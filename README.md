@@ -1,6 +1,6 @@
-# Ass Eater Token Website
+# Only Ass Token Website
 
-A bold, modern website for the Ass Eater token project. Built with Next.js, React, and TailwindCSS.
+A bold, modern website for the Only Ass token project. Built with Next.js, React, and TailwindCSS.
 
 ## Features
 

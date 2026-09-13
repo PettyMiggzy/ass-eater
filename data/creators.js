@@ -2,7 +2,7 @@ export const creators = [
   {
     id: 1,
     name: 'Mascot Official',
-    handle: '@asseater',
+    handle: '@onlyass',
     img: '/images/mascot.png',
     video: null,
     subs: '2.4K',
