@@ -84,27 +84,46 @@ export default function Home() {
           </div>
         </nav>
 
-        {/* Premium Hero Section */}
-        <section className="pt-40 pb-20 px-6 text-center relative overflow-hidden">
-          {/* Ambient glow */}
-          <div className="absolute top-40 left-1/2 -translate-x-1/2 w-96 h-96 bg-brand-gold/10 rounded-full blur-3xl"></div>
+        {/* Premium Hero Section with Featured Content */}
+        <section className="pt-32 pb-12 px-6 relative overflow-hidden">
+          {/* Hero Background with Featured Image Area */}
+          <div className="absolute inset-0 z-0">
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/30 to-black/60"></div>
+            <div className="absolute top-0 left-0 right-0 h-96 bg-gradient-to-b from-brand-gold/5 to-transparent"></div>
+          </div>
 
-          <div className="max-w-5xl mx-auto relative z-10">
-            <div className="mb-8 inline-block">
-              <div className="text-7xl animate-bounce">🍑</div>
+          <div className="max-w-6xl mx-auto relative z-10">
+            {/* Featured Content Grid */}
+            <div className="grid md:grid-cols-3 gap-4 mb-12">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="aspect-video bg-gray-800 rounded-lg border-2 border-brand-gold/40 flex items-center justify-center overflow-hidden group cursor-pointer">
+                  <div className="text-center">
+                    <div className="text-4xl mb-2">👩</div>
+                    <p className="text-gray-500 text-xs font-bold">Premium Content</p>
+                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/10 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
+                </div>
+              ))}
             </div>
 
-            <h1 className="text-7xl md:text-8xl font-black mb-6 premium-title">
-              ASS EATER
-            </h1>
+            {/* Main Hero Content */}
+            <div className="text-center">
+              <h1 className="text-7xl md:text-8xl font-black mb-4 premium-title">
+                ASS EATER
+              </h1>
 
-            <p className="text-2xl md:text-3xl text-brand-secondary font-bold mb-4 tracking-wide">
-              EXQUISITE. REFINED. UNAPOLOGETIC.
-            </p>
+              <p className="text-3xl md:text-4xl text-brand-secondary font-black mb-3 tracking-wider">
+                PREMIUM ADULT TOKEN
+              </p>
 
-            <p className="text-lg text-gray-300 mb-12 max-w-2xl mx-auto leading-relaxed">
-              A distinguished token for those with refined tastes. We celebrate culture, confidence, and excellence.
-            </p>
+              <p className="text-xl text-gray-300 mb-4 max-w-3xl mx-auto leading-relaxed">
+                Where culture meets confidence. A token celebrating the finer things in life. 18+ exclusive community for those with refined tastes.
+              </p>
+
+              <div className="flex justify-center gap-4 mb-12">
+                <span className="px-4 py-2 rounded-full bg-brand-gold/20 text-brand-gold text-sm font-bold">NSFW ⚠️</span>
+                <span className="px-4 py-2 rounded-full bg-green-900/30 text-green-300 text-sm font-bold">18+ ONLY</span>
+              </div>
 
             {/* Premium Countdown */}
             <div className="inline-block mb-8">
@@ -141,57 +160,61 @@ export default function Home() {
         {/* Divider */}
         <div className="h-px bg-gradient-to-r from-transparent via-brand-gold/30 to-transparent"></div>
 
-        {/* Premium Mascot Section */}
+        {/* Featured Women Section */}
         <section id="mascot" className="py-24 px-6">
           <div className="max-w-6xl mx-auto">
-            <h2 className="text-6xl font-black text-center mb-4 premium-title">THE CHARACTER</h2>
-            <p className="text-center text-gray-400 mb-16 text-lg">Introducing our distinguished protagonist</p>
+            <h2 className="text-6xl font-black text-center mb-4 premium-title">FEATURED COLLECTION</h2>
+            <p className="text-center text-gray-400 mb-16 text-lg">Premium aesthetic showcase</p>
 
-            <div className="grid md:grid-cols-2 gap-16 items-center">
-              {/* Character Avatar */}
-              <div className="premium-card p-12 border-2 border-brand-gold/30">
-                <div className="aspect-square bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg flex items-center justify-center luxury-glow">
+            {/* Featured Models Grid */}
+            <div className="grid md:grid-cols-2 gap-8">
+              {/* Main Featured */}
+              <div className="premium-card p-0 border-2 border-brand-gold/50 overflow-hidden">
+                <div className="aspect-square bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center group cursor-pointer">
                   <div className="text-center">
-                    <div className="text-9xl mb-4">🍑</div>
-                    <p className="text-gray-500 text-sm font-medium">Premium Avatar Coming</p>
+                    <div className="text-8xl mb-3">👱‍♀️</div>
+                    <p className="text-gray-400 font-bold">Premium Model</p>
                   </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/20 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                 </div>
               </div>
 
-              {/* Character Description */}
-              <div className="space-y-8">
-                <div>
-                  <h3 className="text-4xl font-black mb-4 text-brand-gold">The Connoisseur</h3>
-                  <p className="text-gray-300 text-lg leading-relaxed">
-                    Our mascot embodies sophistication, confidence, and an uncompromising appreciation for the finer things. Living boldly, unapologetically, and with purpose.
-                  </p>
-                </div>
-
+              {/* Featured Highlights */}
+              <div className="space-y-6">
                 <div className="premium-card p-8 border border-brand-gold/30">
-                  <h4 className="text-brand-gold font-black mb-6 text-xl">DISTINGUISHED PROFILE</h4>
-                  <div className="space-y-4">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">Confidence Level</span>
-                      <span className="text-brand-secondary font-bold">UNMATCHED</span>
-                    </div>
-                    <div className="w-full h-px bg-brand-gold/20"></div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">Taste Profile</span>
-                      <span className="text-brand-secondary font-bold">ELITE TIER</span>
-                    </div>
-                    <div className="w-full h-px bg-brand-gold/20"></div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">Risk Tolerance</span>
-                      <span className="text-brand-secondary font-bold">CALCULATED GAMBIT</span>
-                    </div>
-                    <div className="w-full h-px bg-brand-gold/20"></div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">Vision</span>
-                      <span className="text-brand-secondary font-bold">UNBOUNDED</span>
-                    </div>
+                  <h3 className="text-3xl font-black mb-4 text-brand-gold">THE VISION</h3>
+                  <p className="text-gray-300 text-lg leading-relaxed mb-4">
+                    Premium adult content celebrating confidence, beauty, and unapologetic sensuality. A luxury platform for those who appreciate the finer aesthetic.
+                  </p>
+                  <p className="text-brand-secondary font-bold">Launching soon with exclusive content drops</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="premium-card p-6 border border-brand-gold/30 text-center">
+                    <div className="text-4xl mb-3">📸</div>
+                    <h4 className="text-brand-gold font-bold mb-2">Photography</h4>
+                    <p className="text-sm text-gray-400">Professional</p>
+                  </div>
+                  <div className="premium-card p-6 border border-brand-gold/30 text-center">
+                    <div className="text-4xl mb-3">🎥</div>
+                    <h4 className="text-brand-gold font-bold mb-2">Videography</h4>
+                    <p className="text-sm text-gray-400">Premium</p>
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Content Grid Below */}
+            <div className="grid md:grid-cols-4 gap-4 mt-12">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="aspect-square premium-card border-2 border-brand-gold/30 flex items-center justify-center group cursor-pointer overflow-hidden">
+                  <div className="text-center">
+                    <div className="text-5xl mb-2">👩‍🦱</div>
+                    <p className="text-gray-500 text-xs font-bold">Model {i}</p>
+                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/15 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
+                </div>
+              ))}
             </div>
           </div>
         </section>
@@ -199,75 +222,81 @@ export default function Home() {
         {/* Divider */}
         <div className="h-px bg-gradient-to-r from-transparent via-brand-gold/30 to-transparent"></div>
 
-        {/* Premium Gallery Section */}
+        {/* Premium Content Gallery */}
         <section id="gallery" className="py-24 px-6">
           <div className="max-w-6xl mx-auto">
-            <h2 className="text-6xl font-black text-center mb-4 premium-title">CURATED COLLECTION</h2>
-            <p className="text-center text-gray-400 mb-16 text-lg">A celebration of refined aesthetics</p>
+            <h2 className="text-6xl font-black text-center mb-2 premium-title">EXCLUSIVE GALLERY</h2>
+            <p className="text-center text-brand-secondary font-bold mb-2">NSFW Content - 18+ Only</p>
+            <p className="text-center text-gray-400 mb-16 text-lg">Celebrating the female form in premium aesthetic</p>
 
-            {/* Tabs */}
-            <div className="flex justify-center gap-4 mb-16">
+            {/* Content Type Tabs */}
+            <div className="flex justify-center gap-4 mb-12">
               <button
                 onClick={() => setActiveTab('gallery')}
                 className={`px-8 py-3 font-bold tracking-wide rounded-md transition-all duration-300 ${
                   activeTab === 'gallery'
-                    ? 'bg-gradient-gold text-black shadow-luxury'
+                    ? 'bg-gradient-gold text-black'
                     : 'border border-brand-gold/30 text-brand-gold hover:border-brand-gold/60'
                 }`}
               >
-                PHOTOGRAPHY
+                📸 PHOTOS
               </button>
               <button
                 onClick={() => setActiveTab('videos')}
                 className={`px-8 py-3 font-bold tracking-wide rounded-md transition-all duration-300 ${
                   activeTab === 'videos'
-                    ? 'bg-gradient-gold text-black shadow-luxury'
+                    ? 'bg-gradient-gold text-black'
                     : 'border border-brand-gold/30 text-brand-gold hover:border-brand-gold/60'
                 }`}
               >
-                VIDEOGRAPHY
+                🎥 VIDEOS
               </button>
             </div>
 
             {/* Photo Gallery */}
             {activeTab === 'gallery' && (
-              <div className="grid md:grid-cols-3 gap-8">
+              <div className="grid md:grid-cols-3 gap-6">
                 {galleryImages.map((img) => (
                   <div
                     key={img.id}
-                    className="group relative aspect-square rounded-lg overflow-hidden premium-card border-2 border-brand-gold/30 hover:border-brand-gold/60 cursor-pointer"
+                    className="group relative aspect-square rounded-lg overflow-hidden premium-card border-2 border-brand-gold/40 hover:border-brand-gold/70 cursor-pointer"
                   >
-                    <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
+                    <div className="w-full h-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center relative">
                       <div className="text-center">
-                        <div className="text-6xl mb-3">📸</div>
-                        <p className="text-gray-500 text-sm font-medium">Premium Image</p>
+                        <div className="text-7xl mb-2">👩‍🦱</div>
+                        <p className="text-gray-400 font-bold text-sm">Premium Photo</p>
                       </div>
+                      <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                     </div>
-                    <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/10 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Videos Section */}
+            {/* Twerking Videos Section */}
             {activeTab === 'videos' && (
-              <div className="grid md:grid-cols-2 gap-8">
-                {[1, 2, 3, 4].map((video) => (
-                  <div
-                    key={video}
-                    className="group relative aspect-video rounded-lg overflow-hidden premium-card border-2 border-brand-gold/30 hover:border-brand-gold/60 cursor-pointer"
-                  >
-                    <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
-                      <div className="text-center">
-                        <div className="text-6xl mb-3">🎥</div>
-                        <p className="text-gray-400 font-bold">Premium Video</p>
+              <div className="space-y-8">
+                <div className="grid md:grid-cols-2 gap-6">
+                  {[1, 2, 3, 4].map((video) => (
+                    <div
+                      key={video}
+                      className="group relative aspect-video rounded-lg overflow-hidden premium-card border-2 border-brand-gold/40 hover:border-brand-gold/70 cursor-pointer"
+                    >
+                      <div className="w-full h-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center relative">
+                        <div className="text-center">
+                          <div className="text-6xl mb-2">🎥</div>
+                          <p className="text-gray-400 font-bold">Twerking Content</p>
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition duration-300">
+                          <div className="text-6xl">▶️</div>
+                        </div>
                       </div>
                     </div>
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition duration-300">
-                      <div className="text-5xl">▶️</div>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                <div className="text-center text-gray-400 italic">
+                  More premium twerking videos coming soon...
+                </div>
               </div>
             )}
           </div>
