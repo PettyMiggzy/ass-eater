@@ -125,7 +125,7 @@ export default function Home() {
                 <span className="px-4 py-2 rounded-full bg-green-900/30 text-green-300 text-sm font-bold">18+ ONLY</span>
               </div>
 
-            {/* Premium Countdown */}
+              {/* Premium Countdown */}
             <div className="inline-block mb-8">
               <div className="premium-card p-12 border-2 border-brand-gold/50">
                 <p className="text-brand-secondary text-sm font-bold tracking-widest mb-6">EXCLUSIVE AUCTION LIVE</p>
@@ -153,6 +153,7 @@ export default function Home() {
                   ACQUIRE NOW
                 </a>
               </div>
+            </div>
             </div>
           </div>
         </section>
