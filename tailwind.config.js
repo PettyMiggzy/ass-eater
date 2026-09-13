@@ -6,6 +6,11 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        display: ['"Bebas Neue"', 'sans-serif'],
+        serif: ['"Playfair Display"', 'serif'],
+        sans: ['Inter', '-apple-system', 'sans-serif'],
+      },
       colors: {
         brand: {
           dark: '#0a0a0a',

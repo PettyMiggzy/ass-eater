@@ -1,10 +1,26 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import Head from 'next/head';
 
 export default function OnlyAss() {
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [dashTab, setDashTab] = useState('Overview');
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashFading, setShowSplashFading] = useState(false);
+
+  useEffect(() => {
+    const fadeTimer = setTimeout(() => setShowSplashFading(true), 3200);
+    const hideTimer = setTimeout(() => setShowSplash(false), 3700);
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(hideTimer);
+    };
+  }, []);
+
+  const skipSplash = () => {
+    setShowSplashFading(true);
+    setTimeout(() => setShowSplash(false), 400);
+  };
 
   const creators = [
     { id: 1, name: 'Mascot Official', handle: '@asseater', img: '/images/mascot.png', video: null, subs: '2.4K', price: 'Free', locked: false, trending: true },
@@ -43,6 +59,33 @@ export default function OnlyAss() {
         <title>Only Ass - Exclusive Creator Content</title>
         <meta name="description" content="Token-gated exclusive content platform" />
       </Head>
+
+      {showSplash && (
+        <div
+          className={`fixed inset-0 z-[100] bg-black flex items-center justify-center transition-opacity duration-500 ${
+            splashFading ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          <video
+            src="/videos/splash.mp4"
+            autoPlay
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/60"></div>
+          <div className="relative z-10 text-center px-6">
+            <h1 className="text-6xl md:text-8xl font-black mb-4 premium-title">ONLY ASS</h1>
+            <p className="text-brand-secondary font-bold tracking-widest eyebrow">18+ Exclusive Platform</p>
+          </div>
+          <button
+            onClick={skipSplash}
+            className="absolute bottom-8 right-8 px-5 py-2 rounded-full border border-brand-gold/40 text-brand-gold text-sm font-bold hover:bg-brand-gold/10 transition"
+          >
+            Skip
+          </button>
+        </div>
+      )}
 
       <div className="min-h-screen bg-gradient-luxury text-white">
         {/* Header */}
