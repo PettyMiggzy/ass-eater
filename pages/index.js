@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import Head from 'next/head';
-import Image from 'next/image';
 
 export default function Home() {
   const [auctionTime, setAuctionTime] = useState({
@@ -11,6 +10,7 @@ export default function Home() {
   });
 
   const [activeTab, setActiveTab] = useState('gallery');
+  const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -38,6 +38,14 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 50);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   const galleryImages = [
     { id: 1, alt: 'Gallery 1', url: '/images/gallery1.jpg' },
     { id: 2, alt: 'Gallery 2', url: '/images/gallery2.jpg' },
@@ -50,98 +58,137 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Ass Eater - Next Gen Meme Token</title>
-        <meta name="description" content="Ass Eater token - A bold new meme currency for the culture" />
+        <title>Ass Eater - Luxury Meme Token</title>
+        <meta name="description" content="The premium token for culture connoisseurs" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      <div className="min-h-screen bg-brand-dark text-white">
-        {/* Navigation */}
-        <nav className="fixed w-full top-0 bg-brand-dark/95 backdrop-blur border-b border-brand-primary/20 z-50">
-          <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
-            <div className="text-2xl font-bold text-brand-primary">🍑 ASS EATER</div>
-            <div className="flex gap-6 text-sm">
-              <a href="#mascot" className="hover:text-brand-primary transition">Mascot</a>
-              <a href="#gallery" className="hover:text-brand-primary transition">Gallery</a>
-              <a href="#roadmap" className="hover:text-brand-primary transition">Roadmap</a>
-              <a href="#links" className="hover:text-brand-primary transition">Links</a>
+      <div className="min-h-screen bg-gradient-luxury text-white">
+        {/* Premium Navigation */}
+        <nav className={`fixed w-full top-0 z-50 transition-all duration-300 ${
+          isScrolled
+            ? 'bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 shadow-luxury'
+            : 'bg-transparent'
+        }`}>
+          <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <div className="text-2xl">🍑</div>
+              <div className="text-xl font-bold tracking-widest text-brand-gold">ASS EATER</div>
+            </div>
+            <div className="flex gap-8 text-sm font-medium">
+              <a href="#mascot" className="hover:text-brand-gold transition duration-300">Mascot</a>
+              <a href="#gallery" className="hover:text-brand-gold transition duration-300">Gallery</a>
+              <a href="#roadmap" className="hover:text-brand-gold transition duration-300">Roadmap</a>
+              <a href="#links" className="hover:text-brand-gold transition duration-300">Contact</a>
             </div>
           </div>
         </nav>
 
-        {/* Hero Section */}
-        <section className="pt-32 pb-8 px-4 text-center">
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-6 text-6xl">🍑</div>
-            <h1 className="text-6xl md:text-8xl font-black mb-4 text-transparent bg-clip-text bg-gradient-to-r from-brand-primary via-brand-secondary to-brand-accent">
+        {/* Premium Hero Section */}
+        <section className="pt-40 pb-20 px-6 text-center relative overflow-hidden">
+          {/* Ambient glow */}
+          <div className="absolute top-40 left-1/2 -translate-x-1/2 w-96 h-96 bg-brand-gold/10 rounded-full blur-3xl"></div>
+
+          <div className="max-w-5xl mx-auto relative z-10">
+            <div className="mb-8 inline-block">
+              <div className="text-7xl animate-bounce">🍑</div>
+            </div>
+
+            <h1 className="text-7xl md:text-8xl font-black mb-6 premium-title">
               ASS EATER
             </h1>
-            <p className="text-2xl md:text-3xl text-brand-secondary font-bold mb-3">
-              DEGENERATE. UNFILTERED. UNAPOLOGETIC.
-            </p>
-            <p className="text-lg text-gray-300 mb-8">
-              A token by degens, for degens. No cap, no bs, just vibes and assets.
+
+            <p className="text-2xl md:text-3xl text-brand-secondary font-bold mb-4 tracking-wide">
+              EXQUISITE. REFINED. UNAPOLOGETIC.
             </p>
 
-            {/* Auction Countdown */}
-            <div className="bg-gray-900 border-2 border-brand-primary rounded-lg p-8 mb-8 inline-block">
-              <p className="text-sm uppercase tracking-widest text-brand-secondary mb-4 font-bold">⏰ AUCTION LIVE NOW</p>
-              <div className="grid grid-cols-4 gap-4 mb-6">
-                {[
-                  { label: 'Days', value: auctionTime.days },
-                  { label: 'Hours', value: auctionTime.hours },
-                  { label: 'Mins', value: auctionTime.minutes },
-                  { label: 'Secs', value: auctionTime.seconds },
-                ].map((item) => (
-                  <div key={item.label} className="text-center">
-                    <div className="text-3xl font-bold text-brand-primary">
-                      {String(item.value).padStart(2, '0')}
+            <p className="text-lg text-gray-300 mb-12 max-w-2xl mx-auto leading-relaxed">
+              A distinguished token for those with refined tastes. We celebrate culture, confidence, and excellence.
+            </p>
+
+            {/* Premium Countdown */}
+            <div className="inline-block mb-8">
+              <div className="premium-card p-12 border-2 border-brand-gold/50">
+                <p className="text-brand-secondary text-sm font-bold tracking-widest mb-6">EXCLUSIVE AUCTION LIVE</p>
+                <div className="grid grid-cols-4 gap-6 mb-8">
+                  {[
+                    { label: 'Days', value: auctionTime.days },
+                    { label: 'Hours', value: auctionTime.hours },
+                    { label: 'Mins', value: auctionTime.minutes },
+                    { label: 'Secs', value: auctionTime.seconds },
+                  ].map((item) => (
+                    <div key={item.label} className="text-center">
+                      <div className="text-4xl font-black bg-gradient-gold text-transparent bg-clip-text">
+                        {String(item.value).padStart(2, '0')}
+                      </div>
+                      <div className="text-xs uppercase text-gray-400 font-bold mt-2">{item.label}</div>
                     </div>
-                    <div className="text-xs uppercase text-gray-500">{item.label}</div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                <a
+                  href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="premium-button inline-block"
+                >
+                  ACQUIRE NOW
+                </a>
               </div>
-              <a
-                href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block bg-brand-primary hover:bg-brand-secondary text-black font-bold py-3 px-8 rounded-lg transition text-lg"
-              >
-                🚀 GET IN NOW
-              </a>
             </div>
           </div>
         </section>
 
-        {/* Mascot Section */}
-        <section id="mascot" className="py-16 px-4 bg-gradient-to-b from-gray-900 to-brand-dark">
+        {/* Divider */}
+        <div className="h-px bg-gradient-to-r from-transparent via-brand-gold/30 to-transparent"></div>
+
+        {/* Premium Mascot Section */}
+        <section id="mascot" className="py-24 px-6">
           <div className="max-w-6xl mx-auto">
-            <h2 className="text-5xl font-black text-center mb-12 text-transparent bg-clip-text bg-gradient-to-r from-brand-primary to-brand-secondary">
-              MEET THE DEGEN 🎭
-            </h2>
-            <div className="grid md:grid-cols-2 gap-8 items-center">
-              <div className="bg-gray-800 rounded-lg border-2 border-brand-primary p-8 aspect-square flex items-center justify-center overflow-hidden">
-                <div className="text-center">
-                  <div className="text-9xl mb-4">🍑</div>
-                  <p className="text-gray-400 text-sm">*Mascot avatar coming soon*</p>
-                  <p className="text-brand-secondary font-bold mt-2">Stay tuned for the reveal 👀</p>
+            <h2 className="text-6xl font-black text-center mb-4 premium-title">THE CHARACTER</h2>
+            <p className="text-center text-gray-400 mb-16 text-lg">Introducing our distinguished protagonist</p>
+
+            <div className="grid md:grid-cols-2 gap-16 items-center">
+              {/* Character Avatar */}
+              <div className="premium-card p-12 border-2 border-brand-gold/30">
+                <div className="aspect-square bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg flex items-center justify-center luxury-glow">
+                  <div className="text-center">
+                    <div className="text-9xl mb-4">🍑</div>
+                    <p className="text-gray-500 text-sm font-medium">Premium Avatar Coming</p>
+                  </div>
                 </div>
               </div>
-              <div className="space-y-6">
+
+              {/* Character Description */}
+              <div className="space-y-8">
                 <div>
-                  <h3 className="text-3xl font-bold text-brand-primary mb-3">The Degen Life</h3>
+                  <h3 className="text-4xl font-black mb-4 text-brand-gold">The Connoisseur</h3>
                   <p className="text-gray-300 text-lg leading-relaxed">
-                    our mascot lives the dream. all-in on life, all-in on ass. no filters, no shame, just vibes.
-                    every day is a new opportunity to spread the gospel of the culture.
+                    Our mascot embodies sophistication, confidence, and an uncompromising appreciation for the finer things. Living boldly, unapologetically, and with purpose.
                   </p>
                 </div>
-                <div className="bg-gray-800 border border-brand-secondary rounded-lg p-6">
-                  <h4 className="text-brand-secondary font-bold mb-3">DEGEN STATS 📊</h4>
-                  <div className="space-y-2 text-sm">
-                    <p>💪 Confidence Level: <span className="text-brand-primary font-bold">∞</span></p>
-                    <p>🎯 Focus: <span className="text-brand-primary font-bold">locked in</span></p>
-                    <p>📈 Portfolio Risk: <span className="text-brand-primary font-bold">YOLO</span></p>
-                    <p>🍑 Taste: <span className="text-brand-primary font-bold">ELITE</span></p>
+
+                <div className="premium-card p-8 border border-brand-gold/30">
+                  <h4 className="text-brand-gold font-black mb-6 text-xl">DISTINGUISHED PROFILE</h4>
+                  <div className="space-y-4">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Confidence Level</span>
+                      <span className="text-brand-secondary font-bold">UNMATCHED</span>
+                    </div>
+                    <div className="w-full h-px bg-brand-gold/20"></div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Taste Profile</span>
+                      <span className="text-brand-secondary font-bold">ELITE TIER</span>
+                    </div>
+                    <div className="w-full h-px bg-brand-gold/20"></div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Risk Tolerance</span>
+                      <span className="text-brand-secondary font-bold">CALCULATED GAMBIT</span>
+                    </div>
+                    <div className="w-full h-px bg-brand-gold/20"></div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Vision</span>
+                      <span className="text-brand-secondary font-bold">UNBOUNDED</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -149,51 +196,54 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Gallery & Videos Section */}
-        <section id="gallery" className="py-16 px-4 bg-gray-900/50">
+        {/* Divider */}
+        <div className="h-px bg-gradient-to-r from-transparent via-brand-gold/30 to-transparent"></div>
+
+        {/* Premium Gallery Section */}
+        <section id="gallery" className="py-24 px-6">
           <div className="max-w-6xl mx-auto">
-            <h2 className="text-5xl font-black text-center mb-4 text-transparent bg-clip-text bg-gradient-to-r from-brand-primary to-brand-secondary">
-              THE CULTURE 🔥
-            </h2>
-            <p className="text-center text-gray-400 mb-8">Celebrating the finer things in life</p>
+            <h2 className="text-6xl font-black text-center mb-4 premium-title">CURATED COLLECTION</h2>
+            <p className="text-center text-gray-400 mb-16 text-lg">A celebration of refined aesthetics</p>
 
             {/* Tabs */}
-            <div className="flex justify-center gap-4 mb-12">
+            <div className="flex justify-center gap-4 mb-16">
               <button
                 onClick={() => setActiveTab('gallery')}
-                className={`px-6 py-2 font-bold rounded-lg transition ${
+                className={`px-8 py-3 font-bold tracking-wide rounded-md transition-all duration-300 ${
                   activeTab === 'gallery'
-                    ? 'bg-brand-primary text-black'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                    ? 'bg-gradient-gold text-black shadow-luxury'
+                    : 'border border-brand-gold/30 text-brand-gold hover:border-brand-gold/60'
                 }`}
               >
-                📸 PHOTOS
+                PHOTOGRAPHY
               </button>
               <button
                 onClick={() => setActiveTab('videos')}
-                className={`px-6 py-2 font-bold rounded-lg transition ${
+                className={`px-8 py-3 font-bold tracking-wide rounded-md transition-all duration-300 ${
                   activeTab === 'videos'
-                    ? 'bg-brand-primary text-black'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                    ? 'bg-gradient-gold text-black shadow-luxury'
+                    : 'border border-brand-gold/30 text-brand-gold hover:border-brand-gold/60'
                 }`}
               >
-                🎥 VIDEOS
+                VIDEOGRAPHY
               </button>
             </div>
 
             {/* Photo Gallery */}
             {activeTab === 'gallery' && (
-              <div className="grid md:grid-cols-3 gap-6">
+              <div className="grid md:grid-cols-3 gap-8">
                 {galleryImages.map((img) => (
-                  <div key={img.id} className="group relative aspect-square rounded-lg overflow-hidden border-2 border-brand-primary/30 hover:border-brand-primary transition cursor-pointer">
+                  <div
+                    key={img.id}
+                    className="group relative aspect-square rounded-lg overflow-hidden premium-card border-2 border-brand-gold/30 hover:border-brand-gold/60 cursor-pointer"
+                  >
                     <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
                       <div className="text-center">
-                        <div className="text-6xl mb-4">📸</div>
-                        <p className="text-gray-500 text-sm">Add image</p>
-                        <p className="text-gray-600 text-xs mt-2">gallery{img.id}.jpg</p>
+                        <div className="text-6xl mb-3">📸</div>
+                        <p className="text-gray-500 text-sm font-medium">Premium Image</p>
                       </div>
                     </div>
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition"></div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/10 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                   </div>
                 ))}
               </div>
@@ -201,17 +251,19 @@ export default function Home() {
 
             {/* Videos Section */}
             {activeTab === 'videos' && (
-              <div className="grid md:grid-cols-2 gap-6">
+              <div className="grid md:grid-cols-2 gap-8">
                 {[1, 2, 3, 4].map((video) => (
-                  <div key={video} className="group relative aspect-video rounded-lg overflow-hidden border-2 border-brand-secondary/30 hover:border-brand-secondary transition cursor-pointer bg-gray-800">
-                    <div className="w-full h-full flex items-center justify-center">
+                  <div
+                    key={video}
+                    className="group relative aspect-video rounded-lg overflow-hidden premium-card border-2 border-brand-gold/30 hover:border-brand-gold/60 cursor-pointer"
+                  >
+                    <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
                       <div className="text-center">
-                        <div className="text-7xl mb-4">🎥</div>
-                        <p className="text-gray-400 font-bold">Video {video}</p>
-                        <p className="text-gray-600 text-sm mt-2">Add twerking content here</p>
+                        <div className="text-6xl mb-3">🎥</div>
+                        <p className="text-gray-400 font-bold">Premium Video</p>
                       </div>
                     </div>
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition bg-black/40">
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition duration-300">
                       <div className="text-5xl">▶️</div>
                     </div>
                   </div>
@@ -221,200 +273,176 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Token Info */}
-        <section id="about" className="py-16 px-4">
-          <div className="max-w-6xl mx-auto">
-            <h2 className="text-5xl font-black text-center mb-12 text-transparent bg-clip-text bg-gradient-to-r from-brand-primary to-brand-secondary">
-              WHAT IS THIS? 🤔
-            </h2>
+        {/* Divider */}
+        <div className="h-px bg-gradient-to-r from-transparent via-brand-gold/30 to-transparent"></div>
 
-            <div className="grid md:grid-cols-3 gap-6 mb-12">
-              <div className="bg-gray-800 rounded-lg p-8 border-2 border-brand-primary text-center">
+        {/* Token Details */}
+        <section className="py-24 px-6">
+          <div className="max-w-6xl mx-auto">
+            <h2 className="text-6xl font-black text-center mb-4 premium-title">THE OFFERING</h2>
+            <p className="text-center text-gray-400 mb-16 text-lg">Premium tokenomics for premium holders</p>
+
+            <div className="grid md:grid-cols-3 gap-8 mb-12">
+              <div className="premium-card p-10 border-2 border-brand-gold/30 text-center">
                 <div className="text-5xl mb-4">🍑</div>
-                <h3 className="text-2xl font-bold text-brand-primary mb-2">THE TOKEN</h3>
-                <p className="text-gray-300">
-                  a meme token for people who appreciate culture and aren't afraid to show it
-                </p>
+                <h3 className="text-2xl font-black text-brand-gold mb-3">DISTINCTION</h3>
+                <p className="text-gray-300">Own a piece of something truly unique</p>
               </div>
-              <div className="bg-gray-800 rounded-lg p-8 border-2 border-brand-secondary text-center">
+              <div className="premium-card p-10 border-2 border-brand-gold/30 text-center">
                 <div className="text-5xl mb-4">👥</div>
-                <h3 className="text-2xl font-bold text-brand-secondary mb-2">THE COMMUNITY</h3>
-                <p className="text-gray-300">
-                  degens only. people who get it. people who live it. no bs.
-                </p>
+                <h3 className="text-2xl font-black text-brand-gold mb-3">COMMUNITY</h3>
+                <p className="text-gray-300">Join an exclusive circle of like-minded individuals</p>
               </div>
-              <div className="bg-gray-800 rounded-lg p-8 border-2 border-brand-accent text-center">
+              <div className="premium-card p-10 border-2 border-brand-gold/30 text-center">
                 <div className="text-5xl mb-4">🚀</div>
-                <h3 className="text-2xl font-bold text-brand-accent mb-2">THE JOURNEY</h3>
-                <p className="text-gray-300">
-                  launched from nothing to everything. moon or bust mentality.
-                </p>
+                <h3 className="text-2xl font-black text-brand-gold mb-3">POTENTIAL</h3>
+                <p className="text-gray-300">Be part of something groundbreaking</p>
               </div>
             </div>
 
-            <div className="bg-gradient-to-r from-gray-800 to-gray-900 rounded-lg p-8 border border-brand-primary mb-8">
-              <h3 className="text-2xl font-bold text-brand-primary mb-6">THE DEETS 📊</h3>
-              <div className="grid md:grid-cols-2 gap-6 text-gray-300">
-                <div className="flex justify-between border-b border-gray-700 pb-3">
-                  <span>Contract</span>
-                  <span className="text-brand-primary font-mono text-sm">{process.env.NEXT_PUBLIC_CONTRACT_ADDRESS}</span>
+            <div className="premium-card p-10 border-2 border-brand-gold/30">
+              <div className="grid md:grid-cols-2 gap-8">
+                <div>
+                  <p className="text-brand-secondary font-bold text-sm tracking-widest mb-4">CONTRACT DETAILS</p>
+                  <div className="space-y-4 text-sm text-gray-400 font-mono">
+                    <div className="flex justify-between">
+                      <span>Address:</span>
+                      <span className="text-brand-gold">{process.env.NEXT_PUBLIC_CONTRACT_ADDRESS}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Network:</span>
+                      <span className="text-brand-gold">Ethereum</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Status:</span>
+                      <span className="text-green-400 font-bold">Active</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex justify-between border-b border-gray-700 pb-3">
-                  <span>Network</span>
-                  <span className="text-brand-primary font-bold">Ethereum</span>
-                </div>
-                <div className="flex justify-between border-b border-gray-700 pb-3">
-                  <span>Status</span>
-                  <span className="text-green-400 font-bold">🟢 LIVE</span>
-                </div>
-                <div className="flex justify-between border-b border-gray-700 pb-3">
-                  <span>Your Supply %</span>
-                  <span className="text-brand-secondary font-bold">40% After Auction</span>
+                <div>
+                  <p className="text-brand-secondary font-bold text-sm tracking-widest mb-4">ALLOCATION</p>
+                  <div className="space-y-4 text-gray-300">
+                    <p>Post-auction allocation: <span className="text-brand-gold font-bold">40%</span></p>
+                    <p>Currently live on KekFun launchpad with exclusive 4-day auction window</p>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Roadmap */}
-        <section id="roadmap" className="py-16 px-4 bg-gray-900/50">
+        {/* Divider */}
+        <div className="h-px bg-gradient-to-r from-transparent via-brand-gold/30 to-transparent"></div>
+
+        {/* Premium Roadmap */}
+        <section id="roadmap" className="py-24 px-6">
           <div className="max-w-6xl mx-auto">
-            <h2 className="text-5xl font-black text-center mb-4 text-transparent bg-clip-text bg-gradient-to-r from-brand-primary to-brand-secondary">
-              THE PLAN 🗺️
-            </h2>
-            <p className="text-center text-gray-400 mb-12">From zero to hero</p>
+            <h2 className="text-6xl font-black text-center mb-4 premium-title">VISION & TIMELINE</h2>
+            <p className="text-center text-gray-400 mb-16 text-lg">Our journey toward excellence</p>
 
             <div className="space-y-6 max-w-3xl mx-auto">
               {[
                 {
-                  phase: '🚀 PHASE 1: LAUNCH',
-                  status: 'IN PROGRESS',
-                  emoji: '🎯',
-                  items: [
-                    '4-day auction on KekFun (go hard)',
-                    'Building the community (real ones only)',
-                    'Social media takeover (getting goons)',
-                    'Merch drops announced',
-                  ],
+                  phase: 'PHASE I: GENESIS',
+                  status: 'ACTIVE',
+                  items: ['4-Day Exclusive Auction', 'Premium Community Launch', 'Brand Positioning', 'Foundation Building'],
                 },
                 {
-                  phase: '🎭 PHASE 2: MASCOT',
-                  status: 'COMING SOON',
-                  emoji: '🎨',
-                  items: [
-                    'Degen character design finalized',
-                    '3D model created (gonna be fire)',
-                    'NFT drops for holders',
-                    'Merch based on character',
-                  ],
+                  phase: 'PHASE II: CREATION',
+                  status: 'IMMINENT',
+                  items: ['Character Design Finalization', '3D Asset Development', 'Limited Edition NFTs', 'Merchandise Line'],
                 },
                 {
-                  phase: '🎬 PHASE 3: MUSIC VIDEO',
-                  status: 'INCOMING',
-                  emoji: '🔥',
-                  items: [
-                    'Original music produced',
-                    'Professional music video (featuring the culture)',
-                    'Viral campaign pushes (we going viral)',
-                    'Platform distribution',
-                  ],
+                  phase: 'PHASE III: PRODUCTION',
+                  status: 'UPCOMING',
+                  items: ['Original Composition', 'Professional Video Production', 'Multi-Platform Release', 'Viral Campaign'],
                 },
                 {
-                  phase: '👑 PHASE 4: EMPIRE',
-                  status: 'MOONSHOT',
-                  emoji: '💎',
-                  items: [
-                    'Full merch line (apparel, accessories)',
-                    'Community events (meet & greets)',
-                    'Continued content drops',
-                    'Legend status achieved',
-                  ],
+                  phase: 'PHASE IV: ASCENDANCE',
+                  status: 'FUTURE',
+                  items: ['Full Brand Ecosystem', 'Exclusive Events', 'Continued Innovation', 'Legacy Building'],
                 },
               ].map((phase, i) => (
-                <div key={i} className="bg-gray-800 rounded-lg p-6 border-2 border-brand-primary/40 hover:border-brand-primary transition">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-3xl">{phase.emoji}</span>
-                      <h3 className="text-xl font-black text-brand-primary">{phase.phase}</h3>
-                    </div>
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase whitespace-nowrap ${
+                <div key={i} className="premium-card p-8 border-2 border-brand-gold/30 group hover:border-brand-gold/60 transition">
+                  <div className="flex items-start justify-between mb-6">
+                    <h3 className="text-2xl font-black text-brand-gold">{phase.phase}</h3>
+                    <span className={`px-4 py-2 rounded text-xs font-bold tracking-widest ${
                       i === 0
                         ? 'bg-green-900/50 text-green-300'
-                        : 'bg-brand-secondary/20 text-brand-secondary'
+                        : 'bg-brand-gold/10 text-brand-secondary'
                     }`}>
                       {phase.status}
                     </span>
                   </div>
-                  <ul className="space-y-2">
+                  <div className="grid md:grid-cols-2 gap-4">
                     {phase.items.map((item, j) => (
-                      <li key={j} className="text-gray-300 flex items-start text-sm">
-                        <span className="text-brand-primary mr-2 font-bold">→</span>
-                        {item}
-                      </li>
+                      <div key={j} className="flex items-start">
+                        <span className="text-brand-gold mr-3 font-bold">✓</span>
+                        <span className="text-gray-300">{item}</span>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         </section>
 
-        {/* Links & Social */}
-        <section id="links" className="py-16 px-4">
-          <div className="max-w-6xl mx-auto text-center">
-            <h2 className="text-5xl font-black mb-4 text-transparent bg-clip-text bg-gradient-to-r from-brand-primary to-brand-secondary">
-              GET IN 🚀
-            </h2>
-            <p className="text-gray-400 mb-12">Join the movement</p>
+        {/* Divider */}
+        <div className="h-px bg-gradient-to-r from-transparent via-brand-gold/30 to-transparent"></div>
 
-            <div className="flex flex-wrap justify-center gap-4 mb-12">
+        {/* Premium CTA Section */}
+        <section id="links" className="py-24 px-6">
+          <div className="max-w-4xl mx-auto text-center">
+            <h2 className="text-6xl font-black mb-4 premium-title">BECOME AN INSIDER</h2>
+            <p className="text-gray-400 mb-12 text-lg">Join the exclusive movement</p>
+
+            <div className="flex flex-wrap justify-center gap-6 mb-16">
               <a
                 href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="bg-brand-primary hover:bg-brand-secondary text-black font-black py-4 px-10 rounded-lg transition text-lg transform hover:scale-105"
+                className="premium-button"
               >
-                🔥 BUY NOW (KekFun)
+                SECURE YOUR POSITION
               </a>
               <a
                 href="https://twitter.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-10 rounded-lg transition text-lg"
+                className="px-8 py-3 font-bold text-lg tracking-wide border-2 border-brand-gold text-brand-gold rounded-md hover:bg-brand-gold/10 transition duration-300"
               >
-                𝕏 Twitter
+                TWITTER
               </a>
               <a
                 href="https://discord.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-10 rounded-lg transition text-lg"
+                className="px-8 py-3 font-bold text-lg tracking-wide border-2 border-brand-gold text-brand-gold rounded-md hover:bg-brand-gold/10 transition duration-300"
               >
-                💬 Discord
+                DISCORD
               </a>
             </div>
 
-            <div className="bg-gray-800 rounded-lg p-8 border-2 border-brand-primary/50 text-left max-w-2xl mx-auto">
-              <h3 className="text-2xl font-black text-brand-primary mb-4">⚠️ 18+ WARNING</h3>
+            {/* Disclaimer */}
+            <div className="premium-card p-10 border-2 border-brand-gold/20 text-left max-w-2xl mx-auto">
+              <h3 className="text-xl font-black text-brand-gold mb-4">⚠️ IMPORTANT DISCLOSURE</h3>
               <p className="text-gray-300 text-sm leading-relaxed mb-4">
-                <strong>This website contains NSFW content.</strong> You must be 18+ to access this site. By entering, you confirm you are of legal age in your jurisdiction and accept responsibility for your own viewing.
-              </p>
-              <p className="text-gray-400 text-xs mb-4">
-                🔗 <strong>Contract Address:</strong> {process.env.NEXT_PUBLIC_CONTRACT_ADDRESS}
+                This website contains adult content (NSFW). Age verification (18+) is mandatory. By accessing this site, you acknowledge full legal responsibility and confirm compliance with your jurisdiction's laws.
               </p>
               <p className="text-gray-400 text-xs">
-                ⚖️ Crypto investments carry risk. Do your own research. This is a meme token for entertainment. Not financial advice.
+                Cryptocurrency investments involve substantial risk. Conduct thorough research independently. This is a meme token created for entertainment purposes only. Not financial advice.
               </p>
             </div>
           </div>
         </section>
 
-        {/* Footer */}
-        <footer className="border-t border-gray-700 py-12 px-4 text-center">
+        {/* Premium Footer */}
+        <footer className="border-t border-brand-gold/20 py-12 px-6 text-center bg-brand-dark/50 backdrop-blur">
           <div className="max-w-6xl mx-auto">
-            <p className="text-gray-400 mb-2">© 2026 Ass Eater Token</p>
-            <p className="text-gray-600 text-sm">Built with 💪 and pure degen energy</p>
-            <p className="text-gray-600 text-xs mt-4">WAGMI 🍑</p>
+            <p className="text-brand-gold font-bold tracking-widest mb-2">ASS EATER TOKEN</p>
+            <p className="text-gray-400 text-sm">Crafted for the distinguished. Built on principle.</p>
+            <p className="text-gray-600 text-xs mt-4">© 2026 All Rights Reserved</p>
           </div>
         </footer>
       </div>

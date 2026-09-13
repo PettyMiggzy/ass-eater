@@ -4,9 +4,7 @@
   html {
     scroll-behavior: smooth;
   }
-}
 
-@layer base {
   * {
     margin: 0;
     padding: 0;
@@ -14,27 +12,65 @@
   }
 
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-      sans-serif;
+    font-family: 'Sohne', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
   }
 
+  /* Scrollbar */
   ::-webkit-scrollbar {
-    width: 10px;
+    width: 12px;
   }
 
   ::-webkit-scrollbar-track {
-    background: #1a1a1a;
+    background: rgba(0, 0, 0, 0.5);
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #ff6b35;
-    border-radius: 5px;
+    background: linear-gradient(180deg, #d4af37 0%, #f4b860 100%);
+    border-radius: 6px;
+    border: 2px solid rgba(10, 10, 10, 0.5);
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #f7931e;
+    background: linear-gradient(180deg, #f4b860 0%, #d4af37 100%);
+  }
+
+  /* Selection */
+  ::selection {
+    background: #d4af37;
+    color: #000;
+  }
+}
+
+@layer components {
+  .premium-button {
+    @apply relative px-8 py-3 font-bold text-lg tracking-wide transition-all duration-300;
+    @apply bg-gradient-gold text-black rounded-md;
+    @apply hover:shadow-luxury hover:scale-105;
+  }
+
+  .premium-card {
+    @apply relative rounded-lg border border-brand-gold/30 bg-gradient-to-br from-gray-900/50 to-black/50;
+    @apply backdrop-blur-xl shadow-luxury hover:shadow-luxury-lg transition-all duration-300;
+  }
+
+  .premium-title {
+    @apply text-transparent bg-clip-text bg-gradient-to-r from-brand-gold via-brand-secondary to-brand-gold;
+  }
+
+  .luxury-glow {
+    @apply shadow-glow relative;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-white/10 backdrop-blur-md border border-white/20;
+  }
+
+  .text-premium {
+    @apply font-semibold tracking-tight;
   }
 }
