@@ -1,0 +1,36 @@
+{
+  "name": "ass-eater",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PettyMiggzy/ass-eater.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/PettyMiggzy/ass-eater/issues"
+  },
+  "homepage": "https://github.com/PettyMiggzy/ass-eater#readme",
+  "dependencies": {
+    "autoprefixer": "^10.6.0",
+    "axios": "^1.20.0",
+    "dotenv": "^17.4.2",
+    "next": "^16.3.5",
+    "postcss": "^8.5.28",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3"
+  }
+}
