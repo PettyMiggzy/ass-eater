@@ -50,9 +50,6 @@ export default function Home() {
     { id: 1, alt: 'Gallery 1', url: '/images/gallery1.jpg' },
     { id: 2, alt: 'Gallery 2', url: '/images/gallery2.jpg' },
     { id: 3, alt: 'Gallery 3', url: '/images/gallery3.jpg' },
-    { id: 4, alt: 'Gallery 4', url: '/images/gallery4.jpg' },
-    { id: 5, alt: 'Gallery 5', url: '/images/gallery5.jpg' },
-    { id: 6, alt: 'Gallery 6', url: '/images/gallery6.jpg' },
   ];
 
   return (
@@ -71,8 +68,8 @@ export default function Home() {
             : 'bg-transparent'
         }`}>
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <div className="text-2xl">🍑</div>
+            <div className="flex items-center gap-3">
+              <img src="/images/mascot.png" alt="Ass Eater mascot" className="h-10 w-10 object-contain object-top rounded-full" />
               <div className="text-xl font-bold tracking-widest text-brand-gold">ASS EATER</div>
             </div>
             <div className="flex gap-8 text-sm font-medium">
@@ -95,12 +92,9 @@ export default function Home() {
           <div className="max-w-6xl mx-auto relative z-10">
             {/* Featured Content Grid */}
             <div className="grid md:grid-cols-3 gap-4 mb-12">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="aspect-video bg-gray-800 rounded-lg border-2 border-brand-gold/40 flex items-center justify-center overflow-hidden group cursor-pointer">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2">👩</div>
-                    <p className="text-gray-500 text-xs font-bold">Premium Content</p>
-                  </div>
+              {galleryImages.slice(0, 3).map((img) => (
+                <div key={img.id} className="aspect-video bg-gray-800 rounded-lg border-2 border-brand-gold/40 flex items-center justify-center overflow-hidden group cursor-pointer relative">
+                  <img src={img.url} alt={img.alt} className="w-full h-full object-cover object-top" />
                   <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/10 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                 </div>
               ))}
@@ -169,13 +163,10 @@ export default function Home() {
 
             {/* Featured Models Grid */}
             <div className="grid md:grid-cols-2 gap-8">
-              {/* Main Featured */}
+              {/* Main Featured - Mascot */}
               <div className="premium-card p-0 border-2 border-brand-gold/50 overflow-hidden">
-                <div className="aspect-square bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center group cursor-pointer">
-                  <div className="text-center">
-                    <div className="text-8xl mb-3">👱‍♀️</div>
-                    <p className="text-gray-400 font-bold">Premium Model</p>
-                  </div>
+                <div className="aspect-square bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center group cursor-pointer relative">
+                  <img src="/images/mascot.png" alt="Ass Eater mascot" className="w-full h-full object-contain" />
                   <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/20 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                 </div>
               </div>
@@ -206,13 +197,10 @@ export default function Home() {
             </div>
 
             {/* Content Grid Below */}
-            <div className="grid md:grid-cols-4 gap-4 mt-12">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="aspect-square premium-card border-2 border-brand-gold/30 flex items-center justify-center group cursor-pointer overflow-hidden">
-                  <div className="text-center">
-                    <div className="text-5xl mb-2">👩‍🦱</div>
-                    <p className="text-gray-500 text-xs font-bold">Model {i}</p>
-                  </div>
+            <div className="grid md:grid-cols-3 gap-4 mt-12">
+              {galleryImages.map((img) => (
+                <div key={img.id} className="aspect-square premium-card border-2 border-brand-gold/30 flex items-center justify-center group cursor-pointer overflow-hidden relative">
+                  <img src={img.url} alt={img.alt} className="w-full h-full object-cover" />
                   <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/15 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                 </div>
               ))}
@@ -262,13 +250,8 @@ export default function Home() {
                     key={img.id}
                     className="group relative aspect-square rounded-lg overflow-hidden premium-card border-2 border-brand-gold/40 hover:border-brand-gold/70 cursor-pointer"
                   >
-                    <div className="w-full h-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center relative">
-                      <div className="text-center">
-                        <div className="text-7xl mb-2">👩‍🦱</div>
-                        <p className="text-gray-400 font-bold text-sm">Premium Photo</p>
-                      </div>
-                      <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
-                    </div>
+                    <img src={img.url} alt={img.alt} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                   </div>
                 ))}
               </div>
