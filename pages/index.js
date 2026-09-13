@@ -98,12 +98,12 @@ export default function Home() {
 
         {/* Live Activity Ticker */}
         <div className="fixed top-[65px] w-full z-40 bg-black/80 backdrop-blur border-b border-brand-gold/20 overflow-hidden py-2">
-          <div className="flex gap-8 text-xs text-brand-secondary font-bold whitespace-nowrap animate-pulse px-6">
-            <span>🔥 {holderCount} HOLDERS</span>
-            <span>👁️ {liveViewers} VIEWING NOW</span>
-            <span>💰 AUCTION LIVE</span>
-            <span>🍑 NEW CONTENT DROPPED</span>
-            <span>⚡ TRENDING ON KEKFUN</span>
+          <div className="flex gap-8 text-xs text-brand-secondary font-bold whitespace-nowrap animate-pulse px-6 items-center">
+            <span className="flex items-center gap-1"><img src="/icons/fire.png" className="h-4 w-4" alt="" /> {holderCount} HOLDERS</span>
+            <span className="flex items-center gap-1"><img src="/icons/eye.png" className="h-4 w-4" alt="" /> {liveViewers} VIEWING NOW</span>
+            <span className="flex items-center gap-1"><img src="/icons/money.png" className="h-4 w-4" alt="" /> AUCTION LIVE</span>
+            <span className="flex items-center gap-1"><img src="/icons/peach.png" className="h-4 w-4" alt="" /> NEW CONTENT DROPPED</span>
+            <span className="flex items-center gap-1"><img src="/icons/lightning.png" className="h-4 w-4" alt="" /> TRENDING ON KEKFUN</span>
           </div>
         </div>
 
@@ -141,7 +141,7 @@ export default function Home() {
               </p>
 
               <div className="flex justify-center gap-4 mb-12">
-                <span className="px-4 py-2 rounded-full bg-brand-gold/20 text-brand-gold text-sm font-bold">NSFW ⚠️</span>
+                <span className="px-4 py-2 rounded-full bg-brand-gold/20 text-brand-gold text-sm font-bold flex items-center gap-2">NSFW <img src="/icons/warning.png" className="h-4 w-4" alt="" /></span>
                 <span className="px-4 py-2 rounded-full bg-green-900/30 text-green-300 text-sm font-bold">18+ ONLY</span>
               </div>
 
@@ -209,12 +209,12 @@ export default function Home() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="premium-card p-6 border border-brand-gold/30 text-center">
-                    <div className="text-4xl mb-3">📸</div>
+                    <img src="/icons/camera.png" className="h-10 w-10 mx-auto mb-3" alt="" />
                     <h4 className="text-brand-gold font-bold mb-2">Photography</h4>
                     <p className="text-sm text-gray-400">Professional</p>
                   </div>
                   <div className="premium-card p-6 border border-brand-gold/30 text-center">
-                    <div className="text-4xl mb-3">🎥</div>
+                    <img src="/icons/video.png" className="h-10 w-10 mx-auto mb-3" alt="" />
                     <h4 className="text-brand-gold font-bold mb-2">Videography</h4>
                     <p className="text-sm text-gray-400">Premium</p>
                   </div>
@@ -254,7 +254,7 @@ export default function Home() {
                     : 'border border-brand-gold/30 text-brand-gold hover:border-brand-gold/60'
                 }`}
               >
-                📸 PHOTOS
+                <img src="/icons/camera.png" className="h-5 w-5 inline-block mr-2 align-text-bottom" alt="" /> PHOTOS
               </button>
               <button
                 onClick={() => setActiveTab('videos')}
@@ -264,7 +264,7 @@ export default function Home() {
                     : 'border border-brand-gold/30 text-brand-gold hover:border-brand-gold/60'
                 }`}
               >
-                🎥 VIDEOS
+                <img src="/icons/video.png" className="h-5 w-5 inline-block mr-2 align-text-bottom" alt="" /> VIDEOS
               </button>
             </div>
 
@@ -294,11 +294,11 @@ export default function Home() {
                     >
                       <div className="w-full h-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center relative">
                         <div className="text-center">
-                          <div className="text-6xl mb-2">🎥</div>
+                          <img src="/icons/video.png" className="h-16 w-16 mx-auto mb-2" alt="" />
                           <p className="text-gray-400 font-bold">Twerking Content</p>
                         </div>
                         <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition duration-300">
-                          <div className="text-6xl">▶️</div>
+                          <img src="/icons/play.png" className="h-16 w-16" alt="" />
                         </div>
                       </div>
                     </div>
@@ -336,19 +336,19 @@ export default function Home() {
                   <p className="text-sm text-gray-400">Hold to unlock exclusive access</p>
                 </div>
                 <div className="bg-black/30 rounded-lg p-6 border border-brand-gold/20">
-                  <div className="text-3xl mb-2">💬</div>
+                  <img src="/icons/chat.png" className="h-8 w-8 mx-auto mb-2" alt="" />
                   <p className="font-bold text-brand-gold mb-1">AI Chat</p>
                   <p className="text-sm text-gray-400">Chat with our original characters</p>
                 </div>
                 <div className="bg-black/30 rounded-lg p-6 border border-brand-gold/20">
-                  <div className="text-3xl mb-2">📬</div>
+                  <img src="/icons/mail.png" className="h-8 w-8 mx-auto mb-2" alt="" />
                   <p className="font-bold text-brand-gold mb-1">Early Drops</p>
                   <p className="text-sm text-gray-400">First access to new content</p>
                 </div>
               </div>
 
-              <span className="inline-block px-6 py-3 rounded-md bg-brand-gold/10 text-brand-gold font-bold border border-brand-gold/30">
-                🔒 Launching Post-Auction
+              <span className="inline-flex items-center gap-2 px-6 py-3 rounded-md bg-brand-gold/10 text-brand-gold font-bold border border-brand-gold/30">
+                <img src="/icons/lock.png" className="h-5 w-5" alt="" /> Launching Post-Auction
               </span>
             </div>
           </div>
@@ -365,17 +365,17 @@ export default function Home() {
 
             <div className="grid md:grid-cols-3 gap-8 mb-12">
               <div className="premium-card p-10 border-2 border-brand-gold/30 text-center">
-                <div className="text-5xl mb-4">🍑</div>
+                <img src="/icons/peach.png" className="h-14 w-14 mx-auto mb-4" alt="" />
                 <h3 className="text-2xl font-black text-brand-gold mb-3">DISTINCTION</h3>
                 <p className="text-gray-300">Own a piece of something truly unique</p>
               </div>
               <div className="premium-card p-10 border-2 border-brand-gold/30 text-center">
-                <div className="text-5xl mb-4">👥</div>
+                <img src="/icons/crown.png" className="h-14 w-14 mx-auto mb-4" alt="" />
                 <h3 className="text-2xl font-black text-brand-gold mb-3">COMMUNITY</h3>
                 <p className="text-gray-300">Join an exclusive circle of like-minded individuals</p>
               </div>
               <div className="premium-card p-10 border-2 border-brand-gold/30 text-center">
-                <div className="text-5xl mb-4">🚀</div>
+                <img src="/icons/rocket.png" className="h-14 w-14 mx-auto mb-4" alt="" />
                 <h3 className="text-2xl font-black text-brand-gold mb-3">POTENTIAL</h3>
                 <p className="text-gray-300">Be part of something groundbreaking</p>
               </div>
@@ -458,7 +458,7 @@ export default function Home() {
                   <div className="grid md:grid-cols-2 gap-4">
                     {phase.items.map((item, j) => (
                       <div key={j} className="flex items-start">
-                        <span className="text-brand-gold mr-3 font-bold">✓</span>
+                        <img src="/icons/check.png" className="h-5 w-5 mr-2 flex-shrink-0" alt="" />
                         <span className="text-gray-300">{item}</span>
                       </div>
                     ))}
@@ -507,7 +507,7 @@ export default function Home() {
 
             {/* Disclaimer */}
             <div className="premium-card p-10 border-2 border-brand-gold/20 text-left max-w-2xl mx-auto">
-              <h3 className="text-xl font-black text-brand-gold mb-4">⚠️ IMPORTANT DISCLOSURE</h3>
+              <h3 className="text-xl font-black text-brand-gold mb-4 flex items-center gap-2"><img src="/icons/warning.png" className="h-6 w-6" alt="" /> IMPORTANT DISCLOSURE</h3>
               <p className="text-gray-300 text-sm leading-relaxed mb-4">
                 This website contains adult content (NSFW). Age verification (18+) is mandatory. By accessing this site, you acknowledge full legal responsibility and confirm compliance with your jurisdiction's laws.
               </p>
