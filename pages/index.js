@@ -331,7 +331,7 @@ export default function Home() {
 
               <div className="grid md:grid-cols-3 gap-6 mb-10">
                 <div className="bg-black/30 rounded-lg p-6 border border-brand-gold/20">
-                  <div className="text-3xl mb-2">🔓</div>
+                  <img src="/icons/lock.png" className="h-8 w-8 mx-auto mb-2" alt="" />
                   <p className="font-bold text-brand-gold mb-1">Token-Gated</p>
                   <p className="text-sm text-gray-400">Hold to unlock exclusive access</p>
                 </div>
