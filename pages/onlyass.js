@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import Head from 'next/head';
 
 export default function OnlyAss() {
   const [activeFilter, setActiveFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [dashTab, setDashTab] = useState('Overview');
 
   const creators = [
     { id: 1, name: 'Mascot Official', handle: '@asseater', img: '/images/mascot.png', video: null, subs: '2.4K', price: 'Free', locked: false, trending: true },
@@ -13,13 +15,27 @@ export default function OnlyAss() {
     { id: 6, name: 'Night Owl', handle: '@neonights', img: '/images/gallery6.jpg', video: '/videos/night.mp4', subs: '1.5K', price: '1.2M $ASSEAT', locked: true, trending: false },
   ];
 
-  const filtered = creators.filter((c) => {
-    if (activeFilter === 'all') return true;
-    if (activeFilter === 'free') return c.price === 'Free';
-    if (activeFilter === 'premium') return c.price !== 'Free';
-    if (activeFilter === 'trending') return c.trending;
-    return true;
-  });
+  const filtered = useMemo(() => {
+    return creators.filter((c) => {
+      const matchesFilter =
+        activeFilter === 'all' ||
+        (activeFilter === 'free' && c.price === 'Free') ||
+        (activeFilter === 'premium' && c.price !== 'Free') ||
+        (activeFilter === 'trending' && c.trending);
+      const matchesSearch =
+        search === '' ||
+        c.name.toLowerCase().includes(search.toLowerCase()) ||
+        c.handle.toLowerCase().includes(search.toLowerCase());
+      return matchesFilter && matchesSearch;
+    });
+  }, [activeFilter, search]);
+
+  const subscribers = [
+    { name: 'degen_mike', plan: 'All Access', amount: '3M', status: 'Active' },
+    { name: 'sara.eth', plan: 'VIP', amount: '8M', status: 'Active' },
+    { name: 'apeking99', plan: 'Starter', amount: '1M', status: 'Expiring' },
+    { name: 'crypto_chad', plan: 'All Access', amount: '3M', status: 'Active' },
+  ];
 
   return (
     <>
@@ -36,9 +52,13 @@ export default function OnlyAss() {
               <img src="/images/mascot.png" alt="logo" className="h-10 w-10 object-contain object-top rounded-full" />
               <span className="text-xl font-bold tracking-widest text-brand-gold">ASS EATER</span>
             </a>
-            <div className="flex items-center gap-6 text-sm font-medium">
-              <a href="/" className="hover:text-brand-gold transition">Home</a>
-              <span className="text-brand-gold font-bold">Only Ass</span>
+            <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
+              <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
+              <a href="#pricing" className="hover:text-brand-gold transition">Pricing</a>
+              <a href="#dashboard" className="hover:text-brand-gold transition">Dashboard</a>
+            </div>
+            <div className="flex items-center gap-3">
+              <a href="/" className="text-sm text-gray-400 hover:text-brand-gold transition hidden sm:block">Home</a>
               <button className="premium-button text-sm px-6 py-2">Connect Wallet</button>
             </div>
           </div>
@@ -52,13 +72,13 @@ export default function OnlyAss() {
               18+ EXCLUSIVE PLATFORM
             </div>
             <h1 className="text-7xl md:text-8xl font-black mb-3 premium-title">ONLY ASS</h1>
-            <p className="text-brand-secondary font-bold text-xl mb-3">Exclusive Content. Token-Gated Access.</p>
+            <p className="text-brand-secondary font-bold text-xl mb-3">Support the creators you actually love.</p>
             <p className="text-gray-400 max-w-xl mx-auto mb-10">
-              Hold $ASSEAT to unlock premium galleries, chat with our characters, and get early drops. Not affiliated with any other platform — built on our own token.
+              Hold $ASSEAT to unlock premium galleries, chat with our characters, and get early drops. No ads, no algorithm — just exclusive content on our own token.
             </p>
 
             {/* Stats Bar */}
-            <div className="flex flex-wrap justify-center gap-6 md:gap-12">
+            <div className="flex flex-wrap justify-center gap-6 md:gap-12 mb-12">
               <div className="text-center">
                 <p className="text-3xl font-black text-brand-gold">12.4K</p>
                 <p className="text-xs text-gray-400 uppercase tracking-wide">Members</p>
@@ -76,11 +96,22 @@ export default function OnlyAss() {
                 <p className="text-xs text-gray-400 uppercase tracking-wide">New Content</p>
               </div>
             </div>
+
+            {/* Search */}
+            <div className="max-w-md mx-auto">
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search creators..."
+                className="w-full px-6 py-3 rounded-full bg-black/40 border border-brand-gold/30 text-white placeholder-gray-500 focus:outline-none focus:border-brand-gold transition"
+              />
+            </div>
           </div>
         </section>
 
         {/* Filter Bar */}
-        <div className="sticky top-[73px] z-40 bg-brand-dark/90 backdrop-blur border-b border-brand-gold/10 py-4">
+        <div id="creators" className="sticky top-[73px] z-40 bg-brand-dark/90 backdrop-blur border-b border-brand-gold/10 py-4">
           <div className="max-w-7xl mx-auto px-6 flex gap-3 overflow-x-auto">
             {['all', 'trending', 'free', 'premium'].map((f) => (
               <button
@@ -101,70 +132,80 @@ export default function OnlyAss() {
         {/* Creator Grid */}
         <section className="py-12 px-6">
           <div className="max-w-7xl mx-auto">
-            <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6">
-              {filtered.map((c) => (
-                <div key={c.id} className="premium-card overflow-hidden border-2 border-brand-gold/30 hover:border-brand-gold/60 transition group cursor-pointer">
-                  <div className="aspect-[4/5] relative overflow-hidden">
-                    {c.video ? (
-                      <video
-                        src={c.video}
-                        autoPlay
-                        loop
-                        muted
-                        playsInline
-                        className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${c.locked ? 'blur-md scale-110' : ''}`}
-                      />
-                    ) : (
-                      <img
-                        src={c.img}
-                        alt={c.name}
-                        className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${c.locked ? 'blur-md scale-110' : ''}`}
-                      />
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
-
-                    {c.trending && (
-                      <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-brand-gold/90 text-black text-xs font-black flex items-center gap-1">
-                        <img src="/icons/fire.png" className="h-3 w-3" alt="" /> TRENDING
-                      </div>
-                    )}
-
-                    <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur text-brand-gold text-xs font-bold">
-                      {c.price}
+            {filtered.length === 0 ? (
+              <p className="text-center text-gray-500 py-12">No creators match your search.</p>
+            ) : (
+              <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-8 pt-10">
+                {filtered.map((c) => (
+                  <div key={c.id} className="premium-card overflow-visible border-2 border-brand-gold/30 hover:border-brand-gold/60 transition group cursor-pointer pt-10">
+                    {/* Avatar overlapping the top of the card */}
+                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 w-16 h-16 rounded-full border-4 border-gray-900 overflow-hidden bg-gray-800 z-10 shadow-luxury">
+                      <img src={c.img} alt={c.name} className="w-full h-full object-cover object-top" />
                     </div>
 
-                    {c.locked && (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="bg-black/60 backdrop-blur-sm rounded-full p-5 border border-brand-gold/40">
-                          <img src="/icons/lock.png" className="h-8 w-8" alt="" />
+                    <div className="aspect-[4/5] relative overflow-hidden rounded-t-lg mx-3">
+                      {c.video ? (
+                        <video
+                          src={c.video}
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${c.locked ? 'blur-md scale-110' : ''}`}
+                        />
+                      ) : (
+                        <img
+                          src={c.img}
+                          alt={c.name}
+                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${c.locked ? 'blur-md scale-110' : ''}`}
+                        />
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
+
+                      {c.trending && (
+                        <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-brand-gold/90 text-black text-xs font-black flex items-center gap-1">
+                          <img src="/icons/fire.png" className="h-3 w-3" alt="" /> TRENDING
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    <div className="absolute bottom-0 left-0 right-0 p-4">
+                      <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur text-brand-gold text-xs font-bold">
+                        {c.price}
+                      </div>
+
+                      {c.locked && (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="bg-black/60 backdrop-blur-sm rounded-full p-5 border border-brand-gold/40">
+                            <img src="/icons/lock.png" className="h-8 w-8" alt="" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-4 text-center">
                       <p className="font-black text-lg text-white">{c.name}</p>
-                      <p className="text-brand-secondary text-sm font-medium">{c.handle}</p>
-                      <p className="text-gray-300 text-xs mt-1">{c.subs} subscribers</p>
+                      <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
+                      <p className="text-gray-400 text-xs mb-4">{c.subs} subscribers</p>
+                      <div className="flex gap-2">
+                        <button className="flex-1 premium-button text-sm py-2">
+                          {c.locked ? 'Unlock Now' : 'View'}
+                        </button>
+                        <button className="px-4 py-2 border border-brand-gold/40 rounded-md text-brand-gold text-sm hover:bg-brand-gold/10 transition">
+                          Preview
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <div className="p-4 flex gap-2">
-                    <button className="flex-1 premium-button text-sm py-2">
-                      {c.locked ? 'Unlock Now' : 'View'}
-                    </button>
-                    <button className="px-4 py-2 border border-brand-gold/40 rounded-md text-brand-gold text-sm hover:bg-brand-gold/10 transition">
-                      Preview
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 
         {/* Subscription Tiers */}
-        <section className="py-16 px-6 border-t border-brand-gold/20">
+        <section id="pricing" className="py-16 px-6 border-t border-brand-gold/20">
           <div className="max-w-5xl mx-auto">
-            <h2 className="text-4xl font-black text-center mb-12 premium-title">CHOOSE YOUR TIER</h2>
+            <h2 className="text-4xl font-black text-center mb-2 premium-title">CHOOSE YOUR TIER</h2>
+            <p className="text-center text-gray-400 mb-12">Simple, transparent pricing</p>
             <div className="grid md:grid-cols-3 gap-6">
               <div className="premium-card p-8 border-2 border-brand-gold/30 text-center">
                 <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">STARTER</p>
@@ -203,6 +244,76 @@ export default function OnlyAss() {
           </div>
         </section>
 
+        {/* Creator Dashboard Preview */}
+        <section id="dashboard" className="py-16 px-6 border-t border-brand-gold/20">
+          <div className="max-w-5xl mx-auto">
+            <h2 className="text-4xl font-black text-center mb-2 premium-title">CREATOR DASHBOARD</h2>
+            <p className="text-center text-gray-400 mb-12">Become a creator and track your earnings in real time</p>
+
+            <div className="premium-card border-2 border-brand-gold/30 p-6 grid md:grid-cols-[200px_1fr] gap-6">
+              {/* Sidebar */}
+              <div className="bg-black/30 rounded-lg p-3 flex md:flex-col gap-2 overflow-x-auto">
+                {['Overview', 'Content', 'Subscribers', 'Payouts'].map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setDashTab(tab)}
+                    className={`px-4 py-2 rounded-md text-sm text-left whitespace-nowrap transition ${
+                      dashTab === tab
+                        ? 'bg-gradient-to-r from-brand-gold to-brand-secondary text-black font-bold'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+
+              {/* Panel */}
+              <div className="bg-black/20 rounded-lg p-6">
+                <div className="flex flex-wrap gap-4 mb-6">
+                  <div className="bg-black/30 rounded-lg px-6 py-4 flex-1 min-w-[140px]">
+                    <p className="text-2xl font-black text-brand-gold">4.2M</p>
+                    <p className="text-xs text-gray-400">Earnings (30d)</p>
+                  </div>
+                  <div className="bg-black/30 rounded-lg px-6 py-4 flex-1 min-w-[140px]">
+                    <p className="text-2xl font-black text-brand-gold">312</p>
+                    <p className="text-xs text-gray-400">Subscribers</p>
+                  </div>
+                  <div className="bg-black/30 rounded-lg px-6 py-4 flex-1 min-w-[140px]">
+                    <p className="text-2xl font-black text-brand-gold">18</p>
+                    <p className="text-xs text-gray-400">New This Week</p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-gray-400 border-b border-brand-gold/20">
+                        <th className="text-left py-2">Subscriber</th>
+                        <th className="text-left py-2">Plan</th>
+                        <th className="text-left py-2">Amount</th>
+                        <th className="text-left py-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subscribers.map((s, i) => (
+                        <tr key={i} className="border-b border-brand-gold/10">
+                          <td className="py-3 text-white">{s.name}</td>
+                          <td className="py-3 text-gray-300">{s.plan}</td>
+                          <td className="py-3 text-brand-gold font-bold">{s.amount}</td>
+                          <td className={`py-3 font-bold ${s.status === 'Active' ? 'text-green-400' : 'text-yellow-400'}`}>
+                            {s.status}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Bottom CTA */}
         <section className="py-16 px-6 border-t border-brand-gold/20">
           <div className="max-w-2xl mx-auto text-center premium-card p-10 border-2 border-brand-gold/40">
@@ -213,7 +324,7 @@ export default function OnlyAss() {
         </section>
 
         <footer className="border-t border-brand-gold/20 py-8 px-6 text-center text-gray-500 text-sm">
-          <p>Only Ass — an independent platform. Not affiliated with any other service.</p>
+          <p>Only Ass — an independent platform. Not affiliated with any other service. 18+ only, all creators verify identity & age.</p>
         </footer>
       </div>
     </>
