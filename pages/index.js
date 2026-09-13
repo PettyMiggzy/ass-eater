@@ -50,7 +50,21 @@ export default function Home() {
     { id: 1, alt: 'Gallery 1', url: '/images/gallery1.jpg' },
     { id: 2, alt: 'Gallery 2', url: '/images/gallery2.jpg' },
     { id: 3, alt: 'Gallery 3', url: '/images/gallery3.jpg' },
+    { id: 4, alt: 'Gallery 4', url: '/images/gallery4.jpg' },
+    { id: 5, alt: 'Gallery 5', url: '/images/gallery5.jpg' },
+    { id: 6, alt: 'Gallery 6', url: '/images/gallery6.jpg' },
   ];
+
+  const [holderCount, setHolderCount] = useState(1247);
+  const [liveViewers, setLiveViewers] = useState(89);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setHolderCount((prev) => prev + Math.floor(Math.random() * 3));
+      setLiveViewers((prev) => Math.max(40, prev + Math.floor(Math.random() * 11) - 5));
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <>
@@ -72,17 +86,29 @@ export default function Home() {
               <img src="/images/mascot.png" alt="Ass Eater mascot" className="h-10 w-10 object-contain object-top rounded-full" />
               <div className="text-xl font-bold tracking-widest text-brand-gold">ASS EATER</div>
             </div>
-            <div className="flex gap-8 text-sm font-medium">
+            <div className="flex gap-8 text-sm font-medium items-center">
               <a href="#mascot" className="hover:text-brand-gold transition duration-300">Mascot</a>
               <a href="#gallery" className="hover:text-brand-gold transition duration-300">Gallery</a>
               <a href="#roadmap" className="hover:text-brand-gold transition duration-300">Roadmap</a>
               <a href="#links" className="hover:text-brand-gold transition duration-300">Contact</a>
+              <a href="/onlyass" className="px-4 py-2 rounded-md bg-gradient-to-r from-brand-gold to-brand-secondary text-black font-bold hover:scale-105 transition">Only Ass</a>
             </div>
           </div>
         </nav>
 
+        {/* Live Activity Ticker */}
+        <div className="fixed top-[65px] w-full z-40 bg-black/80 backdrop-blur border-b border-brand-gold/20 overflow-hidden py-2">
+          <div className="flex gap-8 text-xs text-brand-secondary font-bold whitespace-nowrap animate-pulse px-6">
+            <span>🔥 {holderCount} HOLDERS</span>
+            <span>👁️ {liveViewers} VIEWING NOW</span>
+            <span>💰 AUCTION LIVE</span>
+            <span>🍑 NEW CONTENT DROPPED</span>
+            <span>⚡ TRENDING ON KEKFUN</span>
+          </div>
+        </div>
+
         {/* Premium Hero Section with Featured Content */}
-        <section className="pt-32 pb-12 px-6 relative overflow-hidden">
+        <section className="pt-44 pb-12 px-6 relative overflow-hidden">
           {/* Hero Background with Featured Image Area */}
           <div className="absolute inset-0 z-0">
             <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/30 to-black/60"></div>
@@ -283,6 +309,48 @@ export default function Home() {
                 </div>
               </div>
             )}
+          </div>
+        </section>
+
+        {/* Divider */}
+        <div className="h-px bg-gradient-to-r from-transparent via-brand-gold/30 to-transparent"></div>
+
+        {/* Only Ass - In-House Content Platform Parody */}
+        <section className="py-24 px-6 relative overflow-hidden">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-brand-gold/5 rounded-full blur-3xl"></div>
+          <div className="max-w-5xl mx-auto relative z-10">
+            <div className="premium-card p-12 border-2 border-brand-gold/50 text-center">
+              <div className="inline-block px-4 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold tracking-widest mb-6">
+                COMING SOON — TOKEN HOLDER PERK
+              </div>
+              <h2 className="text-6xl md:text-7xl font-black mb-4 premium-title">ONLY ASS</h2>
+              <p className="text-xl text-brand-secondary font-bold mb-6">Our own creator platform. Not affiliated with anyone else — just built different.</p>
+              <p className="text-gray-300 max-w-2xl mx-auto mb-10 leading-relaxed">
+                Hold $ASSEAT tokens to unlock exclusive drops, chat with our AI characters, and get early access to gallery updates. A subscription model, but the currency is our own coin.
+              </p>
+
+              <div className="grid md:grid-cols-3 gap-6 mb-10">
+                <div className="bg-black/30 rounded-lg p-6 border border-brand-gold/20">
+                  <div className="text-3xl mb-2">🔓</div>
+                  <p className="font-bold text-brand-gold mb-1">Token-Gated</p>
+                  <p className="text-sm text-gray-400">Hold to unlock exclusive access</p>
+                </div>
+                <div className="bg-black/30 rounded-lg p-6 border border-brand-gold/20">
+                  <div className="text-3xl mb-2">💬</div>
+                  <p className="font-bold text-brand-gold mb-1">AI Chat</p>
+                  <p className="text-sm text-gray-400">Chat with our original characters</p>
+                </div>
+                <div className="bg-black/30 rounded-lg p-6 border border-brand-gold/20">
+                  <div className="text-3xl mb-2">📬</div>
+                  <p className="font-bold text-brand-gold mb-1">Early Drops</p>
+                  <p className="text-sm text-gray-400">First access to new content</p>
+                </div>
+              </div>
+
+              <span className="inline-block px-6 py-3 rounded-md bg-brand-gold/10 text-brand-gold font-bold border border-brand-gold/30">
+                🔒 Launching Post-Auction
+              </span>
+            </div>
           </div>
         </section>
 
