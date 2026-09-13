@@ -1,7 +1,10 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/router';
 import Head from 'next/head';
+import { creators } from '../data/creators';
 
 export default function OnlyAss() {
+  const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [dashTab, setDashTab] = useState('Overview');
@@ -21,15 +24,6 @@ export default function OnlyAss() {
     setShowSplashFading(true);
     setTimeout(() => setShowSplash(false), 400);
   };
-
-  const creators = [
-    { id: 1, name: 'Mascot Official', handle: '@asseater', img: '/images/mascot.png', video: null, subs: '2.4K', price: 'Free', locked: false, trending: true },
-    { id: 2, name: 'Sunset Collection', handle: '@sunsetgirl', img: '/images/gallery3.jpg', video: '/videos/sunset.mp4', subs: '1.8K', price: '1M $ASSEAT', locked: true, trending: true },
-    { id: 3, name: 'Street Style', handle: '@urbanvibe', img: '/images/gallery2.jpg', video: '/videos/street.mp4', subs: '1.2K', price: '1M $ASSEAT', locked: true, trending: false },
-    { id: 4, name: 'Pool Days', handle: '@poolsidebabe', img: '/images/gallery4.jpg', video: '/videos/pool.mp4', subs: '3.1K', price: '1.5M $ASSEAT', locked: true, trending: true },
-    { id: 5, name: 'Fit Life', handle: '@gymqueen', img: '/images/gallery5.jpg', video: '/videos/gym.mp4', subs: '980', price: '1M $ASSEAT', locked: true, trending: false },
-    { id: 6, name: 'Night Owl', handle: '@neonights', img: '/images/gallery6.jpg', video: '/videos/night.mp4', subs: '1.5K', price: '1.2M $ASSEAT', locked: true, trending: false },
-  ];
 
   const filtered = useMemo(() => {
     return creators.filter((c) => {
@@ -180,7 +174,11 @@ export default function OnlyAss() {
             ) : (
               <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-8 pt-10">
                 {filtered.map((c) => (
-                  <div key={c.id} className="premium-card overflow-visible border-2 border-brand-gold/30 hover:border-brand-gold/60 transition group cursor-pointer pt-10">
+                  <div
+                    key={c.id}
+                    onClick={() => router.push(`/creator/${c.id}`)}
+                    className="premium-card overflow-visible border-2 border-brand-gold/30 hover:border-brand-gold/60 transition group cursor-pointer pt-10"
+                  >
                     {/* Avatar overlapping the top of the card */}
                     <div className="absolute -top-8 left-1/2 -translate-x-1/2 w-16 h-16 rounded-full border-4 border-gray-900 overflow-hidden bg-gray-800 z-10 shadow-luxury">
                       <img src={c.img} alt={c.name} className="w-full h-full object-cover object-top" />
