@@ -6,11 +6,11 @@ export default function OnlyAss() {
 
   const creators = [
     { id: 1, name: 'Mascot Official', handle: '@asseater', img: '/images/mascot.png', video: null, subs: '2.4K', price: 'Free', locked: false, trending: true },
-    { id: 2, name: 'Sunset Collection', handle: '@sunsetgirl', img: '/images/gallery3.jpg', video: '/videos/sunset.mp4', subs: '1.8K', price: '50 $ASSEAT', locked: true, trending: true },
-    { id: 3, name: 'Street Style', handle: '@urbanvibe', img: '/images/gallery2.jpg', video: '/videos/street.mp4', subs: '1.2K', price: '50 $ASSEAT', locked: true, trending: false },
-    { id: 4, name: 'Pool Days', handle: '@poolsidebabe', img: '/images/gallery4.jpg', video: '/videos/pool.mp4', subs: '3.1K', price: '75 $ASSEAT', locked: true, trending: true },
-    { id: 5, name: 'Fit Life', handle: '@gymqueen', img: '/images/gallery5.jpg', video: '/videos/gym.mp4', subs: '980', price: '50 $ASSEAT', locked: true, trending: false },
-    { id: 6, name: 'Night Owl', handle: '@neonights', img: '/images/gallery6.jpg', video: '/videos/night.mp4', subs: '1.5K', price: '60 $ASSEAT', locked: true, trending: false },
+    { id: 2, name: 'Sunset Collection', handle: '@sunsetgirl', img: '/images/gallery3.jpg', video: '/videos/sunset.mp4', subs: '1.8K', price: '1M $ASSEAT', locked: true, trending: true },
+    { id: 3, name: 'Street Style', handle: '@urbanvibe', img: '/images/gallery2.jpg', video: '/videos/street.mp4', subs: '1.2K', price: '1M $ASSEAT', locked: true, trending: false },
+    { id: 4, name: 'Pool Days', handle: '@poolsidebabe', img: '/images/gallery4.jpg', video: '/videos/pool.mp4', subs: '3.1K', price: '1.5M $ASSEAT', locked: true, trending: true },
+    { id: 5, name: 'Fit Life', handle: '@gymqueen', img: '/images/gallery5.jpg', video: '/videos/gym.mp4', subs: '980', price: '1M $ASSEAT', locked: true, trending: false },
+    { id: 6, name: 'Night Owl', handle: '@neonights', img: '/images/gallery6.jpg', video: '/videos/night.mp4', subs: '1.5K', price: '1.2M $ASSEAT', locked: true, trending: false },
   ];
 
   const filtered = creators.filter((c) => {
@@ -168,7 +168,7 @@ export default function OnlyAss() {
             <div className="grid md:grid-cols-3 gap-6">
               <div className="premium-card p-8 border-2 border-brand-gold/30 text-center">
                 <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">STARTER</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">50</p>
+                <p className="text-4xl font-black text-brand-gold mb-1">1M</p>
                 <p className="text-gray-400 text-sm mb-6">$ASSEAT / month</p>
                 <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Access to 3 creators</li>
@@ -179,7 +179,7 @@ export default function OnlyAss() {
               <div className="premium-card p-8 border-2 border-brand-gold text-center relative scale-105 shadow-luxury-lg">
                 <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-brand-gold text-black text-xs font-black rounded-full">MOST POPULAR</div>
                 <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">ALL ACCESS</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">150</p>
+                <p className="text-4xl font-black text-brand-gold mb-1">3M</p>
                 <p className="text-gray-400 text-sm mb-6">$ASSEAT / month</p>
                 <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> All creators unlocked</li>
@@ -190,7 +190,7 @@ export default function OnlyAss() {
               </div>
               <div className="premium-card p-8 border-2 border-brand-gold/30 text-center">
                 <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">VIP</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">400</p>
+                <p className="text-4xl font-black text-brand-gold mb-1">8M</p>
                 <p className="text-gray-400 text-sm mb-6">$ASSEAT / month</p>
                 <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Everything in All Access</li>
