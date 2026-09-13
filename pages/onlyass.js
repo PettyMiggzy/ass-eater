@@ -10,6 +10,12 @@ export default function OnlyAss() {
   const [dashTab, setDashTab] = useState('Overview');
   const [showSplash, setShowSplash] = useState(true);
   const [splashFading, setShowSplashFading] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const showComingSoon = (msg) => {
+    setToast(msg || 'Launching in 4 days — connect your wallet then to unlock.');
+    setTimeout(() => setToast(null), 3000);
+  };
 
   useEffect(() => {
     const fadeTimer = setTimeout(() => setShowSplashFading(true), 3200);
@@ -54,6 +60,12 @@ export default function OnlyAss() {
         <meta name="description" content="Token-gated exclusive content platform" />
       </Head>
 
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] px-6 py-3 rounded-full bg-brand-gold text-black font-bold shadow-luxury-lg animate-pulse">
+          {toast}
+        </div>
+      )}
+
       {showSplash && (
         <div
           className={`fixed inset-0 z-[100] bg-black flex items-center justify-center transition-opacity duration-500 ${
@@ -85,9 +97,8 @@ export default function OnlyAss() {
         {/* Header */}
         <nav className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/" className="flex items-center gap-3">
-              <img src="/images/mascot.png" alt="logo" className="h-10 w-10 object-contain object-top rounded-full" />
-              <span className="text-xl font-bold tracking-widest text-brand-gold">ONLY ASS</span>
+            <a href="/" className="flex items-center">
+              <img src="/icons/onlyass-wordmark.png" alt="Only Ass" className="h-9 md:h-10 w-auto" />
             </a>
             <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
               <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
@@ -96,7 +107,7 @@ export default function OnlyAss() {
             </div>
             <div className="flex items-center gap-3">
               <a href="/" className="text-sm text-gray-400 hover:text-brand-gold transition hidden sm:block">Home</a>
-              <button className="premium-button text-sm px-6 py-2">Connect Wallet</button>
+              <button onClick={() => showComingSoon()} className="premium-button text-sm px-6 py-2">Connect Wallet</button>
             </div>
           </div>
         </nav>
@@ -227,10 +238,16 @@ export default function OnlyAss() {
                       <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
                       <p className="text-gray-400 text-xs mb-4">{c.subs} subscribers</p>
                       <div className="flex gap-2">
-                        <button className="flex-1 premium-button text-sm py-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); c.locked ? showComingSoon() : router.push(`/creator/${c.id}`); }}
+                          className="flex-1 premium-button text-sm py-2"
+                        >
                           {c.locked ? 'Unlock Now' : 'View'}
                         </button>
-                        <button className="px-4 py-2 border border-brand-gold/40 rounded-md text-brand-gold text-sm hover:bg-brand-gold/10 transition">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); router.push(`/creator/${c.id}`); }}
+                          className="px-4 py-2 border border-brand-gold/40 rounded-md text-brand-gold text-sm hover:bg-brand-gold/10 transition"
+                        >
                           Preview
                         </button>
                       </div>
@@ -256,7 +273,7 @@ export default function OnlyAss() {
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Access to 3 creators</li>
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Weekly content drops</li>
                 </ul>
-                <button className="w-full premium-button text-sm">Select</button>
+                <button onClick={() => showComingSoon()} className="w-full premium-button text-sm">Select</button>
               </div>
               <div className="premium-card p-8 border-2 border-brand-gold text-center relative scale-105 shadow-luxury-lg">
                 <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-brand-gold text-black text-xs font-black rounded-full">MOST POPULAR</div>
@@ -268,7 +285,7 @@ export default function OnlyAss() {
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Daily content drops</li>
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> AI character chat access</li>
                 </ul>
-                <button className="w-full premium-button text-sm">Select</button>
+                <button onClick={() => showComingSoon()} className="w-full premium-button text-sm">Select</button>
               </div>
               <div className="premium-card p-8 border-2 border-brand-gold/30 text-center">
                 <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">VIP</p>
@@ -279,7 +296,7 @@ export default function OnlyAss() {
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Priority requests</li>
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Early mascot NFT access</li>
                 </ul>
-                <button className="w-full premium-button text-sm">Select</button>
+                <button onClick={() => showComingSoon()} className="w-full premium-button text-sm">Select</button>
               </div>
             </div>
           </div>
@@ -360,7 +377,7 @@ export default function OnlyAss() {
           <div className="max-w-2xl mx-auto text-center premium-card p-10 border-2 border-brand-gold/40">
             <h2 className="text-3xl font-black text-brand-gold mb-3">Become a Subscriber</h2>
             <p className="text-gray-300 mb-6">Connect your wallet and hold $ASSEAT to unlock exclusive content across all creators.</p>
-            <button className="premium-button">Connect Wallet to Unlock</button>
+            <button onClick={() => showComingSoon()} className="premium-button">Connect Wallet to Unlock</button>
           </div>
         </section>
 

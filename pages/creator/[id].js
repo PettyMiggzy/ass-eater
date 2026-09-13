@@ -7,6 +7,12 @@ export default function CreatorProfile() {
   const router = useRouter();
   const { id } = router.query;
   const [activeTab, setActiveTab] = useState('posts');
+  const [toast, setToast] = useState(null);
+
+  const showComingSoon = (msg) => {
+    setToast(msg || 'Launching in 4 days — connect your wallet then to unlock.');
+    setTimeout(() => setToast(null), 3000);
+  };
 
   const creator = creators.find((c) => String(c.id) === String(id));
 
@@ -26,6 +32,12 @@ export default function CreatorProfile() {
       <Head>
         <title>{creator.name} - Only Ass</title>
       </Head>
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] px-6 py-3 rounded-full bg-brand-gold text-black font-bold shadow-luxury-lg">
+          {toast}
+        </div>
+      )}
 
       <div className="min-h-screen bg-gradient-luxury text-white pb-16">
         {/* Cover */}
@@ -77,7 +89,10 @@ export default function CreatorProfile() {
           <p className="text-gray-300 mt-3 mb-6">{creator.bio}</p>
 
           {/* Chat CTA */}
-          <button className="w-full premium-card border-2 border-brand-gold/40 hover:border-brand-gold/70 transition p-4 flex items-center justify-center gap-3 mb-8">
+          <button
+            onClick={() => showComingSoon('AI chat launches with the platform — 4 days!')}
+            className="w-full premium-card border-2 border-brand-gold/40 hover:border-brand-gold/70 transition p-4 flex items-center justify-center gap-3 mb-8"
+          >
             <img src="/icons/chat.png" className="h-6 w-6" alt="" />
             <span className="font-bold text-brand-gold">Chat with {creator.name}</span>
           </button>
@@ -85,7 +100,7 @@ export default function CreatorProfile() {
           {/* Subscription CTA */}
           <div className="premium-card p-6 border-2 border-brand-gold/40 mb-8">
             <p className="eyebrow text-brand-secondary text-xs mb-3">Subscription</p>
-            <button className="w-full premium-button py-4 text-lg">
+            <button onClick={() => showComingSoon()} className="w-full premium-button py-4 text-lg">
               {creator.locked ? `Subscribe — ${creator.price}` : 'Subscribe — Free'}
             </button>
           </div>
