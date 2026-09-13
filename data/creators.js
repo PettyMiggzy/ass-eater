@@ -51,6 +51,7 @@ export const creators = [
     gallery: [
       { type: 'image', src: '/images/content_street_2.jpg' },
       { type: 'image', src: '/images/content_street_3.jpg' },
+      { type: 'image', src: '/images/content_street_4.jpg' },
     ],
   },
   {

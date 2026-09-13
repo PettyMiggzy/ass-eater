@@ -319,7 +319,8 @@ export default function Home() {
 
         {/* Only Ass - In-House Content Platform Parody */}
         <section className="py-24 px-6 relative overflow-hidden">
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-brand-gold/5 rounded-full blur-3xl"></div>
+          <div className="absolute top-1/2 left-1/3 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-brand-purple/10 rounded-full blur-3xl"></div>
+          <div className="absolute top-1/2 left-2/3 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-brand-gold/8 rounded-full blur-3xl"></div>
           <div className="max-w-5xl mx-auto relative z-10">
             <div className="premium-card p-12 border-2 border-brand-gold/50 text-center">
               <div className="inline-block px-4 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold tracking-widest mb-6">

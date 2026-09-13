@@ -15,7 +15,9 @@
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+    background: radial-gradient(circle at 20% 0%, rgba(139, 111, 214, 0.12) 0%, transparent 50%),
+      radial-gradient(circle at 80% 100%, rgba(212, 175, 55, 0.08) 0%, transparent 50%),
+      linear-gradient(135deg, #0a0a0a 0%, #150f24 50%, #0a0a0a 100%);
     background-attachment: fixed;
     letter-spacing: -0.01em;
   }
@@ -33,13 +35,13 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #d4af37 0%, #f4b860 100%);
+    background: linear-gradient(180deg, #d4af37 0%, #8b6fd6 100%);
     border-radius: 6px;
     border: 2px solid rgba(10, 10, 10, 0.5);
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #f4b860 0%, #d4af37 100%);
+    background: linear-gradient(180deg, #8b6fd6 0%, #d4af37 100%);
   }
 
   ::selection {
@@ -56,16 +58,16 @@
     font-size: 1.125rem;
     letter-spacing: 0.025em;
     transition: all 0.3s ease;
-    background: linear-gradient(135deg, #d4af37 0%, #f4b860 100%);
+    background: linear-gradient(135deg, #d4af37 0%, #f4b860 50%, #8b6fd6 100%);
     color: #000;
     border-radius: 0.375rem;
     border: none;
     cursor: pointer;
-    box-shadow: 0 20px 60px rgba(212, 175, 55, 0.15);
+    box-shadow: 0 20px 60px rgba(139, 111, 214, 0.25);
   }
 
   .premium-button:hover {
-    box-shadow: 0 40px 100px rgba(212, 175, 55, 0.2);
+    box-shadow: 0 40px 100px rgba(139, 111, 214, 0.35);
     transform: scale(1.05);
   }
 
@@ -73,20 +75,21 @@
     position: relative;
     border-radius: 0.5rem;
     border: 1px solid rgba(212, 175, 55, 0.3);
-    background: linear-gradient(to bottom right, rgba(31, 31, 31, 0.5), rgba(0, 0, 0, 0.5));
+    background: linear-gradient(to bottom right, rgba(61, 43, 95, 0.25), rgba(0, 0, 0, 0.5));
     backdrop-filter: blur(20px);
-    box-shadow: 0 20px 60px rgba(212, 175, 55, 0.15);
+    box-shadow: 0 20px 60px rgba(139, 111, 214, 0.12);
     transition: all 0.3s ease;
   }
 
   .premium-card:hover {
-    box-shadow: 0 40px 100px rgba(212, 175, 55, 0.2);
+    border-color: rgba(139, 111, 214, 0.5);
+    box-shadow: 0 40px 100px rgba(139, 111, 214, 0.25);
   }
 
   .premium-title {
     font-family: 'Playfair Display', serif;
     font-weight: 800;
-    background: linear-gradient(to right, #d4af37, #f4b860, #d4af37);
+    background: linear-gradient(to right, #d4af37, #8b6fd6, #d4af37);
     background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -103,6 +106,6 @@
 
   .luxury-glow {
     position: relative;
-    box-shadow: 0 0 40px rgba(212, 175, 55, 0.2);
+    box-shadow: 0 0 40px rgba(139, 111, 214, 0.3);
   }
 }
