@@ -69,7 +69,7 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Ass Eater - Luxury Meme Token</title>
+        <title>Only Ass - Premium Adult Token</title>
         <meta name="description" content="The premium token for culture connoisseurs" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
@@ -83,8 +83,8 @@ export default function Home() {
         }`}>
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
             <div className="flex items-center gap-3">
-              <img src="/images/mascot.png" alt="Ass Eater mascot" className="h-10 w-10 object-contain object-top rounded-full" />
-              <div className="text-xl font-bold tracking-widest text-brand-gold">ASS EATER</div>
+              <img src="/images/mascot.png" alt="Only Ass mascot" className="h-10 w-10 object-contain object-top rounded-full" />
+              <div className="text-xl font-bold tracking-widest text-brand-gold">ONLY ASS</div>
             </div>
             <div className="flex gap-4 md:gap-8 text-sm font-medium items-center">
               <a href="#mascot" className="hidden md:inline hover:text-brand-gold transition duration-300">Mascot</a>
@@ -131,7 +131,7 @@ export default function Home() {
             {/* Main Hero Content */}
             <div className="text-center">
               <h1 className="text-7xl md:text-8xl font-black mb-4 premium-title">
-                ASS EATER
+                ONLY ASS
               </h1>
 
               <p className="text-3xl md:text-4xl text-brand-secondary font-black mb-3 tracking-wider">
@@ -194,7 +194,7 @@ export default function Home() {
               {/* Main Featured - Mascot */}
               <div className="premium-card p-0 border-2 border-brand-gold/50 overflow-hidden">
                 <div className="aspect-square bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center group cursor-pointer relative">
-                  <img src="/images/mascot.png" alt="Ass Eater mascot" className="w-full h-full object-contain" />
+                  <img src="/images/mascot.png" alt="Only Ass mascot" className="w-full h-full object-contain" />
                   <div className="absolute inset-0 bg-gradient-to-t from-brand-gold/20 to-transparent opacity-0 group-hover:opacity-100 transition duration-300"></div>
                 </div>
               </div>
@@ -523,7 +523,7 @@ export default function Home() {
         {/* Premium Footer */}
         <footer className="border-t border-brand-gold/20 py-12 px-6 text-center bg-brand-dark/50 backdrop-blur">
           <div className="max-w-6xl mx-auto">
-            <p className="text-brand-gold font-bold tracking-widest mb-2">ASS EATER TOKEN</p>
+            <p className="text-brand-gold font-bold tracking-widest mb-2">ONLY ASS TOKEN</p>
             <p className="text-gray-400 text-sm">Crafted for the distinguished. Built on principle.</p>
             <p className="text-gray-600 text-xs mt-4">© 2026 All Rights Reserved</p>
           </div>

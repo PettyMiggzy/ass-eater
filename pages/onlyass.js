@@ -87,7 +87,7 @@ export default function OnlyAss() {
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
             <a href="/" className="flex items-center gap-3">
               <img src="/images/mascot.png" alt="logo" className="h-10 w-10 object-contain object-top rounded-full" />
-              <span className="text-xl font-bold tracking-widest text-brand-gold">ASS EATER</span>
+              <span className="text-xl font-bold tracking-widest text-brand-gold">ONLY ASS</span>
             </a>
             <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
               <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
