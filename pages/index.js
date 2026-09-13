@@ -91,9 +91,8 @@ export default function Home() {
               <a href="#gallery" className="hidden md:inline hover:text-brand-gold transition duration-300">Gallery</a>
               <a href="#roadmap" className="hidden md:inline hover:text-brand-gold transition duration-300">Roadmap</a>
               <a href="#links" className="hidden md:inline hover:text-brand-gold transition duration-300">Contact</a>
-              <a href="/onlyass" className="whitespace-nowrap flex items-center gap-2 pl-2 pr-5 py-2 rounded-full bg-gradient-to-r from-brand-gold to-brand-secondary text-black font-black hover:scale-105 transition shadow-luxury">
-                <img src="/icons/onlyass-logo.png" alt="" className="h-10 w-10" />
-                ONLY ASS
+              <a href="/onlyass" className="whitespace-nowrap flex items-center hover:scale-105 transition">
+                <img src="/icons/onlyass-wordmark.png" alt="Only Ass" className="h-9 md:h-11 w-auto" />
               </a>
             </div>
           </div>
