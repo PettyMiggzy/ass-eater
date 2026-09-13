@@ -68,22 +68,24 @@ export default function OnlyAss() {
 
       {showSplash && (
         <div
-          className={`fixed inset-0 z-[100] bg-black flex items-center justify-center transition-opacity duration-500 ${
+          className={`fixed inset-0 z-[100] bg-gradient-to-b from-black via-brand-purple/10 to-black flex items-center justify-center transition-opacity duration-500 ${
             splashFading ? 'opacity-0' : 'opacity-100'
           }`}
         >
-          <video
-            src="/videos/splash.mp4"
-            autoPlay
-            muted
-            playsInline
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/60"></div>
-          <div className="relative z-10 text-center px-6">
-            <h1 className="text-6xl md:text-8xl font-black mb-4 premium-title">ONLY ASS</h1>
-            <p className="text-brand-secondary font-bold tracking-widest eyebrow">18+ Exclusive Platform</p>
+          {/* Enhanced glow effects for splash */}
+          <div className="absolute inset-0">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-gradient-to-r from-brand-purple/30 to-brand-gold/20 rounded-full blur-3xl animate-pulse"></div>
           </div>
+
+          <div className="relative z-10 text-center px-6 flex flex-col items-center gap-6">
+            <img
+              src="/icons/onlyass-hero-logo.png"
+              alt="Only Ass"
+              className="w-64 md:w-80 drop-shadow-2xl animate-pulse"
+            />
+            <p className="text-brand-secondary font-bold tracking-widest eyebrow text-sm md:text-base">18+ Exclusive Creator Platform</p>
+          </div>
+
           <button
             onClick={skipSplash}
             className="absolute bottom-8 right-8 px-5 py-2 rounded-full border border-brand-gold/40 text-brand-gold text-sm font-bold hover:bg-brand-gold/10 transition"
@@ -113,21 +115,38 @@ export default function OnlyAss() {
         </nav>
 
         {/* Hero Banner */}
-        <section className="relative py-20 px-6 border-b border-brand-gold/20 overflow-hidden">
+        <section className="relative py-16 px-6 border-b border-brand-gold/20 overflow-hidden">
           <div className="absolute top-1/2 left-1/3 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-brand-purple/15 rounded-full blur-3xl"></div>
           <div className="absolute top-1/2 left-2/3 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-brand-gold/10 rounded-full blur-3xl"></div>
-          <div className="max-w-7xl mx-auto text-center relative z-10">
-            <div className="inline-block px-4 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold tracking-widest mb-6">
-              18+ EXCLUSIVE PLATFORM
+          <div className="max-w-7xl mx-auto relative z-10">
+            <div className="grid md:grid-cols-2 gap-8 items-center mb-8">
+              {/* Logo Side */}
+              <div className="flex justify-center md:justify-start">
+                <div className="relative group max-w-xs">
+                  <div className="absolute -inset-4 bg-gradient-to-r from-brand-purple/20 to-brand-gold/20 rounded-2xl blur-xl group-hover:blur-2xl opacity-50 group-hover:opacity-75 transition"></div>
+                  <img
+                    src="/icons/onlyass-hero-logo.png"
+                    alt="Only Ass Platform"
+                    className="relative w-full rounded-xl shadow-luxury-lg group-hover:scale-105 transition"
+                  />
+                </div>
+              </div>
+
+              {/* Content Side */}
+              <div className="text-center md:text-left">
+                <div className="inline-block px-4 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold tracking-widest mb-6">
+                  18+ EXCLUSIVE PLATFORM
+                </div>
+                <h1 className="text-5xl md:text-6xl font-black mb-3 premium-title">ONLY ASS</h1>
+                <p className="text-brand-secondary font-bold text-lg mb-3">Support the creators you actually love.</p>
+                <p className="text-gray-400 mb-8">
+                  Hold $ASSEAT to unlock premium galleries, chat with our characters, and get early drops. No ads, no algorithm — just exclusive content on our own token.
+                </p>
+              </div>
             </div>
-            <h1 className="text-7xl md:text-8xl font-black mb-3 premium-title">ONLY ASS</h1>
-            <p className="text-brand-secondary font-bold text-xl mb-3">Support the creators you actually love.</p>
-            <p className="text-gray-400 max-w-xl mx-auto mb-10">
-              Hold $ASSEAT to unlock premium galleries, chat with our characters, and get early drops. No ads, no algorithm — just exclusive content on our own token.
-            </p>
 
             {/* Stats Bar */}
-            <div className="flex flex-wrap justify-center gap-6 md:gap-12 mb-12">
+            <div className="flex flex-wrap justify-center gap-6 md:gap-12 mb-8">
               <div className="text-center">
                 <p className="text-3xl font-black text-brand-gold">12.4K</p>
                 <p className="text-xs text-gray-400 uppercase tracking-wide">Members</p>

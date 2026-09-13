@@ -58,51 +58,66 @@ export default function Home() {
           </div>
         </nav>
 
-        {/* Hero - split layout */}
-        <section className="pt-32 pb-20 px-6 relative">
-          <div className="absolute top-20 left-0 w-[500px] h-[500px] bg-brand-purple/15 rounded-full blur-3xl"></div>
-          <div className="absolute top-40 right-0 w-[400px] h-[400px] bg-brand-gold/10 rounded-full blur-3xl"></div>
+        {/* Hero - centered logo layout */}
+        <section className="pt-24 pb-24 px-6 relative min-h-[90vh] flex items-center">
+          <div className="absolute inset-0 overflow-hidden">
+            <div className="absolute top-10 left-1/4 w-[600px] h-[600px] bg-brand-purple/20 rounded-full blur-3xl animate-pulse"></div>
+            <div className="absolute bottom-10 right-1/4 w-[500px] h-[500px] bg-brand-gold/15 rounded-full blur-3xl animate-pulse" style={{animationDelay: '0.5s'}}></div>
+          </div>
 
-          <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-12 items-center relative z-10">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-purple/20 border border-brand-purple/30 text-brand-purple text-xs font-bold tracking-wide mb-6">
-                <span className="w-2 h-2 rounded-full bg-brand-purple animate-pulse"></span>
-                18+ ADULT TOKEN — LAUNCHING SOON
-              </div>
-              <h1 className="text-6xl md:text-7xl font-black leading-[0.95] mb-6 premium-title">
-                ONLY ASS
-              </h1>
-              <p className="text-lg text-gray-300 mb-8 max-w-md">
-                A degen-run token with a real platform behind it. Hold $ASSEAT, unlock exclusive creator content, and get in before launch.
-              </p>
+          <div className="max-w-6xl mx-auto w-full relative z-10">
+            <div className="grid md:grid-cols-2 gap-12 items-center">
+              {/* Left: Logo Image - Premium Showcase */}
+              <div className="flex justify-center md:justify-end">
+                <div className="relative group">
+                  {/* Glow effect behind logo */}
+                  <div className="absolute -inset-8 bg-gradient-to-r from-brand-purple/30 via-brand-gold/20 to-brand-purple/30 rounded-full blur-2xl opacity-75 group-hover:opacity-100 transition duration-500"></div>
+                  <div className="absolute -inset-4 bg-gradient-to-r from-brand-gold/20 to-brand-purple/20 rounded-full blur-xl opacity-50 group-hover:opacity-75 transition duration-500"></div>
 
-              <div className="flex flex-wrap gap-4 mb-10">
-                <a
-                  href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="premium-button"
-                >
-                  Join Auction
-                </a>
-                <a href="/onlyass" className="px-8 py-3 rounded-md border-2 border-brand-purple/50 text-brand-purple font-bold hover:bg-brand-purple/10 transition">
-                  Explore Platform
-                </a>
+                  <img
+                    src="/icons/onlyass-hero-logo.png"
+                    alt="Only Ass - Exclusive Creator Platform"
+                    className="relative w-full max-w-md drop-shadow-2xl group-hover:scale-105 transition duration-300"
+                  />
+                </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-3 max-w-sm">
-                {[['Days', time.days], ['Hrs', time.hours], ['Min', time.minutes], ['Sec', time.seconds]].map(([label, val]) => (
-                  <div key={label} className="text-center bg-black/40 border border-brand-purple/20 rounded-lg py-3">
-                    <div className="text-2xl font-black text-brand-gold">{String(val).padStart(2, '0')}</div>
-                    <div className="text-[10px] uppercase text-gray-500 tracking-wide">{label}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
+              {/* Right: Content */}
+              <div>
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-purple/20 border border-brand-purple/30 text-brand-purple text-xs font-bold tracking-wide mb-6">
+                  <span className="w-2 h-2 rounded-full bg-brand-purple animate-pulse"></span>
+                  18+ ADULT TOKEN — LAUNCHING SOON
+                </div>
+                <h1 className="text-5xl md:text-6xl font-black leading-[0.95] mb-6 premium-title">
+                  ONLY ASS
+                </h1>
+                <p className="text-lg text-gray-300 mb-8 max-w-md">
+                  The most exclusive adult creator platform backed by $ASSEAT. Own the culture, unlock premium content, and support real creators.
+                </p>
 
-            <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-tr from-brand-purple/20 to-brand-gold/20 rounded-3xl blur-2xl"></div>
-              <img src="/icons/onlyass-coin-logo.png" alt="Only Ass Coin" className="relative w-full max-w-sm mx-auto drop-shadow-2xl" />
+                <div className="flex flex-wrap gap-4 mb-10">
+                  <a
+                    href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="premium-button"
+                  >
+                    Join Auction
+                  </a>
+                  <a href="/onlyass" className="px-8 py-3 rounded-md border-2 border-brand-purple/50 text-brand-purple font-bold hover:bg-brand-purple/10 transition">
+                    Explore Platform
+                  </a>
+                </div>
+
+                <div className="grid grid-cols-4 gap-3 max-w-sm">
+                  {[['Days', time.days], ['Hrs', time.hours], ['Min', time.minutes], ['Sec', time.seconds]].map(([label, val]) => (
+                    <div key={label} className="text-center bg-black/40 border border-brand-purple/20 rounded-lg py-3">
+                      <div className="text-2xl font-black text-brand-gold">{String(val).padStart(2, '0')}</div>
+                      <div className="text-[10px] uppercase text-gray-500 tracking-wide">{label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </section>
