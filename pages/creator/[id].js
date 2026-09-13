@@ -108,20 +108,27 @@ export default function CreatorProfile() {
 
           {/* Content Grid (locked) */}
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div key={i} className="aspect-square rounded-lg overflow-hidden relative premium-card border border-brand-gold/20">
-                {creator.video ? (
-                  <video src={creator.video} autoPlay loop muted playsInline className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
-                ) : (
-                  <img src={creator.img} alt="" className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
-                )}
-                {creator.locked && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                    <img src="/icons/lock.png" className="h-6 w-6" alt="" />
-                  </div>
-                )}
-              </div>
-            ))}
+            {(() => {
+              const items = [
+                creator.video ? { type: 'video', src: creator.video } : { type: 'image', src: creator.img },
+                ...(creator.gallery || []),
+              ];
+              const filled = Array.from({ length: 6 }, (_, i) => items[i % items.length]);
+              return filled.map((item, i) => (
+                <div key={i} className="aspect-square rounded-lg overflow-hidden relative premium-card border border-brand-gold/20">
+                  {item.type === 'video' ? (
+                    <video src={item.src} autoPlay loop muted playsInline className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
+                  ) : (
+                    <img src={item.src} alt="" className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
+                  )}
+                  {creator.locked && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                      <img src="/icons/lock.png" className="h-6 w-6" alt="" />
+                    </div>
+                  )}
+                </div>
+              ));
+            })()}
           </div>
         </div>
       </div>

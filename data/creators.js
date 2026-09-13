@@ -28,6 +28,10 @@ export const creators = [
     posts: 210,
     media: 340,
     likes: '9.4K',
+    gallery: [
+      { type: 'image', src: '/images/content_sunset_2.jpg' },
+      { type: 'image', src: '/images/content_sunset_3.jpg' },
+    ],
   },
   {
     id: 3,
@@ -43,6 +47,10 @@ export const creators = [
     posts: 156,
     media: 220,
     likes: '6.1K',
+    gallery: [
+      { type: 'image', src: '/images/content_street_2.jpg' },
+      { type: 'image', src: '/images/content_street_3.jpg' },
+    ],
   },
   {
     id: 4,
@@ -58,6 +66,10 @@ export const creators = [
     posts: 298,
     media: 410,
     likes: '14.7K',
+    gallery: [
+      { type: 'image', src: '/images/content_pool_2.jpg' },
+      { type: 'image', src: '/images/content_pool_3.jpg' },
+    ],
   },
   {
     id: 5,
@@ -73,6 +85,11 @@ export const creators = [
     posts: 134,
     media: 190,
     likes: '5.3K',
+    gallery: [
+      { type: 'video', src: '/videos/jiggle.mp4' },
+      { type: 'image', src: '/images/content_gym_2.jpg' },
+      { type: 'image', src: '/images/content_gym_3.jpg' },
+    ],
   },
   {
     id: 6,
@@ -88,5 +105,9 @@ export const creators = [
     posts: 178,
     media: 250,
     likes: '7.8K',
+    gallery: [
+      { type: 'image', src: '/images/content_night_2.jpg' },
+      { type: 'image', src: '/images/content_night_3.jpg' },
+    ],
   },
 ];
