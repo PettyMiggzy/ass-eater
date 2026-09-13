@@ -13,6 +13,9 @@ export const creators = [
     posts: 340,
     media: 512,
     likes: '18.2K',
+    gallery: [
+      { type: 'image', src: '/images/content_mascot_2.jpg' },
+    ],
   },
   {
     id: 2,
