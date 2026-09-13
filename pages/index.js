@@ -86,12 +86,12 @@ export default function Home() {
               <img src="/images/mascot.png" alt="Ass Eater mascot" className="h-10 w-10 object-contain object-top rounded-full" />
               <div className="text-xl font-bold tracking-widest text-brand-gold">ASS EATER</div>
             </div>
-            <div className="flex gap-8 text-sm font-medium items-center">
-              <a href="#mascot" className="hover:text-brand-gold transition duration-300">Mascot</a>
-              <a href="#gallery" className="hover:text-brand-gold transition duration-300">Gallery</a>
-              <a href="#roadmap" className="hover:text-brand-gold transition duration-300">Roadmap</a>
-              <a href="#links" className="hover:text-brand-gold transition duration-300">Contact</a>
-              <a href="/onlyass" className="px-4 py-2 rounded-md bg-gradient-to-r from-brand-gold to-brand-secondary text-black font-bold hover:scale-105 transition">Only Ass</a>
+            <div className="flex gap-4 md:gap-8 text-sm font-medium items-center">
+              <a href="#mascot" className="hidden md:inline hover:text-brand-gold transition duration-300">Mascot</a>
+              <a href="#gallery" className="hidden md:inline hover:text-brand-gold transition duration-300">Gallery</a>
+              <a href="#roadmap" className="hidden md:inline hover:text-brand-gold transition duration-300">Roadmap</a>
+              <a href="#links" className="hidden md:inline hover:text-brand-gold transition duration-300">Contact</a>
+              <a href="/onlyass" className="whitespace-nowrap px-4 py-2 rounded-md bg-gradient-to-r from-brand-gold to-brand-secondary text-black font-bold hover:scale-105 transition">Only Ass</a>
             </div>
           </div>
         </nav>
