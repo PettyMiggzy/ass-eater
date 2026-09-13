@@ -1,9 +1,14 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { creators } from '../data/creators';
+import { getCreators } from '../lib/creators-store';
 
-export default function OnlyAss() {
+export async function getServerSideProps() {
+  const creators = await getCreators();
+  return { props: { creators: creators.filter((c) => c.status !== 'pending') } };
+}
+
+export default function OnlyAss({ creators }) {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -307,7 +312,10 @@ export default function OnlyAss() {
         <section id="dashboard" className="py-16 px-6 border-t border-brand-gold/20">
           <div className="max-w-5xl mx-auto">
             <h2 className="text-4xl font-black text-center mb-2 premium-title">CREATOR DASHBOARD</h2>
-            <p className="text-center text-gray-400 mb-12">Become a creator and track your earnings in real time</p>
+            <p className="text-center text-gray-400 mb-4">Become a creator and track your earnings in real time</p>
+            <div className="text-center mb-12">
+              <a href="/become-creator" className="inline-block premium-button text-sm">Apply to Become a Creator</a>
+            </div>
 
             <div className="premium-card border-2 border-brand-gold/30 p-6 grid md:grid-cols-[200px_1fr] gap-6">
               {/* Sidebar */}

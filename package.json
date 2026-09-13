@@ -21,6 +21,7 @@
   },
   "homepage": "https://github.com/PettyMiggzy/ass-eater#readme",
   "dependencies": {
+    "@vercel/blob": "^2.8.0",
     "autoprefixer": "^10.6.0",
     "axios": "^1.20.0",
     "dotenv": "^17.4.2",

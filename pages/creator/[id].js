@@ -1,11 +1,16 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { creators } from '../../data/creators';
+import { getCreators } from '../../lib/creators-store';
 
-export default function CreatorProfile() {
+export async function getServerSideProps({ params }) {
+  const creators = await getCreators();
+  const creator = creators.find((c) => String(c.id) === String(params.id)) || null;
+  return { props: { creator } };
+}
+
+export default function CreatorProfile({ creator }) {
   const router = useRouter();
-  const { id } = router.query;
   const [activeTab, setActiveTab] = useState('posts');
   const [toast, setToast] = useState(null);
 
@@ -13,8 +18,6 @@ export default function CreatorProfile() {
     setToast(msg || 'Launching in 4 days — connect your wallet then to unlock.');
     setTimeout(() => setToast(null), 3000);
   };
-
-  const creator = creators.find((c) => String(c.id) === String(id));
 
   if (!creator) {
     return (
