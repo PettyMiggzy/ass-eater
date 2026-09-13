@@ -31,6 +31,7 @@ export const creators = [
     gallery: [
       { type: 'image', src: '/images/content_sunset_2.jpg' },
       { type: 'image', src: '/images/content_sunset_3.jpg' },
+      { type: 'image', src: '/images/content_lingerie_1.jpg' },
     ],
   },
   {
@@ -69,6 +70,7 @@ export const creators = [
     gallery: [
       { type: 'image', src: '/images/content_pool_2.jpg' },
       { type: 'image', src: '/images/content_pool_3.jpg' },
+      { type: 'image', src: '/images/content_lingerie_2.jpg' },
     ],
   },
   {
@@ -106,6 +108,7 @@ export const creators = [
     media: 250,
     likes: '7.8K',
     gallery: [
+      { type: 'image', src: '/images/content_lingerie_3.jpg' },
       { type: 'image', src: '/images/content_night_2.jpg' },
       { type: 'image', src: '/images/content_night_3.jpg' },
     ],
