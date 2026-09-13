@@ -20,6 +20,8 @@ module.exports = {
           accent: '#c91f16',
           gold: '#d4af37',
           'gold-light': '#e8c547',
+          purple: '#8b6fd6',
+          'purple-dark': '#3d2b5f',
         },
       },
       backgroundImage: {
