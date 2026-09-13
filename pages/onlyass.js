@@ -6,11 +6,11 @@ export default function OnlyAss() {
 
   const creators = [
     { id: 1, name: 'Mascot Official', handle: '@asseater', img: '/images/mascot.png', video: null, subs: '2.4K', price: 'Free', locked: false, trending: true },
-    { id: 2, name: 'Sunset Collection', handle: '@sunsetgirl', img: '/images/gallery3.jpg', video: null, subs: '1.8K', price: '50 $ASSEAT', locked: true, trending: true },
-    { id: 3, name: 'Street Style', handle: '@urbanvibe', img: '/images/gallery2.jpg', video: null, subs: '1.2K', price: '50 $ASSEAT', locked: true, trending: false },
-    { id: 4, name: 'Pool Days', handle: '@poolsidebabe', img: '/images/gallery4.jpg', video: null, subs: '3.1K', price: '75 $ASSEAT', locked: true, trending: true },
-    { id: 5, name: 'Fit Life', handle: '@gymqueen', img: '/images/gallery5.jpg', video: null, subs: '980', price: '50 $ASSEAT', locked: true, trending: false },
-    { id: 6, name: 'Night Owl', handle: '@neonights', img: '/images/gallery6.jpg', video: null, subs: '1.5K', price: '60 $ASSEAT', locked: true, trending: false },
+    { id: 2, name: 'Sunset Collection', handle: '@sunsetgirl', img: '/images/gallery3.jpg', video: '/videos/sunset.mp4', subs: '1.8K', price: '50 $ASSEAT', locked: true, trending: true },
+    { id: 3, name: 'Street Style', handle: '@urbanvibe', img: '/images/gallery2.jpg', video: '/videos/street.mp4', subs: '1.2K', price: '50 $ASSEAT', locked: true, trending: false },
+    { id: 4, name: 'Pool Days', handle: '@poolsidebabe', img: '/images/gallery4.jpg', video: '/videos/pool.mp4', subs: '3.1K', price: '75 $ASSEAT', locked: true, trending: true },
+    { id: 5, name: 'Fit Life', handle: '@gymqueen', img: '/images/gallery5.jpg', video: '/videos/gym.mp4', subs: '980', price: '50 $ASSEAT', locked: true, trending: false },
+    { id: 6, name: 'Night Owl', handle: '@neonights', img: '/images/gallery6.jpg', video: '/videos/night.mp4', subs: '1.5K', price: '60 $ASSEAT', locked: true, trending: false },
   ];
 
   const filtered = creators.filter((c) => {
