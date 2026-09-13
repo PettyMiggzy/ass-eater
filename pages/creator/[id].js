@@ -21,11 +21,6 @@ export default function CreatorProfile() {
     );
   }
 
-  const socials = [
-    { name: 'Twitter', icon: '𝕏' },
-    { name: 'Discord', icon: '💬' },
-  ];
-
   return (
     <>
       <Head>
@@ -74,24 +69,18 @@ export default function CreatorProfile() {
               <button className="w-11 h-11 rounded-full border border-brand-gold/40 flex items-center justify-center hover:bg-brand-gold/10 transition">
                 <img src="/icons/mail.png" className="h-5 w-5" alt="Message" />
               </button>
-              <button className="w-11 h-11 rounded-full border border-brand-gold/40 flex items-center justify-center hover:bg-brand-gold/10 transition">
-                <img src="/icons/chat.png" className="h-5 w-5" alt="Chat" />
-              </button>
             </div>
           </div>
 
           <h1 className="text-3xl font-black premium-title mb-1">{creator.name}</h1>
           <p className="text-gray-400 text-sm mb-1">{creator.handle} · <span className="text-green-400">Online now</span></p>
-          <p className="text-gray-300 mt-3 mb-4">{creator.bio}</p>
+          <p className="text-gray-300 mt-3 mb-6">{creator.bio}</p>
 
-          {/* Socials */}
-          <div className="flex gap-3 mb-8">
-            {socials.map((s) => (
-              <span key={s.name} className="px-4 py-2 rounded-full bg-black/30 border border-brand-gold/20 text-sm text-gray-300">
-                {s.icon} {s.name}
-              </span>
-            ))}
-          </div>
+          {/* Chat CTA */}
+          <button className="w-full premium-card border-2 border-brand-gold/40 hover:border-brand-gold/70 transition p-4 flex items-center justify-center gap-3 mb-8">
+            <img src="/icons/chat.png" className="h-6 w-6" alt="" />
+            <span className="font-bold text-brand-gold">Chat with {creator.name}</span>
+          </button>
 
           {/* Subscription CTA */}
           <div className="premium-card p-6 border-2 border-brand-gold/40 mb-8">
