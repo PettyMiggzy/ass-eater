@@ -50,6 +50,8 @@ export default function AdminPanel() {
         locked: !!selected.locked,
         trending: !!selected.trending,
         status: selected.status || 'active',
+        payoutMethod: selected.payoutMethod || 'asseat',
+        walletAddress: selected.walletAddress || '',
       });
     }
   }, [selectedId]);
@@ -334,6 +336,21 @@ export default function AdminPanel() {
                       rows={3}
                       className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                     />
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Get Paid In</label>
+                      <select
+                        value={draft.payoutMethod}
+                        onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
+                        className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+                      >
+                        <option value="asseat">$ASSEAT</option>
+                        <option value="eth">ETH</option>
+                      </select>
+                    </div>
+                    <Field label="Payout Wallet Address" value={draft.walletAddress} onChange={(v) => setDraft({ ...draft, walletAddress: v })} />
                   </div>
 
                   {selected.status === 'pending' && (

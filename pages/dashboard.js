@@ -32,6 +32,8 @@ export default function Dashboard({ user, creator: initialCreator }) {
     handle: initialCreator?.handle || '',
     bio: initialCreator?.bio || '',
     price: initialCreator?.price || '',
+    payoutMethod: initialCreator?.payoutMethod || 'asseat',
+    walletAddress: initialCreator?.walletAddress || '',
   });
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
@@ -192,6 +194,32 @@ export default function Dashboard({ user, creator: initialCreator }) {
                 <label className="block text-sm text-gray-400 mb-2">Bio</label>
                 <textarea value={draft.bio} onChange={(e) => setDraft({ ...draft, bio: e.target.value })} rows={3} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
               </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Get Paid In</label>
+                  <select
+                    value={draft.payoutMethod}
+                    onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
+                    className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+                  >
+                    <option value="asseat">$ASSEAT</option>
+                    <option value="eth">ETH</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Payout Wallet Address</label>
+                  <input
+                    value={draft.walletAddress}
+                    onChange={(e) => setDraft({ ...draft, walletAddress: e.target.value })}
+                    placeholder="0x..."
+                    className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white font-mono text-sm"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 -mt-2">
+                Fans pay you directly to this wallet when they unlock your content. The platform takes a 10% fee on top, sent separately.
+              </p>
 
               <button onClick={saveProfile} disabled={busy} className="premium-button disabled:opacity-50">
                 Save Profile
