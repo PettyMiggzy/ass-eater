@@ -1,8 +1,8 @@
 import { createPublicClient, createWalletClient, http, erc20Abi, parseAbiItem, type Address } from 'viem';
 import { mnemonicToAccount, privateKeyToAccount } from 'viem/accounts';
-import { base, baseSepolia } from 'viem/chains';
+import { robinhood, robinhoodTestnet } from 'viem/chains';
 
-export const chain = process.env.CHAIN === 'base-sepolia' ? baseSepolia : base;
+export const chain = process.env.CHAIN === 'robinhood-testnet' ? robinhoodTestnet : robinhood;
 export const CHAIN_ID = chain.id;
 export const CONFIRMATIONS = Number(process.env.CONFIRMATIONS ?? 12);
 
