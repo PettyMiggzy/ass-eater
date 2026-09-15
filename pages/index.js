@@ -145,6 +145,7 @@ export default function Home() {
                 { phase: 'Platform', status: 'IN 4 DAYS', desc: 'Only Ass creator platform goes live for holders' },
                 { phase: 'Creators', status: 'NEXT', desc: 'Open creator onboarding with ID-verified real creators' },
                 { phase: 'Launchpad', status: 'FUTURE', desc: 'Community-launched creator characters via bonding curve' },
+                { phase: 'Merch Store', status: 'FUTURE', desc: 'Official Only Ass store at onlyass.store — merch and creator goods' },
               ].map((p, i) => (
                 <div key={i} className="premium-card p-6 flex items-center justify-between gap-4">
                   <div>
