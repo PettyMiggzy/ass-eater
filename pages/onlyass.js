@@ -114,6 +114,7 @@ export default function OnlyAss({ creators, sessionUser }) {
               <a href="#pricing" className="hover:text-brand-gold transition">Pricing</a>
               <a href="#dashboard" className="hover:text-brand-gold transition">Dashboard</a>
               <a href="/marketplace" className="hover:text-brand-gold transition">Marketplace</a>
+              <a href="/search" className="hover:text-brand-gold transition">Search</a>
             </div>
             <div className="flex items-center gap-3">
               <a href="/" className="text-sm text-gray-400 hover:text-brand-gold transition hidden sm:block">Home</a>

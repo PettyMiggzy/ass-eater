@@ -4,22 +4,28 @@ import Head from 'next/head';
 import { getCreators } from '../../lib/creators-store';
 import { getSessionUserId } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
+import { getListings } from '../../lib/listings-store';
 
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
   const creator = creators.find((c) => String(c.id) === String(params.id)) || null;
   const viewerId = getSessionUserId(req);
   const creatorUser = creator ? await findUserByCreatorId(creator.id) : null;
+  const allListings = creator ? await getListings() : [];
+  const listings = allListings
+    .filter((l) => String(l.creatorId) === String(creator?.id) && l.status === 'active')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return {
     props: {
       creator,
       viewerId: viewerId || null,
       creatorUserId: creatorUser ? String(creatorUser.id) : null,
+      listings,
     },
   };
 }
 
-export default function CreatorProfile({ creator, viewerId, creatorUserId }) {
+export default function CreatorProfile({ creator, viewerId, creatorUserId, listings }) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('posts');
   const [toast, setToast] = useState(null);
@@ -181,6 +187,40 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId }) {
               ));
             })()}
           </div>
+
+          {/* Marketplace items */}
+          {listings.length > 0 && (
+            <div className="mt-10">
+              <h2 className="text-xl font-black premium-title mb-4">On the Marketplace</h2>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {listings.map((l) => (
+                  <a
+                    key={l.id}
+                    href="/marketplace"
+                    className="group aspect-square rounded-lg overflow-hidden relative premium-card border-2 border-brand-gold/40 hover:border-brand-gold transition shadow-luxury"
+                  >
+                    {l.media?.[0] ? (
+                      l.media[0].type === 'video' ? (
+                        <video src={l.media[0].src} className="w-full h-full object-cover blur-md scale-110 group-hover:scale-125 transition" muted />
+                      ) : (
+                        <img src={l.media[0].src} alt="" className="w-full h-full object-cover blur-md scale-110 group-hover:scale-125 transition" />
+                      )
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-br from-brand-purple/40 to-brand-gold/20" />
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
+                    <img src="/icons/lock.png" className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-6 w-6" alt="" />
+                    <div className="absolute bottom-0 left-0 right-0 p-2">
+                      <p className="text-xs font-bold text-white truncate">{l.title}</p>
+                      <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-brand-gold text-black text-[11px] font-black">
+                        ${(l.priceCents / 100).toFixed(2)}
+                      </span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
