@@ -2,13 +2,17 @@ import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { getCreators } from '../lib/creators-store';
+import { getSessionUserId } from '../lib/session';
+import { findUserById, publicUser } from '../lib/users-store';
 
-export async function getServerSideProps() {
+export async function getServerSideProps({ req }) {
   const creators = await getCreators();
-  return { props: { creators: creators.filter((c) => c.status !== 'pending') } };
+  const uid = getSessionUserId(req);
+  const sessionUser = uid ? publicUser(await findUserById(uid)) : null;
+  return { props: { creators: creators.filter((c) => c.status !== 'pending'), sessionUser } };
 }
 
-export default function OnlyAss({ creators }) {
+export default function OnlyAss({ creators, sessionUser }) {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -112,6 +116,16 @@ export default function OnlyAss({ creators }) {
             </div>
             <div className="flex items-center gap-3">
               <a href="/" className="text-sm text-gray-400 hover:text-brand-gold transition hidden sm:block">Home</a>
+              {sessionUser ? (
+                <a href="/dashboard" className="text-sm text-gray-300 hover:text-brand-gold transition hidden sm:block">
+                  {sessionUser.role === 'creator' ? 'Creator Dashboard' : 'My Account'}
+                </a>
+              ) : (
+                <>
+                  <a href="/login" className="text-sm text-gray-400 hover:text-brand-gold transition hidden sm:block">Log In</a>
+                  <a href="/signup" className="text-sm text-gray-300 hover:text-brand-gold transition hidden sm:block">Sign Up</a>
+                </>
+              )}
               <button onClick={() => showComingSoon()} className="premium-button text-sm px-6 py-2">Connect Wallet</button>
             </div>
           </div>

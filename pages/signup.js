@@ -1,0 +1,103 @@
+import { useState } from 'react';
+import Head from 'next/head';
+import { useRouter } from 'next/router';
+
+export default function Signup() {
+  const router = useRouter();
+  const [role, setRole] = useState('fan');
+  const [form, setForm] = useState({ email: '', password: '', displayName: '', handle: '', bio: '' });
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const update = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, role }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Signup failed');
+      router.push('/dashboard');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <Head><title>Sign Up - Only Ass</title></Head>
+      <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6 py-16">
+        <div className="max-w-md w-full premium-card p-8">
+          <h1 className="text-3xl font-black premium-title mb-2">Create Account</h1>
+          <p className="text-gray-400 text-sm mb-6">Join as a fan to unlock content, or as a creator to post your own.</p>
+
+          <div className="flex gap-2 mb-6">
+            <button
+              type="button"
+              onClick={() => setRole('fan')}
+              className={`flex-1 py-2 rounded-md font-bold text-sm transition ${role === 'fan' ? 'bg-brand-gold text-black' : 'bg-black/40 text-gray-400 border border-brand-purple/30'}`}
+            >
+              I'm a Fan
+            </button>
+            <button
+              type="button"
+              onClick={() => setRole('creator')}
+              className={`flex-1 py-2 rounded-md font-bold text-sm transition ${role === 'creator' ? 'bg-brand-gold text-black' : 'bg-black/40 text-gray-400 border border-brand-purple/30'}`}
+            >
+              I'm a Creator
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Email</label>
+              <input type="email" required value={form.email} onChange={update('email')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Password</label>
+              <input type="password" required minLength={6} value={form.password} onChange={update('password')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+            </div>
+
+            {role === 'creator' && (
+              <>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Display Name</label>
+                  <input required value={form.displayName} onChange={update('displayName')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Handle</label>
+                  <input required placeholder="@yourname" value={form.handle} onChange={update('handle')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Bio</label>
+                  <textarea value={form.bio} onChange={update('bio')} rows={2} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                </div>
+                <p className="text-xs text-gray-500">
+                  Creator profiles require ID and age verification before going public. You can build out your profile now — our team reviews it before it appears on the platform.
+                </p>
+              </>
+            )}
+
+            {error && <p className="text-sm text-red-400">{error}</p>}
+
+            <button type="submit" disabled={submitting} className="w-full premium-button disabled:opacity-50">
+              {submitting ? 'Creating...' : 'Create Account'}
+            </button>
+          </form>
+
+          <p className="text-sm text-gray-400 mt-6 text-center">
+            Already have an account? <a href="/login" className="text-brand-gold hover:underline">Log in</a>
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}

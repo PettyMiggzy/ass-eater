@@ -51,6 +51,8 @@ export default function Home() {
               <a href="#about" className="hover:text-brand-gold transition">About</a>
               <a href="#gallery" className="hover:text-brand-gold transition">Gallery</a>
               <a href="#roadmap" className="hover:text-brand-gold transition">Roadmap</a>
+              <a href="/login" className="hover:text-brand-gold transition">Log In</a>
+              <a href="/signup" className="hover:text-brand-gold transition">Sign Up</a>
               <a href="/onlyass" className="px-4 py-1.5 rounded-full bg-gradient-to-r from-brand-gold to-brand-purple text-black font-bold hover:scale-105 transition">
                 Enter Platform
               </a>

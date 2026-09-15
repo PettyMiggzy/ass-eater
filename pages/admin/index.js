@@ -49,6 +49,7 @@ export default function AdminPanel() {
         likes: selected.likes || '',
         locked: !!selected.locked,
         trending: !!selected.trending,
+        status: selected.status || 'active',
       });
     }
   }, [selectedId]);
@@ -245,7 +246,12 @@ export default function AdminPanel() {
                     <p className="font-bold text-white truncate">{c.name}</p>
                     <p className="text-xs text-gray-400 truncate">{c.handle}</p>
                   </div>
-                  {c.trending && <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">HOT</span>}
+                  {c.status === 'pending' && (
+                    <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-bold">PENDING</span>
+                  )}
+                  {c.status !== 'pending' && c.trending && (
+                    <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">HOT</span>
+                  )}
                 </button>
               ))}
             </div>
@@ -298,7 +304,13 @@ export default function AdminPanel() {
                     />
                   </div>
 
-                  <div className="flex gap-6">
+                  {selected.status === 'pending' && (
+                    <div className="px-4 py-3 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
+                      This profile is pending review and hidden from the public platform. Set status to Active below to publish it.
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-6 items-center">
                     <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                       <input
                         type="checkbox"
@@ -314,6 +326,17 @@ export default function AdminPanel() {
                         onChange={(e) => setDraft({ ...draft, trending: e.target.checked })}
                       />
                       Trending
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-300">
+                      Status
+                      <select
+                        value={draft.status}
+                        onChange={(e) => setDraft({ ...draft, status: e.target.value })}
+                        className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+                      >
+                        <option value="active">Active (public)</option>
+                        <option value="pending">Pending (hidden)</option>
+                      </select>
                     </label>
                   </div>
 
