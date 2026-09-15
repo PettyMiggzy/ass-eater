@@ -1,0 +1,339 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  FAN
+  CREATOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum KycStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// USDC/ETH are settlement assets fans deposit in; ONLYASS is the platform token.
+enum Asset {
+  USDC
+  ETH
+  ONLYASS
+}
+
+enum TxType {
+  DEPOSIT
+  SUBSCRIPTION
+  PPV
+  TIP
+  MESSAGE_UNLOCK
+  LIVE_TICKET
+  PAYOUT
+  PAYOUT_REVERSAL
+  PLATFORM_FEE
+  REFERRAL
+  ADJUSTMENT
+}
+
+enum SubStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+}
+
+enum Visibility {
+  PUBLIC
+  SUBSCRIBERS
+  PPV
+}
+
+enum MediaStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  REJECTED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+enum StreamStatus {
+  LIVE
+  ENDED
+}
+
+enum ReportStatus {
+  OPEN
+  ACTIONED
+  DISMISSED
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  username     String     @unique
+  passwordHash String
+  role         Role       @default(FAN)
+  status       UserStatus @default(ACTIVE)
+  dob          DateTime
+  kycStatus    KycStatus  @default(NONE)
+  kycRef       String? // provider applicant id (2257-adjacent record pointer)
+  referredById String?
+  referredBy   User?      @relation("Referral", fields: [referredById], references: [id])
+  referrals    User[]     @relation("Referral")
+  createdAt    DateTime   @default(now())
+
+  creator       CreatorProfile?
+  account       Account?
+  ledger        LedgerEntry[]
+  refreshTokens RefreshToken[]
+  depositAddrs  DepositAddress[]
+  subsAsFan     Subscription[]   @relation("FanSubs")
+  subsAsCreator Subscription[]   @relation("CreatorSubs")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+}
+
+model CreatorProfile {
+  userId        String    @id
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName   String
+  bio           String    @default("")
+  avatarKey     String?
+  bannerKey     String?
+  payoutAsset   Asset     @default(USDC)
+  payoutAddress String?
+  payoutsFrozen Boolean   @default(false)
+  promotedUntil DateTime? // paid discovery placement
+  tiers         SubscriptionTier[]
+  posts         Post[]
+  streams       LiveStream[]
+  payouts       Payout[]
+}
+
+model SubscriptionTier {
+  id         String         @id @default(uuid())
+  creatorId  String
+  creator    CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
+  name       String
+  priceCents Int
+  active     Boolean        @default(true)
+  subs       Subscription[]
+}
+
+model Subscription {
+  id               String    @id @default(uuid())
+  fanId            String
+  fan              User      @relation("FanSubs", fields: [fanId], references: [id])
+  creatorId        String
+  creator          User      @relation("CreatorSubs", fields: [creatorId], references: [id])
+  tierId           String
+  tier             SubscriptionTier @relation(fields: [tierId], references: [id])
+  priceCents       Int // locked at purchase
+  status           SubStatus @default(ACTIVE)
+  autoRenew        Boolean   @default(true)
+  currentPeriodEnd DateTime
+  createdAt        DateTime  @default(now())
+
+  @@unique([fanId, creatorId])
+  @@index([status, currentPeriodEnd])
+}
+
+model Post {
+  id         String         @id @default(uuid())
+  creatorId  String
+  creator    CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
+  text       String         @default("")
+  visibility Visibility     @default(SUBSCRIBERS)
+  priceCents Int            @default(0)
+  removed    Boolean        @default(false)
+  createdAt  DateTime       @default(now())
+  media      Media[]
+  unlocks    PostUnlock[]
+
+  @@index([creatorId, createdAt])
+}
+
+model PostUnlock {
+  fanId  String
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([fanId, postId])
+}
+
+model Media {
+  id         String      @id @default(uuid())
+  ownerId    String
+  key        String      @unique // raw upload key
+  hlsKey     String? // transcoded playlist key
+  previewKey String? // blurred thumbnail (public)
+  mime       String
+  bytes      Int         @default(0)
+  status     MediaStatus @default(UPLOADING)
+  postId     String?
+  post       Post?       @relation(fields: [postId], references: [id], onDelete: SetNull)
+  messageId  String?
+  message    Message?    @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  createdAt  DateTime    @default(now())
+}
+
+model Conversation {
+  id        String    @id @default(uuid())
+  aId       String
+  bId       String
+  messages  Message[]
+  updatedAt DateTime  @updatedAt
+
+  @@unique([aId, bId])
+}
+
+model Message {
+  id             String          @id @default(uuid())
+  conversationId String
+  conversation   Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  text           String          @default("")
+  priceCents     Int             @default(0) // >0 = locked media
+  media          Media[]
+  unlocks        MessageUnlock[]
+  createdAt      DateTime        @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+model MessageUnlock {
+  fanId     String
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@id([fanId, messageId])
+}
+
+// ---------- MONEY ----------
+
+model Account {
+  userId       String @id
+  user         User   @relation(fields: [userId], references: [id])
+  balanceCents BigInt @default(0)
+}
+
+model LedgerEntry {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  amountCents BigInt // signed
+  type        TxType
+  refId       String? // subscription/post/message/payout id
+  meta        Json?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+}
+
+model DepositAddress {
+  id              String @id @default(uuid())
+  userId          String
+  user            User   @relation(fields: [userId], references: [id])
+  chainId         Int
+  address         String
+  derivationIndex Int
+
+  @@unique([chainId, address])
+  @@unique([userId, chainId])
+}
+
+model Deposit {
+  id        String   @id @default(uuid())
+  userId    String
+  chainId   Int
+  txHash    String
+  logIndex  Int
+  asset     Asset
+  rawAmount String // wei / 6-dec units as string
+  usdCents  BigInt
+  priceUsed Float
+  createdAt DateTime @default(now())
+
+  @@unique([chainId, txHash, logIndex])
+}
+
+model Payout {
+  id          String         @id @default(uuid())
+  creatorId   String
+  creator     CreatorProfile @relation(fields: [creatorId], references: [userId])
+  asset       Asset
+  address     String
+  amountCents BigInt // net of withdrawal fee
+  feeCents    BigInt
+  assetAmount String?
+  priceUsed   Float?
+  txHash      String?
+  status      PayoutStatus   @default(PENDING)
+  error       String?
+  createdAt   DateTime       @default(now())
+}
+
+model ChainCursor {
+  chainId   Int    @id
+  lastBlock BigInt
+}
+
+// ---------- LIVE ----------
+
+model LiveStream {
+  id               String         @id @default(uuid())
+  creatorId        String
+  creator          CreatorProfile @relation(fields: [creatorId], references: [userId])
+  roomName         String         @unique
+  title            String
+  ticketPriceCents Int            @default(0) // 0 = subscribers only
+  status           StreamStatus   @default(LIVE)
+  startedAt        DateTime       @default(now())
+  endedAt          DateTime?
+  tickets          LiveTicket[]
+}
+
+model LiveTicket {
+  fanId    String
+  streamId String
+  stream   LiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
+
+  @@id([fanId, streamId])
+}
+
+// ---------- MODERATION ----------
+
+model Report {
+  id         String       @id @default(uuid())
+  reporterId String
+  targetType String // "post" | "user" | "message" | "stream"
+  targetId   String
+  reason     String
+  status     ReportStatus @default(OPEN)
+  resolvedBy String?
+  createdAt  DateTime     @default(now())
+}
