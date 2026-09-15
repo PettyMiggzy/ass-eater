@@ -43,14 +43,14 @@ export default function Signup() {
             <button
               type="button"
               onClick={() => setRole('fan')}
-              className={`flex-1 py-2 rounded-md font-bold text-sm transition ${role === 'fan' ? 'bg-brand-gold text-black' : 'bg-black/40 text-gray-400 border border-brand-purple/30'}`}
+              className={`flex-1 py-2 rounded-md font-bold text-sm transition ${role === 'fan' ? 'bg-brand-gold text-black' : 'bg-white/10 text-gray-100 border border-brand-purple/50 hover:bg-white/15'}`}
             >
               I'm a Fan
             </button>
             <button
               type="button"
               onClick={() => setRole('creator')}
-              className={`flex-1 py-2 rounded-md font-bold text-sm transition ${role === 'creator' ? 'bg-brand-gold text-black' : 'bg-black/40 text-gray-400 border border-brand-purple/30'}`}
+              className={`flex-1 py-2 rounded-md font-bold text-sm transition ${role === 'creator' ? 'bg-brand-gold text-black' : 'bg-white/10 text-gray-100 border border-brand-purple/50 hover:bg-white/15'}`}
             >
               I'm a Creator
             </button>
