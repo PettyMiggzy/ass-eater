@@ -79,7 +79,7 @@ export default async function handler(req, res) {
       contactEmail: fields.email || null,
       img: avatarUrl || '/images/mascot.png',
       video: null,
-      price: fields.price ? `${fields.price} $ASSEAT` : '1M $ASSEAT',
+      price: fields.price ? `${fields.price} $ONLYASS` : '1M $ONLYASS',
       gallery,
     });
 

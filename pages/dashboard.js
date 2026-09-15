@@ -32,7 +32,7 @@ export default function Dashboard({ user, creator: initialCreator }) {
     handle: initialCreator?.handle || '',
     bio: initialCreator?.bio || '',
     price: initialCreator?.price || '',
-    payoutMethod: initialCreator?.payoutMethod || 'asseat',
+    payoutMethod: initialCreator?.payoutMethod || 'onlyass',
     walletAddress: initialCreator?.walletAddress || '',
   });
   const [status, setStatus] = useState('');
@@ -153,7 +153,7 @@ export default function Dashboard({ user, creator: initialCreator }) {
             <div className="premium-card p-8">
               <p className="text-gray-300 mb-2">Logged in as <span className="text-brand-gold font-bold">{user.email}</span></p>
               <p className="text-gray-400 text-sm mb-6">
-                You're set up as a fan. Head to the platform to browse creators and unlock content with $ASSEAT.
+                You're set up as a fan. Head to the platform to browse creators and unlock content with $ONLYASS.
               </p>
               <a href="/onlyass" className="premium-button inline-block">Browse Creators</a>
             </div>
@@ -203,7 +203,7 @@ export default function Dashboard({ user, creator: initialCreator }) {
                     onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
                     className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                   >
-                    <option value="asseat">$ASSEAT</option>
+                    <option value="onlyass">$ONLYASS</option>
                     <option value="eth">ETH</option>
                   </select>
                 </div>

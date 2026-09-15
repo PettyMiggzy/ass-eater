@@ -90,7 +90,7 @@ export default function BecomeCreator() {
               <input type="email" value={form.email} onChange={update('email')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
             </div>
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Subscription Price ($ASSEAT, millions)</label>
+              <label className="block text-sm text-gray-400 mb-2">Subscription Price ($ONLYASS, millions)</label>
               <input type="number" value={form.price} onChange={update('price')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
             </div>
             <div>

@@ -66,7 +66,7 @@ export default function Home() {
                 ONLY ASS
               </h1>
               <p className="text-lg text-gray-300 mb-8 max-w-md">
-                A degen-run token with a real platform behind it. Hold $ASSEAT, unlock exclusive creator content, and get in before launch.
+                A degen-run token with a real platform behind it. Hold $ONLYASS, unlock exclusive creator content, and get in before launch.
               </p>
 
               <div className="flex flex-wrap gap-4 mb-10">
@@ -116,7 +116,7 @@ export default function Home() {
             <div className="premium-card p-8">
               <img src="/icons/crown.png" className="h-10 w-10 mb-4" alt="" />
               <h3 className="text-xl font-black text-brand-gold mb-2">Holder Perks</h3>
-              <p className="text-gray-400 text-sm">Hold $ASSEAT for exclusive content, chat access, and creator drops.</p>
+              <p className="text-gray-400 text-sm">Hold $ONLYASS for exclusive content, chat access, and creator drops.</p>
             </div>
           </div>
 
@@ -166,7 +166,7 @@ export default function Home() {
             <img src="/icons/onlyass-coin-logo.png" alt="" className="h-32 mx-auto mb-6" />
             <h2 className="text-3xl md:text-4xl font-black premium-title mb-4">The Platform Is Already Built</h2>
             <p className="text-gray-300 mb-8 max-w-xl mx-auto">
-              Browse creators, see the pricing tiers, and preview what unlocks when $ASSEAT holders get access.
+              Browse creators, see the pricing tiers, and preview what unlocks when $ONLYASS holders get access.
             </p>
             <a href="/onlyass" className="premium-button inline-block">Explore Only Ass →</a>
           </div>

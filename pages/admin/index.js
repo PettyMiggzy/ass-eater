@@ -50,7 +50,7 @@ export default function AdminPanel() {
         locked: !!selected.locked,
         trending: !!selected.trending,
         status: selected.status || 'active',
-        payoutMethod: selected.payoutMethod || 'asseat',
+        payoutMethod: selected.payoutMethod || 'onlyass',
         walletAddress: selected.walletAddress || '',
       });
     }
@@ -346,7 +346,7 @@ export default function AdminPanel() {
                         onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
                         className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                       >
-                        <option value="asseat">$ASSEAT</option>
+                        <option value="onlyass">$ONLYASS</option>
                         <option value="eth">ETH</option>
                       </select>
                     </div>
