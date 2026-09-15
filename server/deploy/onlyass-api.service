@@ -1,0 +1,18 @@
+[Unit]
+Description=Only Ass API (Fastify)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=onlyass
+WorkingDirectory=/opt/onlyass/server
+EnvironmentFile=/opt/onlyass/server/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

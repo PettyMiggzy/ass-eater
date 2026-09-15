@@ -1,0 +1,18 @@
+[Unit]
+Description=Only Ass background workers (deposit-indexer, payout, renewals, transcode)
+After=network.target postgresql.service redis-server.service onlyass-api.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=onlyass
+WorkingDirectory=/opt/onlyass/server
+EnvironmentFile=/opt/onlyass/server/.env
+ExecStart=/usr/bin/node dist/workers/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
