@@ -6,6 +6,7 @@ import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../cor
 
 const PLATFORM_FEE_BPS = 1000; // 10% commission on the sale
 const LISTING_FEE_BPS = 500; // 5% listing fee, also cut at sale time
+const LOYALTY_DISCOUNT_BPS = 1000; // 10% off for a buyer with any active subscription or token-lock
 const CURRENT_TOS_VERSION = 'v1';
 
 export const marketplace: FastifyPluginAsync = async (app) => {
@@ -84,12 +85,20 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         if (already) return { ok: true, already: true, order: already };
       }
 
-      const bal = await lockBalance(tx, req.user.id);
-      if (bal < BigInt(l.priceCents)) throw new InsufficientFunds();
+      // Loyalty discount: any active subscription or token-lock, to any creator, cuts 10% off any marketplace purchase.
+      const [hasSub, hasLock] = await Promise.all([
+        tx.subscription.findFirst({ where: { fanId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } } }),
+        tx.tokenLock.findFirst({ where: { fanId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } } }),
+      ]);
+      const discounted = hasSub || hasLock;
+      const chargeCents = discounted ? Math.round((l.priceCents * (10_000 - LOYALTY_DISCOUNT_BPS)) / 10_000) : l.priceCents;
 
-      const platformFee = Math.floor((l.priceCents * PLATFORM_FEE_BPS) / 10_000);
-      const listingFee = Math.floor((l.priceCents * LISTING_FEE_BPS) / 10_000);
-      const net = l.priceCents - platformFee - listingFee;
+      const bal = await lockBalance(tx, req.user.id);
+      if (bal < BigInt(chargeCents)) throw new InsufficientFunds();
+
+      const platformFee = Math.floor((chargeCents * PLATFORM_FEE_BPS) / 10_000);
+      const listingFee = Math.floor((chargeCents * LISTING_FEE_BPS) / 10_000);
+      const net = chargeCents - platformFee - listingFee;
 
       if (!l.unlimited) {
         const updated = await tx.listing.updateMany({ where: { id: l.id, status: 'ACTIVE' }, data: { status: 'SOLD' } });
@@ -98,17 +107,17 @@ export const marketplace: FastifyPluginAsync = async (app) => {
 
       const order = await tx.listingOrder.create({
         data: {
-          listingId: l.id, buyerId: req.user.id, priceCents: l.priceCents,
+          listingId: l.id, buyerId: req.user.id, priceCents: chargeCents,
           platformFeeCents: platformFee, listingFeeCents: listingFee,
           ageConfirmedAt: new Date(), tosVersion: CURRENT_TOS_VERSION,
         },
       });
 
-      await post(tx, req.user.id, -l.priceCents, 'MARKETPLACE_SALE', order.id);
-      await post(tx, l.creatorId, net, 'MARKETPLACE_SALE', order.id, { gross: l.priceCents, platformFee, listingFee });
+      await post(tx, req.user.id, -chargeCents, 'MARKETPLACE_SALE', order.id);
+      await post(tx, l.creatorId, net, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, originalPriceCents: l.priceCents, loyaltyDiscountApplied: discounted });
       await post(tx, PLATFORM_ID, platformFee + listingFee, 'PLATFORM_FEE', order.id, { source: 'marketplace', platformFee, listingFee });
 
-      return { ok: true, order };
+      return { ok: true, order, discountApplied: discounted };
     });
   });
 };
