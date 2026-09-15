@@ -36,6 +36,7 @@ export default async function handler(req, res) {
     const blob = await put(`content/${creatorId}/${Date.now()}-${fileName}`, body, {
       access: 'public',
       contentType: req.headers['content-type'] || 'application/octet-stream',
+      token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
     const creator = await addGalleryItem(creatorId, {

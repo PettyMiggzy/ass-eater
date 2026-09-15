@@ -30,6 +30,7 @@ export default async function handler(req, res) {
       access: 'public',
       contentType: req.headers['content-type'] || 'application/octet-stream',
       allowOverwrite: true,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
     const creator = await setCreatorAvatar(ctx.creator.id, blob.url);
