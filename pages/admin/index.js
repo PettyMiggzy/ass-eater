@@ -1,0 +1,379 @@
+import { useState, useEffect } from 'react';
+import Head from 'next/head';
+
+export default function AdminPanel() {
+  const [adminKey, setAdminKey] = useState('');
+  const [unlocked, setUnlocked] = useState(false);
+  const [creators, setCreators] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const [draft, setDraft] = useState({});
+  const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const authHeaders = { 'x-admin-key': adminKey };
+
+  const loadCreators = async (key) => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/creators', { headers: { 'x-admin-key': key ?? adminKey } });
+      if (!res.ok) throw new Error('Bad admin key');
+      const data = await res.json();
+      setCreators(data.creators);
+      return true;
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkKey = async () => {
+    if (!adminKey.trim()) return;
+    const ok = await loadCreators(adminKey);
+    if (ok) setUnlocked(true);
+  };
+
+  const selected = creators.find((c) => String(c.id) === String(selectedId));
+
+  useEffect(() => {
+    if (selected) {
+      setDraft({
+        name: selected.name || '',
+        handle: selected.handle || '',
+        bio: selected.bio || '',
+        price: selected.price || '',
+        subs: selected.subs || '',
+        posts: selected.posts ?? 0,
+        likes: selected.likes || '',
+        locked: !!selected.locked,
+        trending: !!selected.trending,
+      });
+    }
+  }, [selectedId]);
+
+  const saveProfile = async () => {
+    setBusy(true);
+    setStatus('Saving...');
+    try {
+      const res = await fetch('/api/admin/profile', {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creatorId: selectedId, fields: draft }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Save failed');
+      setCreators((prev) => prev.map((c) => (String(c.id) === String(selectedId) ? data.creator : c)));
+      setStatus('Saved.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    setStatus('Uploading avatar...');
+    try {
+      const res = await fetch('/api/admin/avatar', {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'x-creator-id': String(selectedId),
+          'x-file-name': file.name,
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setCreators((prev) => prev.map((c) => (String(c.id) === String(selectedId) ? data.creator : c)));
+      setStatus('Avatar updated.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const uploadGalleryItem = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    setStatus('Uploading content...');
+    try {
+      const res = await fetch('/api/admin/upload', {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'x-creator-id': String(selectedId),
+          'x-file-name': file.name,
+          'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setCreators((prev) => prev.map((c) => (String(c.id) === String(selectedId) ? data.creator : c)));
+      setStatus('Content added.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteGalleryItem = async (index) => {
+    setBusy(true);
+    setStatus('Removing...');
+    try {
+      const res = await fetch('/api/admin/gallery-delete', {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creatorId: selectedId, index }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Delete failed');
+      setCreators((prev) => prev.map((c) => (String(c.id) === String(selectedId) ? data.creator : c)));
+      setStatus('Removed.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addCreator = async () => {
+    setBusy(true);
+    setStatus('Creating model...');
+    try {
+      const res = await fetch('/api/admin/create', {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Create failed');
+      setCreators((prev) => [...prev, data.creator]);
+      setSelectedId(data.creator.id);
+      setStatus('Model created — edit their details below.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeCreator = async (id) => {
+    if (!confirm('Delete this model entirely? This cannot be undone.')) return;
+    setBusy(true);
+    setStatus('Deleting model...');
+    try {
+      const res = await fetch('/api/admin/delete', {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creatorId: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Delete failed');
+      setCreators(data.creators);
+      if (String(selectedId) === String(id)) setSelectedId(null);
+      setStatus('Model deleted.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!unlocked) {
+    return (
+      <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6">
+        <div className="premium-card p-8 max-w-sm w-full">
+          <h1 className="text-2xl font-black text-brand-gold mb-4">Admin Access</h1>
+          <input
+            type="password"
+            value={adminKey}
+            onChange={(e) => setAdminKey(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && checkKey()}
+            placeholder="Admin key"
+            className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white mb-4"
+          />
+          <button onClick={checkKey} disabled={loading} className="w-full premium-button disabled:opacity-50">
+            {loading ? 'Checking...' : 'Unlock'}
+          </button>
+          {status && <p className="mt-4 text-sm text-red-400">{status}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Head><title>Admin Panel - Only Ass</title></Head>
+      <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-center justify-between mb-8">
+            <h1 className="text-3xl font-black premium-title">Model Admin Panel</h1>
+            <button onClick={addCreator} disabled={busy} className="premium-button disabled:opacity-50">
+              + Add Model
+            </button>
+          </div>
+
+          {status && (
+            <div className="mb-6 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-brand-secondary text-sm">
+              {status}
+            </div>
+          )}
+
+          <div className="grid md:grid-cols-3 gap-6">
+            {/* Model list */}
+            <div className="md:col-span-1 space-y-3">
+              {creators.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedId(c.id)}
+                  className={`w-full text-left premium-card p-4 flex items-center gap-3 transition ${
+                    String(selectedId) === String(c.id) ? 'border-brand-gold' : ''
+                  }`}
+                >
+                  <img src={c.img} alt={c.name} className="w-12 h-12 rounded-full object-cover object-top border border-brand-gold/40" />
+                  <div className="min-w-0">
+                    <p className="font-bold text-white truncate">{c.name}</p>
+                    <p className="text-xs text-gray-400 truncate">{c.handle}</p>
+                  </div>
+                  {c.trending && <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">HOT</span>}
+                </button>
+              ))}
+            </div>
+
+            {/* Editor */}
+            <div className="md:col-span-2">
+              {!selected ? (
+                <div className="premium-card p-8 text-center text-gray-400">
+                  Select a model on the left to edit their profile, pfp, and content.
+                </div>
+              ) : (
+                <div className="premium-card p-6 space-y-6">
+                  <div className="flex items-center gap-4">
+                    <img src={selected.img} alt={selected.name} className="w-20 h-20 rounded-full object-cover object-top border-2 border-brand-gold" />
+                    <div>
+                      <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
+                        Change PFP
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => uploadAvatar(e.target.files[0])}
+                        />
+                      </label>
+                    </div>
+                    <button
+                      onClick={() => removeCreator(selected.id)}
+                      className="ml-auto text-xs px-3 py-2 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition"
+                    >
+                      Delete Model
+                    </button>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <Field label="Name" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} />
+                    <Field label="Handle" value={draft.handle} onChange={(v) => setDraft({ ...draft, handle: v })} />
+                    <Field label="Price" value={draft.price} onChange={(v) => setDraft({ ...draft, price: v })} />
+                    <Field label="Subscribers" value={draft.subs} onChange={(v) => setDraft({ ...draft, subs: v })} />
+                    <Field label="Posts" value={draft.posts} onChange={(v) => setDraft({ ...draft, posts: v })} />
+                    <Field label="Likes" value={draft.likes} onChange={(v) => setDraft({ ...draft, likes: v })} />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Bio</label>
+                    <textarea
+                      value={draft.bio}
+                      onChange={(e) => setDraft({ ...draft, bio: e.target.value })}
+                      rows={3}
+                      className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+                    />
+                  </div>
+
+                  <div className="flex gap-6">
+                    <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={draft.locked}
+                        onChange={(e) => setDraft({ ...draft, locked: e.target.checked })}
+                      />
+                      Locked (requires token holding)
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={draft.trending}
+                        onChange={(e) => setDraft({ ...draft, trending: e.target.checked })}
+                      />
+                      Trending
+                    </label>
+                  </div>
+
+                  <button onClick={saveProfile} disabled={busy} className="premium-button disabled:opacity-50">
+                    Save Profile
+                  </button>
+
+                  <hr className="border-brand-purple/20" />
+
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-bold text-brand-gold">Gallery ({selected.gallery?.length || 0})</h3>
+                      <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
+                        Upload Content
+                        <input
+                          type="file"
+                          accept="image/*,video/*"
+                          className="hidden"
+                          onChange={(e) => uploadGalleryItem(e.target.files[0])}
+                        />
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                      {(selected.gallery || []).map((item, i) => (
+                        <div key={i} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
+                          {item.type === 'video' ? (
+                            <video src={item.src} className="w-full h-full object-cover" muted />
+                          ) : (
+                            <img src={item.src} alt="" className="w-full h-full object-cover" />
+                          )}
+                          <button
+                            onClick={() => deleteGalleryItem(i)}
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Field({ label, value, onChange }) {
+  return (
+    <div>
+      <label className="block text-sm text-gray-400 mb-2">{label}</label>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+      />
+    </div>
+  );
+}
