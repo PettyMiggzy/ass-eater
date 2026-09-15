@@ -1,4 +1,4 @@
-import { Prisma, TxType } from '@prisma/client';
+import { Prisma, PrismaClient, TxType } from '@prisma/client';
 
 export const PLATFORM_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -88,7 +88,7 @@ export async function charge(
 
 /** Wrap a money operation in a serializable transaction, retrying on serialization conflicts. */
 export async function money<T>(
-  prisma: { $transaction: Prisma.PrismaClient['$transaction'] },
+  prisma: Pick<PrismaClient, '$transaction'>,
   fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
   for (let i = 0; i < 4; i++) {

@@ -11,19 +11,19 @@ async function ethUsd(): Promise<number> {
   return Number(answer) / 1e8;
 }
 
-/** Your token: Uniswap V3 pool spot price. Pre-launch: set ASS_PRICE_OVERRIDE. */
+/** Your token: Uniswap V3 pool spot price. Pre-launch: set ONLYASS_PRICE_OVERRIDE. */
 async function assUsd(): Promise<number> {
-  if (process.env.ASS_PRICE_OVERRIDE) return Number(process.env.ASS_PRICE_OVERRIDE);
-  const [sqrtP] = await publicClient.readContract({ address: process.env.ASS_POOL as Address, abi: univ3Abi, functionName: 'slot0' });
-  const dec0 = Number(process.env.ASS_POOL_TOKEN0_DECIMALS), dec1 = Number(process.env.ASS_POOL_TOKEN1_DECIMALS);
+  if (process.env.ONLYASS_PRICE_OVERRIDE) return Number(process.env.ONLYASS_PRICE_OVERRIDE);
+  const [sqrtP] = await publicClient.readContract({ address: process.env.ONLYASS_POOL as Address, abi: univ3Abi, functionName: 'slot0' });
+  const dec0 = Number(process.env.ONLYASS_POOL_TOKEN0_DECIMALS), dec1 = Number(process.env.ONLYASS_POOL_TOKEN1_DECIMALS);
   const ratio = (Number(sqrtP) / 2 ** 96) ** 2 * 10 ** (dec0 - dec1);          // token1 per token0
-  const assIsToken0 = process.env.ASS_IS_TOKEN0 === 'true';
+  const assIsToken0 = process.env.ONLYASS_IS_TOKEN0 === 'true';
   const priceInQuote = assIsToken0 ? ratio : 1 / ratio;
-  const quoteUsd = process.env.ASS_POOL_QUOTE === 'WETH' ? await ethUsd() : 1;
+  const quoteUsd = process.env.ONLYASS_POOL_QUOTE === 'WETH' ? await ethUsd() : 1;
   return priceInQuote * quoteUsd;
 }
 
-export async function getUsdPrice(asset: 'USDC' | 'ETH' | 'ASS'): Promise<number> {
+export async function getUsdPrice(asset: 'USDC' | 'ETH' | 'ONLYASS'): Promise<number> {
   if (asset === 'USDC') return 1;
   const cached = await redis.get(`px:${asset}`);
   if (cached) return Number(cached);
