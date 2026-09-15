@@ -25,14 +25,6 @@ export default function Home() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  const featured = [
-    '/images/content_sunset_4.jpg',
-    '/images/content_street_5.jpg',
-    '/images/content_pool_4.jpg',
-    '/images/content_gym_4.jpg',
-    '/images/content_night_4.jpg',
-    '/images/content_lingerie_1.jpg',
-  ];
 
   return (
     <>
@@ -49,7 +41,6 @@ export default function Home() {
             <img src="/images/logo-final.png" alt="Only Ass" className="h-12 w-auto" />
             <div className="hidden md:flex items-center gap-7 text-sm text-gray-300">
               <a href="#about" className="hover:text-brand-gold transition">About</a>
-              <a href="#gallery" className="hover:text-brand-gold transition">Gallery</a>
               <a href="#roadmap" className="hover:text-brand-gold transition">Roadmap</a>
               <a href="/login" className="hover:text-brand-gold transition">Log In</a>
               <a href="/signup" className="hover:text-brand-gold transition">Sign Up</a>
@@ -105,26 +96,6 @@ export default function Home() {
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-tr from-brand-purple/20 to-brand-gold/20 rounded-3xl blur-2xl"></div>
               <img src="/images/logo-final.png" alt="Only Ass" className="relative w-full max-w-sm mx-auto drop-shadow-2xl" />
-            </div>
-          </div>
-        </section>
-
-        {/* Featured content strip */}
-        <section id="gallery" className="py-16 px-6 border-t border-brand-purple/10">
-          <div className="max-w-6xl mx-auto">
-            <div className="flex items-end justify-between mb-8">
-              <div>
-                <p className="eyebrow text-brand-purple text-xs mb-2">The Culture</p>
-                <h2 className="text-3xl md:text-4xl font-black premium-title">Featured Content</h2>
-              </div>
-              <a href="/onlyass" className="text-sm text-brand-gold hover:underline hidden sm:block">See all creators →</a>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {featured.map((src, i) => (
-                <div key={i} className="aspect-[4/5] rounded-xl overflow-hidden border border-brand-purple/20 hover:border-brand-gold/50 transition group">
-                  <img src={src} alt="" className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
-                </div>
-              ))}
             </div>
           </div>
         </section>
