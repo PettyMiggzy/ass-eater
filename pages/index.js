@@ -46,7 +46,7 @@ export default function Home() {
         {/* Nav */}
         <nav className={`fixed w-full top-0 z-50 transition-all ${scrolled ? 'bg-black/90 backdrop-blur-xl border-b border-brand-purple/20' : 'bg-transparent'}`}>
           <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-            <img src="/images/logo-explicit.png" alt="Only Ass" className="h-12 w-auto" />
+            <img src="/images/logo-final.png" alt="Only Ass" className="h-12 w-auto" />
             <div className="hidden md:flex items-center gap-7 text-sm text-gray-300">
               <a href="#about" className="hover:text-brand-gold transition">About</a>
               <a href="#gallery" className="hover:text-brand-gold transition">Gallery</a>
@@ -102,7 +102,7 @@ export default function Home() {
 
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-tr from-brand-purple/20 to-brand-gold/20 rounded-3xl blur-2xl"></div>
-              <img src="/images/logo-explicit.png" alt="Only Ass" className="relative w-full max-w-sm mx-auto drop-shadow-2xl" />
+              <img src="/images/logo-final.png" alt="Only Ass" className="relative w-full max-w-sm mx-auto drop-shadow-2xl" />
             </div>
           </div>
         </section>
