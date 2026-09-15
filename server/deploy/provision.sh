@@ -14,7 +14,12 @@ APP_DIR="/opt/onlyass"
 
 echo "==> apt update + base packages"
 apt-get update -y
-apt-get install -y curl git nginx postgresql postgresql-contrib redis-server ufw ca-certificates gnupg
+apt-get install -y curl git nginx postgresql postgresql-contrib redis-server ufw ca-certificates gnupg \
+  fail2ban unattended-upgrades
+
+echo "==> unattended security updates + fail2ban (SSH brute-force protection)"
+dpkg-reconfigure -f noninteractive unattended-upgrades
+systemctl enable --now fail2ban
 
 echo "==> Node.js 22.x (NodeSource)"
 if ! command -v node >/dev/null || [[ "$(node -v)" != v22* ]]; then

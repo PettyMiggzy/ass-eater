@@ -88,7 +88,8 @@ certbot --nginx -d api.onlyass.fun
 ```bash
 systemctl status onlyass-api onlyass-workers
 journalctl -u onlyass-api -f
-curl https://api.onlyass.fun/auth/me   # should return a 401, not a connection error
+curl https://api.onlyass.fun/health                    # {"ok":true}
+curl https://api.onlyass.fun/messages/conversations     # 401 (no token) -- confirms auth is wired up, not a connection error
 ```
 
 Once this is confirmed reachable over HTTPS, a Claude session (including

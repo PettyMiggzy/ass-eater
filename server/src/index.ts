@@ -1,13 +1,17 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
+import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './plugins/auth';
 import * as m from './modules';
 
 const app = Fastify({ logger: true, bodyLimit: 1_000_000 });
 await app.register(cors, { origin: process.env.WEB_ORIGIN, credentials: true });
 await app.register(websocket);
+await app.register(rateLimit, { max: 200, timeWindow: '1 minute' });
 await app.register(authPlugin);
+
+app.get('/health', async () => ({ ok: true }));
 
 app.setErrorHandler((err: any, _req, reply) => {
   if (err.message === 'insufficient_funds') return reply.code(402).send({ error: 'insufficient_funds' });

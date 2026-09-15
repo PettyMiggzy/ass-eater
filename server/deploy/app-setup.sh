@@ -14,6 +14,10 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
   exit 1
 fi
 
+echo "==> locking down .env permissions (holds the treasury key + deposit mnemonic)"
+chown "$APP_USER":"$APP_USER" "$APP_DIR/.env"
+chmod 600 "$APP_DIR/.env"
+
 cd "$APP_DIR"
 
 echo "==> npm ci"

@@ -8,8 +8,13 @@ import { isSubscribed } from '../core/access';
 import { sub } from '../lib/redis';
 
 const LK = { host: process.env.LIVEKIT_HOST!, key: process.env.LIVEKIT_API_KEY!, secret: process.env.LIVEKIT_API_SECRET! };
-const rooms = new RoomServiceClient(LK.host, LK.key, LK.secret);
-const receiver = new WebhookReceiver(LK.key, LK.secret);
+
+// Built lazily so a box without LiveKit configured yet can still boot and
+// serve every other route -- only /live/* itself fails until it's set up.
+let _rooms: RoomServiceClient | undefined;
+const rooms = () => (_rooms ??= new RoomServiceClient(LK.host, LK.key, LK.secret));
+let _receiver: WebhookReceiver | undefined;
+const receiver = () => (_receiver ??= new WebhookReceiver(LK.key, LK.secret));
 
 async function token(identity: string, room: string, publish: boolean) {
   const at = new AccessToken(LK.key, LK.secret, { identity, ttl: '2h' });
@@ -22,7 +27,7 @@ export const live: FastifyPluginAsync = async (app) => {
     const b = z.object({ title: z.string().max(120), ticketPriceCents: z.number().int().min(0).max(50_000).default(0) }).parse(req.body);
     if (await prisma.liveStream.findFirst({ where: { creatorId: req.user.id, status: 'LIVE' } })) return reply.code(409).send({ error: 'already_live' });
     const roomName = `live_${nanoid(10)}`;
-    await rooms.createRoom({ name: roomName, emptyTimeout: 300, maxParticipants: 5000 });
+    await rooms().createRoom({ name: roomName, emptyTimeout: 300, maxParticipants: 5000 });
     const s = await prisma.liveStream.create({ data: { creatorId: req.user.id, roomName, ...b } });
     return { stream: s, token: await token(req.user.id, roomName, true), wsUrl: process.env.LIVEKIT_WS_URL };
   });
@@ -47,7 +52,7 @@ export const live: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/end', { preHandler: app.auth }, async (req: any) => {
     const s = await prisma.liveStream.findFirst({ where: { id: req.params.id, creatorId: req.user.id, status: 'LIVE' } });
-    if (s) { await rooms.deleteRoom(s.roomName).catch(() => {}); await prisma.liveStream.update({ where: { id: s.id }, data: { status: 'ENDED', endedAt: new Date() } }); }
+    if (s) { await rooms().deleteRoom(s.roomName).catch(() => {}); await prisma.liveStream.update({ where: { id: s.id }, data: { status: 'ENDED', endedAt: new Date() } }); }
     return { ok: true };
   });
 
@@ -57,7 +62,7 @@ export const live: FastifyPluginAsync = async (app) => {
   // LiveKit → us. Needs raw body for signature check.
   app.addContentTypeParser('application/webhook+json', { parseAs: 'string' }, (_r, body, done) => done(null, body));
   app.post('/webhook', async (req: any, reply) => {
-    let evt; try { evt = await receiver.receive(req.body, req.headers.authorization); } catch { return reply.code(401).send(); }
+    let evt; try { evt = await receiver().receive(req.body, req.headers.authorization); } catch { return reply.code(401).send(); }
     if (evt.event === 'room_finished' && evt.room?.name)
       await prisma.liveStream.updateMany({ where: { roomName: evt.room.name, status: 'LIVE' }, data: { status: 'ENDED', endedAt: new Date() } });
     return { ok: true };

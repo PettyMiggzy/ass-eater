@@ -15,7 +15,7 @@ export const auth: FastifyPluginAsync = async (app) => {
     return { access, refresh };
   };
 
-  app.post('/register', async (req, reply) => {
+  app.post('/register', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const b = z.object({
       email: z.string().email(), username: z.string().regex(/^[a-z0-9_]{3,24}$/),
       password: z.string().min(10), dob: z.coerce.date(),
@@ -35,7 +35,7 @@ export const auth: FastifyPluginAsync = async (app) => {
     return issue(user);
   });
 
-  app.post('/login', async (req, reply) => {
+  app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const { email, password } = z.object({ email: z.string(), password: z.string() }).parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
     if (!user || !(await argon2.verify(user.passwordHash, password))) return reply.code(401).send({ error: 'bad_credentials' });
@@ -43,7 +43,7 @@ export const auth: FastifyPluginAsync = async (app) => {
     return issue(user);
   });
 
-  app.post('/refresh', async (req, reply) => {
+  app.post('/refresh', { config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const { refresh } = z.object({ refresh: z.string() }).parse(req.body);
     const row = await prisma.refreshToken.findUnique({ where: { tokenHash: sha(refresh) }, include: { user: true } });
     if (!row || row.expiresAt < new Date()) return reply.code(401).send({ error: 'invalid_refresh' });
