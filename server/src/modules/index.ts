@@ -11,3 +11,4 @@ export { live } from './live';
 export { kyc } from './kyc';
 export { admin } from './admin';
 export { stake } from './stake';
+export { marketplace } from './marketplace';

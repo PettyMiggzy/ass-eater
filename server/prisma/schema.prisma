@@ -46,6 +46,13 @@ enum TxType {
   REFERRAL
   ADJUSTMENT
   TOKEN_LOCK
+  MARKETPLACE_SALE
+}
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  REMOVED
 }
 
 enum SubStatus {
@@ -109,6 +116,7 @@ model User {
   subsAsCreator  Subscription[]   @relation("CreatorSubs")
   locksAsFan     TokenLock[]      @relation("FanLocks")
   locksAsCreator TokenLock[]      @relation("CreatorLocks")
+  purchases      ListingOrder[]
 }
 
 model RefreshToken {
@@ -139,10 +147,11 @@ model CreatorProfile {
   stakePerkDescription String?
   stakeUsdCents        Int?
 
-  tiers   SubscriptionTier[]
-  posts   Post[]
-  streams LiveStream[]
-  payouts Payout[]
+  tiers    SubscriptionTier[]
+  posts    Post[]
+  streams  LiveStream[]
+  payouts  Payout[]
+  listings Listing[]
 }
 
 model SubscriptionTier {
@@ -190,6 +199,38 @@ model TokenLock {
 
   @@unique([fanId, creatorId])
   @@index([status, currentPeriodEnd])
+}
+
+// onlyass.online marketplace: creators list something for sale (merch, digital
+// goods, whatever), platform takes a 10% sale commission + 5% listing fee on
+// top, both cut from the sale price when it sells (see modules/marketplace.ts).
+model Listing {
+  id          String         @id @default(uuid())
+  creatorId   String
+  creator     CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
+  title       String
+  description String         @default("")
+  priceCents  Int
+  images      String[]       @default([])
+  status      ListingStatus  @default(ACTIVE)
+  createdAt   DateTime       @default(now())
+  orders      ListingOrder[]
+
+  @@index([status, createdAt])
+}
+
+model ListingOrder {
+  id               String   @id @default(uuid())
+  listingId        String
+  listing          Listing  @relation(fields: [listingId], references: [id])
+  buyerId          String
+  buyer            User     @relation(fields: [buyerId], references: [id])
+  priceCents       Int // locked at purchase
+  platformFeeCents Int // 10% commission
+  listingFeeCents  Int // 5% listing fee
+  ageConfirmedAt   DateTime // explicit 18+ marketplace confirmation, separate from account-level DOB check
+  tosVersion       String
+  createdAt        DateTime @default(now())
 }
 
 model Post {

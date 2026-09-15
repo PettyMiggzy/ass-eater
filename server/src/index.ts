@@ -24,6 +24,7 @@ for (const [prefix, routes] of Object.entries({
   '/auth': m.auth, '/creators': m.creators, '/subscriptions': m.subscriptions,
   '/posts': m.posts, '/media': m.media, '/messages': m.messages, '/tips': m.tips,
   '/wallet': m.wallet, '/payouts': m.payouts, '/live': m.live, '/kyc': m.kyc, '/admin': m.admin, '/stake': m.stake,
+  '/marketplace': m.marketplace,
 })) await app.register(routes, { prefix });
 
 await app.listen({ port: Number(process.env.PORT ?? 4000), host: '0.0.0.0' });
