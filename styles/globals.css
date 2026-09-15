@@ -108,4 +108,9 @@
     position: relative;
     box-shadow: 0 0 40px rgba(101, 48, 176, 0.3);
   }
+
+  .logo-blend {
+    -webkit-mask-image: radial-gradient(ellipse at center, black 76%, transparent 100%);
+    mask-image: radial-gradient(ellipse at center, black 76%, transparent 100%);
+  }
 }
