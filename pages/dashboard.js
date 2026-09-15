@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import { getSessionUserId } from '../lib/session';
 import { findUserById, publicUser } from '../lib/users-store';
 import { getCreators } from '../lib/creators-store';
+import { getListings } from '../lib/listings-store';
 
 export async function getServerSideProps({ req }) {
   const uid = getSessionUserId(req);
@@ -16,17 +17,23 @@ export async function getServerSideProps({ req }) {
   }
 
   let creator = null;
+  let listings = [];
   if (user.role === 'creator' && user.creatorId) {
     const creators = await getCreators();
     creator = creators.find((c) => String(c.id) === String(user.creatorId)) || null;
+    const allListings = await getListings();
+    listings = allListings
+      .filter((l) => String(l.creatorId) === String(user.creatorId))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
-  return { props: { user: publicUser(user), creator } };
+  return { props: { user: publicUser(user), creator, listings } };
 }
 
-export default function Dashboard({ user, creator: initialCreator }) {
+export default function Dashboard({ user, creator: initialCreator, listings: initialListings }) {
   const router = useRouter();
   const [creator, setCreator] = useState(initialCreator);
+  const [listings, setListings] = useState(initialListings || []);
   const [draft, setDraft] = useState({
     name: initialCreator?.name || '',
     handle: initialCreator?.handle || '',
@@ -123,6 +130,74 @@ export default function Dashboard({ user, creator: initialCreator }) {
       if (!res.ok) throw new Error(data.error || 'Delete failed');
       setCreator(data.creator);
       setStatus('Removed.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createListing = async (fields) => {
+    setBusy(true);
+    setStatus('Creating listing...');
+    try {
+      const res = await fetch('/api/marketplace/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create listing');
+      setListings([data.listing, ...listings]);
+      setStatus('Listing created — add photos/video below.');
+      return data.listing;
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const uploadListingMedia = async (listingId, file) => {
+    if (!file) return;
+    const listing = listings.find((l) => l.id === listingId);
+    setBusy(true);
+    setStatus('Uploading...');
+    try {
+      const res = await fetch('/api/marketplace/upload', {
+        method: 'POST',
+        headers: {
+          'x-listing-id': String(listingId),
+          'x-file-name': file.name,
+          'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
+          'x-current-media': JSON.stringify(listing?.media || []),
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      setListings(listings.map((l) => (l.id === listingId ? data.listing : l)));
+      setStatus('Media added.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleListingStatus = async (listingId, status) => {
+    setBusy(true);
+    try {
+      const res = await fetch('/api/marketplace/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, fields: { status } }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Update failed');
+      setListings(listings.map((l) => (l.id === listingId ? data.listing : l)));
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -280,6 +355,16 @@ export default function Dashboard({ user, creator: initialCreator }) {
                   ))}
                 </div>
               </div>
+
+              <hr className="border-brand-purple/20" />
+
+              <MarketplaceSection
+                listings={listings}
+                busy={busy}
+                onCreate={createListing}
+                onUploadMedia={uploadListingMedia}
+                onToggleStatus={toggleListingStatus}
+              />
             </div>
           )}
         </div>
@@ -394,6 +479,106 @@ function Inbox({ currentUserId }) {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleStatus }) {
+  const [form, setForm] = useState({ title: '', description: '', price: '', unlimited: true });
+  const [creating, setCreating] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const priceCents = Math.round(Number(form.price) * 100);
+    if (!form.title.trim() || !priceCents || priceCents < 100) return;
+    setCreating(true);
+    const listing = await onCreate({ title: form.title, description: form.description, priceCents, unlimited: form.unlimited });
+    setCreating(false);
+    if (listing) setForm({ title: '', description: '', price: '', unlimited: true });
+  };
+
+  return (
+    <div>
+      <h3 className="font-bold text-brand-gold mb-3">Sell on the Marketplace (onlyass.shop)</h3>
+      <p className="text-xs text-gray-500 mb-4">
+        List images, videos, or anything else at whatever price you want. Platform takes 10% commission + a 5%
+        listing fee on top when it sells. Buying isn't live yet — listings show up on the Marketplace now, ready
+        to sell as soon as payments launch.
+      </p>
+
+      <form onSubmit={submit} className="grid sm:grid-cols-2 gap-3 mb-6">
+        <input
+          value={form.title}
+          onChange={(e) => setForm({ ...form, title: e.target.value })}
+          placeholder="Title"
+          className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+        />
+        <input
+          value={form.price}
+          onChange={(e) => setForm({ ...form, price: e.target.value })}
+          placeholder="Price (USD)"
+          type="number"
+          min="1"
+          step="0.01"
+          className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+        />
+        <textarea
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          placeholder="Description"
+          rows={2}
+          className="sm:col-span-2 w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+        />
+        <label className="flex items-center gap-2 text-sm text-gray-400">
+          <input type="checkbox" checked={form.unlimited} onChange={(e) => setForm({ ...form, unlimited: e.target.checked })} />
+          Digital good (sell to unlimited buyers) — uncheck for a one-of-a-kind item
+        </label>
+        <button type="submit" disabled={creating || busy} className="premium-button text-sm disabled:opacity-50">
+          Create Listing
+        </button>
+      </form>
+
+      <div className="space-y-4">
+        {listings.length === 0 ? (
+          <p className="text-sm text-gray-500">No listings yet.</p>
+        ) : (
+          listings.map((l) => (
+            <div key={l.id} className="premium-card border border-brand-purple/20 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="font-bold text-white">{l.title} — ${(l.priceCents / 100).toFixed(2)}</p>
+                  <p className="text-xs text-gray-500">{l.status} · {l.unlimited ? 'unlimited' : 'one-of-a-kind'}</p>
+                </div>
+                {l.status !== 'sold' && (
+                  <button
+                    onClick={() => onToggleStatus(l.id, l.status === 'active' ? 'removed' : 'active')}
+                    className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition"
+                  >
+                    {l.status === 'active' ? 'Remove' : 'Reactivate'}
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                {(l.media || []).map((item, i) => (
+                  <div key={i} className="aspect-square rounded-md overflow-hidden border border-brand-purple/20">
+                    {item.type === 'video' ? (
+                      <video src={item.src} className="w-full h-full object-cover" muted />
+                    ) : (
+                      <img src={item.src} alt="" className="w-full h-full object-cover" />
+                    )}
+                  </div>
+                ))}
+                {(l.media || []).length < 10 && (
+                  <label className="aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition">
+                    + Add
+                    <input type="file" accept="image/*,video/*" className="hidden" onChange={(e) => onUploadMedia(l.id, e.target.files[0])} />
+                  </label>
+                )}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
