@@ -22,6 +22,18 @@ export default async function handler(req, res) {
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
 
+  const limit = ctx.creator.premium ? 10 : 4;
+  const used = ctx.creator.gallery?.length || 0;
+  if (used >= limit) {
+    return res.status(403).json({
+      error: ctx.creator.premium
+        ? `You've used all ${limit} of your Premium content slots.`
+        : `Free accounts get ${limit} content slots. Upgrade to Premium for 10.`,
+      limit,
+      used,
+    });
+  }
+
   const fileName = req.headers['x-file-name'] || `upload-${Date.now()}`;
   const fileType = req.headers['x-file-type'] || 'image';
 

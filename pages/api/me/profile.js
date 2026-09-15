@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   if (!ctx) return;
 
   const { fields } = req.body || {};
-  const allowed = ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress'];
+  const allowed = ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress', 'img'];
   const safeFields = {};
   for (const key of allowed) {
     if (fields && key in fields) safeFields[key] = fields[key];

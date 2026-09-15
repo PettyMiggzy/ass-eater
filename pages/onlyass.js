@@ -254,7 +254,10 @@ export default function OnlyAss({ creators, sessionUser }) {
                     </div>
 
                     <div className="p-4 text-center">
-                      <p className="font-black text-lg text-white">{c.name}</p>
+                      <p className="font-black text-lg text-white flex items-center justify-center gap-1">
+                        {c.name}
+                        {c.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4" title="Premium" />}
+                      </p>
                       <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
                       <p className="text-gray-400 text-xs mb-4">{c.subs} subscribers</p>
                       <div className="flex gap-2">

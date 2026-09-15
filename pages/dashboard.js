@@ -50,7 +50,7 @@ export default function Dashboard({ user, creator: initialCreator }) {
       const res = await fetch('/api/me/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: draft }),
+        body: JSON.stringify({ fields: { ...draft, img: creator.img } }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed');
@@ -171,10 +171,16 @@ export default function Dashboard({ user, creator: initialCreator }) {
 
               <div className="flex items-center gap-4">
                 <img src={creator.img} alt={creator.name} className="w-20 h-20 rounded-full object-cover object-top border-2 border-brand-gold" />
-                <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
-                  Change PFP
-                  <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAvatar(e.target.files[0])} />
-                </label>
+                <div>
+                  <p className="font-bold text-white flex items-center gap-1 mb-2">
+                    {creator.name}
+                    {creator.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4" title="Premium" />}
+                  </p>
+                  <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
+                    Change PFP
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAvatar(e.target.files[0])} />
+                  </label>
+                </div>
               </div>
 
               <div className="grid sm:grid-cols-2 gap-4">
@@ -230,13 +236,31 @@ export default function Dashboard({ user, creator: initialCreator }) {
               <hr className="border-brand-purple/20" />
 
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-bold text-brand-gold">Your Content ({creator.gallery?.length || 0})</h3>
-                  <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
-                    Upload
-                    <input type="file" accept="image/*,video/*" className="hidden" onChange={(e) => uploadContent(e.target.files[0])} />
-                  </label>
-                </div>
+                {(() => {
+                  const limit = creator.premium ? 10 : 4;
+                  const used = creator.gallery?.length || 0;
+                  const atLimit = used >= limit;
+                  return (
+                    <>
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-bold text-brand-gold">Your Content ({used}/{limit})</h3>
+                        {atLimit ? (
+                          <span className="text-xs px-4 py-2 rounded-md border border-brand-purple/30 text-gray-500">Slots full</span>
+                        ) : (
+                          <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
+                            Upload
+                            <input type="file" accept="image/*,video/*" className="hidden" onChange={(e) => uploadContent(e.target.files[0])} />
+                          </label>
+                        )}
+                      </div>
+                      {!creator.premium && (
+                        <p className="text-xs text-gray-500 mb-3">
+                          Free accounts get 4 content slots. Premium creators get 10 and a gold check — contact us to upgrade.
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                   {(creator.gallery || []).map((item, i) => (
                     <div key={i} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">

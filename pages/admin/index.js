@@ -49,6 +49,7 @@ export default function AdminPanel() {
         likes: selected.likes || '',
         locked: !!selected.locked,
         trending: !!selected.trending,
+        premium: !!selected.premium,
         status: selected.status || 'active',
         payoutMethod: selected.payoutMethod || 'onlyass',
         walletAddress: selected.walletAddress || '',
@@ -63,7 +64,7 @@ export default function AdminPanel() {
       const res = await fetch('/api/admin/profile', {
         method: 'POST',
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ creatorId: selectedId, fields: draft }),
+        body: JSON.stringify({ creatorId: selectedId, fields: { ...draft, img: selected.img } }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed');
@@ -277,7 +278,10 @@ export default function AdminPanel() {
                 >
                   <img src={c.img} alt={c.name} className="w-12 h-12 rounded-full object-cover object-top border border-brand-gold/40" />
                   <div className="min-w-0">
-                    <p className="font-bold text-white truncate">{c.name}</p>
+                    <p className="font-bold text-white truncate flex items-center gap-1">
+                      {c.name}
+                      {c.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4 shrink-0" title="Premium" />}
+                    </p>
                     <p className="text-xs text-gray-400 truncate">{c.handle}</p>
                   </div>
                   {c.status === 'pending' && (
@@ -376,6 +380,14 @@ export default function AdminPanel() {
                       />
                       Trending
                     </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={draft.premium}
+                        onChange={(e) => setDraft({ ...draft, premium: e.target.checked })}
+                      />
+                      Premium (gold check, 10 content slots)
+                    </label>
                     <label className="flex items-center gap-2 text-sm text-gray-300">
                       Status
                       <select
@@ -397,7 +409,9 @@ export default function AdminPanel() {
 
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-bold text-brand-gold">Gallery ({selected.gallery?.length || 0})</h3>
+                      <h3 className="font-bold text-brand-gold">
+                        Gallery ({selected.gallery?.length || 0}/{selected.premium ? 10 : 4})
+                      </h3>
                       <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
                         Upload Content
                         <input

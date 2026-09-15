@@ -117,7 +117,10 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId }) {
             </div>
           </div>
 
-          <h1 className="text-3xl font-black premium-title mb-1">{creator.name}</h1>
+          <h1 className="text-3xl font-black premium-title mb-1 flex items-center gap-2">
+            {creator.name}
+            {creator.premium && <img src="/icons/check.png" alt="Premium" className="h-6 w-6" title="Premium creator" />}
+          </h1>
           <p className="text-gray-400 text-sm mb-1">{creator.handle} · <span className="text-green-400">Online now</span></p>
           <p className="text-gray-300 mt-3 mb-6">{creator.bio}</p>
 

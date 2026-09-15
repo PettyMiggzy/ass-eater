@@ -110,7 +110,10 @@ export default function Home({ creators }) {
                       />
                     </div>
                     <div className="p-3">
-                      <p className="font-bold text-white text-sm truncate">{c.name}</p>
+                      <p className="font-bold text-white text-sm truncate flex items-center gap-1">
+                        {c.name}
+                        {c.premium && <img src="/icons/check.png" alt="Premium" className="h-3.5 w-3.5 shrink-0" />}
+                      </p>
                       <p className="text-xs text-gray-500 truncate mb-2">{c.handle}</p>
                       <span className="inline-block text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r from-brand-gold to-brand-purple text-black">
                         Subscribe from {c.price}

@@ -15,7 +15,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing creatorId or fields' });
   }
 
-  const allowed = ['name', 'handle', 'bio', 'price', 'subs', 'posts', 'likes', 'locked', 'trending', 'status', 'payoutMethod', 'walletAddress'];
+  const allowed = ['name', 'handle', 'bio', 'price', 'subs', 'posts', 'likes', 'locked', 'trending', 'status', 'payoutMethod', 'walletAddress', 'img', 'premium'];
   const safeFields = {};
   for (const key of allowed) {
     if (key in fields) safeFields[key] = fields[key];
