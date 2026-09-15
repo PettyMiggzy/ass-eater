@@ -190,6 +190,27 @@ export default function AdminPanel() {
     }
   };
 
+  const removeAllCreators = async () => {
+    if (!confirm(`Delete ALL ${creators.length} models? This cannot be undone.`)) return;
+    setBusy(true);
+    setStatus('Deleting all models...');
+    try {
+      const res = await fetch('/api/admin/delete-all', {
+        method: 'POST',
+        headers: authHeaders,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Delete failed');
+      setCreators([]);
+      setSelectedId(null);
+      setStatus('All models deleted.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!unlocked) {
     return (
       <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6">
@@ -219,9 +240,20 @@ export default function AdminPanel() {
         <div className="max-w-6xl mx-auto">
           <div className="flex items-center justify-between mb-8">
             <h1 className="text-3xl font-black premium-title">Model Admin Panel</h1>
-            <button onClick={addCreator} disabled={busy} className="premium-button disabled:opacity-50">
-              + Add Model
-            </button>
+            <div className="flex gap-3">
+              {creators.length > 0 && (
+                <button
+                  onClick={removeAllCreators}
+                  disabled={busy}
+                  className="text-sm px-4 py-2 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                >
+                  Delete All
+                </button>
+              )}
+              <button onClick={addCreator} disabled={busy} className="premium-button disabled:opacity-50">
+                + Add Model
+              </button>
+            </div>
           </div>
 
           {status && (
