@@ -64,6 +64,7 @@ export default async function handler(req, res) {
       const blob = await put(`pending-creators/${Date.now()}-${file.filename}`, file.buffer, {
         access: 'public',
         contentType: file.contentType,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
       });
       if (file.field === 'avatar') {
         avatarUrl = blob.url;
