@@ -124,9 +124,9 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId }) {
           <p className="text-gray-400 text-sm mb-1">{creator.handle} · <span className="text-green-400">Online now</span></p>
           <p className="text-gray-300 mt-3 mb-6">{creator.bio}</p>
 
-          {/* Chat CTA */}
+          {/* Chat CTA -- opens the real inbox (same as the mail icon above) */}
           <button
-            onClick={() => showComingSoon('AI chat launches with the platform — 4 days!')}
+            onClick={openInbox}
             className="w-full premium-card border-2 border-brand-gold/40 hover:border-brand-gold/70 transition p-4 flex items-center justify-center gap-3 mb-8"
           >
             <img src="/icons/chat.png" className="h-6 w-6" alt="" />

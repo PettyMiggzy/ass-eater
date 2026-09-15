@@ -211,7 +211,9 @@ model Listing {
   title       String
   description String         @default("")
   priceCents  Int
-  images      String[]       @default([])
+  unlimited   Boolean        @default(false) // true = digital good, sellable to many buyers; false = one-of-a-kind, SOLD after first purchase
+  images      String[]       @default([]) // free public preview photos (physical items)
+  media       Media[] // the actual digital product, gated until purchased -- see core/access.ts canViewListing
   status      ListingStatus  @default(ACTIVE)
   createdAt   DateTime       @default(now())
   orders      ListingOrder[]
@@ -269,6 +271,8 @@ model Media {
   post       Post?       @relation(fields: [postId], references: [id], onDelete: SetNull)
   messageId  String?
   message    Message?    @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  listingId  String?
+  listing    Listing?    @relation(fields: [listingId], references: [id], onDelete: SetNull)
   createdAt  DateTime    @default(now())
 }
 

@@ -27,14 +27,21 @@ export async function canViewMessage(
   return !!(await prisma.messageUnlock.findUnique({ where: { fanId_messageId: { fanId: userId, messageId: msg.id } } }));
 }
 
+export async function canViewListing(userId: string | null, listingId: string, creatorId: string) {
+  if (!userId) return false;
+  if (userId === creatorId) return true;
+  return !!(await prisma.listingOrder.findFirst({ where: { listingId, buyerId: userId } }));
+}
+
 export async function canViewMedia(userId: string | null, mediaId: string) {
   const m = await prisma.media.findUnique({
     where: { id: mediaId },
-    include: { post: true, message: { include: { conversation: true } } },
+    include: { post: true, message: { include: { conversation: true } }, listing: true },
   });
   if (!m || m.status !== 'READY') return { ok: false as const };
   if (m.ownerId === userId) return { ok: true as const, m };
   if (m.post) return { ok: await canViewPost(userId, m.post), m };
   if (m.message && userId) return { ok: await canViewMessage(userId, m.message), m };
+  if (m.listing) return { ok: await canViewListing(userId, m.listing.id, m.listing.creatorId), m };
   return { ok: false as const };
 }

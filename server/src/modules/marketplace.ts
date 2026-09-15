@@ -9,12 +9,24 @@ const LISTING_FEE_BPS = 500; // 5% listing fee, also cut at sale time
 const CURRENT_TOS_VERSION = 'v1';
 
 export const marketplace: FastifyPluginAsync = async (app) => {
+  // unlimited: true for digital goods (images/videos) sellable to many buyers
+  // at whatever price the creator sets; false (default) for a one-of-a-kind
+  // item that flips to SOLD after the first purchase.
   app.post('/listings', { preHandler: app.creatorOk }, async (req) => {
     const b = z.object({
       title: z.string().min(1).max(120), description: z.string().max(4000).default(''),
       priceCents: z.number().int().min(100).max(100_000_00), images: z.array(z.string()).max(10).default([]),
+      unlimited: z.boolean().default(false), mediaIds: z.array(z.string().uuid()).max(20).default([]),
     }).parse(req.body);
-    return prisma.listing.create({ data: { creatorId: req.user.id, ...b } });
+    const { mediaIds, ...fields } = b;
+    return prisma.$transaction(async (tx) => {
+      const l = await tx.listing.create({ data: { creatorId: req.user.id, ...fields } });
+      if (mediaIds.length) {
+        const r = await tx.media.updateMany({ where: { id: { in: mediaIds }, ownerId: req.user.id, postId: null, messageId: null, listingId: null }, data: { listingId: l.id } });
+        if (r.count !== mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+      }
+      return tx.listing.findUnique({ where: { id: l.id }, include: { media: { select: { id: true, mime: true, previewKey: true } } } });
+    });
   });
 
   app.patch('/listings/:id', { preHandler: app.creatorOk }, async (req: any, reply) => {
@@ -43,10 +55,15 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     });
   });
 
+  // Media never exposes its raw key here -- full access (once purchased) goes
+  // through GET /media/:id/url, which re-checks ownership via canViewListing.
   app.get('/listings/:id', async (req: any, reply) => {
     const l = await prisma.listing.findUnique({
       where: { id: req.params.id },
-      include: { creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } } },
+      include: {
+        creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } },
+        media: { select: { id: true, mime: true, previewKey: true } },
+      },
     });
     return l ?? reply.code(404).send({ error: 'not_found' });
   });
@@ -62,6 +79,11 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       if (l.status !== 'ACTIVE') throw Object.assign(new Error('not_available'), { statusCode: 400 });
       if (l.creatorId === req.user.id) throw Object.assign(new Error('self_purchase'), { statusCode: 400 });
 
+      if (l.unlimited) {
+        const already = await tx.listingOrder.findFirst({ where: { listingId: l.id, buyerId: req.user.id } });
+        if (already) return { ok: true, already: true, order: already };
+      }
+
       const bal = await lockBalance(tx, req.user.id);
       if (bal < BigInt(l.priceCents)) throw new InsufficientFunds();
 
@@ -69,8 +91,10 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       const listingFee = Math.floor((l.priceCents * LISTING_FEE_BPS) / 10_000);
       const net = l.priceCents - platformFee - listingFee;
 
-      const updated = await tx.listing.updateMany({ where: { id: l.id, status: 'ACTIVE' }, data: { status: 'SOLD' } });
-      if (!updated.count) throw Object.assign(new Error('not_available'), { statusCode: 400 });
+      if (!l.unlimited) {
+        const updated = await tx.listing.updateMany({ where: { id: l.id, status: 'ACTIVE' }, data: { status: 'SOLD' } });
+        if (!updated.count) throw Object.assign(new Error('not_available'), { statusCode: 400 });
+      }
 
       const order = await tx.listingOrder.create({
         data: {
