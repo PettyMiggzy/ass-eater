@@ -81,7 +81,10 @@ export default function CreatorProfile({ creator }) {
               <img src={creator.img} alt={creator.name} className="w-full h-full object-cover object-top" />
             </div>
             <div className="flex gap-3 mt-16">
-              <button className="w-11 h-11 rounded-full border border-brand-gold/40 flex items-center justify-center hover:bg-brand-gold/10 transition">
+              <button
+                onClick={() => showComingSoon('Direct messages launch with the platform — 4 days!')}
+                className="w-11 h-11 rounded-full border border-brand-gold/40 flex items-center justify-center hover:bg-brand-gold/10 transition"
+              >
                 <img src="/icons/mail.png" className="h-5 w-5" alt="Message" />
               </button>
             </div>
