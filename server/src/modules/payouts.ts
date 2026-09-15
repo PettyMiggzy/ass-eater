@@ -7,23 +7,29 @@ import { payoutQueue } from '../lib/redis';
 
 export const payouts: FastifyPluginAsync = async (app) => {
   app.post('/', { preHandler: app.creatorOk }, async (req, reply) => {
-    const { amountCents } = z.object({ amountCents: z.number().int().min(FEES.MIN_PAYOUT_CENTS) }).parse(req.body);
+    const { amountCents, instant } = z.object({
+      amountCents: z.number().int().min(FEES.MIN_PAYOUT_CENTS), instant: z.boolean().default(false),
+    }).parse(req.body);
     const c = await prisma.creatorProfile.findUniqueOrThrow({ where: { userId: req.user.id } });
     if (c.payoutsFrozen) return reply.code(403).send({ error: 'payouts_frozen' });
     if (!c.payoutAddress || !isAddress(c.payoutAddress)) return reply.code(400).send({ error: 'no_payout_address' });
 
+    // Instant/on-demand payout costs an extra 2% on top of the normal withdrawal
+    // fee, waived for creators who've opted into the token-lock perk.
+    const instantBps = instant && !c.stakePerkEnabled ? FEES.INSTANT_PAYOUT_BPS : 0;
+
     const p = await money(prisma, async (tx) => {
       const bal = await lockBalance(tx, req.user.id);
       if (bal < BigInt(amountCents)) throw new InsufficientFunds();
-      const fee = FEES.WITHDRAWAL_FLAT_CENTS + Math.floor((amountCents * FEES.WITHDRAWAL_BPS) / 10_000);
+      const fee = FEES.WITHDRAWAL_FLAT_CENTS + Math.floor((amountCents * (FEES.WITHDRAWAL_BPS + instantBps)) / 10_000);
       const net = amountCents - fee;
       if (net <= 0) throw Object.assign(new Error('amount_too_small'), { statusCode: 400 });
-      const payout = await tx.payout.create({ data: { creatorId: req.user.id, asset: c.payoutAsset, address: c.payoutAddress!, amountCents: BigInt(net), feeCents: BigInt(fee) } });
-      await post(tx, req.user.id, -amountCents, 'PAYOUT', payout.id, { fee, net });
+      const payout = await tx.payout.create({ data: { creatorId: req.user.id, asset: c.payoutAsset, address: c.payoutAddress!, instant, amountCents: BigInt(net), feeCents: BigInt(fee) } });
+      await post(tx, req.user.id, -amountCents, 'PAYOUT', payout.id, { fee, net, instant });
       await post(tx, PLATFORM_ID, fee, 'PLATFORM_FEE', payout.id, { source: 'withdrawal' });
       return payout;
     });
-    await payoutQueue.add('send', { payoutId: p.id }, { attempts: 1, removeOnComplete: 1000, removeOnFail: false });
+    await payoutQueue.add('send', { payoutId: p.id }, { attempts: 1, removeOnComplete: 1000, removeOnFail: false, priority: instant ? 1 : 10 });
     return { ...p, amountCents: Number(p.amountCents), feeCents: Number(p.feeCents) };
   });
 

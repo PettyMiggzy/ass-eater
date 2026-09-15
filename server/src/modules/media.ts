@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma';
 import { presignPut, headObject, cdnSignedUrl, cdnPublicUrl } from '../lib/s3';
 import { transcodeQueue } from '../lib/redis';
 import { canViewMedia } from '../core/access';
+import { getOrCreateWatermarkedUrl, traceCode } from '../lib/watermark';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm']);
 const MAX_BYTES = 4 * 1024 ** 3;
@@ -35,9 +36,25 @@ export const media: FastifyPluginAsync = async (app) => {
     try { await req.jwtVerify(); userId = req.user.id; } catch {}
     const { ok, m } = await canViewMedia(userId, req.params.id);
     if (!ok || !m) return reply.code(403).send({ error: 'locked', preview: m?.previewKey ? cdnPublicUrl(`/${m.previewKey}`) : null });
+
+    const viewer = userId && userId !== m.ownerId
+      ? await prisma.user.findUnique({ where: { id: userId }, select: { username: true } })
+      : null;
+
     if (m.hlsKey) {
       const dir = m.hlsKey.slice(0, m.hlsKey.lastIndexOf('/') + 1);
-      return { type: 'hls', url: cdnSignedUrl(`/${m.hlsKey}`, 900, `/${dir}`), expiresIn: 900 };
+      // No per-viewer mark baked into the HLS segments (that needs a per-viewer
+      // transcode, which is a bigger project) -- the client renders `watermark`
+      // as a repositioning on-screen overlay during playback as a deterrent.
+      return {
+        type: 'hls', url: cdnSignedUrl(`/${m.hlsKey}`, 900, `/${dir}`), expiresIn: 900,
+        watermark: viewer ? { label: viewer.username, code: traceCode(m.id, userId!) } : null,
+      };
+    }
+
+    if (viewer) {
+      const key = await getOrCreateWatermarkedUrl(m.id, m.key, userId!, viewer.username);
+      return { type: 'image', url: cdnSignedUrl(`/${key}`, 900), expiresIn: 900 };
     }
     return { type: 'image', url: cdnSignedUrl(`/${m.key}`, 900), expiresIn: 900 };
   });

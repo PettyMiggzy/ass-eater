@@ -45,6 +45,7 @@ enum TxType {
   PLATFORM_FEE
   REFERRAL
   ADJUSTMENT
+  TOKEN_LOCK
 }
 
 enum SubStatus {
@@ -99,13 +100,15 @@ model User {
   referrals    User[]     @relation("Referral")
   createdAt    DateTime   @default(now())
 
-  creator       CreatorProfile?
-  account       Account?
-  ledger        LedgerEntry[]
-  refreshTokens RefreshToken[]
-  depositAddrs  DepositAddress[]
-  subsAsFan     Subscription[]   @relation("FanSubs")
-  subsAsCreator Subscription[]   @relation("CreatorSubs")
+  creator        CreatorProfile?
+  account        Account?
+  ledger         LedgerEntry[]
+  refreshTokens  RefreshToken[]
+  depositAddrs   DepositAddress[]
+  subsAsFan      Subscription[]   @relation("FanSubs")
+  subsAsCreator  Subscription[]   @relation("CreatorSubs")
+  locksAsFan     TokenLock[]      @relation("FanLocks")
+  locksAsCreator TokenLock[]      @relation("CreatorLocks")
 }
 
 model RefreshToken {
@@ -123,14 +126,23 @@ model CreatorProfile {
   bio           String    @default("")
   avatarKey     String?
   bannerKey     String?
+  tags          String[]  @default([]) // creator-picked discovery categories
   payoutAsset   Asset     @default(USDC)
   payoutAddress String?
   payoutsFrozen Boolean   @default(false)
   promotedUntil DateTime? // paid discovery placement
-  tiers         SubscriptionTier[]
-  posts         Post[]
-  streams       LiveStream[]
-  payouts       Payout[]
+
+  // Token-lock perk: opt-in, creator sets the terms. A fan who locks
+  // stakeUsdCents (worth of $ONLYASS at lock time) gets stakePerkDescription.
+  // Opting in also waives the 2% instant-payout fee for this creator.
+  stakePerkEnabled     Boolean @default(false)
+  stakePerkDescription String?
+  stakeUsdCents        Int?
+
+  tiers   SubscriptionTier[]
+  posts   Post[]
+  streams LiveStream[]
+  payouts Payout[]
 }
 
 model SubscriptionTier {
@@ -144,18 +156,37 @@ model SubscriptionTier {
 }
 
 model Subscription {
-  id               String    @id @default(uuid())
+  id               String           @id @default(uuid())
   fanId            String
-  fan              User      @relation("FanSubs", fields: [fanId], references: [id])
+  fan              User             @relation("FanSubs", fields: [fanId], references: [id])
   creatorId        String
-  creator          User      @relation("CreatorSubs", fields: [creatorId], references: [id])
+  creator          User             @relation("CreatorSubs", fields: [creatorId], references: [id])
   tierId           String
   tier             SubscriptionTier @relation(fields: [tierId], references: [id])
   priceCents       Int // locked at purchase
-  status           SubStatus @default(ACTIVE)
-  autoRenew        Boolean   @default(true)
+  status           SubStatus        @default(ACTIVE)
+  autoRenew        Boolean          @default(true)
   currentPeriodEnd DateTime
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime         @default(now())
+
+  @@unique([fanId, creatorId])
+  @@index([status, currentPeriodEnd])
+}
+
+// Fan locks $ONLYASS-equivalent value against a creator's opted-in perk.
+// Mirrors Subscription: monthly recurring charge, cancel = stop renewing.
+model TokenLock {
+  id                String    @id @default(uuid())
+  fanId             String
+  fan               User      @relation("FanLocks", fields: [fanId], references: [id])
+  creatorId         String
+  creator           User      @relation("CreatorLocks", fields: [creatorId], references: [id])
+  usdCents          Int // locked at purchase, mirrors Subscription.priceCents
+  tokenAmountAtLock String // $ONLYASS raw units this was worth at lock time (display only)
+  status            SubStatus @default(ACTIVE)
+  autoRenew         Boolean   @default(true)
+  currentPeriodEnd  DateTime
+  createdAt         DateTime  @default(now())
 
   @@unique([fanId, creatorId])
   @@index([status, currentPeriodEnd])
@@ -287,6 +318,7 @@ model Payout {
   creator     CreatorProfile @relation(fields: [creatorId], references: [userId])
   asset       Asset
   address     String
+  instant     Boolean        @default(false)
   amountCents BigInt // net of withdrawal fee
   feeCents    BigInt
   assetAmount String?

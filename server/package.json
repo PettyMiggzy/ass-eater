@@ -32,6 +32,7 @@
     "ioredis": "^5.4.1",
     "livekit-server-sdk": "^2.9.2",
     "nanoid": "^5.0.9",
+    "sharp": "^0.35.4",
     "viem": "^2.21.44",
     "zod": "^3.23.8"
   },

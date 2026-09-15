@@ -55,4 +55,16 @@ export const auth: FastifyPluginAsync = async (app) => {
     await prisma.refreshToken.deleteMany({ where: { userId: req.user.id } });
     return { ok: true };
   });
+
+  // Referral program: username doubles as the referral code (see /register).
+  // Referrer earns FEES.REFERRAL_BPS of the platform's cut for FEES.REFERRAL_MONTHS
+  // after a referred creator signs up -- see core/ledger.ts charge().
+  app.get('/referral', { preHandler: app.auth }, async (req) => {
+    const [me, referrals, earnings] = await Promise.all([
+      prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { username: true } }),
+      prisma.user.count({ where: { referredById: req.user.id } }),
+      prisma.ledgerEntry.aggregate({ where: { userId: req.user.id, type: 'REFERRAL' }, _sum: { amountCents: true } }),
+    ]);
+    return { code: me.username, referrals, earningsCents: Number(earnings._sum.amountCents ?? 0) };
+  });
 };

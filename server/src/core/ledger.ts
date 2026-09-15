@@ -9,6 +9,7 @@ export const FEES = {
   REFERRAL_MONTHS: 12,
   WITHDRAWAL_FLAT_CENTS: 100, // $1 per payout
   WITHDRAWAL_BPS: 100, // +1%
+  INSTANT_PAYOUT_BPS: 200, // +2% on top, for skipping the payout queue -- waived if the creator opted into the token-lock perk
   MIN_PAYOUT_CENTS: 2000,
   MIN_TIP_CENTS: 100,
 };

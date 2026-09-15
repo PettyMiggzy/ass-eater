@@ -10,3 +10,4 @@ export { payouts } from './payouts';
 export { live } from './live';
 export { kyc } from './kyc';
 export { admin } from './admin';
+export { stake } from './stake';
