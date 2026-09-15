@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { getSessionUserId } from '../lib/session';
@@ -149,6 +149,8 @@ export default function Dashboard({ user, creator: initialCreator }) {
             </div>
           )}
 
+          <Inbox currentUserId={user.id} />
+
           {user.role !== 'creator' && (
             <div className="premium-card p-8">
               <p className="text-gray-300 mb-2">Logged in as <span className="text-brand-gold font-bold">{user.email}</span></p>
@@ -258,5 +260,116 @@ export default function Dashboard({ user, creator: initialCreator }) {
         </div>
       </div>
     </>
+  );
+}
+
+function Inbox({ currentUserId }) {
+  const [conversations, setConversations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState(null);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/messages/conversations');
+      const data = await res.json();
+      if (res.ok) setConversations(data.conversations || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const open = conversations.find((c) => c.id === openId);
+
+  const send = async (e) => {
+    e.preventDefault();
+    if (!text.trim() || !open) return;
+    setSending(true);
+    try {
+      const res = await fetch('/api/messages/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toUserId: open.other.userId, text }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setText('');
+        await load();
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (loading) return null;
+  if (conversations.length === 0) return null;
+
+  return (
+    <div className="premium-card p-6 mb-6">
+      <h3 className="font-bold text-brand-gold mb-4">Messages</h3>
+      <div className="grid sm:grid-cols-3 gap-4">
+        <div className="space-y-2 sm:border-r border-brand-purple/20 sm:pr-4">
+          {conversations.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => setOpenId(c.id)}
+              className={`w-full flex items-center gap-2 p-2 rounded-md text-left transition ${
+                openId === c.id ? 'bg-brand-purple/20' : 'hover:bg-white/5'
+              }`}
+            >
+              {c.other.img ? (
+                <img src={c.other.img} alt="" className="w-8 h-8 rounded-full object-cover object-top" />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-brand-purple/30" />
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white truncate">{c.other.name}</p>
+                <p className="text-xs text-gray-500 truncate">{c.messages[c.messages.length - 1]?.text}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div className="sm:col-span-2">
+          {!open ? (
+            <p className="text-gray-500 text-sm">Select a conversation.</p>
+          ) : (
+            <div className="flex flex-col h-72">
+              <div className="flex-1 overflow-y-auto space-y-2 mb-3 pr-1">
+                {open.messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
+                      String(m.senderId) === String(currentUserId)
+                        ? 'bg-brand-gold text-black ml-auto'
+                        : 'bg-black/40 text-gray-200 mr-auto'
+                    }`}
+                  >
+                    {m.text}
+                  </div>
+                ))}
+              </div>
+              <form onSubmit={send} className="flex gap-2">
+                <input
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Reply..."
+                  className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                />
+                <button type="submit" disabled={sending} className="premium-button py-2 px-4 text-sm disabled:opacity-50">
+                  Send
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

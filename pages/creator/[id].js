@@ -1,22 +1,49 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { getCreators } from '../../lib/creators-store';
+import { getSessionUserId } from '../../lib/session';
+import { findUserByCreatorId } from '../../lib/users-store';
 
-export async function getServerSideProps({ params }) {
+export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
   const creator = creators.find((c) => String(c.id) === String(params.id)) || null;
-  return { props: { creator } };
+  const viewerId = getSessionUserId(req);
+  const creatorUser = creator ? await findUserByCreatorId(creator.id) : null;
+  return {
+    props: {
+      creator,
+      viewerId: viewerId || null,
+      creatorUserId: creatorUser ? String(creatorUser.id) : null,
+    },
+  };
 }
 
-export default function CreatorProfile({ creator }) {
+export default function CreatorProfile({ creator, viewerId, creatorUserId }) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('posts');
   const [toast, setToast] = useState(null);
+  const [inboxOpen, setInboxOpen] = useState(false);
 
   const showComingSoon = (msg) => {
     setToast(msg || 'Launching in 4 days — connect your wallet then to unlock.');
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const openInbox = () => {
+    if (!viewerId) {
+      router.push(`/login?next=/creator/${creator.id}`);
+      return;
+    }
+    if (!creatorUserId) {
+      showComingSoon("This creator hasn't claimed their account yet — messaging isn't available.");
+      return;
+    }
+    if (String(viewerId) === String(creatorUserId)) {
+      showComingSoon("That's you!");
+      return;
+    }
+    setInboxOpen(true);
   };
 
   if (!creator) {
@@ -82,7 +109,7 @@ export default function CreatorProfile({ creator }) {
             </div>
             <div className="flex gap-3 mt-16">
               <button
-                onClick={() => showComingSoon('Direct messages launch with the platform — 4 days!')}
+                onClick={openInbox}
                 className="w-11 h-11 rounded-full border border-brand-gold/40 flex items-center justify-center hover:bg-brand-gold/10 transition"
               >
                 <img src="/icons/mail.png" className="h-5 w-5" alt="Message" />
@@ -153,6 +180,106 @@ export default function CreatorProfile({ creator }) {
           </div>
         </div>
       </div>
+
+      {inboxOpen && (
+        <MessagePanel
+          otherUserId={creatorUserId}
+          otherName={creator.name}
+          otherImg={creator.img}
+          onClose={() => setInboxOpen(false)}
+        />
+      )}
     </>
+  );
+}
+
+function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const res = await fetch(`/api/messages/with/${otherUserId}`);
+      const data = await res.json();
+      if (res.ok) setMessages(data.conversation?.messages || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, [otherUserId]);
+
+  const send = async (e) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    setSending(true);
+    setError('');
+    try {
+      const res = await fetch('/api/messages/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toUserId: otherUserId, text }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send');
+      setMessages(data.conversation.messages);
+      setText('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+      <div className="premium-card w-full max-w-md h-[70vh] sm:h-[560px] flex flex-col overflow-hidden">
+        <div className="flex items-center gap-3 p-4 border-b border-brand-gold/20">
+          <img src={otherImg} alt={otherName} className="w-9 h-9 rounded-full object-cover object-top" />
+          <p className="font-bold text-white flex-1 truncate">{otherName}</p>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {loading ? (
+            <p className="text-gray-500 text-sm text-center">Loading...</p>
+          ) : messages.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center">Say hi to {otherName} 👋</p>
+          ) : (
+            messages.map((m) => (
+              <div
+                key={m.id}
+                className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
+                  String(m.senderId) === String(otherUserId)
+                    ? 'bg-black/40 text-gray-200 mr-auto'
+                    : 'bg-brand-gold text-black ml-auto'
+                }`}
+              >
+                {m.text}
+              </div>
+            ))
+          )}
+        </div>
+
+        {error && <p className="text-red-400 text-xs px-4">{error}</p>}
+
+        <form onSubmit={send} className="p-3 border-t border-brand-gold/20 flex gap-2">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Type a message..."
+            className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+          />
+          <button type="submit" disabled={sending} className="premium-button py-2 px-4 text-sm disabled:opacity-50">
+            Send
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
