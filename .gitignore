@@ -39,3 +39,9 @@ lerna-debug.log*
 # Misc
 *.pem
 *.log
+
+# Hardhat
+artifacts
+cache
+typechain-types
+ignition/deployments
