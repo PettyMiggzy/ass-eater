@@ -102,7 +102,7 @@ export default function Home() {
 
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-tr from-brand-purple/20 to-brand-gold/20 rounded-3xl blur-2xl"></div>
-              <img src="/images/logo-transparent.png" alt="Only Ass" className="relative w-full max-w-sm mx-auto drop-shadow-2xl" />
+              <img src="/images/logo-explicit.png" alt="Only Ass" className="relative w-full max-w-sm mx-auto drop-shadow-2xl" />
             </div>
           </div>
         </section>
