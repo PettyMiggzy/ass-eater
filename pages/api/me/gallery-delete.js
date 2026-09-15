@@ -9,13 +9,13 @@ export default async function handler(req, res) {
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
 
-  const { index } = req.body || {};
+  const { index, knownGallery } = req.body || {};
   if (index === undefined) {
     return res.status(400).json({ error: 'Missing index' });
   }
 
   try {
-    const creator = await removeGalleryItem(ctx.creator.id, index);
+    const creator = await removeGalleryItem(ctx.creator.id, index, knownGallery);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     return res.status(500).json({ error: err.message });

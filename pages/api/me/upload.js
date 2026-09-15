@@ -22,8 +22,17 @@ export default async function handler(req, res) {
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
 
+  let knownGallery;
+  try {
+    if (req.headers['x-current-gallery']) {
+      knownGallery = JSON.parse(req.headers['x-current-gallery']);
+    }
+  } catch {
+    knownGallery = undefined;
+  }
+
   const limit = ctx.creator.premium ? 10 : 4;
-  const used = ctx.creator.gallery?.length || 0;
+  const used = (Array.isArray(knownGallery) ? knownGallery : ctx.creator.gallery || []).length;
   if (used >= limit) {
     return res.status(403).json({
       error: ctx.creator.premium
@@ -45,7 +54,7 @@ export default async function handler(req, res) {
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
-    const creator = await addGalleryItem(ctx.creator.id, { type: fileType, src: blob.url });
+    const creator = await addGalleryItem(ctx.creator.id, { type: fileType, src: blob.url }, knownGallery);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     return res.status(500).json({ error: err.message });

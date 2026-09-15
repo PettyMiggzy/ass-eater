@@ -94,6 +94,7 @@ export default function Dashboard({ user, creator: initialCreator }) {
         headers: {
           'x-file-name': file.name,
           'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
+          'x-current-gallery': JSON.stringify(creator.gallery || []),
           'Content-Type': file.type || 'application/octet-stream',
         },
         body: file,

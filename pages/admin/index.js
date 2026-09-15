@@ -115,6 +115,7 @@ export default function AdminPanel() {
           'x-creator-id': String(selectedId),
           'x-file-name': file.name,
           'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
+          'x-current-gallery': JSON.stringify(selected.gallery || []),
           'Content-Type': file.type || 'application/octet-stream',
         },
         body: file,
@@ -137,7 +138,7 @@ export default function AdminPanel() {
       const res = await fetch('/api/admin/gallery-delete', {
         method: 'POST',
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ creatorId: selectedId, index }),
+        body: JSON.stringify({ creatorId: selectedId, index, knownGallery: selected.gallery || [] }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Delete failed');

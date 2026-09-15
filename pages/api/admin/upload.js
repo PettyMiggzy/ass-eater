@@ -31,6 +31,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing creator id' });
   }
 
+  let knownGallery;
+  try {
+    if (req.headers['x-current-gallery']) {
+      knownGallery = JSON.parse(req.headers['x-current-gallery']);
+    }
+  } catch {
+    knownGallery = undefined;
+  }
+
   try {
     const body = await readBody(req);
     const blob = await put(`content/${creatorId}/${Date.now()}-${fileName}`, body, {
@@ -39,10 +48,14 @@ export default async function handler(req, res) {
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
-    const creator = await addGalleryItem(creatorId, {
-      type: fileType,
-      src: blob.url,
-    });
+    const creator = await addGalleryItem(
+      creatorId,
+      {
+        type: fileType,
+        src: blob.url,
+      },
+      knownGallery
+    );
 
     return res.status(200).json({ ok: true, blob, creator });
   } catch (err) {

@@ -10,13 +10,13 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { creatorId, index } = req.body || {};
+  const { creatorId, index, knownGallery } = req.body || {};
   if (!creatorId || index === undefined) {
     return res.status(400).json({ error: 'Missing creatorId or index' });
   }
 
   try {
-    const creator = await removeGalleryItem(creatorId, index);
+    const creator = await removeGalleryItem(creatorId, index, knownGallery);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     return res.status(500).json({ error: err.message });
