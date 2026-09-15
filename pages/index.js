@@ -164,7 +164,6 @@ export default function Home() {
         {/* Only Ass promo */}
         <section className="py-20 px-6 border-t border-brand-purple/10">
           <div className="max-w-4xl mx-auto text-center premium-card p-12">
-            <img src="/icons/onlyass-coin-logo.png" alt="" className="h-32 mx-auto mb-6" />
             <h2 className="text-3xl md:text-4xl font-black premium-title mb-4">The Platform Is Already Built</h2>
             <p className="text-gray-300 mb-8 max-w-xl mx-auto">
               Browse creators, see the pricing tiers, and preview what unlocks when $ONLYASS holders get access.
