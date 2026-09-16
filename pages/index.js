@@ -250,6 +250,7 @@ export default function Home({ creators }) {
               <a href="/terms" className="hover:text-brand-gold transition">Complaints Policy</a>
               <a href="/terms" className="hover:text-brand-gold transition">Acceptable Use</a>
               <a href="mailto:support@onlyass.fun" className="hover:text-brand-gold transition">Contact</a>
+              <a href="https://t.me/creatorsfirst" target="_blank" rel="noopener noreferrer" className="hover:text-brand-gold transition">Telegram</a>
             </div>
             <p className="text-gray-500 text-xs max-w-2xl mx-auto mb-2 text-center">
               18+ only. This site contains adult content. $ONLYASS is a meme token for entertainment purposes —

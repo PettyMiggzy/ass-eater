@@ -22,10 +22,18 @@ export default function BlockedRegion() {
             not just an age checkbox. We don't have that live yet, so out of caution we're not
             serving this site to your state until we do.
           </p>
-          <p className="text-gray-400 text-sm">
+          <p className="text-gray-400 text-sm mb-6">
             We're actively working on adding identity verification and expect to open this back up
             for your state soon.
           </p>
+          <a
+            href="https://t.me/creatorsfirst"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="premium-button inline-block w-full"
+          >
+            Join our Telegram for updates
+          </a>
         </div>
       </div>
     </>
