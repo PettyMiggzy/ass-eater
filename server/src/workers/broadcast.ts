@@ -34,6 +34,10 @@ new Worker('broadcast', async (job) => {
         })),
       });
     }
-    await publish(fanId, { type: 'message', message: { ...msg, locked: msg.priceCents > 0 } });
+    // Same redaction as the single-DM path (modules/messages.ts) -- a priced
+    // broadcast's text is paywalled content, not a free teaser, so it can't
+    // go out over the realtime push before the fan has unlocked it.
+    const locked = msg.priceCents > 0;
+    await publish(fanId, { type: 'message', message: { ...msg, text: locked ? '' : msg.text, locked } });
   }
 }, { ...connection, concurrency: 1 });

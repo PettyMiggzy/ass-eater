@@ -156,7 +156,7 @@ describe('ledger.charge', () => {
     ).rejects.toThrow('self_payment');
   });
 
-  it('gives a 10% discount when the fan pays out of their $ONLYASS balance, leaving the regular balance untouched', async () => {
+  it('charges the fan\'s $ONLYASS balance at full price, with no discount, leaving the regular balance untouched', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 500); // regular balance -- should be left alone
@@ -166,13 +166,15 @@ describe('ledger.charge', () => {
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-1', payAsset: 'ONLYASS' }),
     );
 
-    expect(result.gross).toBe(900); // 1000 - 10% token-payment discount
-    expect(result.fee).toBe(90); // 10% of the discounted 900
-    expect(result.net).toBe(810);
+    // Staking (not built yet) is meant to be the only fan-facing discount --
+    // paying in $ONLYASS no longer discounts the charge on its own.
+    expect(result.gross).toBe(1000);
+    expect(result.fee).toBe(100); // 10% of the full 1000
+    expect(result.net).toBe(900);
     expect(result.payAsset).toBe('ONLYASS');
-    expect(await onlyAssBalanceOf(fan)).toBe(9100n); // 10,000 - 900
+    expect(await onlyAssBalanceOf(fan)).toBe(9000n); // 10,000 - 1000
     expect(await balanceOf(fan)).toBe(500n); // regular balance untouched
-    expect(await balanceOf(creator)).toBe(810n);
+    expect(await balanceOf(creator)).toBe(900n);
   });
 
   it('rejects an $ONLYASS payment for insufficient $ONLYASS balance even when the regular balance could cover it', async () => {

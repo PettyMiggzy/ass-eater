@@ -10,7 +10,6 @@ export const FEES = {
   WITHDRAWAL_FLAT_CENTS: 100, // $1 per payout
   WITHDRAWAL_BPS: 100, // +1%
   INSTANT_PAYOUT_BPS: 200, // +2% on top, for skipping the payout queue -- waived if the creator opted into the token-lock perk
-  TOKEN_PAYMENT_DISCOUNT_BPS: 1000, // 10% off any charge a fan pays for out of their $ONLYASS balance specifically
   MIN_PAYOUT_CENTS: 2000,
   MIN_TIP_CENTS: 100,
 };
@@ -61,12 +60,10 @@ export async function post(
 
 /**
  * Fan pays creator. Platform takes its cut. Referrer gets a slice of the
- * platform's cut. If the fan pays out of their $ONLYASS balance (payAsset:
- * 'ONLYASS'), they get TOKEN_PAYMENT_DISCOUNT_BPS off -- that balance can
- * only be funded by depositing in $ONLYASS in the first place (see
- * deposit-indexer.ts), so this is a real "paid in the token" discount, not
- * just a UI checkbox: it fails with InsufficientFunds if they don't actually
- * hold enough $ONLYASS-denominated balance to cover it.
+ * platform's cut. Paying out of a $ONLYASS-denominated balance (payAsset:
+ * 'ONLYASS') no longer discounts the charge itself -- staking is meant to be
+ * the only fan-facing discount, so this charges the full grossCents either
+ * way; payAsset only decides which balance gets debited.
  */
 export async function charge(
   tx: Tx,
@@ -82,10 +79,7 @@ export async function charge(
   if (creator.user.status !== 'ACTIVE') throw new Error('creator_unavailable');
 
   const payAsset: PayAsset = p.payAsset === 'ONLYASS' ? 'ONLYASS' : 'USD';
-  const chargeCents =
-    payAsset === 'ONLYASS'
-      ? Math.round((p.grossCents * (10_000 - FEES.TOKEN_PAYMENT_DISCOUNT_BPS)) / 10_000)
-      : p.grossCents;
+  const chargeCents = p.grossCents;
 
   const bal = await lockBalance(tx, p.fanId, payAsset);
   if (bal < BigInt(chargeCents)) throw new InsufficientFunds();

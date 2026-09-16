@@ -21,8 +21,12 @@ export const messages: FastifyPluginAsync = async (app) => {
     const rows = await prisma.message.findMany({ where: { conversationId: conv.id }, include: { media: true, conversation: true }, orderBy: { createdAt: 'desc' }, take: 50, skip: Number(req.query.offset ?? 0) });
     return Promise.all(rows.map(async (m) => {
       const ok = await canViewMessage(req.user.id, m);
-      const { conversation, ...rest } = m;
-      return { ...rest, locked: !ok, media: m.media.map(x => ok ? { id: x.id, mime: x.mime, previewKey: x.previewKey } : { id: x.id, mime: x.mime, previewKey: x.previewKey, locked: true }) };
+      const { conversation, text, ...rest } = m;
+      // A priced message's own text is now a paywalled good in its own right
+      // (not just a free teaser caption alongside priced media, now that
+      // plain-text messages can be priced too) -- redact it the same way
+      // media previews already are until it's unlocked or free.
+      return { ...rest, text: ok ? text : '', locked: !ok, media: m.media.map(x => ok ? { id: x.id, mime: x.mime, previewKey: x.previewKey } : { id: x.id, mime: x.mime, previewKey: x.previewKey, locked: true }) };
     }));
   });
 
@@ -32,7 +36,9 @@ export const messages: FastifyPluginAsync = async (app) => {
     if (to === req.user.id) return reply.code(400).send({ error: 'self' });
     const me = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { role: true, kycStatus: true } });
     const isCreator = me.role === 'CREATOR' && me.kycStatus === 'APPROVED';
-    if (b.priceCents > 0 && (!isCreator || !b.mediaIds.length)) return reply.code(400).send({ error: 'only_creators_can_price_media' });
+    // Any message can be priced -- plain text included, not just media
+    // attachments -- as long as the sender is a KYC'd creator.
+    if (b.priceCents > 0 && !isCreator) return reply.code(400).send({ error: 'only_creators_can_price_messages' });
     // fans may only DM creators they subscribe to; creators may DM their subscribers
     const allowed = isCreator ? await isSubscribed(to, req.user.id) : await isSubscribed(req.user.id, to);
     if (!allowed) return reply.code(403).send({ error: 'subscription_required' });
@@ -46,7 +52,19 @@ export const messages: FastifyPluginAsync = async (app) => {
       }
       return tx.message.findUniqueOrThrow({ where: { id: m.id }, include: { media: { select: { id: true, mime: true, previewKey: true } } } });
     });
-    await publish(to, { type: 'message', message: { ...msg, locked: msg.priceCents > 0 } });
+    // The realtime push goes to the recipient, who hasn't paid/unlocked yet
+    // -- redact the same way the GET /with/:userId REST path does, so a
+    // priced message's text/media can't be read straight off the websocket.
+    const locked = msg.priceCents > 0;
+    await publish(to, {
+      type: 'message',
+      message: {
+        ...msg,
+        text: locked ? '' : msg.text,
+        media: msg.media.map((x) => (locked ? { id: x.id, mime: x.mime, previewKey: x.previewKey, locked: true } : x)),
+        locked,
+      },
+    });
     return msg;
   });
 

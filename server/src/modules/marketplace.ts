@@ -6,8 +6,6 @@ import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_T
 import { placeBid } from '../core/auctions';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
-const LOYALTY_DISCOUNT_BPS = 1000; // 10% off for a buyer with any active subscription or token-lock
-
 // Physical orders pay the creator at purchase time, same as digital -- no
 // escrow. Shipping method, signature-on-delivery, item condition, and any
 // buyer dispute over any of that are the creator's own business, not the
@@ -113,16 +111,11 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         if (already) return { ok: true, already: true, order: already };
       }
 
-      // Loyalty discount (any active subscription/token-lock) and the
-      // pay-in-$ONLYASS discount don't stack -- take whichever's better for
-      // the buyer, same 10% rate either way.
-      const [hasSub, hasLock] = await Promise.all([
-        tx.subscription.findFirst({ where: { fanId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } } }),
-        tx.tokenLock.findFirst({ where: { fanId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } } }),
-      ]);
-      const discounted = !!(hasSub || hasLock) || payAsset === 'ONLYASS';
-      // Discount applies to the item price only -- shipping is a pass-through carrier cost, not a margin to discount.
-      const chargeCents = discounted ? Math.round((l.priceCents * (10_000 - LOYALTY_DISCOUNT_BPS)) / 10_000) : l.priceCents;
+      // No buyer-side discount here -- a subscription, a token-lock, or
+      // paying in $ONLYASS no longer discount anything on their own.
+      // Staking is meant to be the only fan-facing discount; see
+      // MEMORY.md's "Fee structure & discounts" section for the decision.
+      const chargeCents = l.priceCents;
       const shippingCents = l.kind === 'PHYSICAL' ? l.shippingCents : 0;
       const totalCharge = chargeCents + shippingCents;
 
@@ -150,10 +143,10 @@ export const marketplace: FastifyPluginAsync = async (app) => {
 
       await post(tx, req.user.id, -totalCharge, 'MARKETPLACE_SALE', order.id, undefined, payAsset);
       // Paid immediately -- shipping it is the creator's job from here, not the platform's to hold money over.
-      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents, discountApplied: discounted, payAsset });
+      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents, payAsset });
       await post(tx, PLATFORM_ID, platformFee + listingFee, 'PLATFORM_FEE', order.id, { source: 'marketplace', platformFee, listingFee });
 
-      return { ok: true, order, discountApplied: discounted, payAsset };
+      return { ok: true, order, payAsset };
     });
   });
 
