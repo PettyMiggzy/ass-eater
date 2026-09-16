@@ -135,6 +135,58 @@ yet -- the live Next.js/Vercel-Blob site has none of this (no fee logic, no
 subscriptions, no priced messages at all). Content-selling is marketplace-
 only per this decision (a creator's own profile page already surfaces their
 marketplace listings on the live site, so "sell in the marketplace, also
-show it on their page" is already true there). Fan-facing public profiles
-(fans need their own profile page, not just an account) are fully
-greenfield on both stacks -- no model, route, or store exists for this yet.
+show it on their page" is already true there).
+
+## Creators get paid in their own launched token (shipped 2026-09-16)
+
+Explicitly un-deferred the same day it was flagged as "later" -- the user
+pushed back hard on stopping to ask/defer things given launch is imminent,
+so this got built same-session instead of staying on the roadmap.
+
+`contracts/OnlyAssPayments.sol` (the direct wallet-to-wallet payment
+contract, separate from server/'s ledger) got a third payment function,
+`payWithCreatorToken`, alongside the existing ETH and $ONLYASS ones. It
+checks **live, on-chain, every call** that the token being paid in was
+actually launched by that creator through `OnlyAssLaunchpadV4` (loops that
+creator's real launch records -- no admin allowlist, nothing cached, so
+there's no separate "approve this token" step for anyone to forget). Same
+90/10-style split as the other two payment methods. Full writeup in
+`contracts/README.md`.
+
+This is deliberately the **simple, real, ship-able-tonight version**, not
+the full thing: it's a direct on-chain payment (fan's wallet -> creator's
+wallet + platform's wallet, atomically, no platform balance involved), not
+a new asset type inside `server/`'s ledger. The bigger version -- a creator
+token as a real `payAsset` option inside the ledger, with its own price
+oracle and deposit tracking like $ONLYASS has -- is still not built and
+still a real chunk of work (flagged above, unchanged). This is the
+"very minimum working" version of that idea, not a placeholder for it.
+
+## Fan discovery: favorites shipped, category browsing still roadmap (2026-09-16)
+
+Researched what OnlyFans actually does for fans before building anything
+(don't guess at a competitor's real feature set): OnlyFans has **no public
+fan profile page at all** -- fans just get a display name/bio/avatar that
+only shows up to creators they've messaged or subscribed to, never a public
+page anyone can browse, and most fans skip even that for privacy. So "fans
+need their own profile page" (the earlier open item) was dropped as a
+non-goal, not built.
+
+What OnlyFans is actually bad at, and where "plus more" is real: in-app
+discovery. No native browse/filter/category search at all -- fans either
+already know a creator's name, or use third-party "finder" sites, which is
+a well-known pain point.
+
+Shipped tonight, live site only: a **favorites/save button** on a creator's
+profile (heart icon) plus a `/favorites` page listing everyone a fan has
+saved (`lib/favorites-store.js`, `pages/api/favorites/toggle.js`,
+`pages/favorites.js`). This is the real "make it easier to find creators
+you like" feature -- it doesn't need to be public, just useful.
+
+**Not built, roadmap:** category/tag browsing and filters. Creators
+(`data/creators.js` / `lib/creators-store.js`) have no tags/category field
+at all yet -- adding real browse-by-category needs a taxonomy and a way for
+creators to set their own tags first, which is more than a tonight-sized
+add on top of everything else shipped this session. Basic keyword search
+(name/bio/handle) already existed before tonight and still works
+(`pages/search.js`).

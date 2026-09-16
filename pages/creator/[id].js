@@ -6,6 +6,7 @@ import { getSessionUserId } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
 import { getWallPostsForCreator } from '../../lib/wall-store';
+import { isFavorite } from '../../lib/favorites-store';
 
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
@@ -17,6 +18,7 @@ export async function getServerSideProps({ req, params }) {
     .filter((l) => String(l.creatorId) === String(creator?.id) && l.status === 'active')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const wallPosts = creator ? await getWallPostsForCreator(creator.id) : [];
+  const initialFavorited = creator && viewerId ? await isFavorite(viewerId, creator.id) : false;
   return {
     props: {
       creator,
@@ -24,15 +26,45 @@ export async function getServerSideProps({ req, params }) {
       creatorUserId: creatorUser ? String(creatorUser.id) : null,
       listings,
       wallPosts,
+      initialFavorited,
     },
   };
 }
 
-export default function CreatorProfile({ creator, viewerId, creatorUserId, listings, wallPosts }) {
+export default function CreatorProfile({ creator, viewerId, creatorUserId, listings, wallPosts, initialFavorited }) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('posts');
   const [toast, setToast] = useState(null);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [favorited, setFavorited] = useState(initialFavorited);
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+
+  const toggleFavorite = async () => {
+    if (!viewerId) {
+      router.push(`/login?next=/creator/${creator.id}`);
+      return;
+    }
+    if (favoriteBusy) return;
+    setFavoriteBusy(true);
+    const prev = favorited;
+    setFavorited(!prev); // optimistic -- flip back on failure
+    try {
+      const res = await fetch('/api/favorites/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creatorId: creator.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save');
+      setFavorited(data.favorited);
+    } catch (err) {
+      setFavorited(prev);
+      setToast(err.message);
+      setTimeout(() => setToast(null), 3000);
+    } finally {
+      setFavoriteBusy(false);
+    }
+  };
 
   const showComingSoon = (msg) => {
     setToast(msg || 'Launching in 4 days — connect your wallet then to unlock.');
@@ -117,6 +149,16 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
               <img src={creator.img} alt={creator.name} className="w-full h-full object-cover object-top" />
             </div>
             <div className="flex gap-3 mt-16">
+              <button
+                onClick={toggleFavorite}
+                title={favorited ? 'Remove from favorites' : 'Save to favorites'}
+                aria-pressed={favorited}
+                className={`w-11 h-11 rounded-full border flex items-center justify-center transition ${
+                  favorited ? 'border-brand-gold bg-brand-gold/20' : 'border-brand-gold/40 hover:bg-brand-gold/10'
+                }`}
+              >
+                <span className={favorited ? 'text-brand-gold text-xl' : 'text-white/70 text-xl'}>{favorited ? '♥' : '♡'}</span>
+              </button>
               <button
                 onClick={openInbox}
                 className="w-11 h-11 rounded-full border border-brand-gold/40 flex items-center justify-center hover:bg-brand-gold/10 transition"

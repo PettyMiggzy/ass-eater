@@ -7,12 +7,34 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
+/// @notice The handful of OnlyAssLaunchpadV4 view functions this contract
+/// needs, to check "did this creator actually launch this token here" before
+/// ever accepting it as payment. Kept minimal on purpose -- this contract
+/// only ever reads from the launchpad, never calls anything state-changing.
+interface IOnlyAssLaunchpadV4Views {
+    function launchesOf(address creator) external view returns (uint256[] memory);
+    function launches(uint256 launchId)
+        external
+        view
+        returns (
+            address token,
+            address creator,
+            bytes32 poolId,
+            uint256 positionTokenId,
+            uint256 unlockTime,
+            bool liquidityWithdrawn,
+            bool graduationPaid
+        );
+}
+
 /// @title OnlyAssPayments
 /// @notice Non-custodial paywall payments for the Only Ass platform. A fan pays
-/// either ETH or the $ONLYASS token in one transaction; the contract splits it
-/// atomically between the creator's wallet and the platform fee wallet. The
-/// contract never holds funds between transactions — every payment is pushed
-/// straight to its destination in the same call that receives it.
+/// ETH, the $ONLYASS token, or a creator's own token (but only if that token
+/// was actually launched through OnlyAssLaunchpadV4 by that same creator) in
+/// one transaction; the contract splits it atomically between the creator's
+/// wallet and the platform fee wallet. The contract never holds funds between
+/// transactions — every payment is pushed straight to its destination in the
+/// same call that receives it.
 contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
@@ -27,6 +49,11 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
     uint256 public platformFeeBps;
     /// @notice ERC-20 contract address for the $ONLYASS token.
     address public onlyAssToken;
+    /// @notice The launchpad this contract trusts to say "yes, this creator
+    /// really did launch this token." Settable in case the platform ever
+    /// stands up a new launchpad deployment -- payWithCreatorToken always
+    /// checks whichever one is currently set, nothing is cached.
+    IOnlyAssLaunchpadV4Views public launchpad;
 
     event Purchase(
         address indexed fan,
@@ -42,14 +69,17 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
     event PlatformWalletUpdated(address indexed oldWallet, address indexed newWallet);
     event PlatformFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps);
     event OnlyAssTokenUpdated(address indexed oldToken, address indexed newToken);
+    event LaunchpadUpdated(address indexed oldLaunchpad, address indexed newLaunchpad);
     event ERC20Rescued(address indexed token, address indexed to, uint256 amount);
 
     error ZeroAddress();
     error ZeroAmount();
     error FeeTooHigh();
     error TransferFailed();
+    error TokenNotLaunchedByCreator();
+    error LaunchpadNotSet();
 
-    constructor(address initialPlatformWallet, uint256 initialFeeBps, address initialOnlyAssToken)
+    constructor(address initialPlatformWallet, uint256 initialFeeBps, address initialOnlyAssToken, address initialLaunchpad)
         Ownable(msg.sender)
     {
         if (initialPlatformWallet == address(0)) revert ZeroAddress();
@@ -59,6 +89,11 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
         platformWallet = initialPlatformWallet;
         platformFeeBps = initialFeeBps;
         onlyAssToken = initialOnlyAssToken;
+        // Zero address allowed here -- payWithCreatorToken just stays
+        // disabled (LaunchpadNotSet) until setLaunchpad is called, so this
+        // contract can still deploy and handle ETH/$ONLYASS payments even
+        // before the launchpad itself exists.
+        launchpad = IOnlyAssLaunchpadV4Views(initialLaunchpad);
     }
 
     /// @notice Pay a creator in ETH to unlock `contentId`. Splits the payment
@@ -108,6 +143,44 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
         emit Purchase(msg.sender, creatorWallet, creatorId, onlyAssToken, amount, feeAmount, creatorAmount, contentId);
     }
 
+    /// @notice Pay a creator in their OWN token -- but only a token that
+    /// creator actually launched through OnlyAssLaunchpadV4, checked live
+    /// on-chain against the launchpad every single call (never cached, never
+    /// admin-allowlisted). Caller must have approved this contract for at
+    /// least `amount` beforehand.
+    function payWithCreatorToken(uint256 creatorId, uint256 contentId, address creatorWallet, address token, uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        if (amount == 0) revert ZeroAmount();
+        if (creatorWallet == address(0)) revert ZeroAddress();
+        if (address(launchpad) == address(0)) revert LaunchpadNotSet();
+        if (!_isLaunchedByCreator(creatorWallet, token)) revert TokenNotLaunchedByCreator();
+
+        IERC20 t = IERC20(token);
+        (uint256 feeAmount, uint256 creatorAmount) = _split(amount);
+
+        if (feeAmount > 0) t.safeTransferFrom(msg.sender, platformWallet, feeAmount);
+        t.safeTransferFrom(msg.sender, creatorWallet, creatorAmount);
+
+        emit Purchase(msg.sender, creatorWallet, creatorId, token, amount, feeAmount, creatorAmount, contentId);
+    }
+
+    /// @dev Loops the creator's launches (a creator launching dozens of
+    /// tokens isn't a realistic case this needs to optimize for) looking for
+    /// one whose token matches. True non-custodial trust: this contract
+    /// never takes the launchpad's word for anything beyond what's actually
+    /// recorded on it.
+    function _isLaunchedByCreator(address creatorWallet, address token) internal view returns (bool) {
+        uint256[] memory ids = launchpad.launchesOf(creatorWallet);
+        for (uint256 i = 0; i < ids.length; i++) {
+            (address launchedToken,,,,,,) = launchpad.launches(ids[i]);
+            if (launchedToken == token) return true;
+        }
+        return false;
+    }
+
     function _split(uint256 grossAmount) internal view returns (uint256 feeAmount, uint256 creatorAmount) {
         feeAmount = (grossAmount * platformFeeBps) / BPS_DENOMINATOR;
         creatorAmount = grossAmount - feeAmount;
@@ -131,6 +204,11 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
         if (newToken == address(0)) revert ZeroAddress();
         emit OnlyAssTokenUpdated(onlyAssToken, newToken);
         onlyAssToken = newToken;
+    }
+
+    function setLaunchpad(address newLaunchpad) external onlyOwner {
+        emit LaunchpadUpdated(address(launchpad), newLaunchpad);
+        launchpad = IOnlyAssLaunchpadV4Views(newLaunchpad);
     }
 
     function pause() external onlyOwner {

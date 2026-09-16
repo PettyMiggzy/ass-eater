@@ -45,6 +45,7 @@ export default function Home({ creators }) {
               <a href="#token" className="hover:text-brand-gold transition">Token</a>
               <a href="/marketplace" className="hover:text-brand-gold transition">Marketplace</a>
               <a href="/search" className="hover:text-brand-gold transition">Search</a>
+              <a href="/favorites" className="hover:text-brand-gold transition">Favorites</a>
               <a href="/get-crypto" className="hover:text-brand-gold transition">New to Crypto?</a>
               <a href="/login" className="hover:text-brand-gold transition">Log In</a>
               <a href="/signup?role=creator" className="px-4 py-1.5 rounded-full bg-gradient-to-r from-brand-gold to-brand-purple text-black font-bold hover:scale-105 transition">
