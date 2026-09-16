@@ -37,8 +37,8 @@ export default function Login() {
           <h1 className="text-3xl font-black premium-title mb-6">Log In</h1>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Email</label>
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+              <label className="block text-sm text-gray-400 mb-2">Email or Username</label>
+              <input type="text" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
             </div>
             <div>
               <label className="block text-sm text-gray-400 mb-2">Password</label>

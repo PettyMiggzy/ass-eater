@@ -241,7 +241,7 @@ export default function Home({ creators }) {
           <div className="max-w-5xl mx-auto">
             <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-gray-500 mb-6">
               <a href="/terms" className="hover:text-brand-gold transition">Terms of Service</a>
-              <a href="/terms" className="hover:text-brand-gold transition">Privacy Policy</a>
+              <a href="/privacy" className="hover:text-brand-gold transition">Privacy Policy</a>
               <a href="/terms" className="hover:text-brand-gold transition">Cookie Policy</a>
               <a href="/terms" className="hover:text-brand-gold transition">18 U.S.C. §2257 Statement</a>
               <a href="/terms" className="hover:text-brand-gold transition">DMCA / Takedown</a>

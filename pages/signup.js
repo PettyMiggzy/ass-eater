@@ -6,6 +6,7 @@ export default function Signup() {
   const router = useRouter();
   const [role, setRole] = useState('fan');
   const [form, setForm] = useState({ email: '', password: '', displayName: '', handle: '', bio: '' });
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -13,6 +14,10 @@ export default function Signup() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!agreed) {
+      setError('Please agree to the Terms of Service and Privacy Policy to continue.');
+      return;
+    }
     setError('');
     setSubmitting(true);
     try {
@@ -57,10 +62,28 @@ export default function Signup() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Email</label>
-              <input type="email" required value={form.email} onChange={update('email')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
-            </div>
+            {role === 'fan' ? (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Email or Username</label>
+                <input
+                  type="text"
+                  required
+                  minLength={3}
+                  placeholder="Doesn't have to be a real email — pick a username if you'd rather"
+                  value={form.email}
+                  onChange={update('email')}
+                  className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+                />
+                <p className="text-xs text-gray-500 mt-1.5">
+                  We never require a real email for fan accounts — plenty of people would rather not have this show up in an inbox anyone else can see.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Email</label>
+                <input type="email" required value={form.email} onChange={update('email')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+              </div>
+            )}
             <div>
               <label className="block text-sm text-gray-400 mb-2">Password</label>
               <input type="password" required minLength={6} value={form.password} onChange={update('password')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
@@ -86,9 +109,17 @@ export default function Signup() {
               </>
             )}
 
+            <label className="flex items-start gap-2 text-xs text-gray-400">
+              <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5" />
+              I'm 18 or older and I agree to the{' '}
+              <a href="/terms" target="_blank" rel="noreferrer" className="text-brand-gold underline">Terms of Service</a>{' '}
+              and{' '}
+              <a href="/privacy" target="_blank" rel="noreferrer" className="text-brand-gold underline">Privacy Policy</a>.
+            </label>
+
             {error && <p className="text-sm text-red-400">{error}</p>}
 
-            <button type="submit" disabled={submitting} className="w-full premium-button disabled:opacity-50">
+            <button type="submit" disabled={submitting || !agreed} className="w-full premium-button disabled:opacity-50">
               {submitting ? 'Creating...' : 'Create Account'}
             </button>
           </form>

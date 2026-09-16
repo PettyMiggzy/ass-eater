@@ -39,7 +39,8 @@ const ROADMAP = [
     items: [
       { label: 'Creator identity verification (KYC vendor)', status: 'planned' },
       { label: 'Age verification for states that require it by law', status: 'planned' },
-      { label: 'Full legal docs: ToS, Privacy Policy, 18 U.S.C. §2257 statement, DMCA/takedown process', status: 'planned' },
+      { label: 'Terms of Service and Privacy Policy (built, template -- needs attorney review before launch)', status: 'built' },
+      { label: '18 U.S.C. §2257 statement, dedicated DMCA/takedown process', status: 'planned' },
     ],
   },
   {

@@ -7,10 +7,16 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { email, password, role, displayName, handle, bio } = req.body || {};
+  const { password, role, displayName, handle, bio } = req.body || {};
+  // Field is still called "email" internally (nothing here ever sends real
+  // email, it's purely a unique login identifier + display-name fallback --
+  // see lib/users-store.js) but a fan can put any username in it; only
+  // creators are required to use a real, `type="email"`-validated address
+  // client-side. Server-side we just need a sane minimum length either way.
+  const email = String(req.body?.email || '').trim();
 
-  if (!email || !password || password.length < 6) {
-    return res.status(400).json({ error: 'Email and a password (6+ characters) are required' });
+  if (!email || email.length < 3 || !password || password.length < 6) {
+    return res.status(400).json({ error: 'An email or username (3+ characters) and a password (6+ characters) are required' });
   }
   if (!['fan', 'creator'].includes(role)) {
     return res.status(400).json({ error: 'Role must be fan or creator' });

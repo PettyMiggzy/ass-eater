@@ -283,3 +283,49 @@ paste an arbitrary IPFS link into that field.**
 placeholder. This pass only covers minting/payment/ownership on-chain --
 same scoping as the V4 launchpad (contract shipped, matching frontend not
 built yet). No creator-facing UI for starting a drop exists yet either.
+
+**Explicit reminder from the user (2026-09-16): none of this -- the NFT
+contract, the V4 launchpad, the VIP burn feature -- is expected to be live
+for tomorrow's launch.** It's being built now so it exists and is ready for
+audit/deployment on the platform's own timeline, not because it's part of
+day-one scope. Don't treat anything in this file as "must ship tomorrow"
+unless it's explicitly said to be.
+
+## Privacy Policy + anonymous fan signup (shipped 2026-09-16)
+
+Two real gaps, both fixed:
+
+- **No Privacy Policy existed at all** (only Terms of Service). Added
+  `pages/privacy.js`, same structure/tone as `pages/terms.js`, same
+  "template, not legal advice, get an attorney" disclaimer at the bottom.
+  Fixed the footer link on `pages/index.js` that was pointing "Privacy
+  Policy" at `/terms` (leftover placeholder), and `pages/token.js`'s
+  roadmap line that still said this was "planned."
+- **Signup had no Terms/Privacy acceptance checkbox at all** -- only the
+  marketplace's buy flow gated on explicit agreement. Added one to
+  `pages/signup.js` (age + both docs, one combined checkbox, submit
+  disabled until checked) so account creation itself is covered too, not
+  just marketplace purchases.
+- **Fans can now sign up with just a username, no real email required**
+  (`pages/signup.js`'s email field becomes a plain text "Email or Username"
+  input for the Fan role specifically, with a line explaining why; the
+  login page accepts either too). This was a direct, explicit ask: a lot of
+  fans on an adult platform don't want a real email on file that a
+  spouse/partner could ever see. Creators still require a real
+  `type="email"`-validated address (they need a real contact channel;
+  their identity is already verified separately for KYC anyway).
+  Server-side, the field was always just a loose "unique login identifier"
+  with no format enforcement and nothing anywhere actually sends real
+  email to it, so this needed a UI change more than a backend one --
+  `lib/users-store.js` now has a comment making that explicit so it isn't
+  "fixed" back to requiring email format later by accident.
+
+**Flagged, not acted on:** in the same conversation, content scope was
+described as open to "guys and women, and animated stuff, nothing's off
+limits I guess." Worth being deliberate about before that becomes a real
+policy: animated/drawn content that depicts what could read as a minor is
+illegal in a number of jurisdictions regardless of it being fictional, and
+is something payment processors and ad networks explicitly screen for
+separately from real-person adult content. Not a decision to make silently
+-- if/when actual content-moderation rules get written, this needs its own
+explicit line, not an assumption either way.
