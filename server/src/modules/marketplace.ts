@@ -2,13 +2,19 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../core/ledger';
-import { holdInEscrow, markShipped, confirmReceipt, disputeOrder, voluntaryRefund } from '../core/escrow';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 const PLATFORM_FEE_BPS = 1000; // 10% commission on the sale
 const LISTING_FEE_BPS = 500; // 5% listing fee, also cut at sale time
 const LOYALTY_DISCOUNT_BPS = 1000; // 10% off for a buyer with any active subscription or token-lock
 const CURRENT_TOS_VERSION = 'v1';
+
+// Physical orders pay the creator at purchase time, same as digital -- no
+// escrow. Shipping method, signature-on-delivery, item condition, and any
+// buyer dispute over any of that are the creator's own business, not the
+// platform's to hold money hostage over or adjudicate. shipStatus below is
+// for buyer/creator visibility only; it never gates a payout. See
+// MARKETPLACE_FULFILLMENT.md.
 
 export const marketplace: FastifyPluginAsync = async (app) => {
   // unlimited: true for digital goods (images/videos) sellable to many buyers
@@ -20,6 +26,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       priceCents: z.number().int().min(100).max(100_000_00), images: z.array(z.string()).max(10).default([]),
       unlimited: z.boolean().default(false), mediaIds: z.array(z.string().uuid()).max(20).default([]),
       kind: z.enum(['DIGITAL', 'PHYSICAL']).default('DIGITAL'), shippingCents: z.number().int().min(0).max(100_000_00).default(0),
+      signatureRequired: z.boolean().default(false),
     }).parse(req.body);
     const { mediaIds, ...fields } = b;
     // Physical items ship one-at-a-time -- no inventory tracking yet, so "unlimited" doesn't mean anything for them.
@@ -40,6 +47,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       priceCents: z.number().int().min(100).max(100_000_00).optional(), images: z.array(z.string()).max(10).optional(),
       status: z.enum(['ACTIVE', 'REMOVED']).optional(), unlimited: z.boolean().optional(),
       kind: z.enum(['DIGITAL', 'PHYSICAL']).optional(), shippingCents: z.number().int().min(0).max(100_000_00).optional(),
+      signatureRequired: z.boolean().optional(),
     }).parse(req.body);
     if (b.kind === 'PHYSICAL') b.unlimited = false;
     const r = await prisma.listing.updateMany({ where: { id: req.params.id, creatorId: req.user.id, status: { not: 'SOLD' } }, data: b });
@@ -112,7 +120,6 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       const platformFee = Math.floor((chargeCents * PLATFORM_FEE_BPS) / 10_000);
       const listingFee = Math.floor((chargeCents * LISTING_FEE_BPS) / 10_000);
       const net = chargeCents - platformFee - listingFee;
-      const netCentsHeld = net + shippingCents; // shipping isn't commissioned, but it's still held with the rest until delivery
 
       if (!l.unlimited) {
         const updated = await tx.listing.updateMany({ where: { id: l.id, status: 'ACTIVE' }, data: { status: 'SOLD' } });
@@ -125,50 +132,37 @@ export const marketplace: FastifyPluginAsync = async (app) => {
           listingId: l.id, buyerId: req.user.id, priceCents: chargeCents, shippingCents,
           platformFeeCents: platformFee, listingFeeCents: listingFee,
           ageConfirmedAt: new Date(), tosVersion: CURRENT_TOS_VERSION,
-          fulfillmentStatus: isPhysical ? 'AWAITING_SHIPMENT' : 'DIGITAL',
-          netCentsHeld: isPhysical ? netCentsHeld : 0,
+          shipStatus: isPhysical ? 'AWAITING_SHIPMENT' : 'DIGITAL',
         },
       });
 
       await post(tx, req.user.id, -totalCharge, 'MARKETPLACE_SALE', order.id, undefined, payAsset);
-      if (isPhysical) {
-        // Held, not paid out -- see core/escrow.ts. Released on delivery confirmation, auto-release, or dispute resolution.
-        await holdInEscrow(tx, order.id, netCentsHeld);
-      } else {
-        await post(tx, l.creatorId, net, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, originalPriceCents: l.priceCents, discountApplied: discounted, payAsset });
-      }
+      // Paid immediately -- shipping it is the creator's job from here, not the platform's to hold money over.
+      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents, discountApplied: discounted, payAsset });
       await post(tx, PLATFORM_ID, platformFee + listingFee, 'PLATFORM_FEE', order.id, { source: 'marketplace', platformFee, listingFee });
 
       return { ok: true, order, discountApplied: discounted, payAsset };
     });
   });
 
-  // --- Physical-order fulfillment lifecycle (escrow-backed -- see core/escrow.ts) ---
+  // --- Physical-order shipping status (visibility only -- see comment above) ---
 
   app.get('/listings/orders/mine', { preHandler: app.auth }, async (req: any) =>
-    prisma.listingOrder.findMany({ where: { buyerId: req.user.id }, orderBy: { createdAt: 'desc' }, include: { listing: { select: { title: true, kind: true } } } }));
+    prisma.listingOrder.findMany({ where: { buyerId: req.user.id }, orderBy: { createdAt: 'desc' }, include: { listing: { select: { title: true, kind: true, signatureRequired: true } } } }));
 
   app.get('/listings/orders/selling', { preHandler: app.creatorOk }, async (req) =>
     prisma.listingOrder.findMany({
-      where: { listing: { creatorId: req.user.id }, fulfillmentStatus: { in: ['AWAITING_SHIPMENT', 'SHIPPED', 'DISPUTED'] } },
+      where: { listing: { creatorId: req.user.id }, shipStatus: 'AWAITING_SHIPMENT' },
       orderBy: { createdAt: 'asc' },
-      include: { listing: { select: { title: true } }, buyer: { select: { username: true } } },
+      include: { listing: { select: { title: true, signatureRequired: true } }, buyer: { select: { username: true } } },
     }));
 
-  app.post('/listings/orders/:id/ship', { preHandler: app.creatorOk }, async (req: any) => {
+  app.post('/listings/orders/:id/ship', { preHandler: app.creatorOk }, async (req: any, reply) => {
     const { carrier, trackingNumber } = z.object({ carrier: z.string().min(1).max(100), trackingNumber: z.string().min(1).max(100) }).parse(req.body);
-    return prisma.$transaction((tx) => markShipped(tx, req.params.id, req.user.id, { carrier, trackingNumber }));
+    const r = await prisma.listingOrder.updateMany({
+      where: { id: req.params.id, listing: { creatorId: req.user.id }, shipStatus: 'AWAITING_SHIPMENT' },
+      data: { shipStatus: 'SHIPPED', carrier, trackingNumber, shippedAt: new Date() },
+    });
+    return r.count ? { ok: true } : reply.code(404).send({ error: 'not_found' });
   });
-
-  app.post('/listings/orders/:id/confirm-receipt', { preHandler: app.auth }, async (req: any) =>
-    prisma.$transaction((tx) => confirmReceipt(tx, req.params.id, req.user.id)));
-
-  app.post('/listings/orders/:id/dispute', { preHandler: app.auth }, async (req: any) => {
-    const { reason } = z.object({ reason: z.string().min(1).max(1000) }).parse(req.body);
-    return prisma.$transaction((tx) => disputeOrder(tx, req.params.id, req.user.id, reason));
-  });
-
-  // Creator's own call, no dispute or admin sign-off needed -- see core/escrow.ts's voluntaryRefund.
-  app.post('/listings/orders/:id/refund', { preHandler: app.creatorOk }, async (req: any) =>
-    prisma.$transaction((tx) => voluntaryRefund(tx, req.params.id, req.user.id)));
 };

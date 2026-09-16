@@ -1,7 +1,7 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { updateListing } from '../../../lib/listings-store';
 
-const ALLOWED = ['title', 'description', 'priceCents', 'status', 'kind', 'shippingCents'];
+const ALLOWED = ['title', 'description', 'priceCents', 'status', 'kind', 'shippingCents', 'signatureRequired'];
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

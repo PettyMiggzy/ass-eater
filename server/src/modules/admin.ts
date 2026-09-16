@@ -2,7 +2,6 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { money, post, PLATFORM_ID } from '../core/ledger';
-import { resolveDispute } from '../core/escrow';
 import { deleteObject } from '../lib/s3';
 
 export const admin: FastifyPluginAsync = async (app) => {
@@ -12,24 +11,8 @@ export const admin: FastifyPluginAsync = async (app) => {
     prisma.report.findMany({ where: { status: (req.query.status ?? 'OPEN') as any }, orderBy: { createdAt: 'asc' }, take: 100 }));
 
   app.post('/reports/:id/resolve', async (req: any) => {
-    const { action } = z.object({ action: z.enum(['dismiss', 'remove_content', 'suspend_user', 'ban_user', 'release_escrow', 'refund_buyer']) }).parse(req.body);
+    const { action } = z.object({ action: z.enum(['dismiss', 'remove_content', 'suspend_user', 'ban_user']) }).parse(req.body);
     const r = await prisma.report.findUniqueOrThrow({ where: { id: req.params.id } });
-
-    // Marketplace disputes resolve through the escrow flow, not content
-    // moderation -- release sides with the creator (buyer's claim rejected,
-    // same as dismissing it), refund sides with the buyer (claim upheld,
-    // same as any other actioned report).
-    if (r.targetType === 'listing_order') {
-      if (action !== 'release_escrow' && action !== 'refund_buyer') {
-        return { error: 'listing_order reports only take release_escrow or refund_buyer' };
-      }
-      await prisma.$transaction((tx) => resolveDispute(tx, r.targetId, action === 'release_escrow' ? 'release' : 'refund'));
-      return prisma.report.update({ where: { id: r.id }, data: { status: action === 'release_escrow' ? 'DISMISSED' : 'ACTIONED', resolvedBy: req.user.id } });
-    }
-
-    if (action === 'release_escrow' || action === 'refund_buyer') {
-      return { error: 'release_escrow/refund_buyer only apply to listing_order reports' };
-    }
 
     if (action !== 'dismiss') {
       if (r.targetType === 'post') await prisma.post.update({ where: { id: r.targetId }, data: { removed: true } });

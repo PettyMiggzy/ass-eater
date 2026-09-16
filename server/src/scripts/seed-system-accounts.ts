@@ -1,16 +1,15 @@
 import { prisma } from '../lib/prisma';
-import { PLATFORM_ID, ESCROW_ID } from '../core/ledger';
+import { PLATFORM_ID } from '../core/ledger';
 
-// The ledger posts fees/escrow to these two pseudo-users as ordinary
-// Account rows -- they need a real User row to hang off of first. Idempotent,
-// safe to run on every deploy (upsert, not create). Previously undocumented
-// for PLATFORM_ID -- tests created it ad hoc in beforeEach, production never
-// had an equivalent step. Run once after `prisma migrate deploy`:
+// The ledger posts platform fees to PLATFORM_ID as an ordinary Account row --
+// it needs a real User row to hang off of first. Idempotent, safe to run on
+// every deploy (upsert, not create). Previously undocumented -- tests
+// created it ad hoc in beforeEach, production never had an equivalent step.
+// Run once after `prisma migrate deploy`:
 //   node dist/scripts/seed-system-accounts.js
 
 const SYSTEM_ACCOUNTS = [
   { id: PLATFORM_ID, email: 'treasury@internal', username: '__platform__' },
-  { id: ESCROW_ID, email: 'escrow@internal', username: '__escrow__' },
 ];
 
 async function main() {

@@ -1,9 +1,6 @@
 import { Prisma, PrismaClient, TxType } from '@prisma/client';
 
 export const PLATFORM_ID = '00000000-0000-0000-0000-000000000000';
-// Holds a physical marketplace order's creator payout between purchase and
-// delivery confirmation/auto-release/dispute resolution -- see core/escrow.ts.
-export const ESCROW_ID = '00000000-0000-0000-0000-000000000001';
 
 export const FEES = {
   DEFAULT_BPS: 1000, // 10% — standard platform cut

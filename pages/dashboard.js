@@ -537,8 +537,10 @@ function Inbox({ currentUserId }) {
   );
 }
 
+const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false };
+
 function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleStatus }) {
-  const [form, setForm] = useState({ title: '', description: '', price: '', unlimited: true, physical: false, shipping: '' });
+  const [form, setForm] = useState(BLANK_LISTING_FORM);
   const [creating, setCreating] = useState(false);
 
   const submit = async (e) => {
@@ -550,9 +552,10 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
     const listing = await onCreate({
       title: form.title, description: form.description, priceCents, unlimited: form.unlimited,
       kind: form.physical ? 'physical' : 'digital', shippingCents,
+      signatureRequired: form.physical && form.signatureRequired,
     });
     setCreating(false);
-    if (listing) setForm({ title: '', description: '', price: '', unlimited: true, physical: false, shipping: '' });
+    if (listing) setForm(BLANK_LISTING_FORM);
   };
 
   return (
@@ -605,15 +608,25 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
           Physical item — ships to the buyer (no inventory tracking yet, one listing = one item to ship)
         </label>
         {form.physical && (
-          <input
-            value={form.shipping}
-            onChange={(e) => setForm({ ...form, shipping: e.target.value })}
-            placeholder="Shipping fee (USD, 0 for free shipping)"
-            type="number"
-            min="0"
-            step="0.01"
-            className="sm:col-span-2 w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
-          />
+          <>
+            <input
+              value={form.shipping}
+              onChange={(e) => setForm({ ...form, shipping: e.target.value })}
+              placeholder="Shipping fee (USD, 0 for free shipping)"
+              type="number"
+              min="0"
+              step="0.01"
+              className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+            />
+            <label className="flex items-center gap-2 text-sm text-gray-400">
+              <input
+                type="checkbox"
+                checked={form.signatureRequired}
+                onChange={(e) => setForm({ ...form, signatureRequired: e.target.checked })}
+              />
+              Require signature on delivery — your call with the carrier when you ship; price your shipping fee to cover it
+            </label>
+          </>
         )}
         <button type="submit" disabled={creating || busy} className="premium-button text-sm disabled:opacity-50">
           Create Listing
@@ -631,7 +644,7 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
                   <p className="font-bold text-white">{l.title} — ${(l.priceCents / 100).toFixed(2)}</p>
                   <p className="text-xs text-gray-500">
                     {l.status} · {l.unlimited ? 'unlimited' : 'one-of-a-kind'}
-                    {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping)` : ' (free shipping)'}`}
+                    {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping)` : ' (free shipping)'}${l.signatureRequired ? ' · signature required' : ''}`}
                   </p>
                 </div>
                 {l.status !== 'sold' && (
@@ -735,6 +748,9 @@ function OrdersToShip() {
             return (
               <div key={o.id} className="premium-card border border-brand-purple/20 p-4">
                 <p className="text-sm text-white font-bold">Order #{o.id} — ${(o.priceCents / 100).toFixed(2)}{o.shippingCents ? ` + $${(o.shippingCents / 100).toFixed(2)} shipping` : ''}</p>
+                {o.signatureRequired && (
+                  <p className="text-xs text-brand-gold mt-1">Select signature confirmation with your carrier for this one — you marked this listing as requiring it.</p>
+                )}
                 <p className="text-xs text-gray-400 mt-1">
                   {addr.fullName}<br />
                   {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}<br />

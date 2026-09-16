@@ -40,6 +40,7 @@ export default async function handler(req, res) {
       priceCents: listing.priceCents,
       shippingCents: listing.shippingCents,
       kind: listing.kind,
+      signatureRequired: listing.signatureRequired,
       shippingAddress: listing.kind === 'physical' ? shippingAddress : null,
     });
     return res.status(200).json({ ok: true, order });

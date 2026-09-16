@@ -55,14 +55,10 @@ enum ListingKind {
   PHYSICAL
 }
 
-enum FulfillmentStatus {
-  DIGITAL              // instant -- unlocking the media IS delivery, nothing is ever held in escrow
+enum ShipStatus {
+  DIGITAL              // instant -- unlocking the media IS delivery
   AWAITING_SHIPMENT
   SHIPPED
-  DELIVERED_CONFIRMED
-  DISPUTED
-  AUTO_RELEASED
-  REFUNDED
 }
 
 enum ListingStatus {
@@ -236,6 +232,7 @@ model Listing {
   unlimited   Boolean        @default(false) // true = digital good, sellable to many buyers; false = one-of-a-kind, SOLD after first purchase
   kind        ListingKind    @default(DIGITAL)
   shippingCents Int          @default(0) // flat fee the creator sets, physical only -- no address-based rate calculation
+  signatureRequired Boolean  @default(false) // advisory only -- we don't integrate with any carrier, this just reminds the creator and tells the buyer. See MARKETPLACE_FULFILLMENT.md.
   images      String[]       @default([]) // free public preview photos (physical items)
   media       Media[] // the actual digital product, gated until purchased -- see core/access.ts canViewListing
   status      ListingStatus  @default(ACTIVE)
@@ -245,35 +242,30 @@ model Listing {
   @@index([status, createdAt])
 }
 
-// Physical orders hold the creator's net proceeds in the ESCROW_ID pseudo-account
-// (see core/ledger.ts) instead of paying out at purchase time -- released on
-// buyer confirmation, auto-release after MARKETPLACE_AUTO_RELEASE_DAYS, or an
-// admin's dispute resolution. Digital orders skip all of this: unlocking the
-// media IS delivery, so they pay out immediately like before this existed.
+// The creator gets paid at purchase time, physical or digital -- no escrow.
+// Shipping method (and whether to require a signature) is the creator's own
+// call; ship status here is for buyer/creator visibility only, it never
+// gates a payout. See MARKETPLACE_FULFILLMENT.md.
 model ListingOrder {
-  id                String            @id @default(uuid())
-  listingId         String
-  listing           Listing           @relation(fields: [listingId], references: [id])
-  buyerId           String
-  buyer             User              @relation(fields: [buyerId], references: [id])
-  priceCents        Int // locked at purchase
-  shippingCents     Int               @default(0) // locked at purchase, physical only
-  platformFeeCents  Int // 10% commission (on priceCents only, not shipping)
-  listingFeeCents   Int // 5% listing fee (on priceCents only, not shipping)
-  ageConfirmedAt    DateTime // explicit 18+ marketplace confirmation, separate from account-level DOB check
-  tosVersion        String
-  createdAt         DateTime          @default(now())
+  id               String     @id @default(uuid())
+  listingId        String
+  listing          Listing    @relation(fields: [listingId], references: [id])
+  buyerId          String
+  buyer            User       @relation(fields: [buyerId], references: [id])
+  priceCents       Int // locked at purchase
+  shippingCents    Int        @default(0) // locked at purchase, physical only
+  platformFeeCents Int // 10% commission (on priceCents only, not shipping)
+  listingFeeCents  Int // 5% listing fee (on priceCents only, not shipping)
+  ageConfirmedAt   DateTime // explicit 18+ marketplace confirmation, separate from account-level DOB check
+  tosVersion       String
+  createdAt        DateTime   @default(now())
 
-  fulfillmentStatus FulfillmentStatus @default(DIGITAL)
-  netCentsHeld      Int               @default(0) // creator's net + shipping, sitting in ESCROW_ID while physical and unresolved; 0 once released/refunded
-  carrier           String?
-  trackingNumber    String?
-  shippedAt         DateTime?
-  autoReleaseAt     DateTime? // shippedAt + MARKETPLACE_AUTO_RELEASE_DAYS; the auto-release worker sweeps on this
-  releasedAt        DateTime?
-  disputedAt        DateTime?
+  shipStatus       ShipStatus @default(DIGITAL)
+  carrier          String?
+  trackingNumber   String?
+  shippedAt        DateTime?
 
-  @@index([fulfillmentStatus, autoReleaseAt])
+  @@index([shipStatus])
 }
 
 model Post {
