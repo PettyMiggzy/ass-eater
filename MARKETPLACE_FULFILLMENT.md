@@ -53,32 +53,59 @@ different from an instant digital unlock. For a physical item that's the
 platform paying a seller in full before anything has shipped, delivered, or
 been confirmed — if the seller never ships, ships the wrong thing, or the
 item is lost, the platform has already released the money and is the one
-left holding the dispute. Same shape as eBay/Amazon buyer protection now:
+left holding the dispute.
+
+The first version of this held funds for a flat 14 days and required an
+admin to personally decide who was telling the truth on every dispute
+("buyer says it never arrived" vs. "creator says it shipped fine"). Both of
+those were the wrong call: 14 days is a long time for a creator to wait on
+money for something already sold, and the platform has no better evidence
+than either party does — putting it in the position of adjudicating "who's
+lying" is real liability for no benefit, and it's exactly the kind of
+he-said/she-said a buyer could exploit by falsely claiming non-delivery.
+Redesigned around two rules instead: **pay out fast by default, and never
+force the platform to referee a factual dispute.**
+
 - **Purchase**: the buyer's charge posts as before, but a physical order's
   net proceeds (+ shipping) go into the `ESCROW_ID` pseudo-account
   (`core/ledger.ts`), not the creator's balance. `ListingOrder` starts at
   `AWAITING_SHIPMENT`.
 - **Ship** (`POST /listings/orders/:id/ship`, creator-only): records
-  carrier + tracking, starts a `MARKETPLACE_AUTO_RELEASE_DAYS` (default 14)
-  countdown. Still doesn't move money.
+  carrier + tracking, starts a `MARKETPLACE_AUTO_RELEASE_DAYS` (default
+  **5**) countdown — most domestic shipping arrives well inside that.
 - **Confirm receipt** (`POST /listings/orders/:id/confirm-receipt`,
-  buyer-only): releases escrow to the creator immediately.
+  buyer-only): releases escrow to the creator immediately, doesn't wait for
+  the clock.
 - **Auto-release** (`workers/escrow-auto-release.ts`, hourly sweep): pays
-  the creator the same way if the buyer never confirms and the window
-  passes with no dispute — a buyer going silent isn't a reason to hold a
-  creator's money forever.
-- **Dispute** (`POST /listings/orders/:id/dispute`, buyer-only): freezes
-  the clock and files a `Report` (`targetType: 'listing_order'`) into the
-  existing admin queue rather than building a second resolution UI. An
-  admin resolves it via the same `/admin/reports/:id/resolve` endpoint with
-  a new `release_escrow` (creator was right) or `refund_buyer` (buyer was
-  right — also claws back the platform's own fee, since a sale that didn't
-  happen shouldn't leave the platform still holding a cut of it) action.
+  the creator the same way once the clock runs out, buyer silent or not.
+  **This is the default outcome, not a fallback** — nothing about disputing
+  changes it.
+- **Dispute** (`POST /listings/orders/:id/dispute`, buyer-only): does
+  **not** freeze the money or force an admin decision. It buys
+  `MARKETPLACE_DISPUTE_GRACE_DAYS` (default **5**) more time on the *same*
+  clock, so buyer and creator can actually talk (existing Inbox messaging),
+  and logs a `Report` for visibility. If neither side does anything before
+  the grace period runs out, it auto-releases to the creator anyway — a
+  dispute is a pause button, not a hold-forever button. A buyer falsely
+  claiming non-delivery gains nothing but a few extra days' delay unless
+  they can actually convince the creator.
+- **Voluntary refund** (`POST /listings/orders/:id/refund`, creator-only,
+  new): the creator's own call, any time before release, no dispute or
+  admin sign-off needed. If a buyer convinces them directly (or they just
+  don't want the hassle), they can refund on their own — this is the real
+  "let them decide between them" path.
+- **Admin override** (`/admin/reports/:id/resolve` with `release_escrow` /
+  `refund_buyer`): kept, but reframed as a rare manual override for a case
+  that actually needs the platform to step in (a filed chargeback, a clear
+  fraud pattern, a legal request) — **not** the default path for an
+  ordinary dispute. Most disputes should resolve via direct buyer/creator
+  contact or simply time out.
 
 All of this lives in `core/escrow.ts`, kept separate from the Fastify route
 handlers so it's unit-testable the same way `core/ledger.ts` is (see
-`core/escrow.test.ts` — 12 tests, including that a released/refunded order
-can never be released twice, and that only the actual buyer/creator on an
+`core/escrow.test.ts` — 16 tests, including that a dispute's grace period
+still auto-releases if nobody acts, that a released/refunded order can
+never be released twice, and that only the actual buyer/creator on an
 order can act on it).
 
 **On "getting liability off the platform":** escrow is the real mechanism —
@@ -95,6 +122,11 @@ Worth a real ToS review alongside this, not a substitute for one.
 rows the ledger posts to. This was a pre-existing gap for `PLATFORM_ID`
 specifically: tests created it ad hoc in `beforeEach`, production never had
 an equivalent bootstrap step.
+
+**Also fixed while here:** `npm run build` was compiling `*.test.ts` files
+into `dist/`, and Vitest's default glob picked up both the source and
+compiled copies — silently running every test twice. `tsconfig.json` now
+excludes test files from the build.
 
 ## What's NOT done yet, on purpose
 

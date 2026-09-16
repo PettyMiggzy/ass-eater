@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../core/ledger';
-import { holdInEscrow, markShipped, confirmReceipt, disputeOrder } from '../core/escrow';
+import { holdInEscrow, markShipped, confirmReceipt, disputeOrder, voluntaryRefund } from '../core/escrow';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 const PLATFORM_FEE_BPS = 1000; // 10% commission on the sale
@@ -167,4 +167,8 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     const { reason } = z.object({ reason: z.string().min(1).max(1000) }).parse(req.body);
     return prisma.$transaction((tx) => disputeOrder(tx, req.params.id, req.user.id, reason));
   });
+
+  // Creator's own call, no dispute or admin sign-off needed -- see core/escrow.ts's voluntaryRefund.
+  app.post('/listings/orders/:id/refund', { preHandler: app.creatorOk }, async (req: any) =>
+    prisma.$transaction((tx) => voluntaryRefund(tx, req.params.id, req.user.id)));
 };

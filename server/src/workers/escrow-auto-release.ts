@@ -2,16 +2,18 @@ import { prisma } from '../lib/prisma';
 import { autoRelease } from '../core/escrow';
 
 // A creator shouldn't have to depend on a buyer actually clicking "confirm
-// receipt" to ever get paid -- this sweeps SHIPPED physical orders whose
-// auto-release window has passed with no dispute, and pays them out the same
-// way confirmReceipt would. Same protection eBay/Amazon marketplaces give
-// sellers against a buyer who received the item and just never confirms.
+// receipt" (or a dispute actually getting resolved) to ever get paid -- this
+// sweeps physical orders whose clock has run out with nothing further from
+// the buyer, and pays them out the same way confirmReceipt would. Covers
+// both a plain unresolved shipment and a dispute whose grace period expired
+// unresolved (see core/escrow.ts's disputeOrder) -- same money movement,
+// same reasoning either way: silence favors whoever already performed.
 
 const INTERVAL_MS = Number(process.env.ESCROW_SWEEP_INTERVAL_MS ?? 3_600_000); // hourly is plenty; this isn't time-sensitive
 
 async function sweep() {
   const due = await prisma.listingOrder.findMany({
-    where: { fulfillmentStatus: 'SHIPPED', autoReleaseAt: { lte: new Date() } },
+    where: { fulfillmentStatus: { in: ['SHIPPED', 'DISPUTED'] }, autoReleaseAt: { lte: new Date() } },
     select: { id: true },
   });
   for (const { id } of due) {
