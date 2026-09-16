@@ -24,13 +24,27 @@ collected/claimed** (exact vesting curve/cap not yet specified as of
   move 40% of supply is a meaningful tail risk for pool depth/slippage
   assumptions once vesting completes.
 
+**Decided (2026-09-16): no code/UI action needed on this right now.** The
+allocation just sits unclaimed in the launch/deploy contract until the
+30-day window is up -- deliberately not surfacing it on the site or in
+marketing before then ("no reason to scare people right now" / "no reason to
+jump the gun"). Once claimable, the plan is a **separate treasury wallet**
+(not yet created) that the owner will withdraw into and use for marketing
+spend. Don't build a vesting/claim contract or add any founder-allocation
+UI/disclosure unless asked -- this is intentionally quiet until launch.
+
 ## Branding
 
-Keeping the **onlyass.fun domain**, but planning to change the **product/brand
-name** (not the domain) -- explicit "Only Ass" branding is a real problem for
-mainstream ad platforms (Google/Meta/TikTok Ads all prohibit adult content
-ads regardless of brand name, so a rename mainly helps with stigma/press/App
-Store listing/word-of-mouth, not with unlocking those ad platforms directly,
-since they review actual site content). Current thinking: advertise
-primarily on adult ad networks under whatever new name is picked, since
-mainstream paid ads are blocked by the content itself, not just the name.
+**Decided (2026-09-16): no rename.** Considered changing the product name
+while keeping the onlyass.fun domain (see rationale below, kept for
+context), but concluded there's no clean way to do it and is keeping the
+name as-is. Don't propose or build toward a rename unless the user brings it
+back up.
+
+Original reasoning, for context: explicit "Only Ass" branding is a real
+problem for mainstream ad platforms (Google/Meta/TikTok Ads all prohibit
+adult content ads regardless of brand name -- they review actual site
+content, not just the name -- so a rename would mainly have helped with
+stigma/press/App Store listing/word-of-mouth, not with unlocking those ad
+platforms directly). Current plan either way: advertise primarily on adult
+ad networks, since mainstream paid ads are blocked by the content itself.
