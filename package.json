@@ -13,7 +13,11 @@
     "contracts:deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
     "contracts:deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
     "launchpad:deploy:robinhood-testnet": "hardhat run scripts/deploy-launchpad.js --network robinhood-testnet",
-    "launchpad:deploy:robinhood": "hardhat run scripts/deploy-launchpad.js --network robinhood"
+    "launchpad:deploy:robinhood": "hardhat run scripts/deploy-launchpad.js --network robinhood",
+    "onlyass:deploy-token:robinhood-testnet": "hardhat run scripts/deploy-onlyass-token.js --network robinhood-testnet",
+    "onlyass:deploy-token:robinhood": "hardhat run scripts/deploy-onlyass-token.js --network robinhood",
+    "onlyass:seed-pool:robinhood-testnet": "hardhat run scripts/seed-onlyass-pool.js --network robinhood-testnet",
+    "onlyass:seed-pool:robinhood": "hardhat run scripts/seed-onlyass-pool.js --network robinhood"
   },
   "repository": {
     "type": "git",
@@ -44,6 +48,7 @@
     "@tailwindcss/postcss": "^4.3.3",
     "@uniswap/v2-core": "^1.0.1",
     "@uniswap/v2-periphery": "^1.1.0-beta.0",
+    "@uniswap/v3-core": "^1.0.1",
     "hardhat": "^2.29.1"
   }
 }
