@@ -25,6 +25,14 @@ export default function Privacy() {
                   to keep that verification valid and to meet our legal recordkeeping obligations.
                 </li>
                 <li>
+                  <strong>Fan age-verification info.</strong> Some states now require real age verification
+                  (not just a checkbox) before an adult site can let a visitor in. Where that applies, we
+                  use a third-party age-verification vendor to confirm you're of legal age — see Section 6.
+                  That vendor handles whatever information their verification method requires (e.g., a
+                  government-issued ID or a database match) under their own privacy terms; we retain only
+                  what's needed to know your visit was verified.
+                </li>
+                <li>
                   <strong>Content.</strong> Anything you upload — creator posts and media, marketplace
                   listings, messages, wall comments.
                 </li>
@@ -91,11 +99,12 @@ export default function Privacy() {
 
             <Section title="6. Third-Party Services">
               <p>
-                We use infrastructure providers (hosting, file storage, and — for creators — an identity
-                verification vendor) to run the Platform. Those providers can access the specific data
-                needed to perform their function (e.g., storage providers hold uploaded files; the
-                verification vendor handles ID documents) under their own confidentiality and security
-                obligations — we don't hand any of them more than what's needed for that purpose.
+                We use infrastructure providers (hosting, file storage, an identity verification vendor
+                for creators, and an age-verification vendor, AgeChecker.Net, for fans in states that
+                require it) to run the Platform. Those providers can access the specific data needed to
+                perform their function (e.g., storage providers hold uploaded files; the verification
+                vendors handle ID documents) under their own confidentiality and security obligations — we
+                don't hand any of them more than what's needed for that purpose.
               </p>
             </Section>
 
