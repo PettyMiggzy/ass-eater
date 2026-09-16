@@ -215,3 +215,33 @@ category of vendor-compliance problem this session already hit with
 Transak/Circle's Arc (both confirmed to ban adult content too) -- pattern
 to remember: mainstream/general-purpose payment rails reliably say no to
 this vertical; the adult-industry-specific ones are the actual answer.
+
+Checked ease of signup for those four: **Epoch is the easiest** -- it acts
+as a payment facilitator, so a new merchant often doesn't need to secure
+its own separate high-risk merchant account at all (lowest barrier for a
+platform with no track record yet). Segpay/Vendo are a full KYC paperwork
+packet + a working site, then roughly a-week-or-less approval. CCBill is
+the most established/trusted name but the slowest (2-3 weeks) and most
+expensive (10.8-14.5% per transaction + $500-1,000/yr registration fee).
+**All four require a live, working site with real ToS/privacy
+policy/age-verification/contact info already in place before they'll even
+review an application** -- none pre-approve off a promise, so the actual
+site needs to look and function like a real business first, regardless of
+which processor gets picked later.
+
+## Creator tags + browse-by-tag (shipped 2026-09-16)
+
+Built the piece of "make it easier to find creators" that was flagged as
+roadmap: creators can now set up to 8 tags on their own profile (dashboard
+-> Tags field, comma-separated -- `lib/creators-store.js`'s `sanitizeTags`
+normalizes/dedupes/lowercases them, wired into both `/api/me/profile` and
+`/api/admin/profile`). A creator's tags show as clickable `#tag` chips on
+their profile page. `/search` now supports `?tag=`, and when nobody's
+searching for anything yet it shows a "Browse by tag" chip cloud built from
+every tag any creator has set, instead of just a blank "type something"
+prompt. Seed creators (`data/creators.js`) got real tags too so this isn't
+empty at launch.
+
+Still just simple exact-tag matching, no synonym/fuzzy matching, no
+tag-combination filtering (AND/OR across multiple tags at once) -- fine for
+launch, worth revisiting if the tag list grows large.

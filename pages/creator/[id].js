@@ -175,6 +175,20 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
           <p className="text-gray-400 text-sm mb-1">{creator.handle} · <span className="text-green-400">Online now</span></p>
           <p className="text-gray-300 mt-3 mb-3">{creator.bio}</p>
 
+          {Array.isArray(creator.tags) && creator.tags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-4">
+              {creator.tags.map((tag) => (
+                <a
+                  key={tag}
+                  href={`/search?tag=${encodeURIComponent(tag)}`}
+                  className="text-xs px-3 py-1 rounded-full bg-brand-purple/15 border border-brand-purple/30 text-brand-gold hover:bg-brand-purple/30 transition"
+                >
+                  #{tag}
+                </a>
+              ))}
+            </div>
+          )}
+
           {creator.socials && Object.values(creator.socials).some(Boolean) && (
             <div className="flex flex-wrap gap-2 mb-6">
               {creator.socials.twitter && (

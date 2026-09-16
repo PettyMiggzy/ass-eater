@@ -6,15 +6,19 @@ import { getListings } from '../lib/listings-store';
 
 export async function getServerSideProps({ query }) {
   const q = String(query.q || '').trim().toLowerCase();
+  const tag = String(query.tag || '').trim().toLowerCase();
   const [allCreators, allListings] = await Promise.all([getCreators(), getListings()]);
+  const visibleCreators = allCreators.filter((c) => c.status !== 'pending');
 
-  const creators = q
-    ? allCreators.filter((c) => c.status !== 'pending' && (
+  const creators = tag
+    ? visibleCreators.filter((c) => Array.isArray(c.tags) && c.tags.includes(tag))
+    : q
+    ? visibleCreators.filter((c) =>
         c.name?.toLowerCase().includes(q) || c.handle?.toLowerCase().includes(q) || c.bio?.toLowerCase().includes(q)
-      ))
+      )
     : [];
 
-  const listings = q
+  const listings = !tag && q
     ? allListings
         .filter((l) => l.status === 'active' && (l.title.toLowerCase().includes(q) || (l.description || '').toLowerCase().includes(q)))
         .map((l) => {
@@ -23,10 +27,14 @@ export async function getServerSideProps({ query }) {
         })
     : [];
 
-  return { props: { q, creators, listings } };
+  // Every distinct tag any creator has set, for the browse-by-tag cloud shown
+  // when nobody's searching for anything specific yet.
+  const allTags = [...new Set(visibleCreators.flatMap((c) => (Array.isArray(c.tags) ? c.tags : [])))].sort();
+
+  return { props: { q, tag, creators, listings, allTags } };
 }
 
-export default function Search({ q, creators, listings }) {
+export default function Search({ q, tag, creators, listings, allTags }) {
   const router = useRouter();
   const [value, setValue] = useState(q);
 
@@ -35,12 +43,14 @@ export default function Search({ q, creators, listings }) {
     router.push(`/search?q=${encodeURIComponent(value)}`);
   };
 
+  const browsing = !q && !tag;
+
   return (
     <>
       <Head><title>Search - Only Ass</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
         <div className="max-w-4xl mx-auto">
-          <form onSubmit={submit} className="mb-10">
+          <form onSubmit={submit} className="mb-6">
             <input
               autoFocus
               value={value}
@@ -50,10 +60,38 @@ export default function Search({ q, creators, listings }) {
             />
           </form>
 
-          {!q ? (
-            <p className="text-gray-500">Type something to search creators and the marketplace.</p>
+          {allTags.length > 0 && (
+            <div className="mb-10">
+              <h2 className="text-sm font-bold text-brand-gold uppercase tracking-wide mb-3">Browse by tag</h2>
+              <div className="flex flex-wrap gap-2">
+                {allTags.map((t) => (
+                  <a
+                    key={t}
+                    href={`/search?tag=${encodeURIComponent(t)}`}
+                    className={`text-xs px-3 py-1.5 rounded-full border transition ${
+                      tag === t
+                        ? 'bg-brand-gold text-black border-transparent font-bold'
+                        : 'bg-brand-purple/15 border-brand-purple/30 text-brand-gold hover:bg-brand-purple/30'
+                    }`}
+                  >
+                    #{t}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {tag && (
+            <p className="text-gray-400 mb-6">
+              Showing creators tagged <span className="text-brand-gold font-bold">#{tag}</span> ·{' '}
+              <a href="/search" className="underline">clear</a>
+            </p>
+          )}
+
+          {browsing ? (
+            allTags.length === 0 && <p className="text-gray-500">Type something to search creators and the marketplace.</p>
           ) : creators.length === 0 && listings.length === 0 ? (
-            <p className="text-gray-500">No results for "{q}".</p>
+            <p className="text-gray-500">No results for "{tag ? `#${tag}` : q}".</p>
           ) : (
             <div className="space-y-10">
               {creators.length > 0 && (

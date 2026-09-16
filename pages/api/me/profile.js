@@ -1,5 +1,5 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
-import { updateCreatorProfile, sanitizeSocials } from '../../../lib/creators-store';
+import { updateCreatorProfile, sanitizeSocials, sanitizeTags } from '../../../lib/creators-store';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -16,6 +16,7 @@ export default async function handler(req, res) {
     if (fields && key in fields) safeFields[key] = fields[key];
   }
   if (fields && 'socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
+  if (fields && 'tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
 
   try {
     const creator = await updateCreatorProfile(ctx.creator.id, safeFields);

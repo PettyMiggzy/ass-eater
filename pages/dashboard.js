@@ -38,6 +38,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     name: initialCreator?.name || '',
     handle: initialCreator?.handle || '',
     bio: initialCreator?.bio || '',
+    tags: (initialCreator?.tags || []).join(', '),
     price: initialCreator?.price || '',
     payoutMethod: initialCreator?.payoutMethod || 'onlyass',
     walletAddress: initialCreator?.walletAddress || '',
@@ -70,6 +71,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed');
       setCreator(data.creator);
+      setDraft((d) => ({ ...d, tags: (data.creator.tags || []).join(', ') }));
       setStatus('Saved.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -304,6 +306,16 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Bio</label>
                 <textarea value={draft.bio} onChange={(e) => setDraft({ ...draft, bio: e.target.value })} rows={3} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Tags (up to 8, comma-separated — how fans find you when browsing)</label>
+                <input
+                  value={draft.tags}
+                  onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
+                  placeholder="e.g. cosplay, gym, redhead, asmr"
+                  className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+                />
               </div>
 
               <div>
