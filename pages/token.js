@@ -65,14 +65,17 @@ export default function TokenLanding() {
         <nav className="w-full py-6 px-6">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <span className="text-xl font-black premium-title">$ONLYASS</span>
-            <a
-              href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-1.5 rounded-full bg-gradient-to-r from-brand-gold to-brand-purple text-black font-bold text-sm hover:scale-105 transition"
-            >
-              Join Auction
-            </a>
+            <div className="flex items-center gap-4">
+              <a href="/get-crypto" className="text-sm text-gray-300 hover:text-brand-gold transition">New to crypto?</a>
+              <a
+                href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-1.5 rounded-full bg-gradient-to-r from-brand-gold to-brand-purple text-black font-bold text-sm hover:scale-105 transition"
+              >
+                Join Auction
+              </a>
+            </div>
           </div>
         </nav>
 
