@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../core/ledger';
+import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, isVip, FEES } from '../core/ledger';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION } from '../core/marketplace-fees';
 import { placeBid } from '../core/auctions';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
@@ -111,11 +111,12 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         if (already) return { ok: true, already: true, order: already };
       }
 
-      // No buyer-side discount here -- a subscription, a token-lock, or
-      // paying in $ONLYASS no longer discount anything on their own.
-      // Staking is meant to be the only fan-facing discount; see
-      // MEMORY.md's "Fee structure & discounts" section for the decision.
-      const chargeCents = l.priceCents;
+      // A subscription, a token-lock, or paying in $ONLYASS no longer
+      // discount anything on their own -- VIP (having burned enough
+      // $ONLYASS, core/vip.ts) is the only thing that does. Discount applies
+      // to the item price only -- shipping is a pass-through carrier cost.
+      const vip = await isVip(tx, req.user.id);
+      const chargeCents = vip ? Math.round((l.priceCents * (10_000 - FEES.VIP_DISCOUNT_BPS)) / 10_000) : l.priceCents;
       const shippingCents = l.kind === 'PHYSICAL' ? l.shippingCents : 0;
       const totalCharge = chargeCents + shippingCents;
 

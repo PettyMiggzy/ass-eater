@@ -50,6 +50,7 @@ enum TxType {
   REFUND
   AUCTION_BID_HOLD
   AUCTION_BID_RELEASE
+  TOKEN_BURN
 }
 
 enum SaleType {
@@ -386,8 +387,22 @@ model Account {
   user         User   @relation(fields: [userId], references: [id])
   balanceCents BigInt @default(0)
   // Funded only by depositing in $ONLYASS directly (see deposit-indexer.ts).
-  // Spending from this pool gets TOKEN_PAYMENT_DISCOUNT_BPS off -- see charge().
+  // No longer discounted just for spending from here -- see charge()/MEMORY.md.
   onlyAssCents BigInt @default(0)
+  // Cumulative whole $ONLYASS tokens this fan has burned via POST /vip/burn
+  // (core/vip.ts). Compared live against PlatformConfig.vipBurnThresholdTokens
+  // -- no stored "isVip" flag, so lowering the threshold later immediately
+  // qualifies anyone who already burned enough for the new bar.
+  vipBurnedTokens Float @default(0)
+}
+
+// Singleton row (id is always 1) for platform-wide numeric knobs that need to
+// change without a redeploy. Currently just the VIP burn threshold -- as
+// $ONLYASS's price moves, the platform can lower (or raise) how many tokens
+// it takes to reach VIP without touching code.
+model PlatformConfig {
+  id                      Int   @id @default(1)
+  vipBurnThresholdTokens  Float @default(10000000)
 }
 
 model LedgerEntry {

@@ -66,18 +66,34 @@ contradicted that, both now removed:
   active subscription OR an active per-creator `TokenLock`) -- deleted from
   `marketplace.ts`'s buy handler.
 
-**A real global "stake $ONLYASS platform-wide for a discount" feature does
-NOT exist and was explicitly declined when offered** (asked whether to build
-one; answer was no). The only "staking"-shaped thing in the codebase is
-`server/src/modules/stake.ts`'s `TokenLock` -- a *per-creator* perk a fan
-pays into (priced by that creator, in USD), unrelated to any site-wide
-discount now. It still waives the creator's own 2% instant-payout fee
-(`payouts.ts`, `stakePerkEnabled`) -- that's a creator-side payout-speed
-perk, a different axis from the fan-side discount question, and was left
-untouched. **Don't reintroduce either removed discount, and don't build a
-global staking discount without asking first** -- if a real staking feature
-gets greenlit later, it needs actual numbers (discount %, stake duration,
-what "for a month" resets on) before building it, not defaults guessed at.
+**Superseded (2026-09-16): "stake for a month" was replaced by "burn for
+VIP" before staking was ever built.** A global stake-based discount was
+offered and explicitly declined; instead, the actual discount mechanic that
+got built is a **one-way $ONLYASS burn**: a fan permanently gives up tokens
+(from their $ONLYASS balance) and once their cumulative burn crosses an
+admin-adjustable threshold (10,000,000 tokens by default), they get the 10%
+discount on everything, no expiry/renewal (framed as a "VIP club," not a
+subscription). The threshold is intentionally adjustable so it can be
+lowered as $ONLYASS's price rises, keeping the real-dollar cost of VIP from
+floating upward forever. Full design in `server/VIP.md`; code in
+`server/src/core/vip.ts` + `server/src/modules/vip.ts` +
+`server/src/modules/admin.ts`'s `/vip-config`. It's a **ledger-side** burn
+right now (destroys the value in the ledger, doesn't yet execute a real
+on-chain burn transaction) -- see VIP.md for why that's a deliberate, later-
+revisitable scope cut, not an oversight.
+
+The pre-existing `server/src/modules/stake.ts` `TokenLock` (a *per-creator*
+perk a fan pays into, priced by that creator) is unrelated to VIP and was
+left as its own thing -- it still waives the creator's own 2% instant-payout
+fee (`payouts.ts`, `stakePerkEnabled`), a creator-side payout-speed perk on
+a different axis from the fan-side VIP discount.
+
+Also raised, explicitly deferred rather than built: creators who launch
+their own token via the launchpad will likely want to charge fans in that
+token specifically ("let them decide what they want to do"). `payAsset`/
+`payoutAsset` stay `USD | ONLYASS` only for now -- a third, per-creator
+payment asset needs real per-token price oracles and balance pools, not a
+small addition. Don't build it without asking first.
 
 Every other rate already matches the flat-10% rule and didn't need
 changing: `FEES.DEFAULT_BPS` (subscriptions, tips, message unlocks) is

@@ -1,6 +1,10 @@
 import { Prisma, PrismaClient, TxType } from '@prisma/client';
 
 export const PLATFORM_ID = '00000000-0000-0000-0000-000000000000';
+// Pseudo-account tokens burned via core/vip.ts's burnTokens() are posted to --
+// same shape as PLATFORM_ID, except nothing is ever paid out of this one. Its
+// balance is purely a running "how much value has been burned" ledger record.
+export const BURNED_ID = '00000000-0000-0000-0000-0000000000b0';
 
 export const FEES = {
   DEFAULT_BPS: 1000, // 10% — standard platform cut
@@ -10,9 +14,12 @@ export const FEES = {
   WITHDRAWAL_FLAT_CENTS: 100, // $1 per payout
   WITHDRAWAL_BPS: 100, // +1%
   INSTANT_PAYOUT_BPS: 200, // +2% on top, for skipping the payout queue -- waived if the creator opted into the token-lock perk
+  VIP_DISCOUNT_BPS: 1000, // 10% off any charge for a fan who has burned enough $ONLYASS (see core/vip.ts) -- the only fan-facing discount
   MIN_PAYOUT_CENTS: 2000,
   MIN_TIP_CENTS: 100,
 };
+
+const DEFAULT_VIP_BURN_THRESHOLD_TOKENS = 10_000_000;
 
 export type PayAsset = 'USD' | 'ONLYASS';
 
@@ -23,6 +30,26 @@ export class InsufficientFunds extends Error {
 }
 
 export type Tx = Prisma.TransactionClient;
+
+/** Reads the platform-wide VIP burn bar, in whole $ONLYASS tokens. Admin-adjustable (see modules/vip.ts); falls back to the default if the config row hasn't been created yet. */
+export async function getVipBurnThresholdTokens(tx: Tx): Promise<number> {
+  const config = await tx.platformConfig.findUnique({ where: { id: 1 } });
+  return config?.vipBurnThresholdTokens ?? DEFAULT_VIP_BURN_THRESHOLD_TOKENS;
+}
+
+/**
+ * A fan is VIP once their cumulative burned tokens meet or exceed the
+ * current threshold -- checked live, not cached, so lowering the threshold
+ * later immediately qualifies anyone who already burned enough for the new
+ * bar (see the Account.vipBurnedTokens schema comment).
+ */
+export async function isVip(tx: Tx, userId: string): Promise<boolean> {
+  const [account, threshold] = await Promise.all([
+    tx.account.findUnique({ where: { userId }, select: { vipBurnedTokens: true } }),
+    getVipBurnThresholdTokens(tx),
+  ]);
+  return (account?.vipBurnedTokens ?? 0) >= threshold;
+}
 
 /** Row-locks the account so concurrent charges against the same balance serialize. */
 export async function lockBalance(tx: Tx, userId: string, asset: PayAsset = 'USD'): Promise<bigint> {
@@ -61,9 +88,9 @@ export async function post(
 /**
  * Fan pays creator. Platform takes its cut. Referrer gets a slice of the
  * platform's cut. Paying out of a $ONLYASS-denominated balance (payAsset:
- * 'ONLYASS') no longer discounts the charge itself -- staking is meant to be
- * the only fan-facing discount, so this charges the full grossCents either
- * way; payAsset only decides which balance gets debited.
+ * 'ONLYASS') does not discount the charge on its own -- being VIP (having
+ * burned enough $ONLYASS, see core/vip.ts) is the only thing that does,
+ * regardless of which balance the charge is paid from.
  */
 export async function charge(
   tx: Tx,
@@ -79,7 +106,8 @@ export async function charge(
   if (creator.user.status !== 'ACTIVE') throw new Error('creator_unavailable');
 
   const payAsset: PayAsset = p.payAsset === 'ONLYASS' ? 'ONLYASS' : 'USD';
-  const chargeCents = p.grossCents;
+  const vip = await isVip(tx, p.fanId);
+  const chargeCents = vip ? Math.round((p.grossCents * (10_000 - FEES.VIP_DISCOUNT_BPS)) / 10_000) : p.grossCents;
 
   const bal = await lockBalance(tx, p.fanId, payAsset);
   if (bal < BigInt(chargeCents)) throw new InsufficientFunds();

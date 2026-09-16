@@ -7,6 +7,22 @@ import { deleteObject } from '../lib/s3';
 export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));
 
+  // The one platform-wide numeric knob that needs to move without a
+  // redeploy: as $ONLYASS's price rises, lower how many tokens it takes to
+  // reach VIP (see core/vip.ts) rather than letting the USD cost of VIP
+  // status float upward indefinitely.
+  app.get('/vip-config', async () =>
+    prisma.platformConfig.findUnique({ where: { id: 1 } }) ?? { id: 1, vipBurnThresholdTokens: 10_000_000 });
+
+  app.patch('/vip-config', async (req: any) => {
+    const { vipBurnThresholdTokens } = z.object({ vipBurnThresholdTokens: z.number().positive() }).parse(req.body);
+    return prisma.platformConfig.upsert({
+      where: { id: 1 },
+      create: { id: 1, vipBurnThresholdTokens },
+      update: { vipBurnThresholdTokens },
+    });
+  });
+
   app.get('/reports', async (req: any) =>
     prisma.report.findMany({ where: { status: (req.query.status ?? 'OPEN') as any }, orderBy: { createdAt: 'asc' }, take: 100 }));
 
