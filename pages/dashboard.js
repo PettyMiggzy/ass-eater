@@ -444,6 +444,7 @@ function Inbox({ currentUserId }) {
   const [openId, setOpenId] = useState(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -466,6 +467,7 @@ function Inbox({ currentUserId }) {
     e.preventDefault();
     if (!text.trim() || !open) return;
     setSending(true);
+    setSendError('');
     try {
       const res = await fetch('/api/messages/send', {
         method: 'POST',
@@ -476,6 +478,8 @@ function Inbox({ currentUserId }) {
       if (res.ok) {
         setText('');
         await load();
+      } else {
+        setSendError(data.error || 'Failed to send');
       }
     } finally {
       setSending(false);
@@ -530,6 +534,7 @@ function Inbox({ currentUserId }) {
                   </div>
                 ))}
               </div>
+              {sendError && <p className="text-xs text-red-400 mb-2">{sendError}</p>}
               <form onSubmit={send} className="flex gap-2">
                 <input
                   value={text}

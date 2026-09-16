@@ -293,6 +293,12 @@ export default function AdminPanel() {
             >
               REPORTS
             </button>
+            <button
+              onClick={() => setPage('violations')}
+              className={`pb-3 font-bold text-sm ${page === 'violations' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+            >
+              VIOLATIONS
+            </button>
           </div>
 
           {status && (
@@ -303,6 +309,8 @@ export default function AdminPanel() {
 
           {page === 'reports' ? (
             <ReportsPanel adminKey={adminKey} />
+          ) : page === 'violations' ? (
+            <ViolationsPanel adminKey={adminKey} />
           ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
@@ -610,6 +618,110 @@ function ReportsPanel({ adminKey }) {
                 </div>
               ) : (
                 <p className="text-xs text-gray-500">{r.status} by {r.resolvedBy}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Auto-flagged, blocked sends -- see lib/payment-circumvention-filter.js. The flagged message/post itself was never stored, only this record of who tried and why. */
+function ViolationsPanel({ adminKey }) {
+  const [statusFilter, setStatusFilter] = useState('open');
+  const [violations, setViolations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = async (status) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/violations?status=${status}`, { headers: { 'x-admin-key': adminKey } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load violations');
+      setViolations(data.violations);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(statusFilter); }, [statusFilter]);
+
+  const resolve = async (id, action) => {
+    setBusyId(id);
+    setError('');
+    try {
+      const res = await fetch('/api/admin/violations-resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+        body: JSON.stringify({ id, action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to resolve violation');
+      setViolations(violations.filter((v) => String(v.id) !== String(id)));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const contextLabel = (v) => (v.context === 'wall_post' ? 'Wall comment' : v.context === 'bio' ? 'Profile bio' : 'Direct message');
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+        >
+          <option value="open">Open</option>
+          <option value="dismiss">Dismissed</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+
+      {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : violations.length === 0 ? (
+        <p className="text-sm text-gray-500">No {statusFilter === 'all' ? '' : statusFilter} violations.</p>
+      ) : (
+        <div className="space-y-3">
+          {violations.map((v) => (
+            <div key={v.id} className="premium-card border border-brand-purple/20 p-4">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-bold text-brand-gold">{contextLabel(v)} -- user #{v.userId}</p>
+                <p className="text-[10px] text-gray-600">{new Date(v.createdAt).toLocaleString()}</p>
+              </div>
+              <p className="text-xs text-gray-500 mb-1">Flagged: {v.reasons.join(', ')}</p>
+              <p className="text-sm text-gray-300 mb-3 font-mono break-all">"{v.snippet}"</p>
+              {v.status === 'open' ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => resolve(v.id, 'dismiss')}
+                    disabled={busyId === v.id}
+                    className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+                  >
+                    Dismiss (false positive)
+                  </button>
+                  <button
+                    onClick={() => resolve(v.id, 'confirmed')}
+                    disabled={busyId === v.id}
+                    className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                  >
+                    Confirm violation
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">{v.status} by {v.resolvedBy}</p>
               )}
             </div>
           ))}
