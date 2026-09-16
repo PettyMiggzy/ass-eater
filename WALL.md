@@ -28,16 +28,17 @@ extend it to post-level comments later if it's worth building further.
   local-part of their email so a comment shows a name, not a raw ID or
   "Someone" for everyone.
 
-## Known gap: reports aren't reviewable yet
+## Reports are now reviewable
 
-`addReport()` writes a report; nothing reads it back. Neither the
-marketplace's listing-report button nor this wall's comment-report button
-had an admin review UI before this, and this didn't add one — reports
-currently just accumulate in Blob storage with no dashboard to work
-through them. Worth building before this ships at any real volume: a public
-comment surface without a working report queue behind it is worse than not
-having reports at all, since it implies a safety net that isn't actually
-there yet.
+`/admin` has a REPORTS tab (`ReportsPanel`, `pages/api/admin/reports.js` +
+`reports-resolve.js`) covering both the marketplace's listing-report button
+and this wall's comment-report button — filterable by status, with
+**Dismiss** or **Remove Content** per report (removing a listing sets it to
+`removed`; removing a wall comment deletes it via the same path its own
+author/owner would use). Still no user suspend/ban action from this panel
+(the live site's `users-store.js` has no ban/suspend concept at all yet,
+unlike `server/`'s Postgres backend which does) — for now, repeat offenders
+are a manual `users.json` edit, not a button.
 
 ## Why images are last on the roadmap, not in this pass
 

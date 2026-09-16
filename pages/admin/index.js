@@ -10,6 +10,7 @@ export default function AdminPanel() {
   const [draft, setDraft] = useState({});
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState('creators');
 
   const authHeaders = { 'x-admin-key': adminKey };
 
@@ -249,10 +250,10 @@ export default function AdminPanel() {
       <Head><title>Admin Panel - Only Ass</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
         <div className="max-w-6xl mx-auto">
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-4">
             <h1 className="text-3xl font-black premium-title">Model Admin Panel</h1>
             <div className="flex gap-3">
-              {creators.length > 0 && (
+              {page === 'creators' && creators.length > 0 && (
                 <button
                   onClick={removeAllCreators}
                   disabled={busy}
@@ -261,10 +262,27 @@ export default function AdminPanel() {
                   Delete All
                 </button>
               )}
-              <button onClick={addCreator} disabled={busy} className="premium-button disabled:opacity-50">
-                + Add Model
-              </button>
+              {page === 'creators' && (
+                <button onClick={addCreator} disabled={busy} className="premium-button disabled:opacity-50">
+                  + Add Model
+                </button>
+              )}
             </div>
+          </div>
+
+          <div className="flex gap-6 border-b border-brand-gold/20 mb-6">
+            <button
+              onClick={() => setPage('creators')}
+              className={`pb-3 font-bold text-sm ${page === 'creators' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+            >
+              CREATORS
+            </button>
+            <button
+              onClick={() => setPage('reports')}
+              className={`pb-3 font-bold text-sm ${page === 'reports' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+            >
+              REPORTS
+            </button>
           </div>
 
           {status && (
@@ -273,6 +291,9 @@ export default function AdminPanel() {
             </div>
           )}
 
+          {page === 'reports' ? (
+            <ReportsPanel adminKey={adminKey} />
+          ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
             <div className="md:col-span-1 space-y-3">
@@ -465,6 +486,7 @@ export default function AdminPanel() {
               )}
             </div>
           </div>
+          )}
         </div>
       </div>
     </>
@@ -481,6 +503,108 @@ function Field({ label, value, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
       />
+    </div>
+  );
+}
+
+function ReportsPanel({ adminKey }) {
+  const [statusFilter, setStatusFilter] = useState('open');
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = async (status) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/reports?status=${status}`, { headers: { 'x-admin-key': adminKey } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load reports');
+      setReports(data.reports);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(statusFilter); }, [statusFilter]);
+
+  const resolve = async (id, action) => {
+    setBusyId(id);
+    setError('');
+    try {
+      const res = await fetch('/api/admin/reports-resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+        body: JSON.stringify({ id, action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to resolve report');
+      setReports(reports.filter((r) => String(r.id) !== String(id)));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const targetLabel = (r) => (r.targetType === 'wall_post' ? 'Wall comment' : r.targetType === 'listing' ? 'Marketplace listing' : r.targetType);
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+        >
+          <option value="open">Open</option>
+          <option value="dismissed">Dismissed</option>
+          <option value="actioned">Actioned</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+
+      {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : reports.length === 0 ? (
+        <p className="text-sm text-gray-500">No {statusFilter === 'all' ? '' : statusFilter} reports.</p>
+      ) : (
+        <div className="space-y-3">
+          {reports.map((r) => (
+            <div key={r.id} className="premium-card border border-brand-purple/20 p-4">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-bold text-brand-gold">{targetLabel(r)} #{r.targetId}</p>
+                <p className="text-[10px] text-gray-600">{new Date(r.createdAt).toLocaleString()}</p>
+              </div>
+              <p className="text-sm text-gray-300 mb-3">{r.reason}</p>
+              {r.status === 'open' ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => resolve(r.id, 'dismiss')}
+                    disabled={busyId === r.id}
+                    className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+                  >
+                    Dismiss
+                  </button>
+                  <button
+                    onClick={() => resolve(r.id, 'remove_content')}
+                    disabled={busyId === r.id}
+                    className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                  >
+                    Remove Content
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">{r.status} by {r.resolvedBy}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
