@@ -559,6 +559,47 @@ included) or custom Enterprise for high volume. VerifyMy (the other
 adult-specific one flagged earlier) also doesn't publish pricing, same
 enterprise-quote pattern as Yoti.
 
-**Telegram: founder said they'll send the invite link next** -- nothing
-to do until that arrives, noted here so it isn't dropped if this session
-gets compacted before the link shows up.
+**Telegram: link received, added 2026-09-16** -- `https://t.me/creatorsfirst`,
+in the homepage footer and on `/blocked-region` (a "join for updates" button
+for geoblocked visitors instead of a dead end).
+
+**Decided: going with AgeChecker.Net.** Founder pasted their customer ToS
+before accepting -- reviewed it plainly (not a lawyer): it's a normal
+boilerplate B2B SaaS contract, nothing predatory, but it explicitly does
+**not** protect against the thing the founder is actually worried about --
+Section 12.2 disclaims that verification results are "sufficient for
+Customer's legal obligations," and Section 13.1/13.2 explicitly excludes
+regulatory penalties from damages and caps AgeChecker's total liability at
+fees paid in the last 12 months (likely a few hundred dollars/year at this
+volume). If their check somehow fails and a state fines the platform, that
+fine is entirely the platform's to eat -- true of every vendor in this
+space at any price, not unique to AgeChecker, but worth being clear-eyed
+about. Concrete follow-up flagged: get AgeChecker's support to confirm **in
+writing** that their ID-upload + database-match methods satisfy the
+specific named state statutes -- the contract itself won't give that
+assurance (Section 4.8 explicitly puts that determination on the customer).
+
+**Important, don't get this wrong later: AgeChecker.Net has a FREE "Age
+Gate" product that is NOT real verification** -- confirmed directly on
+their own site, it's the identical self-attestation popup/checkbox already
+ruled insufficient earlier tonight, and their own marketing admits "an age
+gate alone will not prevent underage sales." Only their **paid** Age
+Verification API (the $25/mo + $0.50/check one) does real
+verification (database cross-reference + photo ID fallback). Don't
+integrate the free Age Gate thinking it covers the state-law requirement.
+
+**Not yet built: the actual integration.** AgeChecker's real API docs
+(endpoints, auth, request/response shape) are gated behind creating an
+account -- their public marketing pages only show placeholder
+screenshots, so nothing was guessed at. Waiting on the founder to create
+the account and share either the real API docs or an API key + website ID
+before writing integration code against `proxy.js`'s geoblock. Once that
+lands: wire the actual verification flow in, then start lifting states off
+`BLOCKED_STATE_CODES` in `proxy.js` as each one gets covered.
+
+**Shipped now, doesn't need to wait on the API integration:** `pages/privacy.js`
+Section 1 and Section 6 updated to disclose that fan age-verification data
+goes to AgeChecker.Net for states that require it -- AgeChecker's own
+contract (Section 4.3) requires this disclosure exist before data
+collection starts, so it's in place ahead of the integration rather than
+added after the fact.
