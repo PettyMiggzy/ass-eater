@@ -87,7 +87,46 @@ export default function Terms() {
               </ul>
             </Section>
 
-            <Section title="6. Prohibited Conduct">
+            <Section title="6. Marketplace Purchases" id="marketplace">
+              <p>
+                The Platform's Marketplace lets Creators list and sell their own digital content and
+                physical merchandise directly to Fans, at whatever price the Creator sets. A Marketplace
+                purchase is an agreement <strong>directly between the buying Fan and the selling Creator</strong>.
+                The Platform is not a party to that sale, does not manufacture, own, warehouse, inspect, or
+                take possession of anything sold, and acts solely as a payment processor collecting its
+                listing/commission fees.
+              </p>
+              <ul className="list-disc pl-5 space-y-2 mt-3">
+                <li>
+                  The Creator is solely responsible for the accuracy of their listing, the condition,
+                  authenticity, and legality of what they sell, and — for physical items — for packaging,
+                  choice of carrier, shipping cost, delivery timeline, and any tracking or signature
+                  confirmation. The Platform has no role in shipping and does not verify that any item was
+                  shipped, described accurately, or delivered.
+                </li>
+                <li>
+                  Marketplace purchases are paid to the Creator at the time of sale and are final. The
+                  Platform does not hold funds in escrow, does not guarantee delivery, and has no
+                  obligation to investigate, mediate, arbitrate, or resolve a dispute between a Fan and a
+                  Creator, or to issue a refund on a Creator's behalf.
+                </li>
+                <li>
+                  Any disagreement about a Marketplace order — including a claim that an item never
+                  arrived, arrived damaged, or was not as described — is between the Fan and the Creator to
+                  resolve directly. The Platform may, at its sole discretion, suspend or terminate an
+                  account for fraud or abuse of the Marketplace (see Section 9, Termination), but doing so
+                  is a platform-integrity action, not a dispute resolution service, and creates no
+                  entitlement to a refund from the Platform.
+                </li>
+                <li>
+                  Before completing a Marketplace purchase, a Fan must separately confirm they are 18 or
+                  older and affirmatively accept this Section — that confirmation is recorded against the
+                  specific order.
+                </li>
+              </ul>
+            </Section>
+
+            <Section title="7. Prohibited Conduct">
               <ul className="list-disc pl-5 space-y-2">
                 <li>Uploading illegal content, or content involving minors or non-consenting individuals.</li>
                 <li>Harassment, threats, or impersonation of another person or creator.</li>
@@ -97,7 +136,7 @@ export default function Terms() {
               </ul>
             </Section>
 
-            <Section title="7. Content Removal & DMCA">
+            <Section title="8. Content Removal & DMCA">
               <p>
                 If you believe content on the Platform infringes your copyright, contact us with the
                 details of the material and your ownership claim, and we will investigate and remove
@@ -105,7 +144,7 @@ export default function Terms() {
               </p>
             </Section>
 
-            <Section title="8. Termination">
+            <Section title="9. Termination">
               <p>
                 We may suspend or terminate any account, at any time, for violating these Terms, engaging
                 in illegal activity, or for any other reason at our discretion. You may close your account
@@ -113,7 +152,7 @@ export default function Terms() {
               </p>
             </Section>
 
-            <Section title="9. Disclaimers & Limitation of Liability">
+            <Section title="10. Disclaimers & Limitation of Liability">
               <p>
                 The Platform is provided "as is" without warranties of any kind. To the maximum extent
                 permitted by law, the Platform and its operators are not liable for any indirect,
@@ -123,7 +162,7 @@ export default function Terms() {
               </p>
             </Section>
 
-            <Section title="10. Changes to These Terms">
+            <Section title="11. Changes to These Terms">
               <p>
                 We may update these Terms from time to time. Continued use of the Platform after changes
                 are posted constitutes acceptance of the revised Terms. Material changes will be reflected
@@ -131,7 +170,7 @@ export default function Terms() {
               </p>
             </Section>
 
-            <Section title="11. Contact">
+            <Section title="12. Contact">
               <p>Questions about these Terms can be directed to the Platform's support contact.</p>
             </Section>
           </div>
@@ -147,9 +186,9 @@ export default function Terms() {
   );
 }
 
-function Section({ title, children }) {
+function Section({ title, id, children }) {
   return (
-    <section>
+    <section id={id}>
       <h2 className="text-lg font-bold text-brand-gold mb-2">{title}</h2>
       {children}
     </section>

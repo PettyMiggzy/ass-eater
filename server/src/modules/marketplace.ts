@@ -7,7 +7,7 @@ import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../cor
 const PLATFORM_FEE_BPS = 1000; // 10% commission on the sale
 const LISTING_FEE_BPS = 500; // 5% listing fee, also cut at sale time
 const LOYALTY_DISCOUNT_BPS = 1000; // 10% off for a buyer with any active subscription or token-lock
-const CURRENT_TOS_VERSION = 'v1';
+const CURRENT_TOS_VERSION = 'v1'; // pages/terms.js, Section 6 (Marketplace Purchases) -- bump this if that section's text materially changes
 
 // Physical orders pay the creator at purchase time, same as digital -- no
 // escrow. Shipping method, signature-on-delivery, item condition, and any

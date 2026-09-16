@@ -17,8 +17,11 @@ export default async function handler(req, res) {
   const uid = getSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to place an order' });
 
-  const { listingId, shippingAddress } = req.body || {};
+  const { listingId, shippingAddress, ageConfirmed, tosAccepted } = req.body || {};
   if (!listingId) return res.status(400).json({ error: 'Missing listing id' });
+  if (ageConfirmed !== true || tosAccepted !== true) {
+    return res.status(400).json({ error: 'Age confirmation and Marketplace Terms acceptance are both required' });
+  }
 
   const listings = await getListings();
   const listing = findListing(listings, listingId);
@@ -42,6 +45,7 @@ export default async function handler(req, res) {
       kind: listing.kind,
       signatureRequired: listing.signatureRequired,
       shippingAddress: listing.kind === 'physical' ? shippingAddress : null,
+      ageConfirmed, tosAccepted,
     });
     return res.status(200).json({ ok: true, order });
   } catch (err) {

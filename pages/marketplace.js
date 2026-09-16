@@ -26,10 +26,28 @@ export default function Marketplace({ listings }) {
   const [reason, setReason] = useState('');
   const [sending, setSending] = useState(false);
   const [q, setQ] = useState('');
+  const [buying, setBuying] = useState(null);
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [tosAccepted, setTosAccepted] = useState(false);
 
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const openBuy = (listing) => {
+    setAgeConfirmed(false);
+    setTosAccepted(false);
+    setBuying(listing);
+  };
+
+  const confirmBuy = () => {
+    // Once real marketplace checkout exists, this is where it fires with
+    // { ageConfirmed: true, tosAccepted: true } -- the platform's own buy
+    // endpoint requires both, recorded against the specific order (see
+    // Section 6 of /terms). Not wiring a real charge yet since none exists.
+    setBuying(null);
+    showToast('Payments launch with the platform — check back soon.');
   };
 
   const submitReport = async (e) => {
@@ -96,6 +114,46 @@ export default function Marketplace({ listings }) {
         </div>
       )}
 
+      {buying && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="premium-card w-full max-w-sm p-6">
+            <p className="font-bold text-white mb-1">Confirm purchase</p>
+            <p className="text-xs text-gray-500 mb-4">
+              "{buying.title}" — ${(buying.priceCents / 100).toFixed(2)}
+              {buying.kind === 'physical' && buying.shippingCents ? ` + $${(buying.shippingCents / 100).toFixed(2)} shipping` : ''}
+              , sold by {buying.creatorName}.
+            </p>
+            <label className="flex items-start gap-2 text-xs text-gray-400 mb-3">
+              <input type="checkbox" checked={ageConfirmed} onChange={(e) => setAgeConfirmed(e.target.checked)} className="mt-0.5" />
+              I am 18 years of age or older (or the age of majority in my jurisdiction, whichever is higher).
+            </label>
+            <label className="flex items-start gap-2 text-xs text-gray-400 mb-4">
+              <input type="checkbox" checked={tosAccepted} onChange={(e) => setTosAccepted(e.target.checked)} className="mt-0.5" />
+              I've read and agree to the{' '}
+              <a href={`${MAIN_SITE}/terms#marketplace`} target="_blank" rel="noreferrer" className="text-brand-gold underline">
+                Marketplace Terms
+              </a>{' '}
+              — this purchase is an agreement directly between me and the creator; Only Ass is not a party to
+              the sale, does not hold funds in escrow, and is not responsible for shipping, delivery, item
+              condition, or resolving disputes between us.
+            </label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setBuying(null)} className="flex-1 text-sm px-4 py-2 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmBuy}
+                disabled={!ageConfirmed || !tosAccepted}
+                className="flex-1 premium-button text-sm disabled:opacity-50"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="min-h-screen bg-gradient-luxury text-white pb-16">
         <div className="max-w-6xl mx-auto px-6 pt-12 text-center">
           <img src="/images/marketplace-header.png" alt="Only Ass Marketplace" className="w-full max-w-md h-auto mx-auto mb-4" />
@@ -148,7 +206,7 @@ export default function Marketplace({ listings }) {
                     </div>
                     <p className="font-bold text-sm truncate mb-2">{l.title}</p>
                     <button
-                      onClick={() => showToast('Payments launch with the platform — check back soon.')}
+                      onClick={() => openBuy(l)}
                       className="premium-button w-full text-xs py-2"
                     >
                       Buy — ${(l.priceCents / 100).toFixed(2)}
