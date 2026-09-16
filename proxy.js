@@ -16,11 +16,41 @@ const HOST_ROUTES = {
   'www.onlyass.shop': '/marketplace',
 };
 
+// Hosts that never serve adult content, so the state age-verification block
+// below doesn't apply to them -- everything else (the main platform, the
+// marketplace, preview/vercel.app URLs, custom domains not listed here) is
+// treated as adult-content-serving by default (fail closed, not open).
+const SFW_HOSTS = new Set(['onlyass.xyz', 'www.onlyass.xyz', 'onlyass.online', 'www.onlyass.online']);
+
+// States with an enacted, currently-in-effect law requiring real age
+// verification (not a self-attestation checkbox) to access adult content --
+// 27 states as of September 2026, cross-checked against AVPA's tracker and
+// none currently blocked by a court (Texas's was upheld by SCOTUS, June
+// 2025). This is a stopgap: block these states outright until a real
+// verification vendor (Yoti/VerifyMy/AgeChecker -- in progress) is wired up,
+// then lift the block state-by-state as verification comes online for each
+// one. This list will need periodic re-checking -- new states keep passing
+// these laws.
+const BLOCKED_STATE_CODES = new Set([
+  'AL', 'AR', 'AZ', 'FL', 'GA', 'ID', 'IN', 'IA', 'KS', 'KY', 'LA', 'MS',
+  'MO', 'MT', 'NE', 'NC', 'ND', 'OH', 'OK', 'SC', 'SD', 'TN', 'TX', 'UT',
+  'VA', 'WV', 'WY',
+]);
+
 export function proxy(request) {
   const host = request.headers.get('host') || '';
-  const target = HOST_ROUTES[host];
+  const { pathname } = request.nextUrl;
 
-  if (target && request.nextUrl.pathname === '/') {
+  if (pathname !== '/blocked-region' && !SFW_HOSTS.has(host)) {
+    const country = request.headers.get('x-vercel-ip-country');
+    const region = request.headers.get('x-vercel-ip-country-region');
+    if (country === 'US' && BLOCKED_STATE_CODES.has(region)) {
+      return NextResponse.rewrite(new URL('/blocked-region', request.url));
+    }
+  }
+
+  const target = HOST_ROUTES[host];
+  if (target && pathname === '/') {
     return NextResponse.rewrite(new URL(target, request.url));
   }
 
@@ -28,5 +58,5 @@ export function proxy(request) {
 }
 
 export const config = {
-  matcher: '/',
+  matcher: ['/((?!api/|_next/|favicon|images/|videos/|icons/).*)'],
 };
