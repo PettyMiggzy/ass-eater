@@ -128,7 +128,37 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
             {creator.premium && <img src="/icons/check.png" alt="Premium" className="h-6 w-6" title="Premium creator" />}
           </h1>
           <p className="text-gray-400 text-sm mb-1">{creator.handle} · <span className="text-green-400">Online now</span></p>
-          <p className="text-gray-300 mt-3 mb-6">{creator.bio}</p>
+          <p className="text-gray-300 mt-3 mb-3">{creator.bio}</p>
+
+          {creator.socials && Object.values(creator.socials).some(Boolean) && (
+            <div className="flex flex-wrap gap-2 mb-6">
+              {creator.socials.twitter && (
+                <a href={`https://x.com/${creator.socials.twitter}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
+                  X/Twitter
+                </a>
+              )}
+              {creator.socials.instagram && (
+                <a href={`https://instagram.com/${creator.socials.instagram}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
+                  Instagram
+                </a>
+              )}
+              {creator.socials.tiktok && (
+                <a href={`https://tiktok.com/@${creator.socials.tiktok}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
+                  TikTok
+                </a>
+              )}
+              {creator.socials.reddit && (
+                <a href={`https://reddit.com/u/${creator.socials.reddit}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
+                  Reddit
+                </a>
+              )}
+              {creator.socials.website && (
+                <a href={creator.socials.website} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
+                  Website
+                </a>
+              )}
+            </div>
+          )}
 
           {/* Chat CTA -- opens the real inbox (same as the mail icon above) */}
           <button

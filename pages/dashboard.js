@@ -41,7 +41,15 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     price: initialCreator?.price || '',
     payoutMethod: initialCreator?.payoutMethod || 'onlyass',
     walletAddress: initialCreator?.walletAddress || '',
+    socials: {
+      twitter: initialCreator?.socials?.twitter || '',
+      instagram: initialCreator?.socials?.instagram || '',
+      tiktok: initialCreator?.socials?.tiktok || '',
+      reddit: initialCreator?.socials?.reddit || '',
+      website: initialCreator?.socials?.website || '',
+    },
   });
+  const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -245,6 +253,25 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 </div>
               )}
 
+              <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-md bg-black/30 border border-brand-purple/20">
+                <div className="min-w-0">
+                  <p className="text-xs text-gray-500 mb-1">Your shareable profile link</p>
+                  <p className="text-sm text-gray-300 truncate font-mono">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/creator/${creator.id}` : `/creator/${creator.id}`}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/creator/${creator.id}`);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  className="shrink-0 text-xs px-4 py-2 rounded-md border border-brand-gold/40 text-brand-gold hover:bg-brand-gold/10 transition"
+                >
+                  {copied ? 'Copied!' : 'Copy Link'}
+                </button>
+              </div>
+
               <div className="flex items-center gap-4">
                 <img src={creator.img} alt={creator.name} className="w-20 h-20 rounded-full object-cover object-top border-2 border-brand-gold" />
                 <div>
@@ -277,6 +304,32 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Bio</label>
                 <textarea value={draft.bio} onChange={(e) => setDraft({ ...draft, bio: e.target.value })} rows={3} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Socials (shown on your profile — just your username, no login needed)</label>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {[
+                    ['twitter', 'X / Twitter username'],
+                    ['instagram', 'Instagram username'],
+                    ['tiktok', 'TikTok username'],
+                    ['reddit', 'Reddit username'],
+                  ].map(([key, placeholder]) => (
+                    <input
+                      key={key}
+                      value={draft.socials[key]}
+                      onChange={(e) => setDraft({ ...draft, socials: { ...draft.socials, [key]: e.target.value } })}
+                      placeholder={placeholder}
+                      className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                    />
+                  ))}
+                </div>
+                <input
+                  value={draft.socials.website}
+                  onChange={(e) => setDraft({ ...draft, socials: { ...draft.socials, website: e.target.value } })}
+                  placeholder="Website (https://...)"
+                  className="w-full mt-3 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                />
               </div>
 
               <div className="grid sm:grid-cols-2 gap-4">

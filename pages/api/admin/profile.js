@@ -1,4 +1,4 @@
-import { updateCreatorProfile } from '../../../lib/creators-store';
+import { updateCreatorProfile, sanitizeSocials } from '../../../lib/creators-store';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -20,6 +20,7 @@ export default async function handler(req, res) {
   for (const key of allowed) {
     if (key in fields) safeFields[key] = fields[key];
   }
+  if ('socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
 
   try {
     const creator = await updateCreatorProfile(creatorId, safeFields);

@@ -53,6 +53,13 @@ export default function AdminPanel() {
         status: selected.status || 'active',
         payoutMethod: selected.payoutMethod || 'onlyass',
         walletAddress: selected.walletAddress || '',
+        socials: {
+          twitter: selected.socials?.twitter || '',
+          instagram: selected.socials?.instagram || '',
+          tiktok: selected.socials?.tiktok || '',
+          reddit: selected.socials?.reddit || '',
+          website: selected.socials?.website || '',
+        },
       });
     }
   }, [selectedId]);
@@ -341,6 +348,19 @@ export default function AdminPanel() {
                       rows={3}
                       className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Socials</label>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <Field label="X / Twitter username" value={draft.socials?.twitter} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, twitter: v } })} />
+                      <Field label="Instagram username" value={draft.socials?.instagram} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, instagram: v } })} />
+                      <Field label="TikTok username" value={draft.socials?.tiktok} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, tiktok: v } })} />
+                      <Field label="Reddit username" value={draft.socials?.reddit} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, reddit: v } })} />
+                    </div>
+                    <div className="mt-3">
+                      <Field label="Website (https://...)" value={draft.socials?.website} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, website: v } })} />
+                    </div>
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-4">
