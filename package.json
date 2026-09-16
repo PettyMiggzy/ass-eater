@@ -17,6 +17,8 @@
     "launchpad:deploy:robinhood": "hardhat run scripts/deploy-launchpad.js --network robinhood",
     "launchpad-v4:deploy:robinhood-testnet": "hardhat run scripts/deploy-launchpad-v4.js --network robinhood-testnet",
     "launchpad-v4:deploy:robinhood": "hardhat run scripts/deploy-launchpad-v4.js --network robinhood",
+    "creator-nft:deploy:robinhood-testnet": "hardhat run scripts/deploy-creator-nft.js --network robinhood-testnet",
+    "creator-nft:deploy:robinhood": "hardhat run scripts/deploy-creator-nft.js --network robinhood",
     "onlyass:deploy-token:robinhood-testnet": "hardhat run scripts/deploy-onlyass-token.js --network robinhood-testnet",
     "onlyass:deploy-token:robinhood": "hardhat run scripts/deploy-onlyass-token.js --network robinhood",
     "onlyass:seed-pool:robinhood-testnet": "hardhat run scripts/seed-onlyass-pool.js --network robinhood-testnet",

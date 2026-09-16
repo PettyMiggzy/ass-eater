@@ -53,6 +53,21 @@ module.exports = {
         },
       },
     ],
+    overrides: {
+      // OpenZeppelin 5.6's ERC1155 pulls in Arrays.sol, which uses the
+      // Cancun-only MCOPY opcode in a few of its helpers -- solc fails to
+      // compile the whole file under the default (pre-Cancun) EVM target
+      // even though ERC1155 itself never calls those specific helpers.
+      // Same unverified-Robinhood-Chain-EVM-support caveat as the V4
+      // compiler entry above applies here too.
+      'contracts/OnlyAssCreatorNFT.sol': {
+        version: '0.8.24',
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
+          evmVersion: 'cancun',
+        },
+      },
+    },
   },
   networks: {
     hardhat: {},

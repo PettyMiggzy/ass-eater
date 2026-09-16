@@ -245,3 +245,41 @@ empty at launch.
 Still just simple exact-tag matching, no synonym/fuzzy matching, no
 tag-combination filtering (AND/OR across multiple tags at once) -- fine for
 launch, worth revisiting if the tag list grows large.
+
+## Creator NFT drops (shipped 2026-09-16)
+
+Someone ("Brad") floated selling blurred self-images as NFTs on the
+marketplace. Talked through it first: the blur/one-buyer idea doesn't
+actually need to be an NFT (the existing one-of-a-kind marketplace listing
+already does that), and real NFTs are basically permanent once minted --
+which is a genuine liability for adult content specifically if something
+ever needs to come down (consent issue, legal complaint, creator changes
+their mind). User heard that and decided to build it anyway, full creator
+control: pick the image, how many copies, what to charge, and what asset to
+charge it in -- platform takes 10%.
+
+Built `contracts/OnlyAssCreatorNFT.sol` (ERC-1155 -- one token id per drop,
+`editionSize` identical copies; a 1-of-1 is just `editionSize == 1`, same
+mechanism as a print run). `createDrop`/`mintEdition` mint and pay
+atomically in one call, no off-chain relayer. Payment asset is ETH,
+$ONLYASS, or a token the creator actually launched on `OnlyAssLaunchpadV4`
+-- verified live on-chain the same way `OnlyAssPayments.payWithCreatorToken`
+already does (reuses that exact interface/pattern). 24 tests, Slither-clean
+(one real reentrancy-eth finding fixed via reordering, not just
+documented). Full writeup: `contracts/NFT.md`.
+
+**The actual liability mitigation, load-bearing, not yet enforced in
+code:** every drop's `metadataURI` MUST point at a URL the platform itself
+controls (our own API), never raw IPFS/Arweave -- that's what makes (a) the
+blur-until-purchased gating possible at all (has to check `balanceOf` per
+request, server-side) and (b) a future takedown possible if one is ever
+needed. The contract can't enforce this itself (`metadataURI` is just a
+string) -- it's a hard requirement on whatever UI eventually calls
+`createDrop`. **Don't build a creator-facing minting flow that lets someone
+paste an arbitrary IPFS link into that field.**
+
+**Not built:** the actual metadata/image-serving endpoint that checks
+`balanceOf` and decides whether to serve the real image or a blurred
+placeholder. This pass only covers minting/payment/ownership on-chain --
+same scoping as the V4 launchpad (contract shipped, matching frontend not
+built yet). No creator-facing UI for starting a drop exists yet either.
