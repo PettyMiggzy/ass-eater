@@ -4,6 +4,13 @@ The gap: creators can list "merch" but there was no shipping address
 collection, no order/fulfillment status, and no way for a creator to know
 what to ship. This is that system.
 
+Two implementations exist in this repo (a known, pre-existing duplication --
+see the live Blob-based marketplace vs. the Postgres/Fastify `server/`
+backend): the live site's version below, and a fuller escrow-backed version
+in `server/` (see "Escrow" section below) for whenever the real backend is
+deployed. Shipping/carrier/tracking is the creator's own responsibility in
+both -- the platform never touches the physical item, only the payment.
+
 ## What's built
 
 - **`Listing.kind`**: `'digital'` (default) or `'physical'`, set at creation.
@@ -38,6 +45,57 @@ Every read path (`getOrdersForBuyer`, `getOrdersForCreator`) decrypts only
 for the specific, already-authorized caller — nothing ever returns the raw
 order list to a client unfiltered.
 
+## Escrow (server/, real money)
+
+The gap this closes: `marketplace.ts`'s buy handler used to pay the creator
+their net proceeds *immediately* on purchase, physical or digital, no
+different from an instant digital unlock. For a physical item that's the
+platform paying a seller in full before anything has shipped, delivered, or
+been confirmed — if the seller never ships, ships the wrong thing, or the
+item is lost, the platform has already released the money and is the one
+left holding the dispute. Same shape as eBay/Amazon buyer protection now:
+- **Purchase**: the buyer's charge posts as before, but a physical order's
+  net proceeds (+ shipping) go into the `ESCROW_ID` pseudo-account
+  (`core/ledger.ts`), not the creator's balance. `ListingOrder` starts at
+  `AWAITING_SHIPMENT`.
+- **Ship** (`POST /listings/orders/:id/ship`, creator-only): records
+  carrier + tracking, starts a `MARKETPLACE_AUTO_RELEASE_DAYS` (default 14)
+  countdown. Still doesn't move money.
+- **Confirm receipt** (`POST /listings/orders/:id/confirm-receipt`,
+  buyer-only): releases escrow to the creator immediately.
+- **Auto-release** (`workers/escrow-auto-release.ts`, hourly sweep): pays
+  the creator the same way if the buyer never confirms and the window
+  passes with no dispute — a buyer going silent isn't a reason to hold a
+  creator's money forever.
+- **Dispute** (`POST /listings/orders/:id/dispute`, buyer-only): freezes
+  the clock and files a `Report` (`targetType: 'listing_order'`) into the
+  existing admin queue rather than building a second resolution UI. An
+  admin resolves it via the same `/admin/reports/:id/resolve` endpoint with
+  a new `release_escrow` (creator was right) or `refund_buyer` (buyer was
+  right — also claws back the platform's own fee, since a sale that didn't
+  happen shouldn't leave the platform still holding a cut of it) action.
+
+All of this lives in `core/escrow.ts`, kept separate from the Fastify route
+handlers so it's unit-testable the same way `core/ledger.ts` is (see
+`core/escrow.test.ts` — 12 tests, including that a released/refunded order
+can never be released twice, and that only the actual buyer/creator on an
+order can act on it).
+
+**On "getting liability off the platform":** escrow is the real mechanism —
+it's what a chargeback review or a court actually looks at, not the ToS
+wording. But it doesn't make the platform legally invisible. Depending on
+jurisdiction, "marketplace facilitator" statutes and payment-processor/card
+network rules can still pull the platform into a dispute regardless of an
+escrow flow or a "seller is solely responsible" clause — this reduces
+exposure and gives a clean, defensible process, it doesn't eliminate it.
+Worth a real ToS review alongside this, not a substitute for one.
+
+**Also new:** `scripts/seed-system-accounts.ts`, run once after
+`prisma migrate deploy` — creates the `PLATFORM_ID`/`ESCROW_ID` pseudo-user
+rows the ledger posts to. This was a pre-existing gap for `PLATFORM_ID`
+specifically: tests created it ad hoc in `beforeEach`, production never had
+an equivalent bootstrap step.
+
 ## What's NOT done yet, on purpose
 
 - **No buyer-facing checkout/address-collection UI.** The marketplace's Buy
@@ -51,9 +109,16 @@ order list to a client unfiltered.
   ship, same as "one-of-a-kind" digital listings already work. A creator
   with 50 units of the same shirt needs 50 listings today. Real inventory
   tracking is a bigger feature than this gap needed solving.
-- **No delivery confirmation / dispute flow.** Once marked `shipped`, there's
-  no `delivered` state or a way for a buyer to dispute a no-show. Worth
-  building once there's real order volume to see what actually goes wrong.
 - **No shipping-address validation beyond "these fields aren't empty".** No
   address-verification API, no international shipping restrictions modeled
   (e.g. some countries a creator might not want to ship to at all).
+- **The live Blob-based site's `orders-store.js` doesn't have the escrow
+  lifecycle** (confirm-receipt, dispute, auto-release) that `server/`'s
+  Postgres version now has — no real money exists there to escrow yet
+  (see above). Its `pending_shipment` → `shipped` statuses still work fine
+  as-is for creator visibility; extend it to match once the live site has
+  real payment capture and escrow actually needs enforcing there too.
+- **No email/push notification on ship, auto-release-approaching, or
+  dispute.** A buyer finding out their item shipped only by checking the
+  site, and a creator finding out a dispute happened only by checking
+  `/admin`, isn't ideal at any real volume.

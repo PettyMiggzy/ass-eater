@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../core/ledger';
+import { holdInEscrow, markShipped, confirmReceipt, disputeOrder } from '../core/escrow';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 const PLATFORM_FEE_BPS = 1000; // 10% commission on the sale
@@ -18,8 +19,11 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       title: z.string().min(1).max(120), description: z.string().max(4000).default(''),
       priceCents: z.number().int().min(100).max(100_000_00), images: z.array(z.string()).max(10).default([]),
       unlimited: z.boolean().default(false), mediaIds: z.array(z.string().uuid()).max(20).default([]),
+      kind: z.enum(['DIGITAL', 'PHYSICAL']).default('DIGITAL'), shippingCents: z.number().int().min(0).max(100_000_00).default(0),
     }).parse(req.body);
     const { mediaIds, ...fields } = b;
+    // Physical items ship one-at-a-time -- no inventory tracking yet, so "unlimited" doesn't mean anything for them.
+    if (fields.kind === 'PHYSICAL') fields.unlimited = false;
     return prisma.$transaction(async (tx) => {
       const l = await tx.listing.create({ data: { creatorId: req.user.id, ...fields } });
       if (mediaIds.length) {
@@ -34,8 +38,10 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     const b = z.object({
       title: z.string().min(1).max(120).optional(), description: z.string().max(4000).optional(),
       priceCents: z.number().int().min(100).max(100_000_00).optional(), images: z.array(z.string()).max(10).optional(),
-      status: z.enum(['ACTIVE', 'REMOVED']).optional(),
+      status: z.enum(['ACTIVE', 'REMOVED']).optional(), unlimited: z.boolean().optional(),
+      kind: z.enum(['DIGITAL', 'PHYSICAL']).optional(), shippingCents: z.number().int().min(0).max(100_000_00).optional(),
     }).parse(req.body);
+    if (b.kind === 'PHYSICAL') b.unlimited = false;
     const r = await prisma.listing.updateMany({ where: { id: req.params.id, creatorId: req.user.id, status: { not: 'SOLD' } }, data: b });
     return r.count ? { ok: true } : reply.code(404).send({ error: 'not_found' });
   });
@@ -95,33 +101,70 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         tx.tokenLock.findFirst({ where: { fanId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } } }),
       ]);
       const discounted = !!(hasSub || hasLock) || payAsset === 'ONLYASS';
+      // Discount applies to the item price only -- shipping is a pass-through carrier cost, not a margin to discount.
       const chargeCents = discounted ? Math.round((l.priceCents * (10_000 - LOYALTY_DISCOUNT_BPS)) / 10_000) : l.priceCents;
+      const shippingCents = l.kind === 'PHYSICAL' ? l.shippingCents : 0;
+      const totalCharge = chargeCents + shippingCents;
 
       const bal = await lockBalance(tx, req.user.id, payAsset);
-      if (bal < BigInt(chargeCents)) throw new InsufficientFunds();
+      if (bal < BigInt(totalCharge)) throw new InsufficientFunds();
 
       const platformFee = Math.floor((chargeCents * PLATFORM_FEE_BPS) / 10_000);
       const listingFee = Math.floor((chargeCents * LISTING_FEE_BPS) / 10_000);
       const net = chargeCents - platformFee - listingFee;
+      const netCentsHeld = net + shippingCents; // shipping isn't commissioned, but it's still held with the rest until delivery
 
       if (!l.unlimited) {
         const updated = await tx.listing.updateMany({ where: { id: l.id, status: 'ACTIVE' }, data: { status: 'SOLD' } });
         if (!updated.count) throw Object.assign(new Error('not_available'), { statusCode: 400 });
       }
 
+      const isPhysical = l.kind === 'PHYSICAL';
       const order = await tx.listingOrder.create({
         data: {
-          listingId: l.id, buyerId: req.user.id, priceCents: chargeCents,
+          listingId: l.id, buyerId: req.user.id, priceCents: chargeCents, shippingCents,
           platformFeeCents: platformFee, listingFeeCents: listingFee,
           ageConfirmedAt: new Date(), tosVersion: CURRENT_TOS_VERSION,
+          fulfillmentStatus: isPhysical ? 'AWAITING_SHIPMENT' : 'DIGITAL',
+          netCentsHeld: isPhysical ? netCentsHeld : 0,
         },
       });
 
-      await post(tx, req.user.id, -chargeCents, 'MARKETPLACE_SALE', order.id, undefined, payAsset);
-      await post(tx, l.creatorId, net, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, originalPriceCents: l.priceCents, discountApplied: discounted, payAsset });
+      await post(tx, req.user.id, -totalCharge, 'MARKETPLACE_SALE', order.id, undefined, payAsset);
+      if (isPhysical) {
+        // Held, not paid out -- see core/escrow.ts. Released on delivery confirmation, auto-release, or dispute resolution.
+        await holdInEscrow(tx, order.id, netCentsHeld);
+      } else {
+        await post(tx, l.creatorId, net, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, originalPriceCents: l.priceCents, discountApplied: discounted, payAsset });
+      }
       await post(tx, PLATFORM_ID, platformFee + listingFee, 'PLATFORM_FEE', order.id, { source: 'marketplace', platformFee, listingFee });
 
       return { ok: true, order, discountApplied: discounted, payAsset };
     });
+  });
+
+  // --- Physical-order fulfillment lifecycle (escrow-backed -- see core/escrow.ts) ---
+
+  app.get('/listings/orders/mine', { preHandler: app.auth }, async (req: any) =>
+    prisma.listingOrder.findMany({ where: { buyerId: req.user.id }, orderBy: { createdAt: 'desc' }, include: { listing: { select: { title: true, kind: true } } } }));
+
+  app.get('/listings/orders/selling', { preHandler: app.creatorOk }, async (req) =>
+    prisma.listingOrder.findMany({
+      where: { listing: { creatorId: req.user.id }, fulfillmentStatus: { in: ['AWAITING_SHIPMENT', 'SHIPPED', 'DISPUTED'] } },
+      orderBy: { createdAt: 'asc' },
+      include: { listing: { select: { title: true } }, buyer: { select: { username: true } } },
+    }));
+
+  app.post('/listings/orders/:id/ship', { preHandler: app.creatorOk }, async (req: any) => {
+    const { carrier, trackingNumber } = z.object({ carrier: z.string().min(1).max(100), trackingNumber: z.string().min(1).max(100) }).parse(req.body);
+    return prisma.$transaction((tx) => markShipped(tx, req.params.id, req.user.id, { carrier, trackingNumber }));
+  });
+
+  app.post('/listings/orders/:id/confirm-receipt', { preHandler: app.auth }, async (req: any) =>
+    prisma.$transaction((tx) => confirmReceipt(tx, req.params.id, req.user.id)));
+
+  app.post('/listings/orders/:id/dispute', { preHandler: app.auth }, async (req: any) => {
+    const { reason } = z.object({ reason: z.string().min(1).max(1000) }).parse(req.body);
+    return prisma.$transaction((tx) => disputeOrder(tx, req.params.id, req.user.id, reason));
   });
 };

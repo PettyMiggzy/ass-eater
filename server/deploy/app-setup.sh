@@ -30,6 +30,9 @@ sudo -u "$APP_USER" npx prisma migrate deploy
 echo "==> build"
 sudo -u "$APP_USER" npm run build
 
+echo "==> seeding system accounts (platform + escrow pseudo-users)"
+sudo -u "$APP_USER" node dist/scripts/seed-system-accounts.js
+
 echo "==> install systemd units"
 cp "$APP_DIR/deploy/onlyass-api.service" /etc/systemd/system/onlyass-api.service
 cp "$APP_DIR/deploy/onlyass-workers.service" /etc/systemd/system/onlyass-workers.service
