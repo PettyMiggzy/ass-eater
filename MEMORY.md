@@ -190,3 +190,28 @@ creators to set their own tags first, which is more than a tonight-sized
 add on top of everything else shipped this session. Basic keyword search
 (name/bio/handle) already existed before tonight and still works
 (`pages/search.js`).
+
+## Fiat on-ramp (Stripe): a firm no, not just "later" (2026-09-16)
+
+Idea floated: run card payments through Stripe via a DBA under the user's
+*other*, unrelated business's existing Stripe account, since a new adult
+platform likely couldn't get approved directly. Checked Stripe's actual
+restricted-businesses policy rather than assume -- confirmed adult content
+("pornography and other mature audience content... for the purpose of
+sexual gratification") and adult services are **prohibited outright**, not
+a "restricted, needs extra approval" category. There's no account structure
+or DBA that makes that not true, and running it through a DBA specifically
+means not disclosing to Stripe what the money is actually for -- if/when
+caught, the realistic outcome is the account being shut down, funds frozen
+(often 120+ days), and it puts the **other business's** Stripe account at
+risk too, since it would be the same account. Don't build toward Stripe as
+a payment path here under any structure, DBA included.
+
+Fiat on-ramp is still a real, wanted roadmap item, just needs the right
+target: adult-industry-specific processors (**CCBill, Segpay, Epoch,
+Vendo**) are what actual OnlyFans-style platforms use for card payments --
+that's the real "way later" on-ramp research item, not Stripe. Same
+category of vendor-compliance problem this session already hit with
+Transak/Circle's Arc (both confirmed to ban adult content too) -- pattern
+to remember: mainstream/general-purpose payment rails reliably say no to
+this vertical; the adult-industry-specific ones are the actual answer.
