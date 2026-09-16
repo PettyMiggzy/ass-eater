@@ -38,7 +38,9 @@ export default function Home({ creators }) {
         {/* Nav */}
         <nav className="w-full py-4 px-6 border-b border-brand-purple/10">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <img src="/images/logo-final.png" alt="Only Ass" className="h-10 w-auto" />
+            <div className="bg-white/95 rounded-lg px-3 py-1.5 inline-flex items-center">
+              <img src="/images/logo-final.png" alt="Only Ass" className="h-7 w-auto" />
+            </div>
             <div className="hidden md:flex items-center gap-7 text-sm text-gray-300">
               <a href="#creators" className="hover:text-brand-gold transition">Explore</a>
               <a href="#how-it-works" className="hover:text-brand-gold transition">How It Works</a>

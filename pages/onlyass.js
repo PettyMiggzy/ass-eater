@@ -106,8 +106,8 @@ export default function OnlyAss({ creators, sessionUser }) {
         {/* Header */}
         <nav className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/" className="flex items-center">
-              <img src="/images/logo-final.png" alt="Only Ass" className="h-12 md:h-14 w-auto" />
+            <a href="/" className="flex items-center bg-white/95 rounded-lg px-3 py-1.5">
+              <img src="/images/logo-final.png" alt="Only Ass" className="h-8 md:h-9 w-auto" />
             </a>
             <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
               <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
