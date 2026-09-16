@@ -1,6 +1,7 @@
 export const creators = [
   {
     id: 1,
+    seed: true,
     name: 'Mascot Official',
     handle: '@onlyass',
     img: '/images/mascot.png',
@@ -20,6 +21,7 @@ export const creators = [
   },
   {
     id: 2,
+    seed: true,
     name: 'Sunset Collection',
     handle: '@sunsetgirl',
     img: '/images/gallery3.jpg',
@@ -41,6 +43,7 @@ export const creators = [
   },
   {
     id: 3,
+    seed: true,
     name: 'Street Style',
     handle: '@urbanvibe',
     img: '/images/gallery2.jpg',
@@ -62,6 +65,7 @@ export const creators = [
   },
   {
     id: 4,
+    seed: true,
     name: 'Pool Days',
     handle: '@poolsidebabe',
     img: '/images/gallery4.jpg',
@@ -83,6 +87,7 @@ export const creators = [
   },
   {
     id: 5,
+    seed: true,
     name: 'Fit Life',
     handle: '@gymqueen',
     img: '/images/gallery5.jpg',
@@ -104,6 +109,7 @@ export const creators = [
   },
   {
     id: 6,
+    seed: true,
     name: 'Night Owl',
     handle: '@neonights',
     img: '/images/gallery6.jpg',

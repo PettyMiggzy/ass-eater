@@ -202,20 +202,21 @@ export default function AdminPanel() {
     }
   };
 
-  const removeAllCreators = async () => {
-    if (!confirm(`Delete ALL ${creators.length} models? This cannot be undone.`)) return;
+  const removeAllCreators = async (includeSeed) => {
+    const label = includeSeed ? 'ALL models, including the seed/demo ones,' : 'all REAL (non-seed) models';
+    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
     setBusy(true);
-    setStatus('Deleting all models...');
+    setStatus('Deleting...');
     try {
-      const res = await fetch('/api/admin/delete-all', {
+      const res = await fetch(`/api/admin/delete-all${includeSeed ? '?includeSeed=true' : ''}`, {
         method: 'POST',
         headers: authHeaders,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Delete failed');
-      setCreators([]);
+      setCreators(data.creators);
       setSelectedId(null);
-      setStatus('All models deleted.');
+      setStatus(includeSeed ? 'All models deleted, seed rows included.' : 'Real models deleted, seed/demo rows kept.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -254,13 +255,22 @@ export default function AdminPanel() {
             <h1 className="text-3xl font-black premium-title">Model Admin Panel</h1>
             <div className="flex gap-3">
               {page === 'creators' && creators.length > 0 && (
-                <button
-                  onClick={removeAllCreators}
-                  disabled={busy}
-                  className="text-sm px-4 py-2 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
-                >
-                  Delete All
-                </button>
+                <>
+                  <button
+                    onClick={() => removeAllCreators(false)}
+                    disabled={busy}
+                    className="text-sm px-4 py-2 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                  >
+                    Delete Real Creators
+                  </button>
+                  <button
+                    onClick={() => removeAllCreators(true)}
+                    disabled={busy}
+                    className="text-sm px-4 py-2 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                  >
+                    Delete All (incl. seed)
+                  </button>
+                </>
               )}
               {page === 'creators' && (
                 <button onClick={addCreator} disabled={busy} className="premium-button disabled:opacity-50">

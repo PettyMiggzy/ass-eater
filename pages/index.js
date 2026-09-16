@@ -225,7 +225,7 @@ export default function Home({ creators }) {
                 <span className="text-gray-500">Contract</span>
                 <span className="text-brand-gold font-mono ml-2 break-all">{process.env.NEXT_PUBLIC_CONTRACT_ADDRESS}</span>
               </div>
-              <span className="px-3 py-1 rounded-full bg-brand-purple/20 text-brand-purple text-xs font-bold w-fit">Ethereum</span>
+              <span className="px-3 py-1 rounded-full bg-brand-purple/20 text-brand-purple text-xs font-bold w-fit">Robinhood Chain</span>
               <a
                 href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
                 target="_blank"
