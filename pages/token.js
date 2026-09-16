@@ -1,5 +1,57 @@
 import Head from 'next/head';
 
+const ROADMAP = [
+  {
+    title: 'Phase 0',
+    subtitle: 'The platform itself',
+    items: [
+      { label: 'Creator profiles, galleries, Premium tier (gold check, 10 content slots)', status: 'live' },
+      { label: 'Real DM messaging + in-profile chat', status: 'live' },
+      { label: 'Marketplace: creators list images/videos/merch at any price, browse, search, report a listing', status: 'live' },
+      { label: 'Multi-domain setup: onlyass.fun (platform), .xyz (token), .online (SFW gateway), .shop (marketplace)', status: 'live' },
+    ],
+  },
+  {
+    title: 'Phase 1',
+    subtitle: 'Payments go live',
+    items: [
+      { label: 'Custodial payment backend deployed (Postgres/Fastify, already built and tested)', status: 'built' },
+      { label: 'Real subscriptions, tips, and pay-per-view unlocks', status: 'built' },
+      { label: 'Instant creator payouts (+2% fee, waived for token-lock creators) and scheduled payouts', status: 'built' },
+      { label: 'Marketplace buying, with 10% off for any subscriber or staker', status: 'built' },
+      { label: 'Creator token-lock perk: fans lock $ONLYASS for a creator-defined perk', status: 'built' },
+      { label: 'Referral payouts to whoever brought a creator onto the platform', status: 'built' },
+    ],
+  },
+  {
+    title: 'Phase 2',
+    subtitle: 'Token infrastructure',
+    items: [
+      { label: '$ONLYASS deployed/bridged onto Robinhood Chain', status: 'planned' },
+      { label: 'OnlyAssLaunchpad: creators launch their own token, paired against $ONLYASS (code done, tested against real Uniswap V2, Slither-clean)', status: 'built' },
+      { label: 'Live price oracle for $ONLYASS (Uniswap pool once one exists)', status: 'planned' },
+    ],
+  },
+  {
+    title: 'Phase 3',
+    subtitle: 'Trust & compliance',
+    items: [
+      { label: 'Creator identity verification (KYC vendor)', status: 'planned' },
+      { label: 'Age verification for states that require it by law', status: 'planned' },
+      { label: 'Full legal docs: ToS, Privacy Policy, 18 U.S.C. §2257 statement, DMCA/takedown process', status: 'planned' },
+    ],
+  },
+  {
+    title: 'Phase 4',
+    subtitle: 'What\'s next',
+    items: [
+      { label: 'onlyass.store: a real merch store, separate from the peer-to-peer marketplace', status: 'planned' },
+      { label: 'Forensic/invisible watermarking for video (images already get a traceable per-viewer mark)', status: 'planned' },
+      { label: 'Public read-only API for $ONLYASS price/stats', status: 'planned' },
+    ],
+  },
+];
+
 export default function TokenLanding() {
   return (
     <>
@@ -50,7 +102,7 @@ export default function TokenLanding() {
               </div>
               <div className="flex justify-between border-b border-brand-purple/10 pb-3">
                 <span className="text-gray-400">Network</span>
-                <span className="text-brand-gold font-bold">Ethereum</span>
+                <span className="text-brand-gold font-bold">Robinhood Chain (4663)</span>
               </div>
             </div>
           </div>
@@ -70,6 +122,49 @@ export default function TokenLanding() {
               <h3 className="text-lg font-black text-brand-gold mb-2">Holder Perks</h3>
               <p className="text-gray-400 text-sm">Unlock content and lower creator fees by paying in $ONLYASS.</p>
             </div>
+          </div>
+        </section>
+
+        <section className="py-16 px-6 border-t border-brand-purple/10">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-2xl font-black premium-title text-center mb-2">Roadmap</h2>
+            <p className="text-gray-500 text-sm text-center mb-10">
+              Status, honestly — not a hype chart. "Live" means you can use it right now.
+            </p>
+
+            <div className="space-y-8">
+              {ROADMAP.map((phase) => (
+                <div key={phase.title} className="premium-card p-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <h3 className="font-black text-brand-gold">{phase.title}</h3>
+                    <span className="text-xs text-gray-500">{phase.subtitle}</span>
+                  </div>
+                  <ul className="space-y-2">
+                    {phase.items.map((item) => (
+                      <li key={item.label} className="flex items-start gap-3 text-sm">
+                        <span
+                          className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide ${
+                            item.status === 'live'
+                              ? 'bg-green-500/20 text-green-400'
+                              : item.status === 'built'
+                              ? 'bg-brand-gold/20 text-brand-gold'
+                              : 'bg-gray-500/20 text-gray-400'
+                          }`}
+                        >
+                          {item.status === 'live' ? 'Live' : item.status === 'built' ? 'Built' : 'Planned'}
+                        </span>
+                        <span className="text-gray-300">{item.label}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-xs text-gray-600 text-center mt-8">
+              "Built" = code is done and tested, waiting on the backend deployment / a vendor account to go live.
+              "Planned" = not started yet.
+            </p>
           </div>
         </section>
 
