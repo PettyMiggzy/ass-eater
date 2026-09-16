@@ -1,8 +1,75 @@
 # Launching $ONLYASS + the launchpad on Robinhood Chain
 
-Real order of operations. The launchpad can't do anything useful until
-$ONLYASS itself exists and has a market — creators launching their own token
-need $ONLYASS to pair it against.
+## Current plan: $ONLYASS launches via Kekfun.xyz, not our own script
+
+Per the auction on Kekfun.xyz closing Thursday, $ONLYASS is expected to
+deploy to:
+
+```
+0x991F465b9852f55722EdFb947cD1D130974c785b
+```
+
+(pre-computed and shown by Kekfun.xyz's own UI — that's a reasonable source
+of trust, most launch platforms compute this deterministically before the
+real deploy tx). It's expected to come with 4 pools attached (against KEK,
+WETH, COIN, SPCX per the last screenshot), COIN/SPCX being Robinhood's
+tokenized stock tokens.
+
+**The moment it's actually live, verify before trusting it anywhere:**
+
+```
+ONLYASS_TOKEN_ADDRESS=0x991F465b9852f55722EdFb947cD1D130974c785b \
+ONLYASS_EXPECTED_SYMBOL="ONLYASS" \
+npx hardhat run scripts/verify-onlyass-deployment.js --network robinhood
+```
+
+This confirms real code exists at that address on the real network and reads
+back its actual name/symbol/decimals/supply — a pre-computed address is
+usually right, but "usually" isn't the same as "confirmed," and this takes
+ten seconds. Only after it passes: set `ONLYASS_TOKEN_ADDRESS` everywhere
+that's read (`server/.env`, `NEXT_PUBLIC_CONTRACT_ADDRESS` in Vercel).
+
+**Almost certainly V4, not V3 — this matters for the price oracle.** Every
+Robinhood Chain launch platform this project could find docs for
+(pools.trade, Bags.fm's graduation) lands tokens in Uniswap V4 pools, not V3
+— there's no per-pool contract, price lives packed in a singleton
+PoolManager. `server/src/lib/price.ts` now supports both
+(`ONLYASS_POOL_VERSION=v3` or `v4`); set it to `v4` unless you specifically
+confirm Kekfun.xyz uses V3. To point it at a real V4 pool you need, per pool:
+
+- the chain's PoolManager address (`ONLYASS_V4_POOL_MANAGER`)
+- that pool's exact `fee` / `tickSpacing` / `hooks` (Kekfun.xyz-specific —
+  not derivable from the token address alone; get these from Kekfun's own
+  UI/docs, or from the `PoolCreated` event on Blockscout for the launch tx)
+
+Once you have those, `scripts/verify-onlyass-deployment.js` also checks a
+specific V4 pool and prints its live price (set
+`ONLYASS_V4_POOL_MANAGER`/`_CURRENCY0`/`_CURRENCY1` plus
+`ONLYASS_V4_TICK_SPACING`/`_HOOKS`/`ONLYASS_POOL_FEE`).
+
+**Known gap: `treasury-hedge.ts` only knows how to swap through a Uniswap V3
+router.** The price oracle works either way now, but if $ONLYASS's real pool
+is V4, that worker stays a no-op (it'll just never find a V3 router to use)
+until it's ported to swap through a V4 router/UniversalRouter. Not done —
+flagging it rather than leaving it silently broken. It doesn't block
+launch (nothing needs hedging until there's deposit volume), just don't
+assume it's running.
+
+**4 pools instead of 1 — pricing needs a decision, not just plumbing.**
+`price.ts` reads exactly one pool. If $ONLYASS really ends up with 4
+separate pools (against KEK/WETH/COIN/SPCX) rather than one canonical
+market, "what is $ONLYASS worth in USD" needs a choice — most likely the
+deepest/most liquid pool, or a volume-weighted blend across all 4. That's a
+business call once the pools are live and you can see which one actually
+has liquidity, not something to guess at now.
+
+**With that said, keep the launchpad's own steps below** — deploying
+$ONLYASS ourselves stays the fallback if Kekfun.xyz's auction doesn't
+graduate, or a Plan B for testnet rehearsal.
+
+---
+
+## Fallback: deploying $ONLYASS ourselves
 
 ## 1. Deploy $ONLYASS itself
 
@@ -96,10 +163,10 @@ npm run launchpad:deploy:robinhood
 See `contracts/LAUNCHPAD.md` for the contract's own design notes and the
 Slither review.
 
-## If Thursday arrives before step 2 is actually confirmed
+## If Thursday arrives before addresses are actually confirmed
 
-Do steps 1–4 on **Robinhood Chain testnet** (chain `46630`, the
+Do the fallback steps on **Robinhood Chain testnet** (chain `46630`, the
 `*:robinhood-testnet` npm scripts) instead of mainnet. A testnet launch you
 can demo and iterate on beats a mainnet one built on an address nobody
-personally verified. Flip to mainnet once the router address is confirmed
-through your own wallet, not before.
+personally verified. Flip to mainnet once addresses are confirmed, not
+before.
