@@ -506,3 +506,59 @@ REPORTS tab. Not built: any automatic consequence (mute/ban) after N
 confirmed violations -- flagged attempts just sit in the admin queue for
 a human to act on for now; automating escalation is a reasonable next
 step but wasn't asked for.
+
+## State age-verification laws: geoblock shipped as stopgap, real vendor in progress (2026-09-16)
+
+Asked directly: does the existing "I am 18+" checkbox cover the state
+laws requiring age verification for adult content? **No, and said so
+plainly.** These laws exist specifically because self-attestation was
+already the status quo being legislated against -- a checkbox asking
+"are you in Texas?" has the identical defect as the age checkbox, and
+arguably looks worse in enforcement (shows you knew about the law and
+chose a method that doesn't work). Texas's version was upheld by SCOTUS
+in *Free Speech Coalition v. Paxton* (June 2025, 6-3) -- not a gray area.
+
+**27 states currently have an enacted, in-effect law** (cross-checked two
+sources, both agreed exactly): AL, AR, AZ, FL, GA, ID, IN, IA, KS, KY,
+LA, MS, MO, MT, NE, NC, ND, OH, OK, SC, SD, TN, TX, UT, VA, WV, WY. None
+currently blocked by a court. This list grows regularly -- re-check it
+periodically, don't treat it as permanently fixed.
+
+**Shipped tonight: geoblock these 27 states outright** (`proxy.js` --
+Next.js 16 renamed `middleware.js` to `proxy.js`/`export function
+proxy()`, matches the "Proxy (Middleware)" line in build output). Uses
+Vercel's free edge geo headers (`x-vercel-ip-country`/
+`x-vercel-ip-country-region`) -- no third-party geo-IP vendor needed.
+Blocked visitors get rewritten to `/blocked-region`, which explains why
+and says identity verification is being worked on. Exempts
+`onlyass.xyz` (crypto/token landing) and `onlyass.online` (the SFW
+warning gateway) since neither shows adult content and blocking them
+would cost token-marketing reach for zero compliance benefit --
+everything else (main platform, marketplace, preview/vercel.app URLs,
+any future custom domain) is blocked **by default**, not allowlisted, so
+a new domain added later doesn't silently skip the check. Tested locally
+by spoofing the Vercel geo headers against `next dev` (confirmed the
+right page bundle serves per state, confirmed no redirect loop on
+`/blocked-region` itself) since there's no way to trigger real
+geo-headers outside actual Vercel edge infra.
+
+**This is explicitly a stopgap**, not the fix -- lift each state's block
+once real verification is live for it, don't leave the block list frozen
+forever once a vendor's wired up.
+
+**Vendor research for the real fix, in progress (founder starting the
+process now):** Yoti -- the vendor originally being looked at -- does
+**not publish pricing anywhere**; it's enterprise-sales-only, a call is
+unavoidable to get a number. Two adult-industry-relevant alternatives do
+publish real pricing, found so a comparison exists before that call:
+**AgeChecker.Net** -- $25/mo base + $0.50 per *accepted* verification
+(free if someone's declined or abandons), unlimited sites per account,
+no contract, cancel anytime, volume discounts available.
+**TrueCheck** -- $24.95-$49.95/mo "Business" tier (regional compliance
+included) or custom Enterprise for high volume. VerifyMy (the other
+adult-specific one flagged earlier) also doesn't publish pricing, same
+enterprise-quote pattern as Yoti.
+
+**Telegram: founder said they'll send the invite link next** -- nothing
+to do until that arrives, noted here so it isn't dropped if this session
+gets compacted before the link shows up.
