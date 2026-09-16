@@ -446,7 +446,7 @@ export default function AdminPanel() {
                         checked={draft.premium}
                         onChange={(e) => setDraft({ ...draft, premium: e.target.checked })}
                       />
-                      Premium (gold check, 10 content slots)
+                      Premium (gold check, 200 content slots)
                     </label>
                     <label className="flex items-center gap-2 text-sm text-gray-300">
                       Status

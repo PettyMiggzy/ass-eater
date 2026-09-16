@@ -396,7 +396,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                       </div>
                       {!creator.premium && (
                         <p className="text-xs text-gray-500 mb-3">
-                          Free accounts get 4 content slots. Premium creators get 10 and a gold check — contact us to upgrade.
+                          Free accounts get 50 content slots. Premium creators get 200 and a gold check — contact us to upgrade.
                         </p>
                       )}
                     </>

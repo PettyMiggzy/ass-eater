@@ -31,13 +31,17 @@ export default async function handler(req, res) {
     knownGallery = undefined;
   }
 
-  const limit = ctx.creator.premium ? 10 : 4;
+  // Bumped way up from the original 4/10 -- creators bringing an existing back-
+  // catalog need real headroom, not a handful of slots. Still capped (not
+  // unlimited) since Vercel Blob storage cost scales with what's actually
+  // uploaded -- revisit these two numbers if real usage says otherwise.
+  const limit = ctx.creator.premium ? 200 : 50;
   const used = (Array.isArray(knownGallery) ? knownGallery : ctx.creator.gallery || []).length;
   if (used >= limit) {
     return res.status(403).json({
       error: ctx.creator.premium
         ? `You've used all ${limit} of your Premium content slots.`
-        : `Free accounts get ${limit} content slots. Upgrade to Premium for 10.`,
+        : `Free accounts get ${limit} content slots. Upgrade to Premium for 200.`,
       limit,
       used,
     });

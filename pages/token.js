@@ -5,7 +5,7 @@ const ROADMAP = [
     title: 'Phase 0',
     subtitle: 'The platform itself',
     items: [
-      { label: 'Creator profiles, galleries, Premium tier (gold check, 10 content slots)', status: 'live' },
+      { label: 'Creator profiles, galleries, Premium tier (gold check, 200 content slots)', status: 'live' },
       { label: 'Real DM messaging + in-profile chat', status: 'live' },
       { label: 'Marketplace: creators list images/videos/merch at any price, browse, search, report a listing', status: 'live' },
       { label: 'Multi-domain setup: onlyass.fun (platform), .xyz (token), .online (SFW gateway), .shop (marketplace)', status: 'live' },
