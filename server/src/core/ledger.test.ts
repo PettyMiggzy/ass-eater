@@ -136,6 +136,59 @@ describe('ledger.charge', () => {
     expect(await balanceOf(referrer)).toBe(0n);
   });
 
+  it('pays the referrer a cut of the platform fee for a recently referred fan', async () => {
+    const referrer = await makeUser();
+    const fan = await makeUser({ referredById: referrer });
+    const creator = await makeCreator();
+    await fund(fan, 10_000);
+    const platformBefore = await balanceOf(PLATFORM_ID);
+
+    const result = await money(prisma, (tx) =>
+      charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-5' }),
+    );
+
+    expect(result.referral).toBe(50); // 5% of gross
+    expect(await balanceOf(referrer)).toBe(50n);
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(50n); // fee(100) - referral(50)
+  });
+
+  it('does not pay a referral once the referred fan\'s window has expired', async () => {
+    const referrer = await makeUser();
+    const fan = await makeUser({ referredById: referrer });
+    // Backdate the fan's account past the 12-month referral window.
+    await prisma.user.update({
+      where: { id: fan },
+      data: { createdAt: new Date(Date.now() - 400 * 24 * 60 * 60 * 1000) },
+    });
+    const creator = await makeCreator();
+    await fund(fan, 10_000);
+
+    const result = await money(prisma, (tx) =>
+      charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-6' }),
+    );
+
+    expect(result.referral).toBe(0);
+    expect(await balanceOf(referrer)).toBe(0n);
+  });
+
+  it('pays both referrers when both the fan and the creator were referred', async () => {
+    const fanReferrer = await makeUser();
+    const creatorReferrer = await makeUser();
+    const fan = await makeUser({ referredById: fanReferrer });
+    const creator = await makeCreator({ referredById: creatorReferrer });
+    await fund(fan, 10_000);
+    const platformBefore = await balanceOf(PLATFORM_ID);
+
+    const result = await money(prisma, (tx) =>
+      charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-7' }),
+    );
+
+    expect(result.referral).toBe(100); // 5% + 5% of gross
+    expect(await balanceOf(fanReferrer)).toBe(50n);
+    expect(await balanceOf(creatorReferrer)).toBe(50n);
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(0n); // fee(100) - referral(100)
+  });
+
   it('rejects a charge when the fan has insufficient balance, leaving all balances untouched', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();

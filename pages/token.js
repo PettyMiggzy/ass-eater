@@ -20,7 +20,7 @@ const ROADMAP = [
       { label: 'Instant creator payouts (+2% fee, waived for token-lock creators) and scheduled payouts', status: 'built' },
       { label: 'Marketplace buying, with 10% off for any subscriber or staker', status: 'built' },
       { label: 'Creator token-lock perk: fans lock $ONLYASS for a creator-defined perk', status: 'built' },
-      { label: 'Referral payouts to whoever brought a creator onto the platform', status: 'built' },
+      { label: 'Referral payouts to whoever brought a creator or a fan onto the platform', status: 'built' },
     ],
   },
   {

@@ -329,3 +329,37 @@ is something payment processors and ad networks explicitly screen for
 separately from real-person adult content. Not a decision to make silently
 -- if/when actual content-moderation rules get written, this needs its own
 explicit line, not an assumption either way.
+
+## Referral system: now pays for inviting fans, not just creators (shipped 2026-09-16)
+
+Direct ask: "Def need get referral system so ppl invite creators and get
+some of something lol and fans." The referral *plumbing* already existed and
+was already role-agnostic on the signup side --
+`server/src/modules/auth.ts`'s `POST /register` accepts a `referralCode`
+(matched against username) and sets `referredById` on any new account, fan
+or creator, and `GET /referral` already returns a generic
+`{code, referrals, earningsCents}` for whoever's logged in. The actual gap
+was entirely in `server/src/core/ledger.ts`'s `charge()`: it only ever
+looked at the **creator's** `referredById` to decide whether to pay a
+referral cut, so referring a fan produced zero reward no matter how much
+that fan spent.
+
+Fixed by having `charge()` look up both sides' `referredById`/`createdAt`
+and run the same "still inside `FEES.REFERRAL_MONTHS` of that person's
+signup" check independently for each: whoever referred the **creator**
+(payee) and whoever referred the **fan** (payer) each get their own
+`FEES.REFERRAL_BPS` (5%) cut of the platform's fee on every transaction,
+for 12 months after the referred person signed up. If both sides of a given
+transaction were referred by different people, both get paid out of the
+same transaction (still capped so combined referral payouts can never
+exceed the platform's fee itself). No schema change needed -- `User` already
+had a self-referential `referredById`. Tests added in
+`server/src/core/ledger.test.ts` mirroring the existing creator-side ones
+(pays a fan's referrer, referral expires after 12 months, both referrers
+get paid when both sides were referred); full suite (56 tests) passes
+against the real local Postgres+Redis, not just typecheck.
+
+Not changed: the referral *rate* (5%) and *window* (12 months) stay the
+same for both sides -- no ask to make fan-referrals pay differently than
+creator-referrals. This is server/-only (the ledger stack, not yet
+deployed) like every other money-logic feature in this file.

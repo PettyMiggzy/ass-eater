@@ -86,11 +86,12 @@ export async function post(
 }
 
 /**
- * Fan pays creator. Platform takes its cut. Referrer gets a slice of the
- * platform's cut. Paying out of a $ONLYASS-denominated balance (payAsset:
- * 'ONLYASS') does not discount the charge on its own -- being VIP (having
- * burned enough $ONLYASS, see core/vip.ts) is the only thing that does,
- * regardless of which balance the charge is paid from.
+ * Fan pays creator. Platform takes its cut. Whoever referred the creator and
+ * whoever referred the fan each get their own slice of the platform's cut
+ * (see referralCut() below). Paying out of a $ONLYASS-denominated balance
+ * (payAsset: 'ONLYASS') does not discount the charge on its own -- being VIP
+ * (having burned enough $ONLYASS, see core/vip.ts) is the only thing that
+ * does, regardless of which balance the charge is paid from.
  */
 export async function charge(
   tx: Tx,
@@ -99,10 +100,13 @@ export async function charge(
   if (p.fanId === p.creatorId) throw new Error('self_payment');
   if (p.grossCents <= 0) throw new Error('invalid_amount');
 
-  const creator = await tx.creatorProfile.findUniqueOrThrow({
-    where: { userId: p.creatorId },
-    include: { user: { select: { referredById: true, createdAt: true, status: true } } },
-  });
+  const [creator, fan] = await Promise.all([
+    tx.creatorProfile.findUniqueOrThrow({
+      where: { userId: p.creatorId },
+      include: { user: { select: { referredById: true, createdAt: true, status: true } } },
+    }),
+    tx.user.findUniqueOrThrow({ where: { id: p.fanId }, select: { referredById: true, createdAt: true } }),
+  ]);
   if (creator.user.status !== 'ACTIVE') throw new Error('creator_unavailable');
 
   const payAsset: PayAsset = p.payAsset === 'ONLYASS' ? 'ONLYASS' : 'USD';
@@ -116,19 +120,25 @@ export async function charge(
   const fee = Math.floor((chargeCents * feeBps) / 10_000);
   const net = chargeCents - fee;
 
-  let referral = 0;
-  if (creator.user.referredById) {
-    const refCutoff = new Date(creator.user.createdAt);
-    refCutoff.setMonth(refCutoff.getMonth() + FEES.REFERRAL_MONTHS);
-    if (new Date() < refCutoff) {
-      referral = Math.min(fee, Math.floor((chargeCents * FEES.REFERRAL_BPS) / 10_000));
-    }
-  }
+  // Whoever referred the creator (payee) and whoever referred the fan (payer)
+  // each earn a cut of the platform's fee for FEES.REFERRAL_MONTHS after the
+  // referred person signed up -- referring either side of a transaction pays.
+  const referralCut = (referredById: string | null, since: Date) => {
+    if (!referredById) return 0;
+    const cutoff = new Date(since);
+    cutoff.setMonth(cutoff.getMonth() + FEES.REFERRAL_MONTHS);
+    if (new Date() >= cutoff) return 0;
+    return Math.floor((chargeCents * FEES.REFERRAL_BPS) / 10_000);
+  };
+  const creatorReferral = referralCut(creator.user.referredById, creator.user.createdAt);
+  const fanReferral = referralCut(fan.referredById, fan.createdAt);
+  const referral = Math.min(fee, creatorReferral + fanReferral);
 
   await post(tx, p.fanId, -chargeCents, p.type, p.refId, undefined, payAsset);
   await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, payAsset, originalPriceCents: p.grossCents });
   await post(tx, PLATFORM_ID, fee - referral, 'PLATFORM_FEE', p.refId, { source: p.type });
-  if (referral) await post(tx, creator.user.referredById!, referral, 'REFERRAL', p.refId);
+  if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', p.refId, { for: 'creator' });
+  if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', p.refId, { for: 'fan' });
 
   return { gross: chargeCents, fee, net, referral, payAsset };
 }

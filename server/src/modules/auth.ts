@@ -56,9 +56,10 @@ export const auth: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  // Referral program: username doubles as the referral code (see /register).
-  // Referrer earns FEES.REFERRAL_BPS of the platform's cut for FEES.REFERRAL_MONTHS
-  // after a referred creator signs up -- see core/ledger.ts charge().
+  // Referral program: username doubles as the referral code (see /register),
+  // works for inviting either a creator or a fan. Referrer earns FEES.REFERRAL_BPS
+  // of the platform's cut for FEES.REFERRAL_MONTHS after the referred person signs
+  // up and starts transacting (as payer or payee) -- see core/ledger.ts charge().
   app.get('/referral', { preHandler: app.auth }, async (req) => {
     const [me, referrals, earnings] = await Promise.all([
       prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { username: true } }),
