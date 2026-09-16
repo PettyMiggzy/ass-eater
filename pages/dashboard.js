@@ -538,17 +538,21 @@ function Inbox({ currentUserId }) {
 }
 
 function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleStatus }) {
-  const [form, setForm] = useState({ title: '', description: '', price: '', unlimited: true });
+  const [form, setForm] = useState({ title: '', description: '', price: '', unlimited: true, physical: false, shipping: '' });
   const [creating, setCreating] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     const priceCents = Math.round(Number(form.price) * 100);
     if (!form.title.trim() || !priceCents || priceCents < 100) return;
+    const shippingCents = form.physical ? Math.round(Number(form.shipping) * 100) || 0 : undefined;
     setCreating(true);
-    const listing = await onCreate({ title: form.title, description: form.description, priceCents, unlimited: form.unlimited });
+    const listing = await onCreate({
+      title: form.title, description: form.description, priceCents, unlimited: form.unlimited,
+      kind: form.physical ? 'physical' : 'digital', shippingCents,
+    });
     setCreating(false);
-    if (listing) setForm({ title: '', description: '', price: '', unlimited: true });
+    if (listing) setForm({ title: '', description: '', price: '', unlimited: true, physical: false, shipping: '' });
   };
 
   return (
@@ -584,9 +588,33 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
           className="sm:col-span-2 w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
         />
         <label className="flex items-center gap-2 text-sm text-gray-400">
-          <input type="checkbox" checked={form.unlimited} onChange={(e) => setForm({ ...form, unlimited: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={form.unlimited}
+            disabled={form.physical}
+            onChange={(e) => setForm({ ...form, unlimited: e.target.checked })}
+          />
           Digital good (sell to unlimited buyers) — uncheck for a one-of-a-kind item
         </label>
+        <label className="flex items-center gap-2 text-sm text-gray-400">
+          <input
+            type="checkbox"
+            checked={form.physical}
+            onChange={(e) => setForm({ ...form, physical: e.target.checked, unlimited: e.target.checked ? false : form.unlimited })}
+          />
+          Physical item — ships to the buyer (no inventory tracking yet, one listing = one item to ship)
+        </label>
+        {form.physical && (
+          <input
+            value={form.shipping}
+            onChange={(e) => setForm({ ...form, shipping: e.target.value })}
+            placeholder="Shipping fee (USD, 0 for free shipping)"
+            type="number"
+            min="0"
+            step="0.01"
+            className="sm:col-span-2 w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+          />
+        )}
         <button type="submit" disabled={creating || busy} className="premium-button text-sm disabled:opacity-50">
           Create Listing
         </button>
@@ -601,7 +629,10 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
               <div className="flex items-center justify-between mb-2">
                 <div>
                   <p className="font-bold text-white">{l.title} — ${(l.priceCents / 100).toFixed(2)}</p>
-                  <p className="text-xs text-gray-500">{l.status} · {l.unlimited ? 'unlimited' : 'one-of-a-kind'}</p>
+                  <p className="text-xs text-gray-500">
+                    {l.status} · {l.unlimited ? 'unlimited' : 'one-of-a-kind'}
+                    {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping)` : ' (free shipping)'}`}
+                  </p>
                 </div>
                 {l.status !== 'sold' && (
                   <button
@@ -633,6 +664,119 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
           ))
         )}
       </div>
+
+      {listings.some((l) => l.kind === 'physical') && (
+        <>
+          <hr className="border-brand-purple/20 my-6" />
+          <OrdersToShip />
+        </>
+      )}
+    </div>
+  );
+}
+
+function OrdersToShip() {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [shipForm, setShipForm] = useState({}); // orderId -> { carrier, trackingNumber }
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/marketplace/orders/creator');
+      const data = await res.json();
+      if (res.ok) setOrders(data.orders || []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const markShipped = async (orderId) => {
+    const { carrier, trackingNumber } = shipForm[orderId] || {};
+    if (!carrier || !trackingNumber) { setError('Enter a carrier and tracking number first.'); return; }
+    setBusyId(orderId);
+    setError('');
+    try {
+      const res = await fetch('/api/marketplace/orders/ship', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, carrier, trackingNumber }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to mark shipped');
+      setOrders(orders.map((o) => (o.id === orderId ? data.order : o)));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const pending = orders.filter((o) => o.status === 'pending_shipment');
+  const shipped = orders.filter((o) => o.status === 'shipped');
+
+  return (
+    <div>
+      <h3 className="font-bold text-brand-gold mb-3">Orders to Ship</h3>
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : orders.length === 0 ? (
+        <p className="text-sm text-gray-500">No physical orders yet.</p>
+      ) : (
+        <div className="space-y-3">
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          {pending.map((o) => {
+            const addr = o.shippingAddress || {};
+            const form = shipForm[o.id] || { carrier: '', trackingNumber: '' };
+            return (
+              <div key={o.id} className="premium-card border border-brand-purple/20 p-4">
+                <p className="text-sm text-white font-bold">Order #{o.id} — ${(o.priceCents / 100).toFixed(2)}{o.shippingCents ? ` + $${(o.shippingCents / 100).toFixed(2)} shipping` : ''}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {addr.fullName}<br />
+                  {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}<br />
+                  {addr.city}, {addr.region} {addr.postalCode}<br />
+                  {addr.country}{addr.phone ? ` · ${addr.phone}` : ''}
+                </p>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <input
+                    value={form.carrier}
+                    onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, carrier: e.target.value } })}
+                    placeholder="Carrier (e.g. USPS)"
+                    className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
+                  />
+                  <input
+                    value={form.trackingNumber}
+                    onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, trackingNumber: e.target.value } })}
+                    placeholder="Tracking number"
+                    className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
+                  />
+                  <button
+                    onClick={() => markShipped(o.id)}
+                    disabled={busyId === o.id}
+                    className="premium-button text-xs px-4 disabled:opacity-50"
+                  >
+                    Mark Shipped
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {shipped.length > 0 && (
+            <details className="text-xs text-gray-500">
+              <summary className="cursor-pointer">Shipped ({shipped.length})</summary>
+              <div className="mt-2 space-y-1">
+                {shipped.map((o) => (
+                  <p key={o.id}>Order #{o.id} — {o.carrier} {o.trackingNumber}</p>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
     </div>
   );
 }
