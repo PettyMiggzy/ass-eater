@@ -2,12 +2,11 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../core/ledger';
+import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION } from '../core/marketplace-fees';
+import { placeBid } from '../core/auctions';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
-const PLATFORM_FEE_BPS = 1000; // 10% commission on the sale
-const LISTING_FEE_BPS = 500; // 5% listing fee, also cut at sale time
 const LOYALTY_DISCOUNT_BPS = 1000; // 10% off for a buyer with any active subscription or token-lock
-const CURRENT_TOS_VERSION = 'v1'; // pages/terms.js, Section 6 (Marketplace Purchases) -- bump this if that section's text materially changes
 
 // Physical orders pay the creator at purchase time, same as digital -- no
 // escrow. Shipping method, signature-on-delivery, item condition, and any
@@ -27,10 +26,22 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       unlimited: z.boolean().default(false), mediaIds: z.array(z.string().uuid()).max(20).default([]),
       kind: z.enum(['DIGITAL', 'PHYSICAL']).default('DIGITAL'), shippingCents: z.number().int().min(0).max(100_000_00).default(0),
       signatureRequired: z.boolean().default(false),
+      saleType: z.enum(['FIXED', 'AUCTION']).default('FIXED'),
+      auctionDurationHours: z.number().int().min(1).max(24 * 30).optional(), // required for AUCTION: 1 hour to 30 days
+      minBidIncrementCents: z.number().int().min(1).max(100_000_00).optional(),
+      reserveCents: z.number().int().min(100).max(100_000_00).optional(),
     }).parse(req.body);
-    const { mediaIds, ...fields } = b;
+    const { mediaIds, auctionDurationHours, ...fields } = b;
     // Physical items ship one-at-a-time -- no inventory tracking yet, so "unlimited" doesn't mean anything for them.
-    if (fields.kind === 'PHYSICAL') fields.unlimited = false;
+    // An auction is one-of-a-kind by nature (bidding on "one of infinite copies" doesn't mean anything either).
+    if (fields.kind === 'PHYSICAL' || fields.saleType === 'AUCTION') fields.unlimited = false;
+    if (fields.saleType === 'AUCTION') {
+      if (!auctionDurationHours) throw Object.assign(new Error('auctionDurationHours is required for an auction listing'), { statusCode: 400 });
+      if (fields.reserveCents != null && fields.reserveCents < fields.priceCents) {
+        throw Object.assign(new Error('reserveCents cannot be below the starting bid (priceCents)'), { statusCode: 400 });
+      }
+      (fields as any).auctionEndsAt = new Date(Date.now() + auctionDurationHours * 3_600_000);
+    }
     return prisma.$transaction(async (tx) => {
       const l = await tx.listing.create({ data: { creatorId: req.user.id, ...fields } });
       if (mediaIds.length) {
@@ -94,6 +105,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     return money(prisma, async (tx) => {
       const l = await tx.listing.findUniqueOrThrow({ where: { id: req.params.id } });
       if (l.status !== 'ACTIVE') throw Object.assign(new Error('not_available'), { statusCode: 400 });
+      if (l.saleType === 'AUCTION') throw Object.assign(new Error('auction_listing_use_bid'), { statusCode: 400 });
       if (l.creatorId === req.user.id) throw Object.assign(new Error('self_purchase'), { statusCode: 400 });
 
       if (l.unlimited) {
@@ -144,6 +156,22 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       return { ok: true, order, discountApplied: discounted, payAsset };
     });
   });
+
+  // --- Auctions (see core/auctions.ts) ---
+
+  app.post('/listings/:id/bid', { preHandler: app.auth }, async (req: any) => {
+    const { amountCents } = z.object({ amountCents: z.number().int().min(1) }).parse(req.body);
+    const bid = await money(prisma, (tx) => placeBid(tx, req.params.id, req.user.id, amountCents));
+    return { ok: true, bid };
+  });
+
+  app.get('/listings/:id/bids', async (req: any) =>
+    prisma.bid.findMany({
+      where: { listingId: req.params.id },
+      orderBy: { amountCents: 'desc' },
+      take: 20,
+      include: { bidder: { select: { username: true } } },
+    }));
 
   // --- Physical-order shipping status (visibility only -- see comment above) ---
 

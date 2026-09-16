@@ -48,6 +48,13 @@ enum TxType {
   TOKEN_LOCK
   MARKETPLACE_SALE
   REFUND
+  AUCTION_BID_HOLD
+  AUCTION_BID_RELEASE
+}
+
+enum SaleType {
+  FIXED
+  AUCTION
 }
 
 enum ListingKind {
@@ -134,6 +141,7 @@ model User {
   locksAsFan     TokenLock[]      @relation("FanLocks")
   locksAsCreator TokenLock[]      @relation("CreatorLocks")
   purchases      ListingOrder[]
+  bids           Bid[]
 }
 
 model RefreshToken {
@@ -228,8 +236,8 @@ model Listing {
   creator     CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
   title       String
   description String         @default("")
-  priceCents  Int
-  unlimited   Boolean        @default(false) // true = digital good, sellable to many buyers; false = one-of-a-kind, SOLD after first purchase
+  priceCents  Int // FIXED: the price. AUCTION: the starting bid.
+  unlimited   Boolean        @default(false) // true = digital good, sellable to many buyers; false = one-of-a-kind, SOLD after first purchase. Always false for AUCTION.
   kind        ListingKind    @default(DIGITAL)
   shippingCents Int          @default(0) // flat fee the creator sets, physical only -- no address-based rate calculation
   signatureRequired Boolean  @default(false) // advisory only -- we don't integrate with any carrier, this just reminds the creator and tells the buyer. See MARKETPLACE_FULFILLMENT.md.
@@ -239,7 +247,37 @@ model Listing {
   createdAt   DateTime       @default(now())
   orders      ListingOrder[]
 
+  // Auctions settle in the USD-backed balanceCents pool only, never the
+  // $ONLYASS discount pool -- a bid needs a stable denomination for its
+  // whole (possibly multi-day) run, and a token discount would make "highest
+  // bid wins" ambiguous. See core/auctions.ts.
+  saleType             SaleType  @default(FIXED)
+  auctionEndsAt        DateTime?
+  minBidIncrementCents Int? // null = use the default (greater of $1 or 5% of the current bid)
+  reserveCents         Int? // hidden minimum; if unmet at close, the auction ends with no sale
+  currentBidCents      Int?
+  currentBidderId      String? // no FK -- transient/denormalized; Bid rows are the source of truth
+  bids                 Bid[]
+
   @@index([status, createdAt])
+  @@index([saleType, status, auctionEndsAt])
+}
+
+// Every bid, kept even after being outbid, for history/audit. A bid's funds
+// are held (AUCTION_BID_HOLD) the instant it's placed and released
+// (AUCTION_BID_RELEASE) the instant it's outbid or the auction ends without
+// a sale -- so by the time an auction closes, the winning bid is already
+// real money, not a promise. See core/auctions.ts.
+model Bid {
+  id          String   @id @default(uuid())
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id])
+  bidderId    String
+  bidder      User     @relation(fields: [bidderId], references: [id])
+  amountCents Int
+  createdAt   DateTime @default(now())
+
+  @@index([listingId, amountCents])
 }
 
 // The creator gets paid at purchase time, physical or digital -- no escrow.

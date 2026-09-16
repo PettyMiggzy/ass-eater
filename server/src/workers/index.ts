@@ -1,2 +1,2 @@
-import './deposit-indexer'; import './payout-worker'; import './renewals'; import './transcode'; import './broadcast'; import './treasury-hedge';
+import './deposit-indexer'; import './payout-worker'; import './renewals'; import './transcode'; import './broadcast'; import './treasury-hedge'; import './auction-close';
 console.log('workers up');

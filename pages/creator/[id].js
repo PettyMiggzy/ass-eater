@@ -5,6 +5,7 @@ import { getCreators } from '../../lib/creators-store';
 import { getSessionUserId } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
+import { getWallPostsForCreator } from '../../lib/wall-store';
 
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
@@ -15,17 +16,19 @@ export async function getServerSideProps({ req, params }) {
   const listings = allListings
     .filter((l) => String(l.creatorId) === String(creator?.id) && l.status === 'active')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const wallPosts = creator ? await getWallPostsForCreator(creator.id) : [];
   return {
     props: {
       creator,
       viewerId: viewerId || null,
       creatorUserId: creatorUser ? String(creatorUser.id) : null,
       listings,
+      wallPosts,
     },
   };
 }
 
-export default function CreatorProfile({ creator, viewerId, creatorUserId, listings }) {
+export default function CreatorProfile({ creator, viewerId, creatorUserId, listings, wallPosts }) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('posts');
   const [toast, setToast] = useState(null);
@@ -191,35 +194,47 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
             >
               {creator.media} MEDIA
             </button>
+            <button
+              onClick={() => setActiveTab('wall')}
+              className={`pb-3 font-bold text-sm ${activeTab === 'wall' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+            >
+              WALL
+            </button>
           </div>
 
-          {/* Content Grid (locked) */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {(() => {
-              const items = [
-                creator.video ? { type: 'video', src: creator.video } : { type: 'image', src: creator.img },
-                ...(creator.gallery || []),
-              ];
-              const filled = Array.from({ length: 6 }, (_, i) => items[i % items.length]);
-              return filled.map((item, i) => (
-                <div key={i} className="aspect-square rounded-lg overflow-hidden relative premium-card border border-brand-gold/20">
-                  {item.type === 'video' ? (
-                    <video src={item.src} autoPlay loop muted playsInline className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
-                  ) : (
-                    <img src={item.src} alt="" className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
-                  )}
-                  {creator.locked && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                      <img src="/icons/lock.png" className="h-6 w-6" alt="" />
+          {activeTab === 'wall' ? (
+            <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} isWallOwner={!!viewerId && String(viewerId) === String(creatorUserId)} />
+          ) : (
+            <>
+              {/* Content Grid (locked) */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {(() => {
+                  const items = [
+                    creator.video ? { type: 'video', src: creator.video } : { type: 'image', src: creator.img },
+                    ...(creator.gallery || []),
+                  ];
+                  const filled = Array.from({ length: 6 }, (_, i) => items[i % items.length]);
+                  return filled.map((item, i) => (
+                    <div key={i} className="aspect-square rounded-lg overflow-hidden relative premium-card border border-brand-gold/20">
+                      {item.type === 'video' ? (
+                        <video src={item.src} autoPlay loop muted playsInline className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
+                      ) : (
+                        <img src={item.src} alt="" className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
+                      )}
+                      {creator.locked && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                          <img src="/icons/lock.png" className="h-6 w-6" alt="" />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ));
-            })()}
-          </div>
+                  ));
+                })()}
+              </div>
+            </>
+          )}
 
           {/* Marketplace items */}
-          {listings.length > 0 && (
+          {activeTab !== 'wall' && listings.length > 0 && (
             <div className="mt-10">
               <h2 className="text-xl font-black premium-title mb-4">On the Marketplace</h2>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -353,6 +368,156 @@ function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
           </button>
         </form>
       </div>
+    </div>
+  );
+}
+
+function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
+  const router = useRouter();
+  const [posts, setPosts] = useState(initialPosts);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [reporting, setReporting] = useState(null);
+  const [reportReason, setReportReason] = useState('');
+  const [reportSending, setReportSending] = useState(false);
+
+  const submitReport = async (e) => {
+    e.preventDefault();
+    if (!reportReason.trim()) return;
+    setReportSending(true);
+    try {
+      const res = await fetch('/api/wall/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: reporting.id, reason: reportReason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to report');
+      setReporting(null);
+      setReportReason('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setReportSending(false);
+    }
+  };
+
+  const refresh = async () => {
+    const res = await fetch(`/api/wall/list?creatorId=${creatorId}`);
+    const data = await res.json();
+    if (res.ok) setPosts(data.posts);
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!viewerId) {
+      router.push(`/login?next=/creator/${creatorId}`);
+      return;
+    }
+    if (!text.trim()) return;
+    setSending(true);
+    setError('');
+    try {
+      const res = await fetch('/api/wall/post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creatorId, text }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to post');
+      setText('');
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const remove = async (id) => {
+    try {
+      const res = await fetch('/api/wall/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (res.ok) setPosts(posts.filter((p) => String(p.id) !== String(id)));
+    } catch {
+      // best-effort -- the post stays visible if the delete failed, no toast needed for this
+    }
+  };
+
+  return (
+    <div>
+      {reporting && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <form onSubmit={submitReport} className="premium-card w-full max-w-sm p-6">
+            <p className="font-bold text-white mb-1">Report this comment</p>
+            <p className="text-xs text-gray-500 mb-4">Tell us what's wrong with it.</p>
+            <textarea
+              value={reportReason}
+              onChange={(e) => setReportReason(e.target.value)}
+              rows={3}
+              placeholder="Reason..."
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm mb-4"
+            />
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setReporting(null)} className="flex-1 text-sm px-4 py-2 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition">
+                Cancel
+              </button>
+              <button type="submit" disabled={reportSending} className="flex-1 premium-button text-sm disabled:opacity-50">
+                Submit
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <form onSubmit={submit} className="mb-6">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={viewerId ? 'Say something on their wall...' : 'Log in to post on the wall'}
+          rows={2}
+          maxLength={500}
+          className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm mb-2"
+        />
+        {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
+        <button type="submit" disabled={sending} className="premium-button text-sm px-6 disabled:opacity-50">
+          Post
+        </button>
+      </form>
+
+      {posts.length === 0 ? (
+        <p className="text-sm text-gray-500">No one's posted here yet — be the first.</p>
+      ) : (
+        <div className="space-y-3">
+          {posts.map((p) => (
+            <div key={p.id} className="premium-card border border-brand-purple/20 p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-bold text-brand-gold">{p.authorName}</p>
+                  <p className="text-sm text-gray-300 mt-1 whitespace-pre-wrap break-words">{p.text}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {viewerId && String(viewerId) !== String(p.authorId) && (
+                    <button onClick={() => setReporting(p)} className="text-xs text-gray-600 hover:text-brand-gold transition" title="Report">
+                      ⚑
+                    </button>
+                  )}
+                  {(isWallOwner || String(viewerId) === String(p.authorId)) && (
+                    <button onClick={() => remove(p.id)} className="text-xs text-gray-500 hover:text-red-400 transition" title="Delete">
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-[10px] text-gray-600 mt-2">{new Date(p.createdAt).toLocaleDateString()}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
