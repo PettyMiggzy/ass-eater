@@ -461,3 +461,48 @@ what came of them:
     real signup.js flow. Founder needs to say whether this page should
     even be live for tomorrow, since going through it doesn't get you an
     account you can log into.
+
+## Payment-circumvention filter for chat/wall/bio (shipped 2026-09-16)
+
+Direct ask: block creators from routing fans to Cash App/Venmo/Zelle/a
+phone number/email to dodge the platform's cut -- a well-known real
+problem on OnlyFans/Fansly, not hypothetical. Also asked, in the same
+message: does OnlyFans charge creators anything (e.g. a premium-account
+fee)? **No** -- OnlyFans is 100% commission-based (their standard 20% cut
+of everything a creator earns), no account fee of any kind, so there's no
+existing "pay for a perk" precedent to model this on.
+
+**Explicitly decided: no paid bypass.** Floated whether a $20/month
+premium tier should let a creator skip this filter -- decided against it:
+a paid way around your own revenue-protection system just means anyone
+can pay to freely dodge the 10% fee, which defeats the point of building
+it. The filter (`lib/payment-circumvention-filter.js`) applies to every
+creator and fan equally, no tier exemption, ever. Don't add one without
+this being explicitly revisited.
+
+Shipped on the live Next.js site (not server/, since this is a
+content-moderation feature with no ledger dependency): flags Cash
+App/Venmo/Zelle/PayPal/Apple Pay/Google Pay/Chime/Western
+Union/MoneyGram mentions, Cash App-style `$cashtag` patterns, phone
+numbers, and email addresses. **Deliberately does not flag crypto wallet
+addresses** (`0x...`, `bc1...`) -- unlike a typical fiat-only OnlyFans
+clone, this platform's own tipping is denominated in $ONLYASS, so wallet
+addresses show up in completely legitimate on-platform conversations
+here; flagging them would block real platform use, not stop
+circumvention. Wired into every free-text surface a creator/fan writes
+to that reaches another person or the public: DM sends
+(`pages/api/messages/send.js`), wall comments
+(`pages/api/wall/post.js`), and creator bios
+(`pages/api/me/profile.js`) -- bio was added on top of what was asked
+("chat features") since a creator's public bio is actually the most
+visible, permanent place to drop a Cash App handle, not just DMs.
+
+A match blocks the send outright (not a silent redact -- the sender gets
+a clear reason) and logs it to `lib/violations-store.js` (new, mirrors
+the existing `reports-store.js` Vercel Blob pattern) for admin review.
+New **VIOLATIONS** tab in `/admin` lists flagged attempts with
+dismiss-as-false-positive / confirm actions, mirroring the existing
+REPORTS tab. Not built: any automatic consequence (mute/ban) after N
+confirmed violations -- flagged attempts just sit in the admin queue for
+a human to act on for now; automating escalation is a reasonable next
+step but wasn't asked for.
