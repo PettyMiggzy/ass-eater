@@ -55,10 +55,10 @@ async function assUsdV4(): Promise<number> {
   return priceInQuote * quoteUsd;
 }
 
-/** Your token's spot price. Pre-launch: set ONLYASS_PRICE_OVERRIDE. Set ONLYASS_POOL_VERSION=v4 once $ONLYASS's real pool is confirmed as V4 (the norm on Robinhood Chain's launch platforms) rather than assuming V3. */
+/** Your token's spot price. Pre-launch: set ONLYASS_PRICE_OVERRIDE. Defaults to V4 -- confirmed as Kekfun.xyz's (and every other Robinhood Chain launch platform's) actual pool type. Set ONLYASS_POOL_VERSION=v3 only if you know for certain the real pool isn't V4. */
 async function assUsd(): Promise<number> {
   if (process.env.ONLYASS_PRICE_OVERRIDE) return Number(process.env.ONLYASS_PRICE_OVERRIDE);
-  return process.env.ONLYASS_POOL_VERSION === 'v4' ? assUsdV4() : assUsdV3();
+  return process.env.ONLYASS_POOL_VERSION === 'v3' ? assUsdV3() : assUsdV4();
 }
 
 export async function getUsdPrice(asset: 'USDC' | 'ETH' | 'ONLYASS'): Promise<number> {

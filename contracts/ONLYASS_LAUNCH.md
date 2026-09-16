@@ -29,13 +29,12 @@ usually right, but "usually" isn't the same as "confirmed," and this takes
 ten seconds. Only after it passes: set `ONLYASS_TOKEN_ADDRESS` everywhere
 that's read (`server/.env`, `NEXT_PUBLIC_CONTRACT_ADDRESS` in Vercel).
 
-**Almost certainly V4, not V3 — this matters for the price oracle.** Every
-Robinhood Chain launch platform this project could find docs for
-(pools.trade, Bags.fm's graduation) lands tokens in Uniswap V4 pools, not V3
-— there's no per-pool contract, price lives packed in a singleton
-PoolManager. `server/src/lib/price.ts` now supports both
-(`ONLYASS_POOL_VERSION=v3` or `v4`); set it to `v4` unless you specifically
-confirm Kekfun.xyz uses V3. To point it at a real V4 pool you need, per pool:
+**Confirmed V4, not V3 — this matters for the price oracle.** Kekfun.xyz's
+pools are V4, same as every other Robinhood Chain launch platform (pools.trade,
+Bags.fm's graduation) — there's no per-pool contract, price lives packed in a
+singleton PoolManager. `server/src/lib/price.ts` now **defaults** to V4
+(`ONLYASS_POOL_VERSION` only needs setting to `v3` if that ever changes). To
+point it at a real V4 pool you need, per pool:
 
 - the chain's PoolManager address (`ONLYASS_V4_POOL_MANAGER`)
 - that pool's exact `fee` / `tickSpacing` / `hooks` (Kekfun.xyz-specific —
