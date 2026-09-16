@@ -363,3 +363,101 @@ Not changed: the referral *rate* (5%) and *window* (12 months) stay the
 same for both sides -- no ask to make fan-referrals pay differently than
 creator-referrals. This is server/-only (the ledger stack, not yet
 deployed) like every other money-logic feature in this file.
+
+## Second mirror-brand domain: exploring names, decision not made (2026-09-16)
+
+Founder is talking with a buddy about buying a **second domain under a
+different, more mainstream-sounding name**, as a mirror of the same
+platform -- **keeping onlyass.fun too**, not a rename/replacement (a true
+rename was already declined earlier, see Branding section above; this is
+a different idea: an *additional* front door). Reasoning discussed: this
+won't unlock Google/Meta/TikTok ads by itself (they review actual site
+content, not just the domain name -- same finding as the original
+branding discussion), but it's still useful for press/App
+Store/discretion (something safe to share that doesn't immediately out
+what the platform is).
+
+Brainstormed name candidates on request (both "Only___"-pattern and
+totally-different one-word options -- OnlyVault, Flaunt, Crave, etc.) --
+**no name has been picked yet**, founder's buddy is also throwing out
+ideas. Nothing to build until a name + domain are actually chosen. When
+one is: set up as a real mirror (same backend/data, second domain pointed
+at the same deployment or a near-identical branded build), not a
+from-scratch second product.
+
+## MVP launch scope + audit (2026-09-16)
+
+Explicit scope call for "tomorrow's" launch: **launchpad + creator
+accounts + fan accounts + marketplace working, nothing else added.**
+Everything else already built this session (VIP burn, referral, creator
+NFT drops, V4 launchpad, chat pay-per-message, etc.) stays exactly where
+it already was flagged -- roadmap/audit-track, not needed for tomorrow,
+per the founder's own earlier explicit reminder. Audited all four areas
+before touching code (three parallel research passes covering the
+launchpad/contracts side, creator+fan account flows, and the
+marketplace) rather than guessing at what needed fixing. Findings and
+what came of them:
+
+- **Launchpad isn't actually this repo's code.** The "Join Auction"
+  button on the live site links out to a third-party platform,
+  **Kekfun.xyz**, which is running $ONLYASS's real fair-launch auction --
+  confirmed via `contracts/ONLYASS_LAUNCH.md`. There's no auction
+  contract in this repo to build or fix; `OnlyAssLaunchpad`(V2)/`V4` are a
+  *different* system (creators launching their own tokens), correctly
+  already scoped as roadmap/audit-track, not this. What's actually
+  outstanding is non-engineering: confirming Kekfun's auction genuinely
+  closed and the pre-computed token address
+  (`0x991F465b9852f55722EdFb947cD1D130974c785b`, already sitting in
+  `NEXT_PUBLIC_CONTRACT_ADDRESS`/`NEXT_PUBLIC_LAUNCHPAD_URL` in
+  `.env.local`) really has code on it --
+  `scripts/verify-onlyass-deployment.js` does this in ten seconds, but
+  needs `ROBINHOOD_RPC_URL` (a real RPC endpoint for Robinhood Chain,
+  chain 4663) which isn't set anywhere in this repo and wasn't guessed
+  at/fabricated (couldn't find an official public one on
+  docs.robinhood.com/chain either) -- **founder needs to supply this, or
+  just confirm the address directly on a block explorer.** Also confirm
+  the same `NEXT_PUBLIC_*` values are actually set in the real Vercel
+  production env, not just local `.env.local`.
+- **Marketplace: browse/list side is real and works, buying does not
+  exist yet.** Listing creation, photo/video upload (real Vercel Blob),
+  browsing, and search all function end-to-end against real persisted
+  data. The "Buy" button is an intentional, honestly-labeled no-op --
+  clicking it just shows a "check back soon" toast, there is no payment
+  processing of any kind wired up (no Stripe, no crypto rails) for
+  marketplace purchases. This is not a bug to patch by tomorrow, it's an
+  entire unbuilt payment integration -- **decision needed from founder:
+  ship marketplace as browse/list-only tomorrow** (matches what the UI
+  already honestly says) **or explicitly pull it from tomorrow's
+  scope.** Not treated as silently "working" either way.
+- **Creator/fan accounts: signup, login, session, dashboard, profiles,
+  favorites, search all genuinely work end to end** -- traced, no broken
+  references found. **One real bug, now fixed** (see commit
+  "Fix launch-blocking bug: seed creators could permanently merge with
+  real ones"): `lib/creators-store.js`'s `getCreators()` falls back to
+  the hardcoded demo roster (`data/creators.js`) whenever the Vercel Blob
+  manifest doesn't exist yet, and every creator-mutating call persists
+  that whole fallback list back to the blob on the very first write --
+  so the first real signup/edit would have permanently merged fake demo
+  creators into live production data with no way to separate them
+  afterward except wiping everyone via `/api/admin/delete-all`. Fixed by
+  tagging every seed creator with `seed: true` and splitting delete-all
+  into "delete real creators" (default) vs. an explicit
+  `includeSeed=true` full wipe.
+  - **Two things founder/Vercel access needs to confirm, not
+    code fixes**: (1) set an explicit `SESSION_SECRET` env var in Vercel
+    production -- right now it silently falls back to reusing
+    `ADMIN_UPLOAD_KEY` (the admin-panel bearer key) as the session-signing
+    secret, coupling two unrelated trust boundaries
+    (generated one to use: see chat, or run
+    `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
+    for a fresh one). (2) Confirm `BLOB_READ_WRITE_TOKEN` is actually set
+    in the real Vercel production env -- every account/profile/upload/
+    message/favorite/wall write silently depends on it and it's not
+    visible from inside this repo checkout.
+  - **Flagged, not changed:** `pages/become-creator.js` ->
+    `/api/creator/submit.js` is a second, entirely separate
+    creator-onboarding path that creates a pending creator profile with
+    **no login-capable user account at all** -- disconnected from the
+    real signup.js flow. Founder needs to say whether this page should
+    even be live for tomorrow, since going through it doesn't get you an
+    account you can log into.
