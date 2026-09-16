@@ -11,7 +11,9 @@
     "contracts:compile": "hardhat compile",
     "contracts:test": "hardhat test",
     "contracts:deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
-    "contracts:deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet"
+    "contracts:deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
+    "launchpad:deploy:robinhood-testnet": "hardhat run scripts/deploy-launchpad.js --network robinhood-testnet",
+    "launchpad:deploy:robinhood": "hardhat run scripts/deploy-launchpad.js --network robinhood"
   },
   "repository": {
     "type": "git",
@@ -40,6 +42,8 @@
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@openzeppelin/contracts": "^5.6.1",
     "@tailwindcss/postcss": "^4.3.3",
+    "@uniswap/v2-core": "^1.0.1",
+    "@uniswap/v2-periphery": "^1.1.0-beta.0",
     "hardhat": "^2.29.1"
   }
 }
