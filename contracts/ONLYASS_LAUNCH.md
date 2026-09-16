@@ -149,7 +149,28 @@ override.
 
 ## 4. Deploy the launchpad
 
-Only after 1–3. Needs the V2 factory/router from step 2:
+Only after 1–3. There are now two creator-launchpad contracts -- deploy the
+one that matches what's actually live on Robinhood Chain:
+
+**V4 (current, matches Kekfun.xyz/pools.trade/Bags.fm's own architecture --
+see `ONLYASS_POOL_VERSION` above)**: needs the chain's real
+PoolManager/PositionManager/Permit2 addresses instead of a V2 factory/router,
+and adds a fixed 1% platform swap fee + creator-configurable trading tax +
+graduation bonus. See `contracts/LAUNCHPAD_V4.md` for the full design,
+testing status, and everything that still needs a human before mainnet.
+
+```
+PLATFORM_WALLET_ADDRESS=0x... \
+ONLYASS_TOKEN_ADDRESS=0x... \
+V4_POOL_MANAGER_ADDRESS=0x... \
+V4_POSITION_MANAGER_ADDRESS=0x... \
+PERMIT2_ADDRESS=0x... \
+npm run launchpad-v4:deploy:robinhood
+```
+
+**V2 (legacy fallback)**: only worth deploying if V4 turns out not to be
+usable on this chain for some reason (see `LAUNCHPAD_V4.md`'s EVM/Cancun
+note). Needs the V2 factory/router from step 2:
 
 ```
 PLATFORM_WALLET_ADDRESS=0x... \
@@ -159,7 +180,7 @@ UNISWAP_V2_ROUTER_ADDRESS=0x... \
 npm run launchpad:deploy:robinhood
 ```
 
-See `contracts/LAUNCHPAD.md` for the contract's own design notes and the
+See `contracts/LAUNCHPAD.md` for the V2 contract's own design notes and the
 Slither review.
 
 ## If Thursday arrives before addresses are actually confirmed

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.24;
+// Deliberately a range, not an exact pin: this token is deployed by both the
+// V2 launchpad (compiled at 0.8.24) and the V4 launchpad (compiled at 0.8.26,
+// matching @uniswap/v4-core's own pinned version) -- see hardhat.config.js.
+pragma solidity >=0.8.24 <=0.8.26;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 

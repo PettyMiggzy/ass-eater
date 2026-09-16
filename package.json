@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "postinstall": "node scripts/postinstall-permit2-link.js",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -14,6 +15,8 @@
     "contracts:deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
     "launchpad:deploy:robinhood-testnet": "hardhat run scripts/deploy-launchpad.js --network robinhood-testnet",
     "launchpad:deploy:robinhood": "hardhat run scripts/deploy-launchpad.js --network robinhood",
+    "launchpad-v4:deploy:robinhood-testnet": "hardhat run scripts/deploy-launchpad-v4.js --network robinhood-testnet",
+    "launchpad-v4:deploy:robinhood": "hardhat run scripts/deploy-launchpad-v4.js --network robinhood",
     "onlyass:deploy-token:robinhood-testnet": "hardhat run scripts/deploy-onlyass-token.js --network robinhood-testnet",
     "onlyass:deploy-token:robinhood": "hardhat run scripts/deploy-onlyass-token.js --network robinhood",
     "onlyass:seed-pool:robinhood-testnet": "hardhat run scripts/seed-onlyass-pool.js --network robinhood-testnet",
@@ -31,6 +34,8 @@
   },
   "homepage": "https://github.com/PettyMiggzy/ass-eater#readme",
   "dependencies": {
+    "@uniswap/v4-core": "^1.0.2",
+    "@uniswap/v4-periphery": "^1.0.2",
     "@vercel/blob": "^2.8.0",
     "autoprefixer": "^10.6.0",
     "axios": "^1.20.0",

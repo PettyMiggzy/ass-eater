@@ -28,7 +28,8 @@ const ROADMAP = [
     subtitle: 'Token infrastructure',
     items: [
       { label: '$ONLYASS deployed/bridged onto Robinhood Chain', status: 'planned' },
-      { label: 'OnlyAssLaunchpad: creators launch their own token, paired against $ONLYASS (code done, tested against real Uniswap V2, Slither-clean)', status: 'built' },
+      { label: 'OnlyAssLaunchpad (V2): creators launch their own token, paired against $ONLYASS (code done, tested against real Uniswap V2, Slither-clean)', status: 'built' },
+      { label: 'OnlyAssLaunchpad V4: rebuilt on Uniswap V4 -- creators set their own trading tax, platform takes a fixed 1% via a custom hook, plus a 1 ETH graduation bonus (0.5 creator / 0.5 platform) at a volume milestone (code done, tested against real V4 core/periphery locally; needs a professional audit before mainnet)', status: 'built' },
       { label: 'Live price oracle for $ONLYASS (Uniswap pool once one exists)', status: 'planned' },
     ],
   },
