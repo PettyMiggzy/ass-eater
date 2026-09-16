@@ -352,7 +352,7 @@ model DepositAddress {
 }
 
 model Deposit {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
   chainId   Int
   txHash    String
@@ -361,9 +361,23 @@ model Deposit {
   rawAmount String // wei / 6-dec units as string
   usdCents  BigInt
   priceUsed Float
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
+  hedgedAt  DateTime? // set once the treasury-hedge worker has converted this $ONLYASS deposit's share; null = pending. Unused for non-ONLYASS assets.
 
   @@unique([chainId, txHash, logIndex])
+}
+
+// One row per auto-hedge swap the treasury worker executes: converts a slice of
+// incoming $ONLYASS deposits into the stablecoin so the platform isn't fully
+// exposed to $ONLYASS price swings on liabilities it owes in fixed USD cents.
+model TreasuryHedgeBatch {
+  id             String   @id @default(uuid())
+  depositCount   Int
+  onlyAssRawIn   String
+  usdcRawOut     String
+  priceImpactBps Int
+  txHash         String
+  createdAt      DateTime @default(now())
 }
 
 model Payout {

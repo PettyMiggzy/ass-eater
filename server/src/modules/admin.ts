@@ -79,6 +79,23 @@ export const admin: FastifyPluginAsync = async (app) => {
     return { treasuryCents: Number(treasury?.balanceCents ?? 0), series: rows.map(r => ({ ...r, cents: Number(r.cents) })) };
   });
 
+  /** Treasury's $ONLYASS hedge exposure: how much of what's come in is still unconverted risk vs already de-risked into stablecoin. */
+  app.get('/treasury-hedge', async () => {
+    const [pending, batches] = await Promise.all([
+      prisma.deposit.findMany({ where: { asset: 'ONLYASS', hedgedAt: null }, select: { rawAmount: true } }),
+      prisma.treasuryHedgeBatch.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
+    ]);
+    const pendingRaw = pending.reduce((s, d) => s + BigInt(d.rawAmount), 0n);
+    const swappedRaw = batches.reduce((s, b) => s + BigInt(b.onlyAssRawIn), 0n);
+    const usdcRaw = batches.reduce((s, b) => s + BigInt(b.usdcRawOut), 0n);
+    return {
+      pendingOnlyAssRaw: pendingRaw.toString(), // not yet swept by the hedge worker (thin liquidity, or below its cycle)
+      lifetimeOnlyAssSwappedRaw: swappedRaw.toString(),
+      lifetimeUsdcReceivedRaw: usdcRaw.toString(),
+      batches,
+    };
+  });
+
   app.get('/stats', async () => {
     const [users, creators, activeSubs, gmv] = await Promise.all([
       prisma.user.count(), prisma.creatorProfile.count({ where: { user: { kycStatus: 'APPROVED' } } }),
