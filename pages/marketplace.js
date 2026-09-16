@@ -3,6 +3,11 @@ import Head from 'next/head';
 import { getListings } from '../lib/listings-store';
 import { getCreators } from '../lib/creators-store';
 
+// This page is also served as the root ('/') of onlyass.shop via proxy.js's
+// rewrite -- a relative href="/" there just re-renders this same page
+// instead of leaving the domain (same reasoning as gateway.js's MAIN_SITE).
+const MAIN_SITE = 'https://onlyass.fun';
+
 export async function getServerSideProps() {
   const [listings, creators] = await Promise.all([getListings(), getCreators()]);
   const active = listings
@@ -156,7 +161,7 @@ export default function Marketplace({ listings }) {
         </div>
 
         <div className="text-center mt-16">
-          <a href="/" className="premium-button inline-block">Back to Only Ass</a>
+          <a href={MAIN_SITE} className="premium-button inline-block">Back to Only Ass</a>
         </div>
       </div>
     </>
