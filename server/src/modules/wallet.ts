@@ -6,7 +6,10 @@ import { getUsdPrice } from '../lib/price';
 export const wallet: FastifyPluginAsync = async (app) => {
   app.get('/balance', { preHandler: app.auth }, async (req) => {
     const a = await prisma.account.findUnique({ where: { userId: req.user.id } });
-    return { balanceCents: Number(a?.balanceCents ?? 0) };
+    // onlyAssCents is a separate pool, only funded by depositing in $ONLYASS
+    // directly -- spending from it gets a 10% discount (payAsset: 'ONLYASS'
+    // on subscribe/tip/unlock/buy/join-live). See core/ledger.ts charge().
+    return { balanceCents: Number(a?.balanceCents ?? 0), onlyAssCents: Number(a?.onlyAssCents ?? 0) };
   });
 
   app.get('/history', { preHandler: app.auth }, async (req: any) => {

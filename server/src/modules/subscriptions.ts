@@ -7,7 +7,9 @@ export const PERIOD_MS = 30 * 864e5;
 
 export const subscriptions: FastifyPluginAsync = async (app) => {
   app.post('/', { preHandler: app.auth }, async (req) => {
-    const { tierId } = z.object({ tierId: z.string().uuid() }).parse(req.body);
+    const { tierId, payAsset } = z.object({
+      tierId: z.string().uuid(), payAsset: z.enum(['USD', 'ONLYASS']).default('USD'),
+    }).parse(req.body);
     return money(prisma, async (tx) => {
       const tier = await tx.subscriptionTier.findUniqueOrThrow({ where: { id: tierId } });
       if (!tier.active) throw Object.assign(new Error('tier_inactive'), { statusCode: 400 });
@@ -15,15 +17,15 @@ export const subscriptions: FastifyPluginAsync = async (app) => {
         where: { fanId_creatorId: { fanId: req.user.id, creatorId: tier.creatorId } },
       });
       if (existing?.status === 'ACTIVE' && existing.currentPeriodEnd > new Date()) {
-        // already subscribed: just make sure it renews and (optionally) switch tier at next renewal
-        return tx.subscription.update({ where: { id: existing.id }, data: { autoRenew: true, tierId, priceCents: tier.priceCents } });
+        // already subscribed: just make sure it renews and (optionally) switch tier/payment asset at next renewal
+        return tx.subscription.update({ where: { id: existing.id }, data: { autoRenew: true, tierId, priceCents: tier.priceCents, payAsset } });
       }
       const sub = await tx.subscription.upsert({
         where: { fanId_creatorId: { fanId: req.user.id, creatorId: tier.creatorId } },
-        create: { fanId: req.user.id, creatorId: tier.creatorId, tierId, priceCents: tier.priceCents, currentPeriodEnd: new Date(Date.now() + PERIOD_MS) },
-        update: { tierId, priceCents: tier.priceCents, status: 'ACTIVE', autoRenew: true, currentPeriodEnd: new Date(Date.now() + PERIOD_MS) },
+        create: { fanId: req.user.id, creatorId: tier.creatorId, tierId, priceCents: tier.priceCents, payAsset, currentPeriodEnd: new Date(Date.now() + PERIOD_MS) },
+        update: { tierId, priceCents: tier.priceCents, payAsset, status: 'ACTIVE', autoRenew: true, currentPeriodEnd: new Date(Date.now() + PERIOD_MS) },
       });
-      await charge(tx, { fanId: req.user.id, creatorId: tier.creatorId, grossCents: tier.priceCents, type: 'SUBSCRIPTION', refId: sub.id });
+      await charge(tx, { fanId: req.user.id, creatorId: tier.creatorId, grossCents: tier.priceCents, type: 'SUBSCRIPTION', refId: sub.id, payAsset });
       return sub;
     });
   });

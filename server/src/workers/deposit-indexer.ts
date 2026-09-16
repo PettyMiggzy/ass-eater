@@ -23,7 +23,10 @@ async function credit(d: { userId: string; txHash: string; logIndex: number; ass
   try {
     await money(prisma, async (tx) => {
       const dep = await tx.deposit.create({ data: { userId: d.userId, chainId: CHAIN_ID, txHash: d.txHash, logIndex: d.logIndex, asset: d.asset, rawAmount: d.raw.toString(), usdCents: cents, priceUsed: px } });
-      await post(tx, d.userId, cents, 'DEPOSIT', dep.id, { asset: d.asset, raw: d.raw.toString(), px });
+      // $ONLYASS deposits go into their own spendable pool (see core/ledger.ts
+      // charge()'s payAsset discount) -- USDC/ETH deposits go into the
+      // regular unified pool, same as before.
+      await post(tx, d.userId, cents, 'DEPOSIT', dep.id, { asset: d.asset, raw: d.raw.toString(), px }, d.asset === 'ONLYASS' ? 'ONLYASS' : 'USD');
     });
   } catch (e: any) { if (e.code === 'P2002') return; throw e; }   // already credited
   await publish(d.userId, { type: 'deposit', asset: d.asset, amount: formatUnits(d.raw, DECIMALS[d.asset]), usdCents: Number(cents) });

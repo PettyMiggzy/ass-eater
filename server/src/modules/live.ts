@@ -33,6 +33,7 @@ export const live: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:id/join', { preHandler: app.auth }, async (req: any, reply) => {
+    const { payAsset } = z.object({ payAsset: z.enum(['USD', 'ONLYASS']).default('USD') }).parse(req.body ?? {});
     const s = await prisma.liveStream.findUnique({ where: { id: req.params.id } });
     if (!s || s.status !== 'LIVE') return reply.code(404).send({ error: 'not_live' });
     let allowed = await isSubscribed(req.user.id, s.creatorId);
@@ -41,7 +42,7 @@ export const live: FastifyPluginAsync = async (app) => {
       if (!has) {
         await money(prisma, async (tx) => {
           await tx.liveTicket.create({ data: { fanId: req.user.id, streamId: s.id } });
-          await charge(tx, { fanId: req.user.id, creatorId: s.creatorId, grossCents: s.ticketPriceCents, type: 'LIVE_TICKET', refId: s.id });
+          await charge(tx, { fanId: req.user.id, creatorId: s.creatorId, grossCents: s.ticketPriceCents, type: 'LIVE_TICKET', refId: s.id, payAsset });
         });
       }
       allowed = true;

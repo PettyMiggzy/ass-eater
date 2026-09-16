@@ -10,9 +10,12 @@ export const FEES = {
   WITHDRAWAL_FLAT_CENTS: 100, // $1 per payout
   WITHDRAWAL_BPS: 100, // +1%
   INSTANT_PAYOUT_BPS: 200, // +2% on top, for skipping the payout queue -- waived if the creator opted into the token-lock perk
+  TOKEN_PAYMENT_DISCOUNT_BPS: 1000, // 10% off any charge a fan pays for out of their $ONLYASS balance specifically
   MIN_PAYOUT_CENTS: 2000,
   MIN_TIP_CENTS: 100,
 };
+
+export type PayAsset = 'USD' | 'ONLYASS';
 
 export class InsufficientFunds extends Error {
   constructor() {
@@ -23,8 +26,13 @@ export class InsufficientFunds extends Error {
 type Tx = Prisma.TransactionClient;
 
 /** Row-locks the account so concurrent charges against the same balance serialize. */
-export async function lockBalance(tx: Tx, userId: string): Promise<bigint> {
+export async function lockBalance(tx: Tx, userId: string, asset: PayAsset = 'USD'): Promise<bigint> {
   await tx.account.upsert({ where: { userId }, create: { userId }, update: {} });
+  if (asset === 'ONLYASS') {
+    const [row] = await tx.$queryRaw<{ onlyAssCents: bigint }[]>`
+      SELECT "onlyAssCents" FROM "Account" WHERE "userId" = ${userId} FOR UPDATE`;
+    return row.onlyAssCents;
+  }
   const [row] = await tx.$queryRaw<{ balanceCents: bigint }[]>`
     SELECT "balanceCents" FROM "Account" WHERE "userId" = ${userId} FOR UPDATE`;
   return row.balanceCents;
@@ -37,22 +45,32 @@ export async function post(
   type: TxType,
   refId?: string,
   meta?: object,
+  asset: PayAsset = 'USD',
 ) {
   const amt = BigInt(amountCents);
+  const field = asset === 'ONLYASS' ? 'onlyAssCents' : 'balanceCents';
   await tx.account.upsert({
     where: { userId },
-    create: { userId, balanceCents: amt },
-    update: { balanceCents: { increment: amt } },
+    create: { userId, [field]: amt },
+    update: { [field]: { increment: amt } },
   });
   await tx.ledgerEntry.create({
     data: { userId, amountCents: amt, type, refId, meta: meta as Prisma.InputJsonValue },
   });
 }
 
-/** Fan pays creator. Platform takes its cut. Referrer gets a slice of the platform's cut. */
+/**
+ * Fan pays creator. Platform takes its cut. Referrer gets a slice of the
+ * platform's cut. If the fan pays out of their $ONLYASS balance (payAsset:
+ * 'ONLYASS'), they get TOKEN_PAYMENT_DISCOUNT_BPS off -- that balance can
+ * only be funded by depositing in $ONLYASS in the first place (see
+ * deposit-indexer.ts), so this is a real "paid in the token" discount, not
+ * just a UI checkbox: it fails with InsufficientFunds if they don't actually
+ * hold enough $ONLYASS-denominated balance to cover it.
+ */
 export async function charge(
   tx: Tx,
-  p: { fanId: string; creatorId: string; grossCents: number; type: TxType; refId: string },
+  p: { fanId: string; creatorId: string; grossCents: number; type: TxType; refId: string; payAsset?: PayAsset },
 ) {
   if (p.fanId === p.creatorId) throw new Error('self_payment');
   if (p.grossCents <= 0) throw new Error('invalid_amount');
@@ -63,28 +81,34 @@ export async function charge(
   });
   if (creator.user.status !== 'ACTIVE') throw new Error('creator_unavailable');
 
-  const bal = await lockBalance(tx, p.fanId);
-  if (bal < BigInt(p.grossCents)) throw new InsufficientFunds();
+  const payAsset: PayAsset = p.payAsset === 'ONLYASS' ? 'ONLYASS' : 'USD';
+  const chargeCents =
+    payAsset === 'ONLYASS'
+      ? Math.round((p.grossCents * (10_000 - FEES.TOKEN_PAYMENT_DISCOUNT_BPS)) / 10_000)
+      : p.grossCents;
+
+  const bal = await lockBalance(tx, p.fanId, payAsset);
+  if (bal < BigInt(chargeCents)) throw new InsufficientFunds();
 
   const feeBps = creator.payoutAsset === 'ONLYASS' ? FEES.TOKEN_PAYOUT_BPS : FEES.DEFAULT_BPS;
-  const fee = Math.floor((p.grossCents * feeBps) / 10_000);
-  const net = p.grossCents - fee;
+  const fee = Math.floor((chargeCents * feeBps) / 10_000);
+  const net = chargeCents - fee;
 
   let referral = 0;
   if (creator.user.referredById) {
     const refCutoff = new Date(creator.user.createdAt);
     refCutoff.setMonth(refCutoff.getMonth() + FEES.REFERRAL_MONTHS);
     if (new Date() < refCutoff) {
-      referral = Math.min(fee, Math.floor((p.grossCents * FEES.REFERRAL_BPS) / 10_000));
+      referral = Math.min(fee, Math.floor((chargeCents * FEES.REFERRAL_BPS) / 10_000));
     }
   }
 
-  await post(tx, p.fanId, -p.grossCents, p.type, p.refId);
-  await post(tx, p.creatorId, net, p.type, p.refId, { gross: p.grossCents, fee });
+  await post(tx, p.fanId, -chargeCents, p.type, p.refId, undefined, payAsset);
+  await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, payAsset, originalPriceCents: p.grossCents });
   await post(tx, PLATFORM_ID, fee - referral, 'PLATFORM_FEE', p.refId, { source: p.type });
   if (referral) await post(tx, creator.user.referredById!, referral, 'REFERRAL', p.refId);
 
-  return { gross: p.grossCents, fee, net, referral };
+  return { gross: chargeCents, fee, net, referral, payAsset };
 }
 
 /** Wrap a money operation in a serializable transaction, retrying on serialization conflicts. */

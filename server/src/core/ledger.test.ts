@@ -38,6 +38,15 @@ async function balanceOf(userId: string) {
   return acct?.balanceCents ?? 0n;
 }
 
+async function onlyAssBalanceOf(userId: string) {
+  const acct = await prisma.account.findUnique({ where: { userId } });
+  return acct?.onlyAssCents ?? 0n;
+}
+
+async function fundOnlyAss(userId: string, cents: number) {
+  await money(prisma, (tx) => post(tx, userId, cents, 'DEPOSIT', undefined, undefined, 'ONLYASS'));
+}
+
 beforeEach(async () => {
   await prisma.user.upsert({
     where: { id: PLATFORM_ID },
@@ -69,7 +78,7 @@ describe('ledger.charge', () => {
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-1' }),
     );
 
-    expect(result).toEqual({ gross: 1000, fee: 100, net: 900, referral: 0 });
+    expect(result).toEqual({ gross: 1000, fee: 100, net: 900, referral: 0, payAsset: 'USD' });
     expect(await balanceOf(fan)).toBe(9000n);
     expect(await balanceOf(creator)).toBe(900n);
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(100n);
@@ -145,6 +154,41 @@ describe('ledger.charge', () => {
     await expect(
       money(prisma, (tx) => charge(tx, { fanId: fan, creatorId: fan, grossCents: 1000, type: 'TIP', refId: 'tip-6' })),
     ).rejects.toThrow('self_payment');
+  });
+
+  it('gives a 10% discount when the fan pays out of their $ONLYASS balance, leaving the regular balance untouched', async () => {
+    const fan = await makeUser();
+    const creator = await makeCreator();
+    await fund(fan, 500); // regular balance -- should be left alone
+    await fundOnlyAss(fan, 10_000);
+
+    const result = await money(prisma, (tx) =>
+      charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-1', payAsset: 'ONLYASS' }),
+    );
+
+    expect(result.gross).toBe(900); // 1000 - 10% token-payment discount
+    expect(result.fee).toBe(90); // 10% of the discounted 900
+    expect(result.net).toBe(810);
+    expect(result.payAsset).toBe('ONLYASS');
+    expect(await onlyAssBalanceOf(fan)).toBe(9100n); // 10,000 - 900
+    expect(await balanceOf(fan)).toBe(500n); // regular balance untouched
+    expect(await balanceOf(creator)).toBe(810n);
+  });
+
+  it('rejects an $ONLYASS payment for insufficient $ONLYASS balance even when the regular balance could cover it', async () => {
+    const fan = await makeUser();
+    const creator = await makeCreator();
+    await fund(fan, 10_000); // plenty in the regular pool
+    await fundOnlyAss(fan, 100); // not enough in the token pool
+
+    await expect(
+      money(prisma, (tx) =>
+        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-2', payAsset: 'ONLYASS' }),
+      ),
+    ).rejects.toThrow(InsufficientFunds);
+
+    expect(await balanceOf(fan)).toBe(10_000n); // untouched
+    expect(await onlyAssBalanceOf(fan)).toBe(100n); // untouched
   });
 
   it('never lets two concurrent charges double-spend a balance that can only cover one', async () => {

@@ -73,7 +73,9 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     prisma.listing.findMany({ where: { creatorId: req.user.id }, orderBy: { createdAt: 'desc' } }));
 
   app.post('/listings/:id/buy', { preHandler: app.auth }, async (req: any) => {
-    z.object({ ageConfirmed: z.literal(true), tosAccepted: z.literal(true) }).parse(req.body);
+    const { payAsset } = z.object({
+      ageConfirmed: z.literal(true), tosAccepted: z.literal(true), payAsset: z.enum(['USD', 'ONLYASS']).default('USD'),
+    }).parse(req.body);
 
     return money(prisma, async (tx) => {
       const l = await tx.listing.findUniqueOrThrow({ where: { id: req.params.id } });
@@ -85,15 +87,17 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         if (already) return { ok: true, already: true, order: already };
       }
 
-      // Loyalty discount: any active subscription or token-lock, to any creator, cuts 10% off any marketplace purchase.
+      // Loyalty discount (any active subscription/token-lock) and the
+      // pay-in-$ONLYASS discount don't stack -- take whichever's better for
+      // the buyer, same 10% rate either way.
       const [hasSub, hasLock] = await Promise.all([
         tx.subscription.findFirst({ where: { fanId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } } }),
         tx.tokenLock.findFirst({ where: { fanId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } } }),
       ]);
-      const discounted = hasSub || hasLock;
+      const discounted = !!(hasSub || hasLock) || payAsset === 'ONLYASS';
       const chargeCents = discounted ? Math.round((l.priceCents * (10_000 - LOYALTY_DISCOUNT_BPS)) / 10_000) : l.priceCents;
 
-      const bal = await lockBalance(tx, req.user.id);
+      const bal = await lockBalance(tx, req.user.id, payAsset);
       if (bal < BigInt(chargeCents)) throw new InsufficientFunds();
 
       const platformFee = Math.floor((chargeCents * PLATFORM_FEE_BPS) / 10_000);
@@ -113,11 +117,11 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         },
       });
 
-      await post(tx, req.user.id, -chargeCents, 'MARKETPLACE_SALE', order.id);
-      await post(tx, l.creatorId, net, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, originalPriceCents: l.priceCents, loyaltyDiscountApplied: discounted });
+      await post(tx, req.user.id, -chargeCents, 'MARKETPLACE_SALE', order.id, undefined, payAsset);
+      await post(tx, l.creatorId, net, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, originalPriceCents: l.priceCents, discountApplied: discounted, payAsset });
       await post(tx, PLATFORM_ID, platformFee + listingFee, 'PLATFORM_FEE', order.id, { source: 'marketplace', platformFee, listingFee });
 
-      return { ok: true, order, discountApplied: discounted };
+      return { ok: true, order, discountApplied: discounted, payAsset };
     });
   });
 };

@@ -50,17 +50,19 @@ export const messages: FastifyPluginAsync = async (app) => {
     return msg;
   });
 
-  app.post('/:id/unlock', { preHandler: app.auth }, async (req: any, reply) =>
-    money(prisma, async (tx) => {
+  app.post('/:id/unlock', { preHandler: app.auth }, async (req: any, reply) => {
+    const { payAsset } = z.object({ payAsset: z.enum(['USD', 'ONLYASS']).default('USD') }).parse(req.body ?? {});
+    return money(prisma, async (tx) => {
       const m = await tx.message.findUniqueOrThrow({ where: { id: req.params.id }, include: { conversation: true } });
       if (m.priceCents === 0 || m.senderId === req.user.id) return reply.code(400).send({ error: 'not_locked' });
       if (![m.conversation.aId, m.conversation.bId].includes(req.user.id)) return reply.code(403).send({ error: 'forbidden' });
       if (await tx.messageUnlock.findUnique({ where: { fanId_messageId: { fanId: req.user.id, messageId: m.id } } })) return { ok: true, already: true };
       await tx.messageUnlock.create({ data: { fanId: req.user.id, messageId: m.id } });
-      const r = await charge(tx, { fanId: req.user.id, creatorId: m.senderId, grossCents: m.priceCents, type: 'MESSAGE_UNLOCK', refId: m.id });
+      const r = await charge(tx, { fanId: req.user.id, creatorId: m.senderId, grossCents: m.priceCents, type: 'MESSAGE_UNLOCK', refId: m.id, payAsset });
       await publish(m.senderId, { type: 'unlock', messageId: m.id, by: req.user.id, ...r });
       return { ok: true, ...r };
-    }));
+    });
+  });
 
   // Mass DM to all active subscribers (huge OF revenue feature: paid mass PPV drops)
   app.post('/broadcast', { preHandler: app.creatorOk }, async (req) => {

@@ -14,7 +14,7 @@ new Worker('renewals', async () => {
     }
     try {
       await money(prisma, async (tx) => {
-        await charge(tx, { fanId: s.fanId, creatorId: s.creatorId, grossCents: s.priceCents, type: 'SUBSCRIPTION', refId: s.id });
+        await charge(tx, { fanId: s.fanId, creatorId: s.creatorId, grossCents: s.priceCents, type: 'SUBSCRIPTION', refId: s.id, payAsset: s.payAsset });
         await tx.subscription.update({ where: { id: s.id }, data: { currentPeriodEnd: new Date(Math.max(s.currentPeriodEnd.getTime(), Date.now()) + PERIOD_MS) } });
       });
       await publish(s.fanId, { type: 'renewed', creatorId: s.creatorId, amountCents: s.priceCents });
