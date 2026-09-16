@@ -104,13 +104,17 @@ export default function GetCrypto() {
               </div>
               <p className="text-gray-300 text-sm mb-2">
                 You need a small amount of ETH on Robinhood Chain to pay network fees, plus more ETH (or USDC/USDG)
-                to swap into $ONLYASS. The usual path:
+                to swap into $ONLYASS. The easiest path:
               </p>
               <ol className="text-gray-300 text-sm list-decimal list-inside space-y-1 mb-3">
-                <li>Buy ETH on any exchange (Coinbase, Kraken, or directly in MetaMask)</li>
+                <li>Open MetaMask and tap <strong>Buy</strong> — it lets you buy ETH with a card directly into your wallet, no separate exchange signup needed</li>
                 <li>Bridge it to Robinhood Chain — <a href="https://across.to" target="_blank" rel="noopener noreferrer" className="text-brand-gold hover:underline">Across</a> supports this from Ethereum, Base, Arbitrum, and others</li>
                 <li>Swap ETH for $ONLYASS on a Robinhood Chain DEX (Uniswap)</li>
               </ol>
+              <p className="text-xs text-gray-500 mb-3">
+                (MetaMask's Buy button uses its own on-ramp partners behind the scenes — that's between you and
+                MetaMask, not something we run or integrate with.)
+              </p>
               <p className="text-xs text-yellow-400/80 bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
                 $ONLYASS hasn't launched on Robinhood Chain yet (see the <a href="/token" className="underline">roadmap</a>) —
                 once it has, the swap link goes here. Steps 1 and 2 above work today regardless.
