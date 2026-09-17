@@ -897,3 +897,63 @@ displaying the old 4/10 gallery-slot limit in the UI (a leftover from the
 50/200 cap change earlier this session that only updated the actual
 server-side enforcement in `pages/api/me/upload.js`, not these two
 display-only labels) -- both now correctly show 50/200.
+
+## Content-violation enforcement ladder decided and built (2026-09-17)
+
+Direct decision on the one thing left open from the TAKE IT DOWN Act work
+above: **first confirmed violation of the AI-labeling or non-consensual-
+content rules = 30-day account suspension; second = permanent ban and
+forfeiture of any money owed that hasn't already been paid out.**
+
+Built into `lib/creators-store.js`: `applyContentViolation(creatorId)`
+increments a `contentViolationCount` on the creator record and sets
+`status`/`suspendedUntil` per the ladder; `effectiveCreatorStatus()`
+auto-lifts a suspension once `suspendedUntil` passes (no cron needed,
+every check just compares against the clock) so nobody has to remember to
+manually reinstate someone; `isPubliclyVisible()` is the one place that
+now decides whether a creator shows up anywhere public, replacing the
+scattered `status !== 'pending'` checks across `index.js`, `search.js`,
+`onlyass.js`, `favorites.js`, and `creator/[id].js` (all switched to it,
+plus `creator/[id].js` also fully hides a banned creator's profile even
+from themselves, unlike suspended/pending which the owner can still
+preview).
+
+**Enforcement is wired to the actual trigger, not automatic on every
+report:** admin resolving a takedown request as "removed" in the new
+TAKEDOWN REQUESTS panel can optionally attribute it to a specific creator
+account first (a picker was added since NCII reports only capture a free-
+text description of where the content is, not a structured creator link)
+-- only when attributed does resolving it call `applyContentViolation`
+and show the resulting suspension/ban in the admin UI. Left as a manual
+per-report choice rather than automatic because not every valid report is
+necessarily that account's own doing (a hijacked account, a comment vs. a
+post, etc.) -- admin's call each time, not guessed at.
+
+`lib/require-creator-owner.js` (the gate every creator-content-mutating
+endpoint already goes through -- profile edits, uploads, listing create/
+update) now rejects a suspended or banned creator outright with a clear
+reason, so the restriction is enforced server-side regardless of what the
+dashboard UI shows. Dashboard UI updated to match: a clear suspended/
+banned notice with the reinstatement date, and the Save Profile/Upload/
+Create Listing controls disabled client-side too (belt-and-suspenders,
+not the actual security boundary -- that's server-side).
+
+**The "forfeit funds" half is honest about what's actually enforceable
+right now, not pretending otherwise:** this live Next.js site has no
+custodial balance at all -- every payment is a direct wallet-to-wallet
+on-chain transfer (per Terms of Service Section 5), settled and
+irreversible the moment it confirms, so there is nothing here for a ban to
+literally seize. A banned creator's consequence on *this* stack is
+entirely the visibility/posting lockout above. Real fund forfeiture only
+has something to act on once `server/`'s ledger (which does hold a real
+balance) is the one actually taking payments -- not built there yet,
+flagged as a real follow-up whenever that stack deploys, not something to
+fake here. Terms of Service Section 7 states the ladder in plain language,
+including this same "hasn't already been paid out" scoping rather than
+overpromising a seizure that isn't technically possible against completed
+on-chain payments.
+
+Admin's creator editor also got manual `suspended`/`banned` status
+options (for hand-adjusting outside the automatic ladder -- e.g.
+reinstating someone early) and a violation-count/suspension-date readout,
+consistent with how `status` was already hand-editable there.

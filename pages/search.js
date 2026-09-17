@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { getCreators, toPublicCreator } from '../lib/creators-store';
+import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 import { getListings } from '../lib/listings-store';
 
 export async function getServerSideProps({ query }) {
   const q = String(query.q || '').trim().toLowerCase();
   const tag = String(query.tag || '').trim().toLowerCase();
   const [allCreators, allListings] = await Promise.all([getCreators(), getListings()]);
-  const visibleCreators = allCreators.filter((c) => c.status !== 'pending');
+  const visibleCreators = allCreators.filter(isPubliclyVisible);
 
   const creators = tag
     ? visibleCreators.filter((c) => Array.isArray(c.tags) && c.tags.includes(tag))

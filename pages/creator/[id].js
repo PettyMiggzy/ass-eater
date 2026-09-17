@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { getCreators, toPublicCreator } from '../../lib/creators-store';
+import { getCreators, toPublicCreator, isPubliclyVisible } from '../../lib/creators-store';
 import { getSessionUserId } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
@@ -14,10 +14,13 @@ export async function getServerSideProps({ req, params }) {
   const viewerId = getSessionUserId(req);
   const creatorUser = creator ? await findUserByCreatorId(creator.id) : null;
 
-  // Pending applicants aren't public yet -- only the applicant themselves
-  // (once they've claimed a login) can preview their own pending profile.
-  if (creator && creator.status === 'pending' && String(viewerId) !== String(creatorUser?.id)) {
-    creator = null;
+  // Pending applicants, suspended, and banned creators aren't public --
+  // only the account owner (once they've claimed a login) can preview
+  // their own pending/suspended profile; a banned creator is hidden even
+  // from themselves.
+  if (creator && !isPubliclyVisible(creator)) {
+    const isOwner = String(viewerId) === String(creatorUser?.id);
+    if (creator.status === 'banned' || !isOwner) creator = null;
   }
 
   const allListings = creator ? await getListings() : [];

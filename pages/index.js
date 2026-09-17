@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import Head from 'next/head';
-import { getCreators, toPublicCreator } from '../lib/creators-store';
+import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 
 export async function getServerSideProps() {
   const all = await getCreators();
   const creators = all
-    .filter((c) => c.status !== 'pending')
+    .filter(isPubliclyVisible)
     .sort((a, b) => (b.trending === true) - (a.trending === true))
     .slice(0, 8)
     .map(toPublicCreator);

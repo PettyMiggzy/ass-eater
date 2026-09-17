@@ -3,7 +3,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { getSessionUserId } from '../lib/session';
 import { findUserById, publicUser } from '../lib/users-store';
-import { getCreators } from '../lib/creators-store';
+import { getCreators, effectiveCreatorStatus } from '../lib/creators-store';
 import { getListings } from '../lib/listings-store';
 
 export async function getServerSideProps({ req }) {
@@ -54,6 +54,8 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
+  const creatorStatus = creator ? effectiveCreatorStatus(creator) : null;
+  const isRestricted = creatorStatus === 'suspended' || creatorStatus === 'banned';
 
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -256,6 +258,18 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   Your profile is pending review and not yet visible on the platform. Build it out below — our team will verify and publish it soon.
                 </div>
               )}
+              {creatorStatus === 'suspended' && (
+                <div className="px-4 py-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+                  Your account is suspended until {new Date(creator.suspendedUntil).toLocaleDateString()} following a
+                  confirmed content violation. Your profile is hidden and you can't post or edit content until then.
+                </div>
+              )}
+              {creatorStatus === 'banned' && (
+                <div className="px-4 py-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+                  Your account has been permanently banned following a second confirmed content violation. Your
+                  profile is hidden and you can no longer post or edit content.
+                </div>
+              )}
 
               <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-md bg-black/30 border border-brand-purple/20">
                 <div className="min-w-0">
@@ -372,7 +386,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 Fans pay you directly to this wallet when they unlock your content. The platform takes a 10% fee on top, sent separately.
               </p>
 
-              <button onClick={saveProfile} disabled={busy} className="premium-button disabled:opacity-50">
+              <button onClick={saveProfile} disabled={busy || isRestricted} className="premium-button disabled:opacity-50">
                 Save Profile
               </button>
 
@@ -382,13 +396,15 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 {(() => {
                   const limit = creator.premium ? 200 : 50;
                   const used = creator.gallery?.length || 0;
-                  const atLimit = used >= limit;
+                  const atLimit = used >= limit || isRestricted;
                   return (
                     <>
                       <div className="flex items-center justify-between mb-2">
                         <h3 className="font-bold text-brand-gold">Your Content ({used}/{limit})</h3>
                         {atLimit ? (
-                          <span className="text-xs px-4 py-2 rounded-md border border-brand-purple/30 text-gray-500">Slots full</span>
+                          <span className="text-xs px-4 py-2 rounded-md border border-brand-purple/30 text-gray-500">
+                            {isRestricted ? 'Uploads disabled' : 'Slots full'}
+                          </span>
                         ) : (
                           <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
                             Upload
@@ -448,6 +464,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
               <MarketplaceSection
                 listings={listings}
                 busy={busy}
+                disabled={isRestricted}
                 onCreate={createListing}
                 onUploadMedia={uploadListingMedia}
                 onToggleStatus={toggleListingStatus}
@@ -578,7 +595,7 @@ function Inbox({ currentUserId }) {
 
 const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false };
 
-function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleStatus }) {
+function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia, onToggleStatus }) {
   const [form, setForm] = useState(BLANK_LISTING_FORM);
   const [creating, setCreating] = useState(false);
 
@@ -676,7 +693,7 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
             </label>
           </>
         )}
-        <button type="submit" disabled={creating || busy} className="premium-button text-sm disabled:opacity-50">
+        <button type="submit" disabled={creating || busy || disabled} className="premium-button text-sm disabled:opacity-50">
           Create Listing
         </button>
       </form>

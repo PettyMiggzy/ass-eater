@@ -318,7 +318,7 @@ export default function AdminPanel() {
           ) : page === 'violations' ? (
             <ViolationsPanel adminKey={adminKey} />
           ) : page === 'takedowns' ? (
-            <NciiReportsPanel adminKey={adminKey} />
+            <NciiReportsPanel adminKey={adminKey} creators={creators} />
           ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
@@ -465,9 +465,21 @@ export default function AdminPanel() {
                       >
                         <option value="active">Active (public)</option>
                         <option value="pending">Pending (hidden)</option>
+                        <option value="suspended">Suspended (hidden, temporary)</option>
+                        <option value="banned">Banned (hidden, permanent)</option>
                       </select>
                     </label>
                   </div>
+
+                  {(selected.contentViolationCount > 0 || selected.status === 'suspended' || selected.status === 'banned') && (
+                    <p className="text-xs text-red-400">
+                      {selected.contentViolationCount || 0} confirmed content violation(s)
+                      {selected.status === 'suspended' && selected.suspendedUntil && ` — suspended until ${new Date(selected.suspendedUntil).toLocaleDateString()}`}
+                      {selected.status === 'banned' && ' — permanently banned'}
+                      . Manually changing Status above overrides this (e.g. to reinstate early), but won't reset the
+                      violation count itself.
+                    </p>
+                  )}
 
                   <button onClick={saveProfile} disabled={busy} className="premium-button disabled:opacity-50">
                     Save Profile
@@ -745,12 +757,13 @@ function ViolationsPanel({ adminKey }) {
  * These carry a legal 48-hour handling clock, so they're sorted oldest
  * first and flag how much time has passed instead of just a timestamp.
  */
-function NciiReportsPanel({ adminKey }) {
+function NciiReportsPanel({ adminKey, creators }) {
   const [statusFilter, setStatusFilter] = useState('open');
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
+  const [attributed, setAttributed] = useState({});
 
   const load = async (status) => {
     setLoading(true);
@@ -770,18 +783,31 @@ function NciiReportsPanel({ adminKey }) {
   useEffect(() => { load(statusFilter); }, [statusFilter]);
 
   const resolve = async (id, action) => {
-    if (action === 'removed' && !confirm('Confirm you have already removed the reported content before marking this resolved.')) return;
+    const creatorId = attributed[id] || null;
+    if (action === 'removed') {
+      const violationNote = creatorId
+        ? ' This will also count as a confirmed content violation against the selected creator (30-day suspension on the 1st, permanent ban on the 2nd).'
+        : ' No creator selected -- this will be logged as removed without counting toward any account\'s violation record.';
+      if (!confirm(`Confirm you have already removed the reported content before marking this resolved.${violationNote}`)) return;
+    }
     setBusyId(id);
     setError('');
     try {
       const res = await fetch('/api/admin/ncii-reports-resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-        body: JSON.stringify({ id, action }),
+        body: JSON.stringify({ id, action, creatorId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to resolve report');
       setReports(reports.filter((r) => String(r.id) !== String(id)));
+      if (data.creator) {
+        setError(
+          data.creator.status === 'banned'
+            ? `${data.creator.name} has been permanently banned (2nd confirmed violation).`
+            : `${data.creator.name} suspended until ${new Date(data.creator.suspendedUntil).toLocaleDateString()} (1st confirmed violation).`
+        );
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -833,22 +859,41 @@ function NciiReportsPanel({ adminKey }) {
                 <p className="text-sm text-gray-300 mb-1"><span className="text-gray-500">Content:</span> {r.contentLocation}</p>
                 {r.description && <p className="text-sm text-gray-400 mb-3">{r.description}</p>}
                 {r.status === 'open' && (
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      onClick={() => resolve(r.id, 'dismiss')}
-                      disabled={busyId === r.id}
-                      className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
-                    >
-                      Dismiss (invalid)
-                    </button>
-                    <button
-                      onClick={() => resolve(r.id, 'removed')}
-                      disabled={busyId === r.id}
-                      className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
-                    >
-                      Mark Removed & Resolve
-                    </button>
-                  </div>
+                  <>
+                    <div className="mb-2">
+                      <label className="block text-[10px] text-gray-500 mb-1">
+                        Which creator posted this? (attributing it applies the violation ladder on resolve)
+                      </label>
+                      <select
+                        value={attributed[r.id] || ''}
+                        onChange={(e) => setAttributed({ ...attributed, [r.id]: e.target.value })}
+                        className="w-full px-2 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
+                      >
+                        <option value="">— Not attributed to a creator —</option>
+                        {(creators || []).map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.handle}){c.contentViolationCount ? ` — ${c.contentViolationCount} prior violation(s)` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        onClick={() => resolve(r.id, 'dismiss')}
+                        disabled={busyId === r.id}
+                        className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+                      >
+                        Dismiss (invalid)
+                      </button>
+                      <button
+                        onClick={() => resolve(r.id, 'removed')}
+                        disabled={busyId === r.id}
+                        className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                      >
+                        Mark Removed & Resolve
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             );

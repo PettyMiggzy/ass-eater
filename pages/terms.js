@@ -152,6 +152,13 @@ export default function Terms() {
                 nature of the violation, which may include content removal, account suspension or termination,
                 forfeiting money owed to you, and cooperating with law enforcement.
               </p>
+              <p className="mt-3 text-gray-400">
+                For a confirmed violation of the AI-labeling requirement or the non-consensual-content ban
+                specifically: a first confirmed violation results in a 30-day account suspension (your profile is
+                hidden and you can't post or edit content during that time); a second confirmed violation results
+                in a permanent ban and forfeiture of any money the Platform owes you that hasn't already been
+                paid out.
+              </p>
             </Section>
 
             <Section title="8. Content Removal, DMCA & Non-Consensual Content" id="content-removal">
