@@ -45,6 +45,7 @@ export default function Home({ creators }) {
               <a href="#creators" className="hover:text-brand-gold transition">Explore</a>
               <a href="#how-it-works" className="hover:text-brand-gold transition">How It Works</a>
               <a href="#token" className="hover:text-brand-gold transition">Token</a>
+              <a href="/token" className="hover:text-brand-gold transition">Roadmap</a>
               <a href="/marketplace" className="hover:text-brand-gold transition">Marketplace</a>
               <a href="/search" className="hover:text-brand-gold transition">Search</a>
               <a href="/favorites" className="hover:text-brand-gold transition">Favorites</a>

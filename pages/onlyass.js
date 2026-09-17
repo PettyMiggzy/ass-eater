@@ -113,6 +113,7 @@ export default function OnlyAss({ creators, sessionUser }) {
               <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
               <a href="#pricing" className="hover:text-brand-gold transition">Pricing</a>
               <a href="#dashboard" className="hover:text-brand-gold transition">Dashboard</a>
+              <a href="/token" className="hover:text-brand-gold transition">Roadmap</a>
               <a href="/marketplace" className="hover:text-brand-gold transition">Marketplace</a>
               <a href="/search" className="hover:text-brand-gold transition">Search</a>
               <a href="/favorites" className="hover:text-brand-gold transition">Favorites</a>
