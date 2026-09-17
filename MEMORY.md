@@ -676,3 +676,35 @@ Still true, unchanged by these docs: no explicit written confirmation
 anywhere that AgeChecker's method satisfies each specific named state
 statute -- that's still worth asking their support directly, separate
 from marketing material.
+
+## AgeChecker.Net went fully live (2026-09-17)
+
+Founder created the account, added `onlyass.fun` as the website, saved
+both credentials to Vercel production
+(`NEXT_PUBLIC_AGECHECKER_KEY` = the domain key,
+`AGECHECKER_SECRET_KEY` = the account secret), redeployed, and confirmed
+a real verification through the popup actually works end to end.
+Verified from this session's side too: the real API key and widget
+script are baked into the production JS bundle for `/verify-age`, and
+`/api/age-verify/confirm` is live and actually reaching AgeChecker's API
+(no longer the 501 "not configured" stub).
+
+Along the way, fixed an unrelated but real security finding while in
+the same Vercel settings page: `BLOB_READ_WRITE_TOKEN` had been saved as
+the plain "Config" env var type instead of "Secret," making its value
+visible in plaintext to anyone on the Vercel team -- founder rotated it
+and re-saved as Secret. Not a public leak, just tightened internal
+visibility.
+
+**Decided: no selfie-with-ID for now, review again later.** Founder
+noticed the flow only does the instant DB/name/address/DOB match plus a
+photo-ID fallback if that fails -- no selfie-matching. Confirmed that's
+correct: "Take Selfie with ID" is a separate opt-in toggle in
+AgeChecker's dashboard (seen unchecked in earlier screenshots), off by
+default. Decided to leave it off for now -- the account's already set to
+a stricter-than-required 21+ default and the DB-match is a real check,
+not self-attestation, so this is a reasonable starting point, not a
+compliance gap. **Treating this first month as a trial** (AgeChecker has
+no contract anyway, cancel anytime) -- worth revisiting whether to
+enable selfie-matching once there's real usage data, not a permanent
+decision made once and forgotten.
