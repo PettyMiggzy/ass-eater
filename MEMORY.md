@@ -651,3 +651,28 @@ own marketing admits "an age gate alone will not prevent underage
 sales") -- only their paid Verification API (what's now wired in above)
 does real verification. Don't ever route back to the free one thinking
 it's equivalent.
+
+Founder forwarded two PDFs AgeChecker emailed them (a "How It Works" brief
+and a sales deck) -- two things from those worth keeping:
+
+1. **Confirms the site-entry-gate approach (not just checkout) is a
+   real, documented AgeChecker use case**, not a hack: their deck
+   explicitly shows using it "as a qualifying step before new customer
+   registration or account creation" with the same DOB/name/address
+   flow. `pages/verify-age.js`'s approach is exactly this pattern.
+2. **AgeChecker's dashboard has real per-state rule configuration** --
+   block location, require photo ID, require e-signature, custom minimum
+   age, down to county/zip in some states -- "industry-specific profiles,
+   which we update as laws change so you don't have to." **Not yet
+   configured on the founder's account.** Without it, every state gets
+   the same generic instant-DOB-match check by default. Recommended the
+   founder (or have me walk them through it) set explicit rules for the
+   same 27-state list `proxy.js` blocks -- e.g. some of these state laws
+   may warrant requiring photo ID outright rather than accepting the
+   softer instant-database-match method. Not done yet, needs a decision
+   on a per-state strictness level, not just a technical wire-up.
+
+Still true, unchanged by these docs: no explicit written confirmation
+anywhere that AgeChecker's method satisfies each specific named state
+statute -- that's still worth asking their support directly, separate
+from marketing material.
