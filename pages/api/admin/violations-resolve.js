@@ -1,14 +1,12 @@
 import { updateViolationStatus } from '../../../lib/violations-store';
+import { requireAdminKey } from '../../../lib/admin-auth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const adminKey = req.headers['x-admin-key'];
-  if (!adminKey || adminKey !== process.env.ADMIN_UPLOAD_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminKey(req, res)) return;
 
   const { id, action } = req.body || {};
   if (!id || !['dismiss', 'confirmed'].includes(action)) {

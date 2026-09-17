@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
+import { effectiveCreatorStatus } from '../../lib/creators-store';
 
 export default function AdminPanel() {
   const [adminKey, setAdminKey] = useState('');
@@ -11,6 +12,7 @@ export default function AdminPanel() {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState('creators');
+  const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
 
   const authHeaders = { 'x-admin-key': adminKey };
 
@@ -37,6 +39,11 @@ export default function AdminPanel() {
   };
 
   const selected = creators.find((c) => String(c.id) === String(selectedId));
+  // A suspension lifts itself once suspendedUntil passes -- nothing rewrites
+  // the stored `status` when it does, so every status shown here has to go
+  // through effectiveCreatorStatus() or the panel keeps reporting someone as
+  // suspended long after they're publicly visible again.
+  const selectedStatus = selected ? effectiveCreatorStatus(selected) : null;
 
   useEffect(() => {
     if (selected) {
@@ -51,7 +58,7 @@ export default function AdminPanel() {
         locked: !!selected.locked,
         trending: !!selected.trending,
         premium: !!selected.premium,
-        status: selected.status || 'active',
+        status: effectiveCreatorStatus(selected) || 'active',
         payoutMethod: selected.payoutMethod || 'onlyass',
         walletAddress: selected.walletAddress || '',
         socials: {
@@ -111,7 +118,7 @@ export default function AdminPanel() {
     }
   };
 
-  const uploadGalleryItem = async (file) => {
+  const uploadGalleryItem = async (file, aiGenerated) => {
     if (!file) return;
     setBusy(true);
     setStatus('Uploading content...');
@@ -124,6 +131,7 @@ export default function AdminPanel() {
           'x-file-name': file.name,
           'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
           'x-current-gallery': JSON.stringify(selected.gallery || []),
+          'x-ai-generated': aiGenerated ? 'true' : 'false',
           'Content-Type': file.type || 'application/octet-stream',
         },
         body: file,
@@ -323,30 +331,42 @@ export default function AdminPanel() {
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
             <div className="md:col-span-1 space-y-3">
-              {creators.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setSelectedId(c.id)}
-                  className={`w-full text-left premium-card p-4 flex items-center gap-3 transition ${
-                    String(selectedId) === String(c.id) ? 'border-brand-gold' : ''
-                  }`}
-                >
-                  <img src={c.img} alt={c.name} className="w-12 h-12 rounded-full object-cover object-top border border-brand-gold/40" />
-                  <div className="min-w-0">
-                    <p className="font-bold text-white truncate flex items-center gap-1">
-                      {c.name}
-                      {c.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4 shrink-0" title="Premium" />}
-                    </p>
-                    <p className="text-xs text-gray-400 truncate">{c.handle}</p>
-                  </div>
-                  {c.status === 'pending' && (
-                    <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-bold">PENDING</span>
-                  )}
-                  {c.status !== 'pending' && c.trending && (
-                    <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">HOT</span>
-                  )}
-                </button>
-              ))}
+              {creators.map((c) => {
+                // Effective, not stored -- an expired suspension reads as
+                // active here the same way it does everywhere public.
+                const cStatus = effectiveCreatorStatus(c);
+                const flagged = cStatus === 'pending' || cStatus === 'suspended' || cStatus === 'banned';
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedId(c.id)}
+                    className={`w-full text-left premium-card p-4 flex items-center gap-3 transition ${
+                      String(selectedId) === String(c.id) ? 'border-brand-gold' : ''
+                    }`}
+                  >
+                    <img src={c.img} alt={c.name} className="w-12 h-12 rounded-full object-cover object-top border border-brand-gold/40" />
+                    <div className="min-w-0">
+                      <p className="font-bold text-white truncate flex items-center gap-1">
+                        {c.name}
+                        {c.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4 shrink-0" title="Premium" />}
+                      </p>
+                      <p className="text-xs text-gray-400 truncate">{c.handle}</p>
+                    </div>
+                    {cStatus === 'pending' && (
+                      <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-bold">PENDING</span>
+                    )}
+                    {cStatus === 'suspended' && (
+                      <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">SUSPENDED</span>
+                    )}
+                    {cStatus === 'banned' && (
+                      <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">BANNED</span>
+                    )}
+                    {!flagged && c.trending && (
+                      <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">HOT</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Editor */}
@@ -426,7 +446,7 @@ export default function AdminPanel() {
                     <Field label="Payout Wallet Address" value={draft.walletAddress} onChange={(v) => setDraft({ ...draft, walletAddress: v })} />
                   </div>
 
-                  {selected.status === 'pending' && (
+                  {selectedStatus === 'pending' && (
                     <div className="px-4 py-3 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
                       This profile is pending review and hidden from the public platform. Set status to Active below to publish it.
                     </div>
@@ -472,11 +492,12 @@ export default function AdminPanel() {
                     </label>
                   </div>
 
-                  {(selected.contentViolationCount > 0 || selected.status === 'suspended' || selected.status === 'banned') && (
+                  {(selected.contentViolationCount > 0 || selectedStatus === 'suspended' || selectedStatus === 'banned') && (
                     <p className="text-xs text-red-400">
                       {selected.contentViolationCount || 0} confirmed content violation(s)
-                      {selected.status === 'suspended' && selected.suspendedUntil && ` — suspended until ${new Date(selected.suspendedUntil).toLocaleDateString()}`}
-                      {selected.status === 'banned' && ' — permanently banned'}
+                      {selectedStatus === 'suspended' && selected.suspendedUntil && ` — suspended until ${new Date(selected.suspendedUntil).toLocaleDateString()}`}
+                      {selectedStatus === 'active' && selected.status === 'suspended' && ' — suspension has since expired, account is active again'}
+                      {selectedStatus === 'banned' && ' — permanently banned'}
                       . Manually changing Status above overrides this (e.g. to reinstate early), but won't reset the
                       violation count itself.
                     </p>
@@ -500,10 +521,24 @@ export default function AdminPanel() {
                           accept="image/*,video/*"
                           className="hidden"
                           disabled={busy}
-                          onChange={(e) => uploadGalleryItem(e.target.files[0])}
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (!file) return;
+                            uploadGalleryItem(file, nextUploadIsAi);
+                            setNextUploadIsAi(false);
+                            e.target.value = '';
+                          }}
                         />
                       </label>
                     </div>
+                    {/* Same self-reported AI label creators get on their own uploads
+                        (pages/dashboard.js) -- content uploaded on a creator's behalf
+                        has to be able to carry it too, since the labeling requirement
+                        is about what's published, not who pressed upload. */}
+                    <label className="flex items-center gap-2 text-xs text-gray-400 mb-3 cursor-pointer">
+                      <input type="checkbox" checked={nextUploadIsAi} onChange={(e) => setNextUploadIsAi(e.target.checked)} />
+                      This upload is AI-generated or synthetic content (will be labeled "AI" on the profile)
+                    </label>
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                       {(selected.gallery || []).map((item, i) => (
                         <div key={i} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
@@ -511,6 +546,9 @@ export default function AdminPanel() {
                             <video src={item.src} className="w-full h-full object-cover" muted />
                           ) : (
                             <img src={item.src} alt="" className="w-full h-full object-cover" />
+                          )}
+                          {item.aiGenerated && (
+                            <span className="absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
                           )}
                           <button
                             onClick={() => deleteGalleryItem(i)}
@@ -650,6 +688,16 @@ function ReportsPanel({ adminKey }) {
   );
 }
 
+const CONTEXT_LABELS = {
+  message: 'Direct message',
+  wall_post: 'Wall comment',
+  bio: 'Profile bio',
+  name: 'Profile display name',
+  handle: 'Profile handle',
+  listing_title: 'Listing title',
+  listing_description: 'Listing description',
+};
+
 /** Auto-flagged, blocked sends -- see lib/payment-circumvention-filter.js. The flagged message/post itself was never stored, only this record of who tried and why. */
 function ViolationsPanel({ adminKey }) {
   const [statusFilter, setStatusFilter] = useState('open');
@@ -694,7 +742,18 @@ function ViolationsPanel({ adminKey }) {
     }
   };
 
-  const contextLabel = (v) => (v.context === 'wall_post' ? 'Wall comment' : v.context === 'bio' ? 'Profile bio' : 'Direct message');
+  // Every surface the filter is wired into logs its own context string (see
+  // the addViolation calls in pages/api/...). Anything unrecognized shows the
+  // raw context rather than being mislabeled as a DM, which is what the old
+  // two-branch ternary did to every profile-name, handle and listing flag.
+  const contextLabel = (v) => CONTEXT_LABELS[v.context] || v.context;
+
+  // Admin-path flags have no logged-in user behind them -- pages/api/admin/profile.js
+  // records which creator record the text was headed for instead.
+  const actorLabel = (v) => {
+    const adminEdit = String(v.userId || '').match(/^admin-edit:creator:(.+)$/);
+    return adminEdit ? `creator #${adminEdit[1]} (admin edit)` : `user #${v.userId}`;
+  };
 
   return (
     <div>
@@ -721,7 +780,7 @@ function ViolationsPanel({ adminKey }) {
           {violations.map((v) => (
             <div key={v.id} className="premium-card border border-brand-purple/20 p-4">
               <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-bold text-brand-gold">{contextLabel(v)} -- user #{v.userId}</p>
+                <p className="text-xs font-bold text-brand-gold">{contextLabel(v)} -- {actorLabel(v)}</p>
                 <p className="text-[10px] text-gray-600">{new Date(v.createdAt).toLocaleString()}</p>
               </div>
               <p className="text-xs text-gray-500 mb-1">Flagged: {v.reasons.join(', ')}</p>

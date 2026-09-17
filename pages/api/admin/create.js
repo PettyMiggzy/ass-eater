@@ -1,17 +1,26 @@
 import { createCreator } from '../../../lib/creators-store';
+import { requireAdminKey } from '../../../lib/admin-auth';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const adminKey = req.headers['x-admin-key'];
-  if (!adminKey || adminKey !== process.env.ADMIN_UPLOAD_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!requireAdminKey(req, res)) return;
+
+  const profile = req.body || {};
+  // createCreator() allocates the next free id and then spreads the submitted
+  // profile over it, so an `id` in the body wins -- submitting one that's
+  // already taken produced two creators sharing an id, which every lookup in
+  // the app resolves by findIndex/filter on id (edits would hit whichever
+  // came first, a delete would remove both). Ids are the platform's to
+  // assign; the admin panel never sends one.
+  if ('id' in profile) {
+    return res.status(400).json({ error: 'id is assigned automatically and cannot be set' });
   }
 
   try {
-    const creator = await createCreator(req.body || {});
+    const creator = await createCreator(profile);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     return res.status(500).json({ error: err.message });

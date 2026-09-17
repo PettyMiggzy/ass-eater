@@ -1,5 +1,6 @@
 import { put } from '@vercel/blob';
 import { setCreatorAvatar } from '../../../lib/creators-store';
+import { requireAdminKey } from '../../../lib/admin-auth';
 
 export const config = {
   api: {
@@ -18,10 +19,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const adminKey = req.headers['x-admin-key'];
-  if (!adminKey || adminKey !== process.env.ADMIN_UPLOAD_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminKey(req, res)) return;
 
   const creatorId = req.headers['x-creator-id'];
   const fileName = req.headers['x-file-name'] || `avatar-${Date.now()}`;

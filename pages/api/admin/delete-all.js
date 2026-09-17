@@ -1,4 +1,5 @@
 import { deleteAllCreators } from '../../../lib/creators-store';
+import { requireAdminKey } from '../../../lib/admin-auth';
 
 // Defaults to wiping only real (non-seed) creators, so a routine cleanup
 // can't accidentally erase the launch demo roster along with everything
@@ -8,10 +9,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const adminKey = req.headers['x-admin-key'];
-  if (!adminKey || adminKey !== process.env.ADMIN_UPLOAD_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireAdminKey(req, res)) return;
 
   const includeSeed = req.query.includeSeed === 'true' || req.body?.includeSeed === true;
 

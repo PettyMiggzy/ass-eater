@@ -1,5 +1,5 @@
 import { createUser } from '../../../lib/users-store';
-import { createCreator } from '../../../lib/creators-store';
+import { createCreator, deleteCreator } from '../../../lib/creators-store';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
 
 export default async function handler(req, res) {
@@ -25,9 +25,9 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Display name and handle are required for creator accounts' });
   }
 
-  try {
-    let creatorId = null;
+  let newCreatorId = null;
 
+  try {
     if (role === 'creator') {
       const creator = await createCreator({
         name: displayName,
@@ -36,11 +36,11 @@ export default async function handler(req, res) {
         status: 'pending',
         locked: true,
       });
-      creatorId = creator.id;
+      newCreatorId = creator.id;
     }
 
-    const user = await createUser({ email, password, role, creatorId });
-    const token = createSessionToken(user.id);
+    const user = await createUser({ email, password, role, creatorId: newCreatorId });
+    const token = createSessionToken(user.id, user.sessionVersion);
     setSessionCookie(res, token);
 
     return res.status(200).json({
@@ -48,6 +48,20 @@ export default async function handler(req, res) {
       user: { id: user.id, email: user.email, role: user.role, creatorId: user.creatorId },
     });
   } catch (err) {
+    // The creator profile is written before the account that owns it, so a
+    // failure in createUser (a duplicate email is the everyday one) used to
+    // strand a pending creator profile nobody can ever log into -- sitting
+    // in the admin applicant queue forever, and piling up another ghost
+    // every time someone retried. Roll it back.
+    if (newCreatorId !== null) {
+      try {
+        await deleteCreator(newCreatorId);
+      } catch {
+        // Nothing better to do here: the original failure below is what the
+        // person needs to see, and the leftover profile is still visible to
+        // an admin. Don't mask the real error with this one.
+      }
+    }
     return res.status(400).json({ error: err.message });
   }
 }
