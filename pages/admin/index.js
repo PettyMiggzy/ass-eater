@@ -360,12 +360,13 @@ export default function AdminPanel() {
                   <div className="flex items-center gap-4">
                     <img src={selected.img} alt={selected.name} className="w-20 h-20 rounded-full object-cover object-top border-2 border-brand-gold" />
                     <div>
-                      <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
+                      <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
                         Change PFP
                         <input
                           type="file"
                           accept="image/*"
                           className="hidden"
+                          disabled={busy}
                           onChange={(e) => uploadAvatar(e.target.files[0])}
                         />
                       </label>
@@ -492,12 +493,13 @@ export default function AdminPanel() {
                       <h3 className="font-bold text-brand-gold">
                         Gallery ({selected.gallery?.length || 0}/{selected.premium ? 200 : 50})
                       </h3>
-                      <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
-                        Upload Content
+                      <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                        {busy ? 'Uploading...' : 'Upload Content'}
                         <input
                           type="file"
                           accept="image/*,video/*"
                           className="hidden"
+                          disabled={busy}
                           onChange={(e) => uploadGalleryItem(e.target.files[0])}
                         />
                       </label>

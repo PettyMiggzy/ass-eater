@@ -297,9 +297,9 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                     {creator.name}
                     {creator.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4" title="Premium" />}
                   </p>
-                  <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
+                  <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy || isRestricted ? 'opacity-50 pointer-events-none' : ''}`}>
                     Change PFP
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAvatar(e.target.files[0])} />
+                    <input type="file" accept="image/*" className="hidden" disabled={busy || isRestricted} onChange={(e) => uploadAvatar(e.target.files[0])} />
                   </label>
                 </div>
               </div>
@@ -406,12 +406,13 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                             {isRestricted ? 'Uploads disabled' : 'Slots full'}
                           </span>
                         ) : (
-                          <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
-                            Upload
+                          <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                            {busy ? 'Uploading...' : 'Upload'}
                             <input
                               type="file"
                               accept="image/*,video/*"
                               className="hidden"
+                              disabled={busy}
                               onChange={(e) => {
                                 const file = e.target.files[0];
                                 if (!file) return;
@@ -733,9 +734,9 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
                   </div>
                 ))}
                 {(l.media || []).length < 10 && (
-                  <label className="aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition">
+                  <label className={`aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
                     + Add
-                    <input type="file" accept="image/*,video/*" className="hidden" onChange={(e) => onUploadMedia(l.id, e.target.files[0])} />
+                    <input type="file" accept="image/*,video/*" className="hidden" disabled={busy} onChange={(e) => onUploadMedia(l.id, e.target.files[0])} />
                   </label>
                 )}
               </div>
