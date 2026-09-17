@@ -25,11 +25,16 @@ export default async function handler(req, res) {
     const otherCreator = otherUser?.creatorId
       ? creators.find((cr) => String(cr.id) === String(otherUser.creatorId))
       : null;
+    // otherUser.email can be a real email address (see MEMORY.md's
+    // anonymous-fan-signup feature) -- only show it when it has no "@",
+    // meaning it's actually the plain username a fan chose to be shown
+    // by, never a real address someone didn't intend to expose.
+    const safeFanName = otherUser?.email && !otherUser.email.includes('@') ? otherUser.email : null;
     return {
       ...c,
       other: {
         userId: otherId,
-        name: otherCreator?.name || otherUser?.email || 'Unknown',
+        name: otherCreator?.name || safeFanName || 'Unknown',
         handle: otherCreator?.handle || null,
         img: otherCreator?.img || null,
       },

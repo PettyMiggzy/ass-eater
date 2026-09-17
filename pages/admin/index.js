@@ -514,7 +514,8 @@ export default function AdminPanel() {
                           )}
                           <button
                             onClick={() => deleteGalleryItem(i)}
-                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition"
+                            disabled={busy}
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition disabled:opacity-30"
                           >
                             ✕
                           </button>

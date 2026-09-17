@@ -23,7 +23,7 @@ export default async function handler(req, res) {
 
   try {
     const user = await findUserById(uid);
-    const post = await addWallPost({ creatorId, authorId: uid, authorName: displayNameFor(user), text });
+    const post = await addWallPost({ creatorId, authorId: uid, authorName: await displayNameFor(user), text });
     return res.status(200).json({ ok: true, post });
   } catch (err) {
     return res.status(400).json({ error: err.message });

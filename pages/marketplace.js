@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import Head from 'next/head';
 import { getListings } from '../lib/listings-store';
-import { getCreators } from '../lib/creators-store';
+import { getCreators, isPubliclyVisible } from '../lib/creators-store';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
@@ -14,7 +14,10 @@ export async function getServerSideProps() {
     .filter((l) => l.status === 'active')
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .map((l) => {
-      const creator = creators.find((c) => String(c.id) === String(l.creatorId));
+      const match = creators.find((c) => String(c.id) === String(l.creatorId));
+      // A suspended/banned creator must stay hidden here too -- same rule
+      // every other public page enforces via isPubliclyVisible.
+      const creator = match && isPubliclyVisible(match) ? match : null;
       return { ...l, creatorName: creator?.name || 'Unknown', creatorImg: creator?.img || '/images/mascot.png' };
     });
   return { props: { listings: active } };

@@ -22,7 +22,10 @@ export async function getServerSideProps({ query }) {
     ? allListings
         .filter((l) => l.status === 'active' && (l.title.toLowerCase().includes(q) || (l.description || '').toLowerCase().includes(q)))
         .map((l) => {
-          const creator = allCreators.find((c) => String(c.id) === String(l.creatorId));
+          // visibleCreators, not allCreators -- a suspended/banned
+          // creator's listing must show "Unknown" here too, matching
+          // every other public surface.
+          const creator = visibleCreators.find((c) => String(c.id) === String(l.creatorId));
           return { ...l, creatorName: creator?.name || 'Unknown' };
         })
     : [];

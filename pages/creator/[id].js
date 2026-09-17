@@ -33,7 +33,13 @@ export async function getServerSideProps({ req, params }) {
     props: {
       creator: toPublicCreator(creator),
       viewerId: viewerId || null,
-      creatorUserId: creatorUser ? String(creatorUser.id) : null,
+      // Must be re-checked against the post-visibility-check `creator`
+      // (null'd out above for a hidden profile), not the original
+      // `creatorUser` lookup -- otherwise a pending/suspended/banned
+      // creator's real internal account id still reaches the page's
+      // __NEXT_DATA__ JSON even while the page itself correctly renders
+      // "Creator not found".
+      creatorUserId: creator && creatorUser ? String(creatorUser.id) : null,
       listings,
       wallPosts,
       initialFavorited,

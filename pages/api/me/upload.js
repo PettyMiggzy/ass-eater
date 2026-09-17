@@ -35,8 +35,14 @@ export default async function handler(req, res) {
   // catalog need real headroom, not a handful of slots. Still capped (not
   // unlimited) since Vercel Blob storage cost scales with what's actually
   // uploaded -- revisit these two numbers if real usage says otherwise.
+  //
+  // The limit check must use ctx.creator.gallery (freshly fetched by
+  // requireCreatorOwner for THIS request), never the client-supplied
+  // x-current-gallery header -- that header is just a snapshot the
+  // browser sends, and trusting it here meant sending an empty array
+  // bypassed the slot limit entirely, for anyone.
   const limit = ctx.creator.premium ? 200 : 50;
-  const used = (Array.isArray(knownGallery) ? knownGallery : ctx.creator.gallery || []).length;
+  const used = (ctx.creator.gallery || []).length;
   if (used >= limit) {
     return res.status(403).json({
       error: ctx.creator.premium

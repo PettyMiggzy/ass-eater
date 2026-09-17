@@ -957,3 +957,123 @@ Admin's creator editor also got manual `suspended`/`banned` status
 options (for hand-adjusting outside the automatic ladder -- e.g.
 reinstating someone early) and a violation-count/suspension-date readout,
 consistent with how `status` was already hand-editable there.
+
+## Full fresh-eyes re-audit + critical fixes (2026-09-17)
+
+After a real production bug (uploads silently overwriting each other,
+traced to a stale-client-snapshot pattern) slipped past the earlier audit
+pass, explicit direction: re-audit the ENTIRE repo with no assumptions
+carried over, as if seeing it for the first time. Ran a much larger
+Workflow pass -- 9 finder agents covering every page, every API route,
+every lib file, `proxy.js`, all of `server/`, and all of `contracts/`,
+each explicitly told not to trust prior conclusions and to read full
+files, not skim -- then adversarially verified every finding 3 ways.
+62 raw findings, 59 confirmed. Fixed the live-site critical ones
+immediately rather than just reporting them:
+
+**Age verification could be faked with an ordinary login cookie.** The
+single worst finding. `lib/session.js`'s login-session token and
+`lib/age-verification.js`'s age-verification token used the identical
+root secret and an identical HMAC scheme, with no field distinguishing
+one token type from the other -- copying a real `oa_session` cookie
+value into the `oa_age_verified` cookie slot was accepted as proof of
+real age verification, completely defeating the 27-state geoblock.
+Fixed with two independent layers, either of which alone would have
+closed it: each token type now signs with its own key, derived from the
+shared root secret via HMAC with a distinct context string
+(`oa:session:v1` vs `oa:age-verification:v1`), and each payload now
+carries an explicit `typ` field that verification checks. Verified both
+directions locally: a genuine token of one type is now rejected when
+replayed as the other, while each type's own legitimate round-trip still
+works.
+
+**Wall comments and DMs were leaking real email addresses.**
+`lib/users-store.js`'s `displayNameFor()` always fell back to the
+local-part of `user.email` since no user ever actually had a
+`displayName` field set -- meaning every creator (real email required)
+and every fan who opted into a real email (vs. the anonymous-username
+option) had a fragment of their real address shown publicly on every
+wall comment and DM. Fixed: a creator now shows their real public
+creator name; a fan's stored value is only shown as-is when it has no
+"@" (meaning it genuinely is the plain username they chose to be shown
+by, not a real address). Same fix applied to the independent, separate
+leak in `pages/api/messages/conversations.js`'s inline fallback.
+
+**A live, fully-functional endpoint could create real marketplace orders
+for $0.** `pages/api/marketplace/orders/create.js` was built ahead of
+real payment capture (its own comment said so) but was directly callable
+by anyone logged in -- including creating a real physical order with a
+real shipping address, having paid nothing. Closed with a 501 until
+payment actually exists to call it first.
+
+**A signup timing race could log one person into a different person's
+account.** `lib/users-store.js`'s `createUser` computed new account IDs
+as "highest existing + 1" -- two signups landing close together could
+compute the same ID and end up sharing a login-session identity. Fixed
+with `crypto.randomUUID()` instead of a sequential counter; every ID
+comparison in the codebase already does `String(a) === String(b)`, so a
+non-numeric ID is a safe drop-in.
+
+**Hardcoded fallback secret was a live risk for any future
+misconfigured deployment.** `lib/session.js` and `lib/age-verification.js`
+both fell back to a secret hardcoded in the source (`'only-ass-dev-secret'`)
+if neither real env var was set. Today's production is correctly
+configured so this wasn't actively exploitable, but a future mirror site
+or fork that didn't inherit the same env vars would have silently
+accepted a publicly-known secret. Now production refuses to start
+(throws loudly) instead of silently falling back; the hardcoded value
+only applies to local dev.
+
+**A hidden creator's internal account ID was still leaking, and
+Marketplace/Search forgot to hide suspended/banned creators.**
+`pages/creator/[id].js` correctly nulled the `creator` prop for a
+pending/suspended/banned profile but still separately leaked
+`creatorUserId` from a stale closure variable -- fixed to re-derive it
+from the post-check `creator`. `pages/marketplace.js` and `pages/search.js`
+both resolved a listing's creator against the *unfiltered* creator list
+instead of `isPubliclyVisible()`, so a suspended/banned creator's real
+name and photo kept showing on their listings -- both fixed to match
+every other public page's behavior.
+
+**The upload-limit bypass was the exact same bug class as the fix from
+earlier tonight, just missed in a second spot.** `pages/api/me/upload.js`'s
+50/200-slot check used the client-sent `x-current-gallery` header's
+length instead of the real server-side gallery length -- sending an
+empty array bypassed the limit entirely, for anyone. Fixed to use the
+fresh server value, matching the fix already applied to the store layer.
+Also fixed: the gallery-delete button (dashboard and admin) had no
+`disabled={busy}` guard, so two quick clicks could delete the wrong
+photo -- same missing-disable pattern as the original upload race.
+
+**The systemic "read full file, write full file, no synchronization"
+pattern got a real, general fix -- not a punt.** The earlier session's
+fix for gallery uploads only addressed *client*-supplied stale data; a
+genuine *concurrent-request* race (two people sending a message, filing
+an NCII report, etc. within milliseconds of each other) was still
+possible in at least 9 other stores, one of which (`ncii-reports-store.js`)
+carries real legal exposure under the TAKE IT DOWN Act's 48-hour clock.
+Checked whether a real fix was actually possible before writing anything
+off as "needs a full database migration" -- it was: Vercel Blob's `put()`
+supports a documented `ifMatch` option (conditional write against the
+blob's current ETag, throwing `BlobPreconditionFailedError` on a
+mismatch). Built `lib/blob-json-store.js`, a shared `readJsonList`/
+`updateJsonList` helper implementing real optimistic-concurrency
+read-modify-write with automatic retry on conflict, and migrated every
+flagged store to it: `creators-store.js`, `listings-store.js`,
+`orders-store.js`, `messages-store.js`, `wall-store.js`,
+`favorites-store.js`, `reports-store.js`, `violations-store.js`,
+`ncii-reports-store.js`, and `users-store.js` (not originally flagged,
+same underlying pattern, fixed for consistency). A losing write is now
+rejected and retried against the winner's fresh state instead of
+silently discarding it, with no database migration needed.
+
+**Not done in this pass, explicitly deferred:** the full SHOULD-FIX list
+(login timing/rate-limiting, logout not invalidating sessions, a few
+admin-side filter gaps, marketplace edit validation gaps, an overly
+aggressive payment-filter false-positive rate) and everything found in
+`server/`/`contracts/` (a real money-minting bug in the ledger for
+double-referred transactions, a launchpad contract that can be
+permanently disabled by anyone for one cheap transaction, and several
+smaller issues) -- none of the server/contracts findings are live since
+neither stack is deployed, but they're real and tracked here for
+whenever that changes.

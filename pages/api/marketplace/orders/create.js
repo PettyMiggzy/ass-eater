@@ -14,6 +14,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // This endpoint was built ahead of real payment capture (see the file
+  // comment above) but was directly callable and fully functional in the
+  // meantime -- anyone logged in could hit it and create a real order,
+  // including a physical one with a real shipping address, having paid
+  // nothing. Close it until it's actually wired in right after a real
+  // charge succeeds; remove this guard at that point, not before.
+  return res.status(501).json({ error: 'Marketplace checkout is not live yet.' });
+
   const uid = getSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to place an order' });
 

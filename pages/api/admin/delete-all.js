@@ -1,4 +1,4 @@
-import { getCreators, saveCreators } from '../../../lib/creators-store';
+import { deleteAllCreators } from '../../../lib/creators-store';
 
 // Defaults to wiping only real (non-seed) creators, so a routine cleanup
 // can't accidentally erase the launch demo roster along with everything
@@ -16,8 +16,7 @@ export default async function handler(req, res) {
   const includeSeed = req.query.includeSeed === 'true' || req.body?.includeSeed === true;
 
   try {
-    const remaining = includeSeed ? [] : (await getCreators()).filter((c) => c.seed);
-    await saveCreators(remaining);
+    const remaining = await deleteAllCreators(includeSeed);
     return res.status(200).json({ ok: true, creators: remaining });
   } catch (err) {
     return res.status(500).json({ error: err.message });

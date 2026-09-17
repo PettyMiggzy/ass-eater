@@ -1,5 +1,5 @@
 import { getReports, updateReportStatus } from '../../../lib/reports-store';
-import { getListings, saveListings, findListing } from '../../../lib/listings-store';
+import { markListingRemoved } from '../../../lib/listings-store';
 import { deleteWallPost } from '../../../lib/wall-store';
 
 export default async function handler(req, res) {
@@ -24,11 +24,7 @@ export default async function handler(req, res) {
   try {
     if (action === 'remove_content') {
       if (report.targetType === 'listing') {
-        const listings = await getListings();
-        const listing = findListing(listings, report.targetId);
-        if (listing) {
-          await saveListings(listings.map((l) => (String(l.id) === String(report.targetId) ? { ...l, status: 'removed' } : l)));
-        }
+        await markListingRemoved(report.targetId);
       } else if (report.targetType === 'wall_post') {
         await deleteWallPost(report.targetId, 'admin', { isWallOwner: true }).catch(() => {}); // already-deleted is fine
       }
