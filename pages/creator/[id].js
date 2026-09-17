@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { getCreators } from '../../lib/creators-store';
+import { getCreators, toPublicCreator } from '../../lib/creators-store';
 import { getSessionUserId } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
@@ -10,9 +10,16 @@ import { isFavorite } from '../../lib/favorites-store';
 
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
-  const creator = creators.find((c) => String(c.id) === String(params.id)) || null;
+  let creator = creators.find((c) => String(c.id) === String(params.id)) || null;
   const viewerId = getSessionUserId(req);
   const creatorUser = creator ? await findUserByCreatorId(creator.id) : null;
+
+  // Pending applicants aren't public yet -- only the applicant themselves
+  // (once they've claimed a login) can preview their own pending profile.
+  if (creator && creator.status === 'pending' && String(viewerId) !== String(creatorUser?.id)) {
+    creator = null;
+  }
+
   const allListings = creator ? await getListings() : [];
   const listings = allListings
     .filter((l) => String(l.creatorId) === String(creator?.id) && l.status === 'active')
@@ -21,7 +28,7 @@ export async function getServerSideProps({ req, params }) {
   const initialFavorited = creator && viewerId ? await isFavorite(viewerId, creator.id) : false;
   return {
     props: {
-      creator,
+      creator: toPublicCreator(creator),
       viewerId: viewerId || null,
       creatorUserId: creatorUser ? String(creatorUser.id) : null,
       listings,

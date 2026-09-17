@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { getCreators } from '../lib/creators-store';
+import { getCreators, toPublicCreator } from '../lib/creators-store';
 import { getSessionUserId } from '../lib/session';
 import { findUserById, publicUser } from '../lib/users-store';
 
@@ -9,7 +9,7 @@ export async function getServerSideProps({ req }) {
   const creators = await getCreators();
   const uid = getSessionUserId(req);
   const sessionUser = uid ? publicUser(await findUserById(uid)) : null;
-  return { props: { creators: creators.filter((c) => c.status !== 'pending'), sessionUser } };
+  return { props: { creators: creators.filter((c) => c.status !== 'pending').map(toPublicCreator), sessionUser } };
 }
 
 export default function OnlyAss({ creators, sessionUser }) {

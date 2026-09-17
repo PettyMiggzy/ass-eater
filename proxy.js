@@ -38,13 +38,25 @@ const BLOCKED_STATE_CODES = new Set([
   'VA', 'WV', 'WY',
 ]);
 
-const GATE_PATHS = new Set(['/blocked-region', '/verify-age']);
+// Paths that never show adult content regardless of hostname -- the two gate
+// pages (need to stay reachable so the block/verify flow itself can run),
+// the two SFW landing pages (reachable directly by path, not just through
+// the root rewrite below), and the shared brand logo those pages render.
+// Deliberately NOT a blanket exemption for images/videos generally -- those
+// hold real creator content and must go through the check.
+const SFW_PATHS = new Set(['/blocked-region', '/verify-age', '/gateway', '/token', '/images/logo-final.png']);
 
 export async function proxy(request) {
   const host = request.headers.get('host') || '';
   const { pathname } = request.nextUrl;
 
-  if (!GATE_PATHS.has(pathname) && !SFW_HOSTS.has(host)) {
+  // SFW_HOSTS only ever serve real content at the root path (rewritten to
+  // /gateway or /token below) -- any other path on those hosts still
+  // resolves to the actual platform (same Next.js app, routed by pathname
+  // regardless of hostname), so only root is exempt from the check.
+  const isSfwRoot = pathname === '/' && SFW_HOSTS.has(host);
+
+  if (!SFW_PATHS.has(pathname) && !isSfwRoot) {
     const country = request.headers.get('x-vercel-ip-country');
     const region = request.headers.get('x-vercel-ip-country-region');
     if (country === 'US' && BLOCKED_STATE_CODES.has(region)) {
@@ -64,6 +76,10 @@ export async function proxy(request) {
   return NextResponse.next();
 }
 
+// images/ and videos/ hold real creator content (seed demo photos/videos are
+// adult content) and must go through the age check -- only icons/favicon/
+// framework assets (never content) and api/ (needs to stay reachable so the
+// verify-age flow itself can complete from a blocked state) are exempt.
 export const config = {
-  matcher: ['/((?!api/|_next/|favicon|images/|videos/|icons/).*)'],
+  matcher: ['/((?!api/|_next/|favicon|icons/).*)'],
 };

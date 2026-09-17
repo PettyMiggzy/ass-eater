@@ -708,3 +708,102 @@ compliance gap. **Treating this first month as a trial** (AgeChecker has
 no contract anyway, cancel anytime) -- worth revisiting whether to
 enable selfie-matching once there's real usage data, not a permanent
 decision made once and forgotten.
+
+## Pre-launch security audit + fixes (2026-09-17)
+
+With launch imminent ("goin live in few hours"), ran two comprehensive
+Workflow-orchestrated audits (Ultracode on) -- one over the live site
+(`pages/`, `lib/`, `proxy.js`), one over `server/`+`contracts/` -- each with
+parallel dimension-finders, adversarial 3-vote verification per finding,
+then a synthesis pass. Live site: 30 confirmed findings. Server/contracts:
+14 confirmed findings (explicitly NOT launch-blocking, that stack isn't
+deployed yet).
+
+**All 4 live-site MUST-FIX items are now fixed, verified against a real
+`next dev` server with spoofed Vercel geo headers/cookies (not just read
+over)**:
+
+1. **Creator payout/wallet data + pending applicants' private emails were
+   leaking to every visitor via unfiltered SSR props.** `getServerSideProps`
+   in `pages/index.js`, `search.js`, `onlyass.js`, `favorites.js`, and
+   `creator/[id].js` were spreading the full internal creator record
+   (including `walletAddress`, `payoutMethod`, and -- for pending
+   applicants -- `contactEmail`) straight into `__NEXT_DATA__`, visible to
+   anyone via page source, no login needed. Added `toPublicCreator()` in
+   `lib/creators-store.js` (strips those 3 fields) and applied it at every
+   public-facing prop return; `dashboard.js` (creator's own data) and
+   `admin/*` (admin-key gated) intentionally keep full records. Also fixed
+   `creator/[id].js` specifically lacking the `status !== 'pending'` filter
+   the other pages had (any pending applicant's profile, including their
+   email, was reachable by walking `/creator/<id>`) -- now hidden from the
+   public, visible only to the applicant themselves once they've claimed a
+   login.
+2. **Two real ways to skip the state age-verification check, both in
+   `proxy.js`, both fixed:**
+   - `onlyass.online`/`onlyass.xyz` were exempted from the check for
+     *every* path on those hostnames, not just the root (which is what
+     actually gets rewritten to the SFW landing page) -- e.g.
+     `onlyass.online/creator/5` served the real, ungated creator page since
+     Next.js routes by pathname regardless of host. Narrowed the exemption
+     to root-path-only for those hosts (`isSfwRoot`), and separately
+     exempted `/gateway` and `/token` by path (so those two SFW pages stay
+     reachable from any hostname, matching original intent) alongside the
+     existing `/blocked-region`/`/verify-age` gate paths.
+   - The proxy's `matcher` excluded `images/` and `videos/` entirely, but
+     real creator content (seed demo photos/videos -- confirmed genuinely
+     adult, e.g. `content_lingerie_*.jpg`) is served directly from those
+     paths on the same domain with zero gating. Removed that blanket
+     exclusion so those paths go through the age check like any other page;
+     kept `icons/` excluded (pure UI chrome, confirmed no content in it) and
+     added a narrow exemption for `/images/logo-final.png` specifically
+     (the brand logo the gate pages themselves render, which would
+     otherwise break on `/blocked-region`/`/verify-age`). Verified with
+     curl against spoofed headers: a blocked state can no longer load
+     `/images/content_lingerie_1.jpg` directly (now gets the blocked-region
+     HTML instead of the raw file), the logo still loads, and a valid
+     verification cookie still bypasses everywhere it should. Real
+     creator-uploaded content lives on Vercel Blob (a different origin
+     entirely) and can't be gated by this proxy at all -- that's a separate,
+     harder, not-yet-built problem (same "needs its own serving/gating
+     endpoint" shape as the NFT-drop blur-until-purchased gap noted
+     earlier in this file), not something this fix covers.
+3. **`SESSION_SECRET` was never actually set -- silently reusing
+   `ADMIN_UPLOAD_KEY`** (the admin panel password) to sign both login
+   sessions and the age-verification cookie, coupling two unrelated trust
+   boundaries. This can't be fixed from inside the repo -- there's no tool
+   access to Vercel env vars. Generated a real secret and added it to
+   local `.env.local` (gitignored, never committed) so local dev is no
+   longer coupled to the admin key either. **Founder still needs to add a
+   `SESSION_SECRET` env var (Secret type) in Vercel production** -- gave
+   them a freshly generated value in chat plus the
+   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
+   one-liner to make their own.
+4. **Marketplace listing titles/descriptions and creator display
+   name/handle completely skipped the payment-circumvention filter**, even
+   though the bio field right next to them was already checked -- the two
+   most visible fields on the site, the first place someone would try to
+   slip a Cash App handle through. Wired `detectPaymentCircumvention` into
+   `pages/api/me/profile.js` (now checks `name`/`handle`/`bio`, was
+   bio-only) and into `pages/api/marketplace/create.js` and `update.js`
+   (now checks `title`/`description`), same pattern/violation-logging as
+   the existing message/wall/bio checks.
+
+**Not done, explicitly deferred as SHOULD-FIX-SOON not launch-blocking**
+(full list relayed to founder, not re-litigated here): payment filter is
+beatable via spacing/homoglyphs; admin profile editor and the old
+become-a-creator form skip the filter entirely; social links aren't
+filtered; a concurrent-upload race can silently drop a file; a failed
+signup can leave a ghost pending application; deleting a creator via admin
+doesn't clean up their login account; admin-key comparisons aren't
+timing-safe; a handful of nav gaps. None of these expose data or let
+anyone dodge a fee/age-check on their own -- lower urgency than the 4 above.
+
+**Server/contracts findings (14 confirmed, not deployed, not launch
+scope) intentionally NOT fixed in this pass** -- flagged to founder for
+later prioritization: a referral-payout combo in `ledger.ts` that can mint
+more than the platform's fee collected; a one-of-a-kind marketplace
+listing sellable twice; a no-bid auction double-refund; paid message text
+readable free from the inbox preview; VIP burn discount gameable via price
+timing; a launchpad volume-gaming exploit on the graduation-bonus pool.
+Tracked here so they don't get lost, not urgent since none of `server/` is
+deployed yet.

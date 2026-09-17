@@ -1,6 +1,6 @@
 import Head from 'next/head';
 import { getSessionUserId } from '../lib/session';
-import { getCreators } from '../lib/creators-store';
+import { getCreators, toPublicCreator } from '../lib/creators-store';
 import { getFavoriteCreatorIds } from '../lib/favorites-store';
 
 export async function getServerSideProps({ req }) {
@@ -9,7 +9,9 @@ export async function getServerSideProps({ req }) {
     return { redirect: { destination: '/login?next=/favorites', permanent: false } };
   }
   const [allCreators, favoriteIds] = await Promise.all([getCreators(), getFavoriteCreatorIds(uid)]);
-  const creators = allCreators.filter((c) => favoriteIds.some((id) => String(id) === String(c.id)));
+  const creators = allCreators
+    .filter((c) => c.status !== 'pending' && favoriteIds.some((id) => String(id) === String(c.id)))
+    .map(toPublicCreator);
   return { props: { creators } };
 }
 

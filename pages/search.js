@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { getCreators } from '../lib/creators-store';
+import { getCreators, toPublicCreator } from '../lib/creators-store';
 import { getListings } from '../lib/listings-store';
 
 export async function getServerSideProps({ query }) {
@@ -31,7 +31,7 @@ export async function getServerSideProps({ query }) {
   // when nobody's searching for anything specific yet.
   const allTags = [...new Set(visibleCreators.flatMap((c) => (Array.isArray(c.tags) ? c.tags : [])))].sort();
 
-  return { props: { q, tag, creators, listings, allTags } };
+  return { props: { q, tag, creators: creators.map(toPublicCreator), listings, allTags } };
 }
 
 export default function Search({ q, tag, creators, listings, allTags }) {

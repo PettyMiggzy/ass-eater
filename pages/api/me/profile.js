@@ -20,10 +20,11 @@ export default async function handler(req, res) {
   if (fields && 'socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if (fields && 'tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
 
-  if ('bio' in safeFields) {
-    const check = detectPaymentCircumvention(safeFields.bio);
+  for (const field of ['name', 'handle', 'bio']) {
+    if (!(field in safeFields)) continue;
+    const check = detectPaymentCircumvention(safeFields[field]);
     if (check.flagged) {
-      await addViolation({ userId: ctx.user.id, context: 'bio', reasons: check.reasons, snippet: safeFields.bio });
+      await addViolation({ userId: ctx.user.id, context: field, reasons: check.reasons, snippet: safeFields[field] });
       return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
     }
   }

@@ -1,5 +1,7 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { createListing } from '../../../lib/listings-store';
+import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
+import { addViolation } from '../../../lib/violations-store';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -15,6 +17,14 @@ export default async function handler(req, res) {
   }
   if (kind === 'physical' && (shippingCents == null || shippingCents < 0)) {
     return res.status(400).json({ error: 'Physical items need a shipping fee (can be 0 for free shipping)' });
+  }
+
+  for (const [field, value] of [['title', title], ['description', description]]) {
+    const check = detectPaymentCircumvention(value);
+    if (check.flagged) {
+      await addViolation({ userId: ctx.user.id, context: `listing_${field}`, reasons: check.reasons, snippet: value });
+      return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+    }
   }
 
   try {

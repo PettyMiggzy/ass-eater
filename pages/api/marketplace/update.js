@@ -1,5 +1,7 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { updateListing } from '../../../lib/listings-store';
+import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
+import { addViolation } from '../../../lib/violations-store';
 
 const ALLOWED = ['title', 'description', 'priceCents', 'status', 'kind', 'shippingCents', 'signatureRequired'];
 
@@ -17,6 +19,15 @@ export default async function handler(req, res) {
   const safeFields = {};
   for (const key of ALLOWED) {
     if (fields && key in fields) safeFields[key] = fields[key];
+  }
+
+  for (const field of ['title', 'description']) {
+    if (!(field in safeFields)) continue;
+    const check = detectPaymentCircumvention(safeFields[field]);
+    if (check.flagged) {
+      await addViolation({ userId: ctx.user.id, context: `listing_${field}`, reasons: check.reasons, snippet: safeFields[field] });
+      return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+    }
   }
 
   try {
