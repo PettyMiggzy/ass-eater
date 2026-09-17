@@ -26,11 +26,14 @@ export default function BlockedRegion() {
             We're actively working on adding identity verification and expect to open this back up
             for your state soon.
           </p>
+          <a href="/verify-age" className="premium-button inline-block w-full mb-3">
+            Verify Your Age
+          </a>
           <a
             href="https://t.me/creatorsfirst"
             target="_blank"
             rel="noopener noreferrer"
-            className="premium-button inline-block w-full"
+            className="inline-block w-full text-sm text-gray-400 hover:text-brand-gold transition"
           >
             Join our Telegram for updates
           </a>

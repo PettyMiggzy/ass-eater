@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, verifyAgeVerificationToken } from './lib/age-verification';
 
 // Only Ass runs on one Vercel project behind several domains, each serving
 // different content based on hostname:
@@ -37,15 +38,21 @@ const BLOCKED_STATE_CODES = new Set([
   'VA', 'WV', 'WY',
 ]);
 
-export function proxy(request) {
+const GATE_PATHS = new Set(['/blocked-region', '/verify-age']);
+
+export async function proxy(request) {
   const host = request.headers.get('host') || '';
   const { pathname } = request.nextUrl;
 
-  if (pathname !== '/blocked-region' && !SFW_HOSTS.has(host)) {
+  if (!GATE_PATHS.has(pathname) && !SFW_HOSTS.has(host)) {
     const country = request.headers.get('x-vercel-ip-country');
     const region = request.headers.get('x-vercel-ip-country-region');
     if (country === 'US' && BLOCKED_STATE_CODES.has(region)) {
-      return NextResponse.rewrite(new URL('/blocked-region', request.url));
+      const token = request.cookies.get(AGE_VERIFIED_COOKIE_NAME)?.value;
+      const verified = await verifyAgeVerificationToken(ageVerificationSecret(), token);
+      if (!verified) {
+        return NextResponse.rewrite(new URL('/blocked-region', request.url));
+      }
     }
   }
 
