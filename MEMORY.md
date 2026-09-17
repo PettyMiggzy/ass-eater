@@ -603,3 +603,51 @@ goes to AgeChecker.Net for states that require it -- AgeChecker's own
 contract (Section 4.3) requires this disclosure exist before data
 collection starts, so it's in place ahead of the integration rather than
 added after the fact.
+
+## AgeChecker.Net integration: built for real against actual docs (2026-09-17)
+
+Founder created and paid for an AgeChecker.Net account, then pasted both
+the real Client API docs and Server API docs -- built the actual
+integration against them, nothing guessed at:
+
+- `pages/verify-age.js` -- loads AgeChecker's popup widget (documented for
+  a checkout button, adapted here to a "Verify Age & Continue" button on a
+  dedicated site-entry gate page) against `NEXT_PUBLIC_AGECHECKER_KEY`.
+  Shows a "still being set up" message instead of a broken widget when
+  that env var isn't set yet.
+- `lib/age-verification.js` -- signed `oa_age_verified` cookie proving a
+  visitor passed verification, written with the Web Crypto API (not
+  Node's `crypto` module) so the identical code runs in both API routes
+  (Node) and `proxy.js` (Edge runtime, can't use Node's crypto).
+- `proxy.js` -- checks that cookie before applying the state geoblock; a
+  valid signature lets the visitor through regardless of state, missing
+  or forged ones still route to `/blocked-region` as before. Verified
+  locally by forging both a garbage cookie (stayed blocked) and a
+  correctly-signed one against the real local session secret (bypassed).
+- `pages/api/age-verify/confirm.js` -- **the actual security-critical
+  piece**: the client popup's "accepted" callback alone is bypassable
+  (fakeable from devtools), so this calls AgeChecker's real
+  `GET /v1/status/:uuid` endpoint server-side (authenticated with
+  `AGECHECKER_SECRET_KEY`, never exposed client-side) and only sets the
+  cookie if AgeChecker's own server confirms `status: "accepted"`. Also
+  checks the verification's echoed domain key matches ours so a UUID
+  minted for a different site/account can't be replayed here. Tested
+  against AgeChecker's real (not mocked) API with placeholder credentials
+  to confirm the request/error-handling path actually works end to end
+  before real credentials existed.
+
+**Still needed to go fully live:** set `NEXT_PUBLIC_AGECHECKER_KEY` (the
+website/domain key) and `AGECHECKER_SECRET_KEY` (the account secret) in
+Vercel's production env. Until both exist, `/verify-age` shows the
+"still being set up" state and the confirm endpoint stays a clean 501 --
+intentionally, so nothing broken shipped ahead of real credentials. Once
+set: test the real flow end to end, then start removing states from
+`proxy.js`'s `BLOCKED_STATE_CODES` one at a time as each is confirmed
+working, rather than lifting the whole block at once.
+
+Also learned along the way, worth remembering: AgeChecker has a
+**separate free "Age Gate" product that is pure self-attestation** (their
+own marketing admits "an age gate alone will not prevent underage
+sales") -- only their paid Verification API (what's now wired in above)
+does real verification. Don't ever route back to the free one thinking
+it's equivalent.
