@@ -412,6 +412,11 @@ export default function OnlyAss({ creators, sessionUser }) {
         </section>
 
         <footer className="border-t border-brand-gold/20 py-8 px-6 text-center text-gray-500 text-sm">
+          <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs mb-4">
+            <a href="/terms" className="hover:text-brand-gold transition">Terms of Service</a>
+            <a href="/privacy" className="hover:text-brand-gold transition">Privacy Policy</a>
+            <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">Report Non-Consensual Content</a>
+          </div>
           <p>Only Ass — an independent platform. Not affiliated with any other service. 18+ only, all creators verify identity & age.</p>
         </footer>
       </div>

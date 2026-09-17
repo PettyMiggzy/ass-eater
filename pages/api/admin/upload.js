@@ -26,6 +26,7 @@ export default async function handler(req, res) {
   const creatorId = req.headers['x-creator-id'];
   const fileName = req.headers['x-file-name'] || `upload-${Date.now()}`;
   const fileType = req.headers['x-file-type'] || 'image';
+  const aiGenerated = req.headers['x-ai-generated'] === 'true';
 
   if (!creatorId) {
     return res.status(400).json({ error: 'Missing creator id' });
@@ -53,6 +54,7 @@ export default async function handler(req, res) {
       {
         type: fileType,
         src: blob.url,
+        aiGenerated,
       },
       knownGallery
     );

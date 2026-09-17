@@ -191,6 +191,9 @@ export default function Marketplace({ listings }) {
                     <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                       <img src="/icons/lock.png" className="h-6 w-6" alt="" />
                     </div>
+                    {l.aiGenerated && (
+                      <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
+                    )}
                     <button
                       onClick={() => setReporting(l)}
                       className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs hover:bg-black/90 transition"

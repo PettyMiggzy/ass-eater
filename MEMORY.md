@@ -807,3 +807,93 @@ readable free from the inbox preview; VIP burn discount gameable via price
 timing; a launchpad volume-gaming exploit on the graduation-bonus pool.
 Tracked here so they don't get lost, not urgent since none of `server/` is
 deployed yet.
+
+## AI/deepfake content policy: fact-checked the wrong claim, found the real one (2026-09-17)
+
+Asked to check whether OnlyFans really enforces a specific-sounding AI
+content policy (mandatory per-post labeling with a warning-then-suspension
+ladder; deepfakes get an immediate permanent ban + frozen payouts +
+forfeited earnings + law enforcement referral). Ran a Workflow-orchestrated
+research pass (4 parallel research agents against real sources, not
+guessed at) before building anything, since this exact kind of
+confident-sounding "here's what OnlyFans does" claim had already turned
+out to be wrong once earlier this session (the age-verification-checkbox
+question).
+
+**The claim is fact-checked as false/exaggerated.** OnlyFans's real ToS
+does require AI content labeling and does ban non-consensual deepfakes,
+but the specific "warning then suspension" two-strike system doesn't
+exist anywhere in their docs (their own terms say the opposite -- they can
+act without warning for serious/repeated violations), and no OnlyFans
+document states the specific "permanent ban + frozen payouts + forfeited
+earnings + law enforcement referral" bundle. Traced the likely source to a
+cluster of SEO/creator-management blog posts making the same
+specific-sounding claim with zero citations to any real OnlyFans page.
+
+**The actually important finding, unrelated to the OnlyFans claim: the
+federal TAKE IT DOWN Act.** Signed into law May 2025. Requires any
+platform hosting user-posted content -- no small-platform exception -- to
+run a notice-and-removal process letting someone report non-consensual
+intimate content (including AI-generated/deepfake) about themselves and
+get it removed within 48 hours. The compliance deadline was **May 19,
+2026, already four months past as of this research**, with active FTC
+enforcement since (penalties up to ~$53k/violation). This platform had
+*no* such process. Everything else researched (DEFIANCE Act, state
+deepfake laws, AI-labeling laws like California's AB 3211 which never
+actually passed) turned out to bind either the individual creator or
+platforms far bigger than this one -- not a binding requirement here right
+now.
+
+**Built immediately, since this is overdue law rather than a policy
+debate:**
+- `pages/report-content.js` + `pages/api/report-content.js` -- a public,
+  unauthenticated "I appear in this content and didn't consent" form
+  (name, contact, where the content is, an explicit consent statement).
+  Deliberately no login required -- someone reporting themselves as a
+  victim shouldn't need a platform account to do it.
+- `lib/ncii-reports-store.js` + `pages/api/admin/ncii-reports*.js` + a new
+  **TAKEDOWN REQUESTS** tab in `/admin` (mirrors the existing
+  Reports/Violations panels) -- sorted oldest-first (not newest-first like
+  the others) since these carry a 48-hour legal clock, with a visual
+  overdue flag at 36h/48h open.
+- `pages/terms.js` Section 7/8 and `pages/privacy.js` -- plain-language AI
+  labeling requirement, non-consensual-AI-content ban, and a real
+  notice-and-removal section describing the 48-hour process and linking
+  to the report form (the law requires this be posted "clearly and
+  conspicuous," not just exist).
+- `proxy.js` -- added `/report-content` to the paths exempt from the
+  state age-verification geoblock. Caught this in testing: without the
+  exemption, a visitor in a blocked state couldn't reach the takedown
+  form without first passing age verification, which would have
+  defeated the "freely accessible" requirement the law itself imposes.
+- Footer links on `pages/index.js` and `pages/onlyass.js` (onlyass.js had
+  no footer link list at all before this).
+- An "AI-generated" checkbox at creator content upload
+  (`pages/api/me/upload.js`, `pages/api/admin/upload.js`,
+  `pages/dashboard.js`) and at marketplace listing creation
+  (`pages/api/marketplace/create.js`/`update.js`,
+  `lib/listings-store.js`, `pages/dashboard.js`) -- self-reported, not
+  detected, matching what the report identified as realistic/cheap
+  (automatic AI-content detection is neither reliable nor required).
+  Shows a small "AI" badge wherever that content displays
+  (`pages/creator/[id].js`, `pages/marketplace.js`).
+- `pages/token.js` roadmap corrected: age verification was still marked
+  "planned" there even though AgeChecker went fully live yesterday --
+  fixed to "live," and the takedown-process line split into what's now
+  actually live (NCII/TAKE IT DOWN reporting) vs. still not built (the
+  18 U.S.C. §2257 statement, a separate requirement).
+
+**Deliberately not decided/built, left as manual admin review:** the
+exact enforcement ladder for repeat labeling violations (permanent ban on
+first confirmed deepfake? does forfeiture claw back already-paid-out
+money?) -- the research's own recommendation was that a human-reviewed
+queue with logging satisfies the law without locking in specifics not yet
+committed to. Also not built: automatic AI-content detection (unreliable,
+not legally required).
+
+**Incidental fixes made while in these files, unrelated to the above but
+worth noting:** `pages/dashboard.js` and `pages/admin/index.js` were still
+displaying the old 4/10 gallery-slot limit in the UI (a leftover from the
+50/200 cap change earlier this session that only updated the actual
+server-side enforcement in `pages/api/me/upload.js`, not these two
+display-only labels) -- both now correctly show 50/200.

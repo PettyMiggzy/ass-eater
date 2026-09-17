@@ -53,6 +53,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
 
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -101,7 +102,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     }
   };
 
-  const uploadContent = async (file) => {
+  const uploadContent = async (file, aiGenerated) => {
     if (!file) return;
     setBusy(true);
     setStatus('Uploading content...');
@@ -112,6 +113,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
           'x-file-name': file.name,
           'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
           'x-current-gallery': JSON.stringify(creator.gallery || []),
+          'x-ai-generated': aiGenerated ? 'true' : 'false',
           'Content-Type': file.type || 'application/octet-stream',
         },
         body: file,
@@ -378,7 +380,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
 
               <div>
                 {(() => {
-                  const limit = creator.premium ? 10 : 4;
+                  const limit = creator.premium ? 200 : 50;
                   const used = creator.gallery?.length || 0;
                   const atLimit = used >= limit;
                   return (
@@ -390,10 +392,27 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                         ) : (
                           <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
                             Upload
-                            <input type="file" accept="image/*,video/*" className="hidden" onChange={(e) => uploadContent(e.target.files[0])} />
+                            <input
+                              type="file"
+                              accept="image/*,video/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files[0];
+                                if (!file) return;
+                                uploadContent(file, nextUploadIsAi);
+                                setNextUploadIsAi(false);
+                                e.target.value = '';
+                              }}
+                            />
                           </label>
                         )}
                       </div>
+                      {!atLimit && (
+                        <label className="flex items-center gap-2 text-xs text-gray-400 mb-2 cursor-pointer">
+                          <input type="checkbox" checked={nextUploadIsAi} onChange={(e) => setNextUploadIsAi(e.target.checked)} />
+                          This upload is AI-generated or synthetic content (will be labeled "AI" on your profile)
+                        </label>
+                      )}
                       {!creator.premium && (
                         <p className="text-xs text-gray-500 mb-3">
                           Free accounts get 50 content slots. Premium creators get 200 and a gold check — contact us to upgrade.
@@ -409,6 +428,9 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                         <video src={item.src} className="w-full h-full object-cover" muted />
                       ) : (
                         <img src={item.src} alt="" className="w-full h-full object-cover" />
+                      )}
+                      {item.aiGenerated && (
+                        <span className="absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
                       )}
                       <button
                         onClick={() => deleteItem(i)}
@@ -554,7 +576,7 @@ function Inbox({ currentUserId }) {
   );
 }
 
-const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false };
+const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false };
 
 function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleStatus }) {
   const [form, setForm] = useState(BLANK_LISTING_FORM);
@@ -570,6 +592,7 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
       title: form.title, description: form.description, priceCents, unlimited: form.unlimited,
       kind: form.physical ? 'physical' : 'digital', shippingCents,
       signatureRequired: form.physical && form.signatureRequired,
+      aiGenerated: form.aiGenerated,
     });
     setCreating(false);
     if (listing) setForm(BLANK_LISTING_FORM);
@@ -624,6 +647,14 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
           />
           Physical item — ships to the buyer (no inventory tracking yet, one listing = one item to ship)
         </label>
+        <label className="flex items-center gap-2 text-sm text-gray-400">
+          <input
+            type="checkbox"
+            checked={form.aiGenerated}
+            onChange={(e) => setForm({ ...form, aiGenerated: e.target.checked })}
+          />
+          AI-generated or synthetic content (will be labeled "AI" on the listing)
+        </label>
         {form.physical && (
           <>
             <input
@@ -662,6 +693,7 @@ function MarketplaceSection({ listings, busy, onCreate, onUploadMedia, onToggleS
                   <p className="text-xs text-gray-500">
                     {l.status} · {l.unlimited ? 'unlimited' : 'one-of-a-kind'}
                     {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping)` : ' (free shipping)'}${l.signatureRequired ? ' · signature required' : ''}`}
+                    {l.aiGenerated && ' · AI'}
                   </p>
                 </div>
                 {l.status !== 'sold' && (

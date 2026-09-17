@@ -299,6 +299,12 @@ export default function AdminPanel() {
             >
               VIOLATIONS
             </button>
+            <button
+              onClick={() => setPage('takedowns')}
+              className={`pb-3 font-bold text-sm ${page === 'takedowns' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+            >
+              TAKEDOWN REQUESTS
+            </button>
           </div>
 
           {status && (
@@ -311,6 +317,8 @@ export default function AdminPanel() {
             <ReportsPanel adminKey={adminKey} />
           ) : page === 'violations' ? (
             <ViolationsPanel adminKey={adminKey} />
+          ) : page === 'takedowns' ? (
+            <NciiReportsPanel adminKey={adminKey} />
           ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
@@ -470,7 +478,7 @@ export default function AdminPanel() {
                   <div>
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="font-bold text-brand-gold">
-                        Gallery ({selected.gallery?.length || 0}/{selected.premium ? 10 : 4})
+                        Gallery ({selected.gallery?.length || 0}/{selected.premium ? 200 : 50})
                       </h3>
                       <label className="premium-button inline-block cursor-pointer text-sm py-2 px-4">
                         Upload Content
@@ -725,6 +733,126 @@ function ViolationsPanel({ adminKey }) {
               )}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Non-consensual intimate imagery (NCII) / deepfake takedown requests --
+ * the notice-and-removal process required by the federal TAKE IT DOWN Act.
+ * These carry a legal 48-hour handling clock, so they're sorted oldest
+ * first and flag how much time has passed instead of just a timestamp.
+ */
+function NciiReportsPanel({ adminKey }) {
+  const [statusFilter, setStatusFilter] = useState('open');
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = async (status) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/ncii-reports?status=${status}`, { headers: { 'x-admin-key': adminKey } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load takedown requests');
+      setReports(data.reports);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(statusFilter); }, [statusFilter]);
+
+  const resolve = async (id, action) => {
+    if (action === 'removed' && !confirm('Confirm you have already removed the reported content before marking this resolved.')) return;
+    setBusyId(id);
+    setError('');
+    try {
+      const res = await fetch('/api/admin/ncii-reports-resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+        body: JSON.stringify({ id, action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to resolve report');
+      setReports(reports.filter((r) => String(r.id) !== String(id)));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const hoursOpen = (r) => Math.floor((Date.now() - new Date(r.createdAt).getTime()) / (1000 * 60 * 60));
+
+  return (
+    <div>
+      <p className="text-xs text-gray-500 mb-4">
+        Filed via /report-content, no login required. Legally required to be reviewed and, if valid, the content
+        removed within 48 hours of submission.
+      </p>
+      <div className="flex items-center gap-3 mb-4">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+        >
+          <option value="open">Open</option>
+          <option value="dismiss">Dismissed</option>
+          <option value="removed">Removed</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+
+      {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : reports.length === 0 ? (
+        <p className="text-sm text-gray-500">No {statusFilter === 'all' ? '' : statusFilter} takedown requests.</p>
+      ) : (
+        <div className="space-y-3">
+          {reports.map((r) => {
+            const hrs = hoursOpen(r);
+            const overdue = r.status === 'open' && hrs >= 48;
+            const dueSoon = r.status === 'open' && hrs >= 36 && hrs < 48;
+            return (
+              <div key={r.id} className={`premium-card border p-4 ${overdue ? 'border-red-500' : dueSoon ? 'border-yellow-500/60' : 'border-brand-purple/20'}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs font-bold text-brand-gold">Report #{r.id} — {r.reporterName}</p>
+                  <p className={`text-[10px] font-bold ${overdue ? 'text-red-400' : dueSoon ? 'text-yellow-400' : 'text-gray-600'}`}>
+                    {r.status === 'open' ? `${hrs}h open${overdue ? ' — OVERDUE (48h)' : ''}` : `${r.status} by ${r.resolvedBy}`}
+                  </p>
+                </div>
+                <p className="text-xs text-gray-500 mb-1">Contact: {r.reporterContact}</p>
+                <p className="text-sm text-gray-300 mb-1"><span className="text-gray-500">Content:</span> {r.contentLocation}</p>
+                {r.description && <p className="text-sm text-gray-400 mb-3">{r.description}</p>}
+                {r.status === 'open' && (
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => resolve(r.id, 'dismiss')}
+                      disabled={busyId === r.id}
+                      className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+                    >
+                      Dismiss (invalid)
+                    </button>
+                    <button
+                      onClick={() => resolve(r.id, 'removed')}
+                      disabled={busyId === r.id}
+                      className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                    >
+                      Mark Removed & Resolve
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

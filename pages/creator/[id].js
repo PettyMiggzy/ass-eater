@@ -289,6 +289,9 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
                           <img src="/icons/lock.png" className="h-6 w-6" alt="" />
                         </div>
                       )}
+                      {item.aiGenerated && (
+                        <span className="absolute bottom-1 left-1 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
+                      )}
                     </div>
                   ));
                 })()}
@@ -318,6 +321,9 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
                     )}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
                     <img src="/icons/lock.png" className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-6 w-6" alt="" />
+                    {l.aiGenerated && (
+                      <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
+                    )}
                     <div className="absolute bottom-0 left-0 right-0 p-2">
                       <p className="text-xs font-bold text-white truncate">{l.title}</p>
                       <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-brand-gold text-black text-[11px] font-black">

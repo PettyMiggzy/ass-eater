@@ -49,6 +49,7 @@ export default async function handler(req, res) {
 
   const fileName = req.headers['x-file-name'] || `upload-${Date.now()}`;
   const fileType = req.headers['x-file-type'] || 'image';
+  const aiGenerated = req.headers['x-ai-generated'] === 'true';
 
   try {
     const body = await readBody(req);
@@ -58,7 +59,7 @@ export default async function handler(req, res) {
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
-    const creator = await addGalleryItem(ctx.creator.id, { type: fileType, src: blob.url }, knownGallery);
+    const creator = await addGalleryItem(ctx.creator.id, { type: fileType, src: blob.url, aiGenerated }, knownGallery);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     return res.status(500).json({ error: err.message });

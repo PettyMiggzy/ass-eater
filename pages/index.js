@@ -251,6 +251,7 @@ export default function Home({ creators }) {
               <a href="/terms" className="hover:text-brand-gold transition">DMCA / Takedown</a>
               <a href="/terms" className="hover:text-brand-gold transition">Complaints Policy</a>
               <a href="/terms" className="hover:text-brand-gold transition">Acceptable Use</a>
+              <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">Report Non-Consensual Content</a>
               <a href="mailto:support@onlyass.fun" className="hover:text-brand-gold transition">Contact</a>
               <a href="https://t.me/creatorsfirst" target="_blank" rel="noopener noreferrer" className="hover:text-brand-gold transition">Telegram</a>
             </div>

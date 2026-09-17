@@ -3,7 +3,7 @@ import { updateListing } from '../../../lib/listings-store';
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
 
-const ALLOWED = ['title', 'description', 'priceCents', 'status', 'kind', 'shippingCents', 'signatureRequired'];
+const ALLOWED = ['title', 'description', 'priceCents', 'status', 'kind', 'shippingCents', 'signatureRequired', 'aiGenerated'];
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

@@ -44,7 +44,12 @@ const BLOCKED_STATE_CODES = new Set([
 // the root rewrite below), and the shared brand logo those pages render.
 // Deliberately NOT a blanket exemption for images/videos generally -- those
 // hold real creator content and must go through the check.
-const SFW_PATHS = new Set(['/blocked-region', '/verify-age', '/gateway', '/token', '/images/logo-final.png']);
+// /report-content must stay reachable regardless of state or verification
+// status -- it's the legally-required non-consensual-content takedown
+// process (TAKE IT DOWN Act), and gating it behind age verification would
+// undermine the "clearly and conspicuous, freely accessible" requirement
+// that process has to meet.
+const SFW_PATHS = new Set(['/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/images/logo-final.png']);
 
 export async function proxy(request) {
   const host = request.headers.get('host') || '';

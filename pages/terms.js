@@ -1,6 +1,6 @@
 import Head from 'next/head';
 
-const LAST_UPDATED = 'September 15, 2026';
+const LAST_UPDATED = 'September 17, 2026';
 
 export default function Terms() {
   return (
@@ -57,6 +57,17 @@ export default function Terms() {
                   <strong>Zero tolerance:</strong> content depicting minors, non-consensual acts, or any
                   illegal activity is strictly prohibited and will result in immediate account termination
                   and referral to law enforcement.
+                </li>
+                <li>
+                  <strong>AI-generated content must be labeled.</strong> If a photo or video was created or
+                  substantially altered using AI (including face-swap or "deepfake" tools), it must be clearly
+                  marked as AI-generated when posted.
+                </li>
+                <li>
+                  <strong>Non-consensual AI content is prohibited.</strong> Posting an AI-generated, deepfaked,
+                  or face-swapped image or video of a real person who has not consented to it is strictly
+                  prohibited, whether or not the underlying image was itself AI-generated. See Section 8 for
+                  how to report this kind of content.
                 </li>
               </ul>
             </Section>
@@ -133,14 +144,31 @@ export default function Terms() {
                 <li>Attempting to defraud, chargeback, or reverse a completed on-chain payment.</li>
                 <li>Scraping, redistributing, or reselling content without the creator's authorization.</li>
                 <li>Circumventing the Platform's payment or age-verification systems.</li>
+                <li>Posting AI-generated or synthetic content without labeling it as such.</li>
+                <li>Posting a non-consensual deepfake, face-swap, or other AI-altered depiction of a real person.</li>
               </ul>
+              <p className="mt-3 text-gray-400">
+                Violating any of the above is handled at the Platform's discretion based on the severity and
+                nature of the violation, which may include content removal, account suspension or termination,
+                forfeiting money owed to you, and cooperating with law enforcement.
+              </p>
             </Section>
 
-            <Section title="8. Content Removal & DMCA">
+            <Section title="8. Content Removal, DMCA & Non-Consensual Content" id="content-removal">
               <p>
                 If you believe content on the Platform infringes your copyright, contact us with the
                 details of the material and your ownership claim, and we will investigate and remove
                 infringing content where warranted.
+              </p>
+              <p className="mt-3">
+                <strong>If you appear in content on the Platform that you did not consent to</strong> —
+                including a real photo/video of you, or an AI-generated, deepfaked, or face-swapped depiction
+                of you — you can report it through our{' '}
+                <a href="/report-content" className="text-brand-gold underline">Report Non-Consensual Content</a>{' '}
+                form. No account is required to submit a report. We review every report and, where the report
+                is valid, remove the content within 48 hours, consistent with the federal TAKE IT DOWN Act. We
+                also make reasonable efforts to locate and remove additional known copies of reported content
+                on the Platform.
               </p>
             </Section>
 
