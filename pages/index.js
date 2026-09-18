@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import Head from 'next/head';
+import SiteNav from '../components/SiteNav';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 
 export async function getServerSideProps() {
@@ -12,121 +12,204 @@ export async function getServerSideProps() {
   return { props: { creators } };
 }
 
-const DIFFERENTIATORS = [
-  { icon: '/icons/money.png', label: '10% fee vs 20% elsewhere' },
-  { icon: '/icons/lightning.png', label: 'Instant crypto payouts, no 7-day holds' },
-  { icon: '/icons/check.png', label: 'Zero chargebacks' },
-  { icon: '/icons/lock.png', label: 'Private — nothing on a bank statement' },
-  { icon: '/icons/onlyass-coin-logo.png', label: 'Pay 8% instead of 10% in $ONLYASS' },
+const PROMISES = [
+  { icon: '🛡️', title: 'Safe & Secure', sub: 'Your privacy matters' },
+  { icon: '⚡', title: 'Fast Payouts', sub: 'Creators first' },
+  { icon: '👥', title: 'Real Connections', sub: 'More than just content' },
+];
+
+const CREATOR_POINTS = [
+  'Easy to use tools',
+  'Keep more of what you earn',
+  'Build a loyal fanbase',
+  'Your rules, your content',
+];
+
+const FAN_POINTS = [
+  'Exclusive content',
+  'Direct messaging',
+  'Support your favorite creators',
+  'A more personal experience',
+];
+
+// `live: false` marks something the platform does not actually do yet. The
+// row still shows it, because it is the roadmap, but it says "Coming soon"
+// rather than listing it beside features that genuinely work -- an earlier
+// audit caught this exact class of thing (a footer claiming every creator
+// was identity-verified when no such check existed), and a homepage that
+// advertises a payment feature this site cannot yet take money for is the
+// same mistake.
+const FEATURES = [
+  { icon: '🎥', title: 'Photos & Videos', sub: 'Exclusive content', live: true },
+  { icon: '💬', title: 'Direct Messaging', sub: 'Real conversations', live: true },
+  { icon: '❤️', title: 'Subscriptions', sub: 'Support creators', live: false },
+  { icon: '⭐', title: 'Tips', sub: 'Show appreciation', live: false },
+  { icon: '🔒', title: 'PPV Content', sub: 'Unlock exclusives', live: false },
 ];
 
 export default function Home({ creators }) {
-  const [subs, setSubs] = useState(500);
-  const price = 9.99;
-  const gross = subs * price;
-  const hereNet = gross * 0.9;
-  const thereNet = gross * 0.8;
-
   return (
     <>
       <Head>
-        <title>Only Ass - Creators Keep 90%</title>
-        <meta name="description" content="Only Ass — creators keep 90%, fans pay in crypto. No banks, no chargebacks, no card statements." />
+        <title>OnlyOne — More Than Content. It&apos;s Personal.</title>
+        <meta
+          name="description"
+          content="The next generation platform for creators and fans. Share, connect, subscribe and be part of a community without limits."
+        />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
-      <div className="min-h-screen bg-gradient-luxury text-white overflow-x-hidden">
-        {/* Nav */}
-        <nav className="w-full py-4 px-6 border-b border-brand-purple/10">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="bg-white/95 rounded-lg px-3 py-1.5 inline-flex items-center">
-              <img src="/images/logo-final.png" alt="Only Ass" className="h-7 w-auto" />
-            </div>
-            <div className="hidden md:flex items-center gap-7 text-sm text-gray-300">
-              <a href="#creators" className="hover:text-brand-gold transition">Explore</a>
-              <a href="#how-it-works" className="hover:text-brand-gold transition">How It Works</a>
-              <a href="#token" className="hover:text-brand-gold transition">Token</a>
-              <a href="/token" className="hover:text-brand-gold transition">Roadmap</a>
-              <a href="/marketplace" className="hover:text-brand-gold transition">Marketplace</a>
-              <a href="/search" className="hover:text-brand-gold transition">Search</a>
-              <a href="/favorites" className="hover:text-brand-gold transition">Favorites</a>
-              <a href="/get-crypto" className="hover:text-brand-gold transition">New to Crypto?</a>
-              <a href="/login" className="hover:text-brand-gold transition">Log In</a>
-              <a href="/signup?role=creator" className="px-4 py-1.5 rounded-full bg-gradient-to-r from-brand-gold to-brand-purple text-black font-bold hover:scale-105 transition">
-                Start Earning
-              </a>
-            </div>
-          </div>
-        </nav>
+      <div className="min-h-screen bg-brand-ink text-white overflow-x-hidden">
+        <SiteNav />
 
         {/* Hero */}
-        <section className="pt-20 pb-16 px-6 relative text-center">
-          <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-brand-purple/15 rounded-full blur-3xl"></div>
-          <div className="max-w-3xl mx-auto relative z-10">
-            <h1 className="text-4xl md:text-6xl font-black leading-[1.05] mb-6 premium-title">
-              Creators keep 90%.<br />Fans pay in crypto.
-            </h1>
-            <p className="text-lg text-gray-300 mb-3 max-w-xl mx-auto">
-              No banks. No chargebacks. No card statements.
-            </p>
-            <p className="text-sm text-gray-500 mb-8">Payouts in USDC, ETH or $ONLYASS — same day.</p>
+        <section className="relative">
+          <div className="max-w-6xl mx-auto grid lg:grid-cols-2 items-stretch">
+            <div className="px-6 py-14 lg:py-24 flex flex-col justify-center">
+              <p className="text-[11px] tracking-[0.25em] text-gray-400 mb-5">REAL PEOPLE. REAL CONNECTIONS.</p>
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[0.95] tracking-tight mb-6">
+                MORE THAN<br />CONTENT.<br />
+                <span className="text-brand-pink">IT&apos;S PERSONAL.</span>
+              </h1>
+              <p className="text-gray-300 max-w-md mb-8">
+                OnlyOne is the next generation platform for creators and fans. Share, connect,
+                subscribe and be part of a community without limits.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <a
+                  href="/signup"
+                  className="px-7 py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold transition inline-flex items-center gap-2"
+                >
+                  Join OnlyOne <span aria-hidden="true">→</span>
+                </a>
+                <a
+                  href="/onlyass"
+                  className="px-7 py-3.5 rounded-full border border-white/20 hover:border-white/50 font-bold transition"
+                >
+                  Explore Creators
+                </a>
+              </div>
 
-            <div className="flex flex-wrap justify-center gap-4 mb-4">
-              <a href="/signup?role=creator" className="premium-button">Start Earning</a>
-              <a href="#creators" className="px-8 py-3 rounded-md border-2 border-brand-purple/50 text-brand-purple font-bold hover:bg-brand-purple/10 transition">
-                Explore Creators
-              </a>
+              <div className="grid grid-cols-3 gap-4 mt-12 max-w-lg">
+                {PROMISES.map((p) => (
+                  <div key={p.title}>
+                    <div className="text-xl mb-2" aria-hidden="true">{p.icon}</div>
+                    <p className="font-bold text-sm">{p.title}</p>
+                    <p className="text-[11px] text-gray-500">{p.sub}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="relative min-h-[320px] lg:min-h-[560px]">
+              <img
+                src="/images/content_lingerie_1.jpg"
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover object-top"
+              />
+              <div className="absolute inset-0 bg-gradient-to-r from-brand-ink via-brand-ink/40 to-transparent lg:from-brand-ink lg:via-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-transparent to-transparent" />
+              <p className="absolute bottom-10 right-8 text-right font-serif italic text-brand-pink text-2xl sm:text-3xl leading-tight [text-shadow:0_2px_12px_rgba(0,0,0,0.9)]">
+                You&apos;re<br />Not Alone<br />Here ♥
+              </p>
             </div>
           </div>
         </section>
 
-        {/* Differentiator strip */}
-        <section className="px-6 pb-16">
-          <div className="max-w-5xl mx-auto premium-card p-6 grid grid-cols-2 md:grid-cols-5 gap-6">
-            {DIFFERENTIATORS.map((d) => (
-              <div key={d.label} className="text-center">
-                <img src={d.icon} alt="" className="h-8 w-8 mx-auto mb-2" />
-                <p className="text-xs text-gray-300 leading-snug">{d.label}</p>
+        {/* A Platform for Everyone */}
+        <section className="py-16 px-6 border-t border-white/5">
+          <div className="max-w-6xl mx-auto">
+            <h2 className="text-3xl sm:text-4xl font-black text-center mb-3">
+              A Platform for <span className="text-brand-pink">Everyone</span>
+            </h2>
+            <p className="text-center text-gray-400 text-sm max-w-2xl mx-auto mb-10">
+              Whether you&apos;re here to create or to explore, OnlyOne gives you the freedom to be yourself.
+            </p>
+
+            <div className="grid md:grid-cols-2 gap-5">
+              {[
+                { title: 'For Creators', copy: 'Take control of your content, your income and your freedom.', points: CREATOR_POINTS, cta: 'Start Creating', href: '/become-creator', img: '/images/content_lingerie_2.jpg', primary: true },
+                { title: 'For Fans', copy: 'Discover real creators, exclusive content and genuine connections.', points: FAN_POINTS, cta: 'Start Exploring', href: '/onlyass', img: '/images/content_night_2.jpg', primary: false },
+              ].map((card) => (
+                <div key={card.title} className="relative rounded-2xl overflow-hidden border border-white/10 bg-brand-card">
+                  <img src={card.img} alt="" className="absolute left-0 top-0 h-full w-40 object-cover opacity-70" />
+                  <div className="absolute left-0 top-0 h-full w-40 bg-gradient-to-r from-transparent to-brand-card" />
+                  <div className="relative pl-44 pr-6 py-7">
+                    <h3 className="text-xl font-black mb-2">{card.title}</h3>
+                    <p className="text-sm text-gray-400 mb-4">{card.copy}</p>
+                    <ul className="space-y-2 mb-6">
+                      {card.points.map((pt) => (
+                        <li key={pt} className="flex items-center gap-2 text-sm text-gray-300">
+                          <span className="text-brand-pink" aria-hidden="true">✓</span>
+                          {pt}
+                        </li>
+                      ))}
+                    </ul>
+                    <a
+                      href={card.href}
+                      className={`inline-flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm transition ${
+                        card.primary
+                          ? 'bg-brand-pink hover:bg-brand-pink-dark'
+                          : 'border border-white/20 hover:border-white/50'
+                      }`}
+                    >
+                      {card.cta} <span aria-hidden="true">→</span>
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Feature row */}
+        <section className="py-14 px-6 border-t border-white/5">
+          <div className="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6 text-center">
+            {FEATURES.map((f) => (
+              <div key={f.title}>
+                <div className="text-2xl mb-2 text-brand-pink" aria-hidden="true">{f.icon}</div>
+                <p className="font-bold text-sm">{f.title}</p>
+                {f.live ? (
+                  <p className="text-[11px] text-gray-500">{f.sub}</p>
+                ) : (
+                  <p className="text-[11px] text-gray-600">Coming soon</p>
+                )}
               </div>
             ))}
           </div>
         </section>
 
-        {/* Featured creators */}
+        {/* Featured creators -- real accounts, not part of the mockup but the
+            page would otherwise have no way into the actual product. */}
         {creators.length > 0 && (
-          <section id="creators" className="py-16 px-6 border-t border-brand-purple/10">
+          <section className="py-14 px-6 border-t border-white/5">
             <div className="max-w-6xl mx-auto">
-              <div className="flex items-end justify-between mb-8">
-                <div>
-                  <p className="eyebrow text-brand-purple text-xs mb-2">The Culture</p>
-                  <h2 className="text-3xl md:text-4xl font-black premium-title">Featured Creators</h2>
-                </div>
-                <a href="/onlyass" className="text-sm text-brand-gold hover:underline hidden sm:block">See all →</a>
+              <div className="flex items-end justify-between mb-6">
+                <h2 className="text-2xl font-black">Creators on OnlyOne</h2>
+                <a href="/onlyass" className="text-sm text-brand-pink hover:underline">See all</a>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {creators.map((c) => (
                   <a
                     key={c.id}
-                    href="/onlyass"
-                    className="premium-card overflow-hidden hover:border-brand-gold/50 transition group"
+                    href={`/creator/${c.id}`}
+                    className="group relative aspect-[3/4] rounded-xl overflow-hidden border border-white/10 hover:border-brand-pink/60 transition"
                   >
-                    <div className="aspect-square overflow-hidden">
-                      <img
-                        src={c.img}
-                        alt=""
-                        className="w-full h-full object-cover object-top blur-xl scale-110 group-hover:scale-100 transition"
-                      />
+                    <img
+                      src={c.img}
+                      alt={c.name}
+                      className={`w-full h-full object-cover object-top transition group-hover:scale-105 ${c.locked ? 'blur-sm' : ''}`}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+                    <div className="absolute bottom-0 left-0 right-0 p-3">
+                      <p className="font-bold text-sm truncate">{c.name}</p>
+                      <p className="text-[11px] text-gray-400 truncate">{c.handle}</p>
                     </div>
-                    <div className="p-3">
-                      <p className="font-bold text-white text-sm truncate flex items-center gap-1">
-                        {c.name}
-                        {c.premium && <img src="/icons/check.png" alt="Premium" className="h-3.5 w-3.5 shrink-0" />}
-                      </p>
-                      <p className="text-xs text-gray-500 truncate mb-2">{c.handle}</p>
-                      <span className="inline-block text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r from-brand-gold to-brand-purple text-black">
-                        Subscribe from {c.price}
+                    {c.locked && (
+                      <span className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-black/70 text-brand-pink font-bold">
+                        🔒
                       </span>
-                    </div>
+                    )}
                   </a>
                 ))}
               </div>
@@ -134,123 +217,53 @@ export default function Home({ creators }) {
           </section>
         )}
 
-        {/* Earnings calculator */}
-        <section className="py-16 px-6 border-t border-brand-purple/10">
-          <div className="max-w-2xl mx-auto premium-card p-8">
-            <p className="eyebrow text-brand-purple text-xs mb-2 text-center">For Creators</p>
-            <h2 className="text-2xl md:text-3xl font-black premium-title text-center mb-8">See What You'd Keep</h2>
-
-            <label className="block text-sm text-gray-400 mb-2">
-              Subscribers: <span className="text-brand-gold font-bold">{subs.toLocaleString()}</span> × $9.99/mo
-            </label>
-            <input
-              type="range"
-              min={10}
-              max={5000}
-              step={10}
-              value={subs}
-              onChange={(e) => setSubs(Number(e.target.value))}
-              className="w-full mb-8 accent-[#f4c86a]"
-            />
-
-            <div className="grid sm:grid-cols-2 gap-4 text-center">
-              <div className="p-5 rounded-lg bg-black/40 border border-brand-purple/20">
-                <p className="text-xs text-gray-500 mb-1">Elsewhere (80%)</p>
-                <p className="text-2xl font-black text-gray-400">${thereNet.toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo</p>
-              </div>
-              <div className="p-5 rounded-lg bg-gradient-to-br from-brand-gold/20 to-brand-purple/20 border border-brand-gold/40">
-                <p className="text-xs text-brand-gold mb-1">On Only Ass (90%)</p>
-                <p className="text-2xl font-black text-brand-gold">${hereNet.toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo</p>
-              </div>
+        {/* Closing CTA */}
+        <section className="relative border-t border-white/5">
+          <img src="/images/content_night_3.jpg" alt="" className="absolute inset-0 w-full h-full object-cover object-center" />
+          <div className="absolute inset-0 bg-brand-ink/70" />
+          <div className="absolute inset-0 bg-gradient-to-r from-brand-ink via-brand-ink/85 to-transparent" />
+          <div className="relative max-w-6xl mx-auto px-6 py-16 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+            <div>
+              <p className="text-[11px] tracking-[0.25em] text-gray-400 mb-3">IT STARTS HERE</p>
+              <p className="text-4xl sm:text-5xl font-black tracking-tight">
+                ONLY<span className="text-brand-pink">ONE</span>
+              </p>
+              <p className="text-[11px] tracking-[0.25em] text-gray-400 mt-3">REAL PEOPLE. REAL CONNECTIONS.</p>
             </div>
-            <p className="text-center text-green-400 text-sm font-bold mt-4">
-              +${(hereNet - thereNet).toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo more in your pocket
-            </p>
+            <a
+              href="/signup"
+              className="self-start md:self-auto px-8 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold transition inline-flex items-center gap-2"
+            >
+              Join Now <span aria-hidden="true">→</span>
+            </a>
           </div>
         </section>
 
-        {/* How it works */}
-        <section id="how-it-works" className="py-16 px-6 border-t border-brand-purple/10">
-          <div className="max-w-4xl mx-auto">
-            <h2 className="text-3xl md:text-4xl font-black premium-title text-center mb-12">How It Works</h2>
-            <div className="grid md:grid-cols-2 gap-8">
-              <div className="premium-card p-6">
-                <p className="eyebrow text-brand-gold text-xs mb-4">For Fans</p>
-                <ol className="space-y-3 text-sm text-gray-300">
-                  <li><span className="text-brand-gold font-bold mr-2">1.</span>Deposit USDC, ETH or $ONLYASS</li>
-                  <li><span className="text-brand-gold font-bold mr-2">2.</span>Subscribe, unlock, or tip</li>
-                  <li><span className="text-brand-gold font-bold mr-2">3.</span>Chat directly with creators</li>
-                </ol>
-              </div>
-              <div className="premium-card p-6">
-                <p className="eyebrow text-brand-gold text-xs mb-4">For Creators</p>
-                <ol className="space-y-3 text-sm text-gray-300">
-                  <li><span className="text-brand-gold font-bold mr-2">1.</span>Verify your identity and age</li>
-                  <li><span className="text-brand-gold font-bold mr-2">2.</span>Post content and set your price</li>
-                  <li><span className="text-brand-gold font-bold mr-2">3.</span>Withdraw earnings same-day</li>
-                </ol>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Trust & safety */}
-        <section className="py-16 px-6 border-t border-brand-purple/10">
-          <div className="max-w-4xl mx-auto grid sm:grid-cols-3 gap-6 text-center">
-            <div className="premium-card p-6">
-              <img src="/icons/check.png" className="h-8 w-8 mx-auto mb-3" alt="" />
-              <p className="text-sm text-gray-300">All creators are ID-verified before going live</p>
-            </div>
-            <div className="premium-card p-6">
-              <img src="/icons/lock.png" className="h-8 w-8 mx-auto mb-3" alt="" />
-              <p className="text-sm text-gray-300">Content is protected and access-controlled</p>
-            </div>
-            <div className="premium-card p-6">
-              <img src="/icons/warning.png" className="h-8 w-8 mx-auto mb-3" alt="" />
-              <p className="text-sm text-gray-300">Report and takedown requests handled within 24h</p>
-            </div>
-          </div>
-        </section>
-
-        {/* Token — below the fold, utility first */}
-        <section id="token" className="py-16 px-6 border-t border-brand-purple/10">
-          <div className="max-w-3xl mx-auto premium-card p-8">
-            <p className="eyebrow text-brand-purple text-xs mb-2">The Token</p>
-            <h2 className="text-2xl md:text-3xl font-black premium-title mb-4">$ONLYASS</h2>
-            <ul className="text-sm text-gray-300 space-y-2 mb-6 list-disc list-inside">
-              <li>Creators pay 8% instead of 10% platform fee when paid out in $ONLYASS</li>
-              <li>Fans get a deposit bonus for funding their balance in $ONLYASS</li>
-              <li>Staking for promoted discovery placement — coming soon</li>
-            </ul>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 text-sm">
-              <div className="flex justify-between sm:block border-b sm:border-0 border-brand-purple/10 pb-2 sm:pb-0">
-                <span className="text-gray-500">Contract</span>
-                <span className="text-brand-gold font-mono ml-2 break-all">{process.env.NEXT_PUBLIC_CONTRACT_ADDRESS}</span>
-              </div>
-              <span className="px-3 py-1 rounded-full bg-brand-purple/20 text-brand-purple text-xs font-bold w-fit">Robinhood Chain</span>
-            </div>
-          </div>
-        </section>
-
-        {/* Footer */}
-        <footer className="py-10 px-6 border-t border-brand-purple/10">
+        {/* Footer -- these links are not decoration. The takedown form is
+            required to be posted conspicuously under the federal TAKE IT
+            DOWN Act, and the rest are the legal pages a processor asks for.
+            Do not drop them in a redesign. */}
+        <footer className="py-10 px-6 border-t border-white/5">
           <div className="max-w-5xl mx-auto">
             <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-gray-500 mb-6">
-              <a href="/terms" className="hover:text-brand-gold transition">Terms of Service</a>
-              <a href="/privacy" className="hover:text-brand-gold transition">Privacy Policy</a>
-              <a href="/terms" className="hover:text-brand-gold transition">Cookie Policy</a>
-              <a href="/terms" className="hover:text-brand-gold transition">18 U.S.C. §2257 Statement</a>
-              <a href="/terms" className="hover:text-brand-gold transition">DMCA / Takedown</a>
-              <a href="/terms" className="hover:text-brand-gold transition">Complaints Policy</a>
-              <a href="/terms" className="hover:text-brand-gold transition">Acceptable Use</a>
-              <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">Report Non-Consensual Content</a>
-              <a href="mailto:support@onlyass.fun" className="hover:text-brand-gold transition">Contact</a>
+              <a href="/terms" className="hover:text-brand-pink transition">Terms of Service</a>
+              <a href="/privacy" className="hover:text-brand-pink transition">Privacy Policy</a>
+              <a href="/terms" className="hover:text-brand-pink transition">Cookie Policy</a>
+              <a href="/terms" className="hover:text-brand-pink transition">18 U.S.C. §2257 Statement</a>
+              <a href="/terms" className="hover:text-brand-pink transition">DMCA / Takedown</a>
+              <a href="/terms" className="hover:text-brand-pink transition">Complaints Policy</a>
+              <a href="/terms" className="hover:text-brand-pink transition">Acceptable Use</a>
+              <a href="/token" className="hover:text-brand-pink transition">$ONLYASS</a>
+              <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">
+                Report Non-Consensual Content
+              </a>
+              <a href="mailto:support@onlyass.fun" className="hover:text-brand-pink transition">Contact</a>
             </div>
             <p className="text-gray-500 text-xs max-w-2xl mx-auto mb-2 text-center">
               18+ only. This site contains adult content. $ONLYASS is a meme token for entertainment purposes —
               not an investment, and not financial advice.
             </p>
-            <p className="text-gray-600 text-xs text-center">© 2026 Only Ass</p>
+            <p className="text-gray-600 text-xs text-center">© 2026 OnlyOne</p>
           </div>
         </footer>
       </div>
