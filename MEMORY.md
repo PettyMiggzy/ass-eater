@@ -1903,3 +1903,63 @@ compiles and evaluates to the LAST operand -- it would have silently dropped
 the entire media grid and shipped a creator page with no content on it. Found
 by reading the rendered block back rather than trusting that the build
 passed. `next build` was perfectly happy with it.
+
+## Credits-as-token, third attempt: the fixed $1 peg, and why it's an arbitrage (2026-09-18)
+
+Founder refined it again, and the refinement is real: **assign credits a
+fixed $1 each regardless of the token's market price.** He mints 20-40% of
+supply through his launchpad's auction, parks 100-200M tokens in a contract;
+fans pay USDC in, receive tokens-as-credits out at $1 each; fans can never
+refund; only creators cash out, at $1 per credit. *"No oracle needed... it
+doesn't matter if they tripled, quadrupled, nobody's taking that loss."* He
+tops the contract up by buying tokens off the market when it runs low.
+
+**He is right that the peg fixes the volatility problem** from the previous
+attempt -- nobody's earnings move between earning and cashing out. That
+objection is answered.
+
+**It replaces it with a guaranteed arbitrage, and the arithmetic is brutal.**
+A tradeable token has a market price whether or not the platform declares
+one. A 1B-supply token from a new adult platform will trade at a fraction of
+a cent, not $1 (1B x $1 = a $1B market cap). So:
+
+    token trades at $0.001 on the DEX
+    someone buys 100,000 tokens for $100
+    deposits them -> platform credits $100,000 of credits at the fixed peg
+    they spend $100,000 on content
+    creators earn 100,000 credits, cash out at $1 = $100,000 USDC
+    ...out of a pool that received $100
+
+That is not a tail risk, it is free money, and it will be found within hours
+of launch. Buying tokens back off the market to refill is funding the
+arbitrage with his own money. The mirror case (market above $1) is milder but
+also bad: creators sell on the market instead of redeeming, tokens leave the
+contract and never come back.
+
+**The rule underneath:** a thing whose value the platform *declares* and
+whose value a market *also sets* has two prices, and anyone can trade the
+gap. Credits with only one price cannot be arbitraged, because there is no
+second price to trade against.
+
+**Second, independent problem:** an ERC-20 credit is transferable, which
+breaks the closed-loop property that made credits defensible in the first
+place (recorded above, 2026-09-18). Non-transferable, non-cashable,
+spend-only-here is what keeps this the Twitch/OnlyFans model rather than the
+platform issuing its own dollar-denominated instrument.
+
+**The fix is his own design with one part removed -- the token.** Everything
+he asked for holds the moment credits stop being tokens: $1 each, fixed, no
+oracle (his actual question: yes, absolutely, and it is already built that
+way); USDC in a contract; no refunds to fans; creators cash out; nobody eats
+a price swing; and the pool is exactly solvent by construction because a
+dollar in is a dollar out. The token adds no capability to that mechanism --
+it only introduces the second price. He keeps his 20-40% of supply and it
+earns demand from the VIP burn and token-gating, neither of which needs a peg
+or a buyback promise.
+
+**Also confirmed by the founder this message:** the watermark/traceability
+approach is accepted as the realistic ceiling -- *"whatever we can do to
+help, that's all we can do"* -- and he explicitly asked that all of this keep
+being written down: *"you need to be saving all this stuff somewhere so you
+don't forget what we're doing."* That is this file; it has been kept current
+every session and should continue to be.
