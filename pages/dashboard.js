@@ -457,6 +457,25 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   const atLimit = used >= limit || isRestricted;
                   return (
                     <>
+                      {/* A creator will ask whether their content is safe.
+                          Telling them it can't be copied would be a lie they
+                          would find out about the hard way, so this says
+                          exactly what is and isn't true. */}
+                      <div className="mb-4 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-gray-400 leading-relaxed">
+                        <p className="text-brand-gold font-bold text-sm mb-1">How your content is protected</p>
+                        <p>
+                          Right-click saving, dragging and the phone long-press "Save Image" menu are all
+                          blocked, and every image and video is stamped with a code identifying whoever is
+                          looking at it — so anything that leaks points back to the account it came from.
+                        </p>
+                        <p className="mt-2">
+                          What no website can do is block a screenshot. That's not a feature we haven't built:
+                          the browser has to hand the picture to the operating system to show it to anyone, and
+                          the screenshot tool reads it from there. Anyone claiming otherwise is selling
+                          something. The watermark is what makes a leak traceable, and traceable is what
+                          actually stops people.
+                        </p>
+                      </div>
                       <div className="flex items-center justify-between mb-2">
                         <h3 className="font-bold text-brand-gold">Your Content ({used}/{limit})</h3>
                         {atLimit ? (

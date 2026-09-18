@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import ProtectedMedia from '../../components/ProtectedMedia';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../../lib/creators-store';
 import { getVerifiedSessionUserId } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
 import { getWallPostsForCreator } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
+import { viewerMarkFor } from '../../lib/viewer-mark';
 import SiteNav from '../../components/SiteNav';
 
 export async function getServerSideProps({ req, params }) {
@@ -30,10 +32,14 @@ export async function getServerSideProps({ req, params }) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const wallPosts = creator ? await getWallPostsForCreator(creator.id) : [];
   const initialFavorited = creator && viewerId ? await isFavorite(viewerId, creator.id) : false;
+  // Computed server-side: the mark is an HMAC and the key never leaves the
+  // server. See lib/viewer-mark.js.
+  const viewerMark = viewerMarkFor(viewerId);
   return {
     props: {
       creator: toPublicCreator(creator),
       viewerId: viewerId || null,
+      viewerMark,
       // Must be re-checked against the post-visibility-check `creator`
       // (null'd out above for a hidden profile), not the original
       // `creatorUser` lookup -- otherwise a pending/suspended/banned
@@ -48,7 +54,7 @@ export async function getServerSideProps({ req, params }) {
   };
 }
 
-export default function CreatorProfile({ creator, viewerId, creatorUserId, listings, wallPosts, initialFavorited }) {
+export default function CreatorProfile({ creator, viewerId, viewerMark, creatorUserId, listings, wallPosts, initialFavorited }) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('posts');
   const [toast, setToast] = useState(null);
@@ -138,11 +144,14 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
 
   const Tile = ({ item, badge }) => (
     <div className="relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/5">
-      {item?.type === 'video' ? (
-        <video src={item.src} muted loop playsInline className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
-      ) : (
-        <img src={item?.src || creator.img} alt="" className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
-      )}
+      {/* A blurred (locked) tile carries no mark -- there is nothing
+          identifiable to leak, and a watermark over a blur is just noise. */}
+      <ProtectedMedia
+        src={item?.src || creator.img}
+        type={item?.type === 'video' ? 'video' : 'image'}
+        mark={locked ? '' : viewerMark}
+        className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`}
+      />
       {locked && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/25">
           <span className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center text-lg">🔒</span>
@@ -421,9 +430,19 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
                 gallery.length === 0 ? (
                   <p className="text-sm text-gray-500">No media yet.</p>
                 ) : (
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    {gallery.map((item, i) => <Tile key={i} item={item} />)}
-                  </div>
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {gallery.map((item, i) => <Tile key={i} item={item} />)}
+                    </div>
+                    {/* The mark deters because the viewer knows it is there.
+                        An invisible one only helps after the fact. */}
+                    {viewerMark && (
+                      <p className="mt-4 text-[11px] text-gray-500 text-center">
+                        Content on this page is watermarked to your account. Sharing it outside OnlyOne is
+                        traceable back to you and is grounds for losing access.
+                      </p>
+                    )}
+                  </>
                 )
               )}
 

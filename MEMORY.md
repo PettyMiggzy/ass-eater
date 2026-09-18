@@ -1843,3 +1843,63 @@ discounts no transaction (so "VIP is the only fan-facing discount" still
 holds), costs the platform nothing in cash, and gives creators something real
 to offer. Founder deferred it himself -- *"we'll think of that later"* -- so
 it is NOT built, but this is the shape to build when he comes back to it.
+
+## Content protection: what's possible, what isn't, what shipped (2026-09-18)
+
+Asked for a way to stop screenshots and right-click-saving, so *"creators
+will know the only way people get their stuff is if they sell it to them."*
+
+**That promise cannot be kept by anyone, and must not be made to creators.**
+There is no web API that blocks a screenshot and there cannot be one: to
+display an image the browser has to put pixels into the OS frame buffer, and
+the screenshot tool reads that buffer -- a web page has no authority over the
+operating system. (Native Android apps get FLAG_SECURE; websites get nothing.
+Encrypted-media DRM can blank capture for *video* in some browsers, at the
+cost of a licence server and packaging, and does nothing for images.) And a
+second phone pointed at the screen defeats everything, permanently. OnlyFans
+has the same problem and a well-known leak industry to prove it.
+
+So the goal is not prevention, it's **traceability**: not "can we stop it"
+but "if it turns up somewhere, can we tell whose screen it came off."
+
+### Shipped
+
+- `components/ProtectedMedia.js` -- blocks right-click, drag-to-desktop and
+  the iOS/Android long-press "Save Image" sheet (`-webkit-touch-callout`,
+  which `onContextMenu` alone does NOT suppress), plus `controlsList`/
+  `disablePictureInPicture` on video. Closes casual copying, which is most of
+  it.
+- `lib/viewer-mark.js` -- a short code (`A3F9-21C4`) derived per viewer by
+  HMAC off the session root secret with its own purpose string
+  (`oa:viewer-mark:v1`). Derived rather than stored, so there is nothing to
+  keep and an admin holding a leaked screenshot just recomputes the code for
+  each suspect until one matches. Cannot be forged to frame another account,
+  cannot be reversed from the screenshot alone. **Server-only** -- computed in
+  `getServerSideProps` and passed down as a string.
+- The mark is tiled faintly over gallery media on `pages/creator/[id].js`,
+  and the page **tells the viewer it is there** -- an invisible mark only
+  helps after the fact, a visible one stops most people taking the shot at
+  all. Locked/blurred tiles carry no mark (nothing identifiable to leak).
+- Dashboard copy telling creators exactly this, including the sentence that
+  no website can block a screenshot. Better they hear it here than discover
+  it.
+
+### Known limit, deliberately not oversold
+
+The overlay is drawn in the page, so devtools can remove it before a
+screenshot, and the stored file itself is unmarked. The version that survives
+that burns the mark into the bytes server-side per request --
+`server/src/lib/watermark.ts` already does this and is NOT wired to the live
+site. Also relevant: live content sits at public Vercel Blob URLs, so the raw
+file is reachable without the page at all. Both point at the same missing
+piece: a signed, expiring, per-request media endpoint. That is the real fix
+and it is not built.
+
+### Caught before pushing
+
+The first version of the viewer-facing note was spliced into the media tab as
+a comma expression inside JSX (`(<div>…</div>), cond && (<p/>)`), which
+compiles and evaluates to the LAST operand -- it would have silently dropped
+the entire media grid and shipped a creator page with no content on it. Found
+by reading the rendered block back rather than trusting that the build
+passed. `next build` was perfectly happy with it.
