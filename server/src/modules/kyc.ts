@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { prisma } from '../lib/prisma';
 
 const SS = { base: process.env.SUMSUB_BASE_URL!, token: process.env.SUMSUB_APP_TOKEN!, secret: process.env.SUMSUB_SECRET_KEY!, level: process.env.SUMSUB_LEVEL ?? 'creator-kyc', webhook: process.env.SUMSUB_WEBHOOK_SECRET! };
@@ -33,9 +33,22 @@ export const kyc: FastifyPluginAsync = async (app) => {
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_r, body, done) => done(null, body));
   app.post('/webhook', async (req: any, reply) => {
     const raw: Buffer = req.body;
-    const expected = createHmac('sha256', SS.webhook).update(raw).digest('hex');
-    if (req.headers['x-payload-digest'] !== expected) return reply.code(401).send();
+    const expected = createHmac('sha256', SS.webhook).update(raw).digest();
+    // Constant-time: a plain !== on the hex string bails at the first differing
+    // character, and that timing difference is enough to walk a forged digest
+    // out one byte at a time. Anything that isn't valid hex decodes short, so a
+    // junk (or repeated, hence array-valued) header fails the length check.
+    const sent = Buffer.from(String(req.headers['x-payload-digest'] ?? ''), 'hex');
+    if (sent.length !== expected.length || !timingSafeEqual(sent, expected)) return reply.code(401).send();
+
     const evt = JSON.parse(raw.toString());
+    // Prisma reads an undefined filter as "no filter": an event that arrived
+    // without an externalUserId would make the updateMany calls below unscoped
+    // and rewrite kycStatus for every user on the platform. Event types we
+    // don't act on are still acked, so Sumsub doesn't retry them forever.
+    const acted = evt.type === 'applicantReviewed' || evt.type === 'applicantWorkflowCompleted' || evt.type === 'applicantReset';
+    if (acted && typeof evt.externalUserId !== 'string') return reply.code(400).send({ error: 'missing_external_user_id' });
+
     if (evt.type === 'applicantReviewed' || evt.type === 'applicantWorkflowCompleted') {
       const ok = evt.reviewResult?.reviewAnswer === 'GREEN';
       await prisma.user.updateMany({ where: { id: evt.externalUserId }, data: { kycStatus: ok ? 'APPROVED' : 'REJECTED', kycRef: evt.applicantId } });

@@ -7,6 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
@@ -15,6 +16,7 @@ import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 
 import {IPositionManager} from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
 import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
@@ -65,6 +67,7 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
     using PoolIdLibrary for PoolKey;
     using SafeCast for uint256;
+    using StateLibrary for IPoolManager;
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant MAX_PLATFORM_SUPPLY_BPS = 2_000; // 20%
@@ -84,6 +87,10 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     /// launched pair stays valid. One-shot use immediately after granting it,
     /// so this only needs to outlive the current transaction.
     uint48 public constant PERMIT2_EXPIRATION_BUFFER = 900;
+    /// @notice How many candidate token addresses a single launch will try
+    /// before giving up. See _deployTokenForFreshPool for why more than one
+    /// is needed.
+    uint256 public constant MAX_ADDRESS_ATTEMPTS = 8;
 
     address public immutable onlyAssToken;
     IPoolManager public immutable poolManager;
@@ -150,6 +157,9 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     error GraduationAlreadyPaid();
     error GraduationThresholdNotMet();
     error GraduationPoolUnderfunded();
+    error NoAvailableTokenAddress();
+    error PoolInitializationFailed();
+    error CannotRescueProtectedToken();
 
     struct LaunchParams {
         string name;
@@ -213,25 +223,23 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     function _deployAndSeed(LaunchParams calldata p) private returns (Launch memory) {
         IERC20(onlyAssToken).safeTransferFrom(msg.sender, address(this), p.onlyAssForLiquidity);
 
-        LaunchedToken token = new LaunchedToken(p.name, p.symbol, p.totalSupply, address(this));
-        IERC20 tokenErc20 = IERC20(address(token));
-
         uint256 platformCut = (p.totalSupply * platformSupplyBps) / BPS_DENOMINATOR;
         uint256 liquidityTokens = (p.totalSupply * p.tokenLiquidityBps) / BPS_DENOMINATOR;
         uint256 creatorCut = p.totalSupply - platformCut - liquidityTokens;
 
+        (address token, PoolKey memory key, uint256 amount0, uint256 amount1) =
+            _deployTokenForFreshPool(p, liquidityTokens);
+        IERC20 tokenErc20 = IERC20(token);
+
         if (platformCut > 0) tokenErc20.safeTransfer(platformWallet, platformCut);
         if (creatorCut > 0) tokenErc20.safeTransfer(msg.sender, creatorCut);
-
-        (PoolKey memory key, uint256 amount0, uint256 amount1) =
-            _buildPoolKey(address(token), liquidityTokens, p.onlyAssForLiquidity);
 
         hook.registerPool(key, onlyAssToken, msg.sender, p.creatorTaxBps);
 
         uint256 tokenId = _seedLiquidity(key, amount0, amount1);
 
         return Launch({
-            token: address(token),
+            token: token,
             creator: msg.sender,
             poolId: key.toId(),
             positionTokenId: tokenId,
@@ -239,6 +247,78 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
             liquidityWithdrawn: false,
             graduationPaid: false
         });
+    }
+
+    /// @dev Deploys this launch's ERC20 at an address nobody could have
+    /// computed before this transaction, and never at one whose V4 pool has
+    /// already been initialized by somebody else. Returns the token plus the
+    /// PoolKey/amounts derived from it, since the key depends on the address
+    /// this picks.
+    ///
+    /// Why this is not just `new LaunchedToken(...)`: a plain CREATE puts the
+    /// token at an address derived solely from (this contract, this
+    /// contract's nonce), which anyone can compute in advance. A V4 pool's
+    /// identity is just the hash of its PoolKey, and `PoolManager.initialize`
+    /// is permissionless (this hook declares no beforeInitialize permission,
+    /// so nothing gates it) -- so an attacker could initialize the next
+    /// launch's pool themselves, at a price of their own choosing, for the
+    /// price of one cheap transaction. What happens then is worse than a
+    /// plain failure, because `PositionManager.initializePool` SWALLOWS the
+    /// "already initialized" error (see _seedLiquidity): the launch would
+    /// either seed its entire liquidity against the attacker's price, or
+    /// revert on the resulting slippage. A reverted launch never increments
+    /// this contract's nonce, so the *next* launch would deploy to the same
+    /// squatted address and hit the same pool -- the launchpad would be
+    /// bricked permanently, for every creator, with no way to recover it.
+    ///
+    /// Two independent defenses, either of which alone closes that:
+    /// (1) CREATE2 with a salt mixing in `block.prevrandao` and the previous
+    /// blockhash, so the address can't be known before the block this launch
+    /// actually lands in -- a same-block front-runner can still squat one
+    /// attempt, but the address is different again in the next block, so it's
+    /// a per-attempt grief that costs the attacker a transaction every time,
+    /// never a permanent brick; and (2) a bounded retry, so a pool that IS
+    /// already initialized is skipped rather than fatal. Do not "simplify"
+    /// this back to `new LaunchedToken(...)`.
+    ///
+    /// `block.number`/`block.timestamp` are in the salt as well, not because
+    /// they're unpredictable (they aren't) but because they're guaranteed to
+    /// differ from one block to the next on any chain. This repo has never
+    /// verified what Robinhood Chain's EVM actually returns for prevrandao or
+    /// blockhash; if both turned out to be constants there, those two alone
+    /// still keep every block's candidate addresses different, which is the
+    /// property that makes "permanently bricked" impossible.
+    function _deployTokenForFreshPool(LaunchParams calldata p, uint256 liquidityTokens)
+        private
+        returns (address token, PoolKey memory key, uint256 amount0, uint256 amount1)
+    {
+        bytes memory creationCode =
+            abi.encodePacked(type(LaunchedToken).creationCode, abi.encode(p.name, p.symbol, p.totalSupply, address(this)));
+        bytes32 creationCodeHash = keccak256(creationCode);
+
+        for (uint256 attempt = 0; attempt < MAX_ADDRESS_ATTEMPTS; attempt++) {
+            bytes32 salt = keccak256(
+                abi.encode(
+                    msg.sender,
+                    launches.length,
+                    attempt,
+                    block.prevrandao,
+                    blockhash(block.number - 1),
+                    block.number,
+                    block.timestamp,
+                    creationCodeHash
+                )
+            );
+            address predicted = Create2.computeAddress(salt, creationCodeHash);
+            if (predicted.code.length != 0) continue;
+
+            (key, amount0, amount1) = _buildPoolKey(predicted, liquidityTokens, p.onlyAssForLiquidity);
+            (uint160 existingSqrtPriceX96,,,) = poolManager.getSlot0(key.toId());
+            if (existingSqrtPriceX96 != 0) continue;
+
+            return (Create2.deploy(0, salt, creationCode), key, amount0, amount1);
+        }
+        revert NoAvailableTokenAddress();
     }
 
     function _buildPoolKey(address token, uint256 tokenAmount, uint256 onlyAssAmount)
@@ -263,7 +343,20 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     /// tokenId, which this contract holds in escrow (see withdrawLiquidity).
     function _seedLiquidity(PoolKey memory key, uint256 amount0, uint256 amount1) private returns (uint256 tokenId) {
         uint160 sqrtPriceX96 = OnlyAssSqrtPriceMath.toSqrtPriceX96(amount0, amount1);
-        positionManager.initializePool(key, sqrtPriceX96);
+        // PositionManager.initializePool swallows a failed
+        // PoolManager.initialize and just returns type(int24).max instead of
+        // reverting -- that is documented upstream behavior
+        // (IPoolInitializer_v4), meant for a multicall that doesn't care
+        // whether the pool already existed. Here it matters enormously:
+        // continuing past a swallowed failure seeds this launch's entire
+        // liquidity into a pool whose starting price was never the one
+        // computed and validated above (either nobody set it, or somebody
+        // else did). Treat the sentinel as fatal rather than silently
+        // trusting whatever price is actually in the pool. No real pool can
+        // report this tick -- V4's own max usable tick is ~887272 -- so this
+        // can't false-positive on a legitimate initialization.
+        int24 initTick = positionManager.initializePool(key, sqrtPriceX96);
+        if (initTick == type(int24).max) revert PoolInitializationFailed();
 
         address token0 = Currency.unwrap(key.currency0);
         address token1 = Currency.unwrap(key.currency1);
@@ -388,8 +481,18 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     /// @notice Recover ERC-20 tokens sent to this contract by mistake.
     /// Cannot touch $ONLYASS or the position-manager's own ERC-721 escrow --
     /// there is no ERC-20 rescue path for the locked LP NFTs at all.
+    /// @dev Both exclusions are enforced here, not merely documented.
+    /// $ONLYASS is what every launch pairs its liquidity against and what
+    /// this contract pulls from the creator mid-launch, so an unrestricted
+    /// rescue is exactly the path a compromised owner key would use to take
+    /// someone else's pairing capital -- the same reason V2's own rescueERC20
+    /// refuses to touch a tracked LP pair. The cost is that $ONLYASS genuinely
+    /// sent here by mistake (or seeding dust left behind by rounding) is
+    /// stuck forever: deliberate, since nothing on-chain can tell that apart
+    /// from a launch's own funds.
     function rescueERC20(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
+        if (token == onlyAssToken || token == address(positionManager)) revert CannotRescueProtectedToken();
         IERC20(token).safeTransfer(to, amount);
         emit ERC20Rescued(token, to, amount);
     }

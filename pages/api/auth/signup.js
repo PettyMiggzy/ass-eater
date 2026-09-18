@@ -1,6 +1,21 @@
-import { createUser } from '../../../lib/users-store';
+import { createUser, findUserByEmail } from '../../../lib/users-store';
 import { createCreator, deleteCreator } from '../../../lib/creators-store';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
+import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
+
+// Signup unavoidably tells the caller whether an identifier is already
+// taken: there is no email-confirmation channel on this site (nothing here
+// ever sends mail -- see lib/users-store.js), so "that one is taken" has to
+// be said out loud or account creation is unusable. That makes this an
+// account-existence oracle in exactly the way the login route deliberately
+// is not, which matters here because on an adult platform the account list
+// is itself the sensitive asset. Each call also costs a bcrypt hash and a
+// read-modify-write of the shared users manifest, so an unmetered one is
+// simultaneously the cheapest CPU-burn and account-flood vector on the
+// site. Metering it per IP is what stops all three being free; it can't
+// stop them outright while the "taken" answer has to be given at all.
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_SIGNUPS_PER_IP = 5;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -23,6 +38,30 @@ export default async function handler(req, res) {
   }
   if (role === 'creator' && (!displayName || !handle)) {
     return res.status(400).json({ error: 'Display name and handle are required for creator accounts' });
+  }
+
+  // Counted after the shape checks, so somebody fumbling the form doesn't
+  // spend their own budget on requests that never reached the account list.
+  const { limited, retryAfterSeconds } = consumeAttempt(`signup:ip:${clientIp(req)}`, {
+    limit: MAX_SIGNUPS_PER_IP,
+    windowMs: WINDOW_MS,
+  });
+  if (limited) {
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many signup attempts from this connection. Please wait a few minutes and try again.' });
+  }
+
+  // Look for a taken identifier BEFORE writing anything. createUser checks
+  // again inside its own ETag-guarded transform and that one is the
+  // authoritative check (this one can go stale between here and there) --
+  // but the everyday case has to stop here, because the creator profile
+  // below is written before the account that owns it, so a duplicate
+  // surfacing from inside createUser means rolling that profile back out
+  // through deleteCreator. Putting a delete against data/creators.json on
+  // the end of an ordinary "that email is taken" request, which anyone can
+  // trigger at will, is not a trade worth taking -- see the rollback below.
+  if (await findUserByEmail(email)) {
+    return res.status(400).json({ error: 'An account with that email already exists' });
   }
 
   let newCreatorId = null;
@@ -49,10 +88,20 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     // The creator profile is written before the account that owns it, so a
-    // failure in createUser (a duplicate email is the everyday one) used to
-    // strand a pending creator profile nobody can ever log into -- sitting
-    // in the admin applicant queue forever, and piling up another ghost
-    // every time someone retried. Roll it back.
+    // failure in createUser used to strand a pending creator profile nobody
+    // can ever log into -- sitting in the admin applicant queue forever, and
+    // piling up another ghost every time someone retried. Roll it back.
+    //
+    // Only genuinely rare failures reach here now (a storage error, or a
+    // duplicate that raced past the pre-flight check above), and that is
+    // deliberate: deleteCreator rewrites data/creators.json, whose read
+    // falls back to the hardcoded demo roster in data/creators.js, so a
+    // rollback that runs while storage is misbehaving can replace every real
+    // creator with the seed rows -- the merge that MEMORY.md records as a
+    // previously launch-blocking bug. That hazard lives in
+    // lib/blob-json-store.js's read (it cannot tell a missing manifest from
+    // a failed one) and has to be fixed there; keeping this path off the
+    // everyday duplicate-email request is what this file can do about it.
     if (newCreatorId !== null) {
       try {
         await deleteCreator(newCreatorId);

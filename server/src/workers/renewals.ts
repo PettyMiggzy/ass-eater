@@ -1,48 +1,86 @@
 import { Worker } from 'bullmq';
+import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma';
 import { charge, money, InsufficientFunds } from '../core/ledger';
-import { renewalQueue, publish, connection } from '../lib/redis';
+import { renewalQueue, publish, connection, redis } from '../lib/redis';
 import { PERIOD_MS } from '../modules/subscriptions';
 
 await renewalQueue.add('tick', {}, { repeat: { every: 5 * 60_000 }, jobId: 'renewals-tick', removeOnComplete: true });
 
-new Worker('renewals', async () => {
-  const due = await prisma.subscription.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { status: true } } } });
-  for (const s of due) {
-    if (!s.autoRenew || s.status === 'CANCELLED' || s.creator.status !== 'ACTIVE') {
-      await prisma.subscription.update({ where: { id: s.id }, data: { status: 'EXPIRED' } }); continue;
-    }
-    try {
-      await money(prisma, async (tx) => {
-        await charge(tx, { fanId: s.fanId, creatorId: s.creatorId, grossCents: s.priceCents, type: 'SUBSCRIPTION', refId: s.id, payAsset: s.payAsset });
-        await tx.subscription.update({ where: { id: s.id }, data: { currentPeriodEnd: new Date(Math.max(s.currentPeriodEnd.getTime(), Date.now()) + PERIOD_MS) } });
-      });
-      await publish(s.fanId, { type: 'renewed', creatorId: s.creatorId, amountCents: s.priceCents });
-    } catch (e) {
-      if (e instanceof InsufficientFunds) {
-        await prisma.subscription.update({ where: { id: s.id }, data: { status: 'EXPIRED' } });
-        await publish(s.fanId, { type: 'renewal_failed', creatorId: s.creatorId, reason: 'insufficient_funds' });
-      } else console.error('renewal', s.id, e);
-    }
-  }
+// Raised when the row's period was already advanced by someone else between our
+// read and our write. Thrown from inside money(), so the charge that would have
+// been the second one for the same period rolls back with it.
+class AlreadyRenewed extends Error {}
 
-  // Token-lock perks renew the same way -- see modules/stake.ts
-  const dueLocks = await prisma.tokenLock.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { status: true, creator: { select: { stakePerkEnabled: true } } } } } });
-  for (const l of dueLocks) {
-    if (!l.autoRenew || l.status === 'CANCELLED' || l.creator.status !== 'ACTIVE' || !l.creator.creator?.stakePerkEnabled) {
-      await prisma.tokenLock.update({ where: { id: l.id }, data: { status: 'EXPIRED' } }); continue;
+const TICK_LOCK = 'renewals:tick';
+const TICK_LOCK_MS = 15 * 60_000;
+// Release only if we still hold it -- a tick that overran the TTL must not
+// delete the lock a later tick has since taken.
+const RELEASE_LOCK = 'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
+
+new Worker('renewals', async () => {
+  // Only one tick runs at a time across every worker instance. BullMQ hands a
+  // stalled job to a second worker, and nothing stops a second worker process
+  // existing at all, so without this two runs can pick up the same due rows.
+  // This is the cheap guard; the per-row claim below is what actually makes a
+  // double charge impossible if this lock ever expires mid-tick.
+  const held = randomUUID();
+  if (!(await redis.set(TICK_LOCK, held, 'PX', TICK_LOCK_MS, 'NX'))) return;
+  try {
+    const due = await prisma.subscription.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { status: true } } } });
+    for (const s of due) {
+      if (!s.autoRenew || s.status === 'CANCELLED' || s.creator.status !== 'ACTIVE') {
+        await prisma.subscription.update({ where: { id: s.id }, data: { status: 'EXPIRED' } }); continue;
+      }
+      try {
+        await money(prisma, async (tx) => {
+          // Claim the period before charging for it: this only matches while the
+          // row still shows the period end (and status) we read, so a racing tick
+          // that already renewed it claims nothing and we roll back without ever
+          // touching the fan's balance. Idempotency lives here, in the database,
+          // not in how the job happens to be scheduled.
+          const claimed = await tx.subscription.updateMany({
+            where: { id: s.id, status: s.status, currentPeriodEnd: s.currentPeriodEnd },
+            data: { currentPeriodEnd: new Date(Math.max(s.currentPeriodEnd.getTime(), Date.now()) + PERIOD_MS) },
+          });
+          if (!claimed.count) throw new AlreadyRenewed();
+          await charge(tx, { fanId: s.fanId, creatorId: s.creatorId, grossCents: s.priceCents, type: 'SUBSCRIPTION', refId: s.id, payAsset: s.payAsset });
+        });
+        await publish(s.fanId, { type: 'renewed', creatorId: s.creatorId, amountCents: s.priceCents });
+      } catch (e) {
+        if (e instanceof AlreadyRenewed) continue;
+        if (e instanceof InsufficientFunds) {
+          await prisma.subscription.update({ where: { id: s.id }, data: { status: 'EXPIRED' } });
+          await publish(s.fanId, { type: 'renewal_failed', creatorId: s.creatorId, reason: 'insufficient_funds' });
+        } else console.error('renewal', s.id, e);
+      }
     }
-    try {
-      await money(prisma, async (tx) => {
-        await charge(tx, { fanId: l.fanId, creatorId: l.creatorId, grossCents: l.usdCents, type: 'TOKEN_LOCK', refId: l.id });
-        await tx.tokenLock.update({ where: { id: l.id }, data: { currentPeriodEnd: new Date(Math.max(l.currentPeriodEnd.getTime(), Date.now()) + PERIOD_MS) } });
-      });
-      await publish(l.fanId, { type: 'lock_renewed', creatorId: l.creatorId, amountCents: l.usdCents });
-    } catch (e) {
-      if (e instanceof InsufficientFunds) {
-        await prisma.tokenLock.update({ where: { id: l.id }, data: { status: 'EXPIRED' } });
-        await publish(l.fanId, { type: 'lock_renewal_failed', creatorId: l.creatorId, reason: 'insufficient_funds' });
-      } else console.error('lock renewal', l.id, e);
+
+    // Token-lock perks renew the same way -- see modules/stake.ts
+    const dueLocks = await prisma.tokenLock.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { status: true, creator: { select: { stakePerkEnabled: true } } } } } });
+    for (const l of dueLocks) {
+      if (!l.autoRenew || l.status === 'CANCELLED' || l.creator.status !== 'ACTIVE' || !l.creator.creator?.stakePerkEnabled) {
+        await prisma.tokenLock.update({ where: { id: l.id }, data: { status: 'EXPIRED' } }); continue;
+      }
+      try {
+        await money(prisma, async (tx) => {
+          const claimed = await tx.tokenLock.updateMany({
+            where: { id: l.id, status: l.status, currentPeriodEnd: l.currentPeriodEnd },
+            data: { currentPeriodEnd: new Date(Math.max(l.currentPeriodEnd.getTime(), Date.now()) + PERIOD_MS) },
+          });
+          if (!claimed.count) throw new AlreadyRenewed();
+          await charge(tx, { fanId: l.fanId, creatorId: l.creatorId, grossCents: l.usdCents, type: 'TOKEN_LOCK', refId: l.id });
+        });
+        await publish(l.fanId, { type: 'lock_renewed', creatorId: l.creatorId, amountCents: l.usdCents });
+      } catch (e) {
+        if (e instanceof AlreadyRenewed) continue;
+        if (e instanceof InsufficientFunds) {
+          await prisma.tokenLock.update({ where: { id: l.id }, data: { status: 'EXPIRED' } });
+          await publish(l.fanId, { type: 'lock_renewal_failed', creatorId: l.creatorId, reason: 'insufficient_funds' });
+        } else console.error('lock renewal', l.id, e);
+      }
     }
+  } finally {
+    await redis.eval(RELEASE_LOCK, 1, TICK_LOCK, held);
   }
 }, { ...connection, concurrency: 1 });

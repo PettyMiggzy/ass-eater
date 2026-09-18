@@ -25,8 +25,27 @@ export const media: FastifyPluginAsync = async (app) => {
     if (!m) return reply.code(404).send({ error: 'not_found' });
     const head = await headObject(m.key).catch(() => null);
     if (!head) return reply.code(400).send({ error: 'upload_missing' });
-    await prisma.media.update({ where: { id: m.id }, data: { status: 'PROCESSING', bytes: Number(head.ContentLength ?? m.bytes) } });
-    await transcodeQueue.add('transcode', { mediaId: m.id }, { attempts: 3, backoff: { type: 'exponential', delay: 10_000 }, removeOnComplete: 500 });
+    // Claim the UPLOADING -> PROCESSING transition atomically. The findFirst
+    // above is not a guard on its own: two /complete calls landing together
+    // both saw UPLOADING, both updated, and both enqueued, so the same media
+    // was transcoded twice with the two runs writing over each other's HLS
+    // output. Only the request that actually flips the row enqueues.
+    const claimed = await prisma.media.updateMany({
+      where: { id: m.id, ownerId: req.user.id, status: 'UPLOADING' },
+      data: { status: 'PROCESSING', bytes: Number(head.ContentLength ?? m.bytes) },
+    });
+    if (!claimed.count) {
+      // Someone else already claimed it -- the caller's intent is satisfied
+      // either way, so report where it actually got to rather than erroring.
+      const cur = await prisma.media.findUniqueOrThrow({ where: { id: m.id }, select: { status: true } });
+      return { ok: true, status: cur.status };
+    }
+    // Deterministic jobId: BullMQ ignores an add() for an id already in the
+    // queue, so even a re-queue by hand can't stack a second live job for the
+    // same media. It's dropped on completion (removeOnComplete), which keeps a
+    // genuine later re-transcode possible. No ':' in the id -- BullMQ rejects
+    // custom ids containing one.
+    await transcodeQueue.add('transcode', { mediaId: m.id }, { jobId: `transcode-${m.id}`, attempts: 3, backoff: { type: 'exponential', delay: 10_000 }, removeOnComplete: 500 });
     return { ok: true, status: 'PROCESSING' };
   });
 

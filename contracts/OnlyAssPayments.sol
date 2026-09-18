@@ -79,9 +79,20 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
     error TokenNotLaunchedByCreator();
     error LaunchpadNotSet();
 
-    constructor(address initialPlatformWallet, uint256 initialFeeBps, address initialOnlyAssToken, address initialLaunchpad)
-        Ownable(msg.sender)
-    {
+    /// @dev `initialOwner` is passed in rather than taken from `msg.sender`,
+    /// matching every other contract in this repo (OnlyAssLaunchpad,
+    /// OnlyAssLaunchpadV4, OnlyAssLaunchpadHook, OnlyAssCreatorNFT): the
+    /// address that runs the deploy script is not necessarily the address
+    /// that should end up owning the contract, and silently making the
+    /// deployer the owner is how a live contract ends up owned by a hot key
+    /// that was only ever meant to broadcast a transaction.
+    constructor(
+        address initialOwner,
+        address initialPlatformWallet,
+        uint256 initialFeeBps,
+        address initialOnlyAssToken,
+        address initialLaunchpad
+    ) Ownable(initialOwner) {
         if (initialPlatformWallet == address(0)) revert ZeroAddress();
         if (initialOnlyAssToken == address(0)) revert ZeroAddress();
         if (initialFeeBps > MAX_FEE_BPS) revert FeeTooHigh();

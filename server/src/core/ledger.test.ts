@@ -189,6 +189,32 @@ describe('ledger.charge', () => {
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(0n); // fee(100) - referral(100)
   });
 
+  it('never pays out more in referrals than the fee it collected, even at the lower $ONLYASS payout rate', async () => {
+    const fanReferrer = await makeUser();
+    const creatorReferrer = await makeUser();
+    const fan = await makeUser({ referredById: fanReferrer });
+    const creator = await makeCreator({ referredById: creatorReferrer, payoutAsset: 'ONLYASS' });
+    await fund(fan, 10_000);
+    const platformBefore = await balanceOf(PLATFORM_ID);
+
+    const result = await money(prisma, (tx) =>
+      charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-8' }),
+    );
+
+    // The fee here is 8% (FEES.TOKEN_PAYOUT_BPS) = 80, but two 5% referral
+    // cuts want 100 between them -- both get scaled down to 40 rather than
+    // the platform paying out 100 against 80 collected.
+    expect(result.fee).toBe(80);
+    expect(result.referral).toBe(80);
+    expect(await balanceOf(fanReferrer)).toBe(40n);
+    expect(await balanceOf(creatorReferrer)).toBe(40n);
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(0n);
+    // Nothing created from nothing: what left the fan is exactly what landed
+    // in the creator's, the platform's and both referrers' balances.
+    expect(await balanceOf(fan)).toBe(9000n);
+    expect(await balanceOf(creator)).toBe(920n);
+  });
+
   it('rejects a charge when the fan has insufficient balance, leaving all balances untouched', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();

@@ -4,11 +4,20 @@ import { prisma } from '../lib/prisma';
 import { charge, money } from '../core/ledger';
 import { canViewPost } from '../core/access';
 
-// strip locked media down to preview thumbnails
+// strip locked media down to preview thumbnails, and locked text down to a
+// teaser that can never be the whole thing
+const TEASER_CHARS = 80;
+
 const redact = async (userId: string | null, posts: any[]) =>
   Promise.all(posts.map(async (p) => {
     const ok = await canViewPost(userId, p);
-    return { ...p, locked: !ok, text: ok ? p.text : p.text.slice(0, 80),
+    // A PPV post's own text is a paywalled good in its own right, exactly
+    // like a priced DM's (see modules/messages.ts) -- blank it outright, not
+    // tease it. And truncating only redacts when there's genuinely more text
+    // behind the cut: a locked post at or under TEASER_CHARS was being handed
+    // over in full, for free.
+    const teaser = p.visibility === 'PPV' || p.text.length <= TEASER_CHARS ? '' : p.text.slice(0, TEASER_CHARS);
+    return { ...p, locked: !ok, text: ok ? p.text : teaser,
       media: p.media.map((m: any) => ok ? { id: m.id, mime: m.mime, status: m.status, previewKey: m.previewKey } : { id: m.id, mime: m.mime, previewKey: m.previewKey, locked: true }) };
   }));
 

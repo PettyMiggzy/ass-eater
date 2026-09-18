@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {LaunchedToken} from "./LaunchedToken.sol";
 import {IUniswapV2Factory} from "./interfaces/IUniswapV2Factory.sol";
 import {IUniswapV2Router02} from "./interfaces/IUniswapV2Router02.sol";
@@ -30,6 +31,9 @@ contract OnlyAssLaunchpad is Ownable, ReentrancyGuard, Pausable {
     /// @notice LP tokens are held in escrow by this contract for this long
     /// after launch, immutable regardless of any later admin action.
     uint256 public constant LOCK_DURATION = 180 days;
+    /// @notice How many candidate addresses a single launch will try before
+    /// giving up. See _deployLaunchedToken for why more than one is needed.
+    uint256 public constant MAX_ADDRESS_ATTEMPTS = 8;
 
     /// @notice The $ONLYASS token every launch is paired against.
     address public immutable onlyAssToken;
@@ -95,6 +99,7 @@ contract OnlyAssLaunchpad is Ownable, ReentrancyGuard, Pausable {
     error AlreadyWithdrawn();
     error CannotRescueTrackedPair();
     error TransferFailed();
+    error NoAvailableTokenAddress();
 
     constructor(
         address initialOwner,
@@ -157,7 +162,7 @@ contract OnlyAssLaunchpad is Ownable, ReentrancyGuard, Pausable {
     function _deployAndSeed(LaunchParams calldata p) private returns (Launch memory) {
         IERC20(onlyAssToken).safeTransferFrom(msg.sender, address(this), p.onlyAssForLiquidity);
 
-        LaunchedToken token = new LaunchedToken(p.name, p.symbol, p.totalSupply, address(this));
+        LaunchedToken token = _deployLaunchedToken(p);
         IERC20 tokenErc20 = IERC20(address(token));
 
         uint256 platformCut = (p.totalSupply * platformSupplyBps) / BPS_DENOMINATOR;
@@ -167,7 +172,8 @@ contract OnlyAssLaunchpad is Ownable, ReentrancyGuard, Pausable {
         if (platformCut > 0) tokenErc20.safeTransfer(platformWallet, platformCut);
         if (creatorCut > 0) tokenErc20.safeTransfer(msg.sender, creatorCut);
 
-        // token was just deployed above, so its pair can never already exist.
+        // _deployLaunchedToken only ever returns an address whose $ONLYASS
+        // pair does not exist yet, so this createPair can't hit PAIR_EXISTS.
         address pair = uniswapFactory.createPair(address(token), onlyAssToken);
         isTrackedPair[pair] = true;
 
@@ -187,6 +193,66 @@ contract OnlyAssLaunchpad is Ownable, ReentrancyGuard, Pausable {
             unlockTime: block.timestamp + LOCK_DURATION,
             withdrawn: false
         });
+    }
+
+    /// @dev Deploys this launch's ERC20 at an address nobody could have
+    /// computed before this transaction, and never at one whose $ONLYASS pair
+    /// already exists.
+    ///
+    /// Why this is not just `new LaunchedToken(...)`: a plain CREATE puts the
+    /// token at an address derived solely from (this contract, this
+    /// contract's nonce), which anyone can compute in advance. A UniswapV2
+    /// pair's own address is in turn derived from just its two token
+    /// addresses, and `createPair` is permissionless -- so an attacker could
+    /// call `factory.createPair(nextLaunchToken, $ONLYASS)` themselves for
+    /// the price of one cheap transaction, and this contract's own
+    /// `createPair` call would then revert with PAIR_EXISTS. A reverted
+    /// launch never increments this contract's nonce, so the *next* launch
+    /// would deploy to that same squatted address and revert too: the
+    /// launchpad would be bricked permanently, for every creator, with no way
+    /// to recover it.
+    ///
+    /// Two independent defenses, either of which alone closes that:
+    /// (1) CREATE2 with a salt mixing in `block.prevrandao` and the previous
+    /// blockhash, so the address can't be known before the block this launch
+    /// actually lands in -- a same-block front-runner can still squat one
+    /// attempt, but the address is different again in the next block, so it's
+    /// a per-attempt grief that costs the attacker a transaction every time,
+    /// never a permanent brick; and (2) a bounded retry, so an address that
+    /// IS taken is skipped rather than fatal. Do not "simplify" this back to
+    /// `new LaunchedToken(...)`.
+    ///
+    /// `block.number`/`block.timestamp` are in the salt as well, not because
+    /// they're unpredictable (they aren't) but because they're guaranteed to
+    /// differ from one block to the next on any chain. This repo has never
+    /// verified what Robinhood Chain's EVM actually returns for prevrandao or
+    /// blockhash; if both turned out to be constants there, those two alone
+    /// still keep every block's candidate addresses different, which is the
+    /// property that makes "permanently bricked" impossible.
+    function _deployLaunchedToken(LaunchParams calldata p) private returns (LaunchedToken) {
+        bytes memory creationCode =
+            abi.encodePacked(type(LaunchedToken).creationCode, abi.encode(p.name, p.symbol, p.totalSupply, address(this)));
+        bytes32 creationCodeHash = keccak256(creationCode);
+
+        for (uint256 attempt = 0; attempt < MAX_ADDRESS_ATTEMPTS; attempt++) {
+            bytes32 salt = keccak256(
+                abi.encode(
+                    msg.sender,
+                    launches.length,
+                    attempt,
+                    block.prevrandao,
+                    blockhash(block.number - 1),
+                    block.number,
+                    block.timestamp,
+                    creationCodeHash
+                )
+            );
+            address predicted = Create2.computeAddress(salt, creationCodeHash);
+            if (predicted.code.length == 0 && uniswapFactory.getPair(predicted, onlyAssToken) == address(0)) {
+                return LaunchedToken(Create2.deploy(0, salt, creationCode));
+            }
+        }
+        revert NoAvailableTokenAddress();
     }
 
     /// @notice Once LOCK_DURATION has passed, the launching creator can pull

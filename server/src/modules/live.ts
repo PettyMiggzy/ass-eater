@@ -40,10 +40,19 @@ export const live: FastifyPluginAsync = async (app) => {
     if (s.ticketPriceCents > 0 && s.creatorId !== req.user.id) {
       const has = await prisma.liveTicket.findUnique({ where: { fanId_streamId: { fanId: req.user.id, streamId: s.id } } });
       if (!has) {
-        await money(prisma, async (tx) => {
-          await tx.liveTicket.create({ data: { fanId: req.user.id, streamId: s.id } });
-          await charge(tx, { fanId: req.user.id, creatorId: s.creatorId, grossCents: s.ticketPriceCents, type: 'LIVE_TICKET', refId: s.id, payAsset });
-        });
+        try {
+          await money(prisma, async (tx) => {
+            await tx.liveTicket.create({ data: { fanId: req.user.id, streamId: s.id } });
+            await charge(tx, { fanId: req.user.id, creatorId: s.creatorId, grossCents: s.ticketPriceCents, type: 'LIVE_TICKET', refId: s.id, payAsset });
+          });
+        } catch (e) {
+          // A double-clicked join races itself. LiveTicket's primary key is
+          // (fanId, streamId), so the loser's insert hits a unique violation and
+          // rolls its whole transaction back -- the charge with it, which is what
+          // keeps the fan from paying twice. They already own the ticket the
+          // winning request bought, so let them in instead of erroring out.
+          if ((e as { code?: string }).code !== 'P2002') throw e;
+        }
       }
       allowed = true;
     }

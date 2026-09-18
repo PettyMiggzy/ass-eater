@@ -8,12 +8,24 @@ import { publish, sub, broadcastQueue } from '../lib/redis';
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
 export const messages: FastifyPluginAsync = async (app) => {
-  app.get('/conversations', { preHandler: app.auth }, async (req) =>
-    prisma.conversation.findMany({
+  app.get('/conversations', { preHandler: app.auth }, async (req) => {
+    const convs = await prisma.conversation.findMany({
       where: { OR: [{ aId: req.user.id }, { bId: req.user.id }] },
-      include: { messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { text: true, priceCents: true, senderId: true, createdAt: true } } },
+      include: { messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, text: true, priceCents: true, senderId: true, createdAt: true } } },
       orderBy: { updatedAt: 'desc' }, take: 50,
-    }));
+    });
+    // The inbox preview is the conversation's own latest message, which may
+    // itself be a priced one the viewer hasn't unlocked -- redact its text
+    // the same way GET /with/:userId does, or a priced message is readable
+    // straight off the conversation list without ever opening the thread.
+    return Promise.all(convs.map(async (c) => ({
+      ...c,
+      messages: await Promise.all(c.messages.map(async (m) => {
+        const ok = await canViewMessage(req.user.id, { id: m.id, senderId: m.senderId, priceCents: m.priceCents, conversation: { aId: c.aId, bId: c.bId } });
+        return { ...m, text: ok ? m.text : '', locked: !ok };
+      })),
+    })));
+  });
 
   app.get('/with/:userId', { preHandler: app.auth }, async (req: any) => {
     const conv = await prisma.conversation.findUnique({ where: { aId_bId: pair(req.user.id, req.params.userId) } });

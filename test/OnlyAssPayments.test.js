@@ -18,7 +18,13 @@ describe('OnlyAssPayments', function () {
     await launchpad.waitForDeployment();
 
     const Payments = await ethers.getContractFactory('OnlyAssPayments');
-    const payments = await Payments.deploy(platformWallet.address, FEE_BPS, await token.getAddress(), await launchpad.getAddress());
+    const payments = await Payments.deploy(
+      owner.address,
+      platformWallet.address,
+      FEE_BPS,
+      await token.getAddress(),
+      await launchpad.getAddress()
+    );
     await payments.waitForDeployment();
 
     await token.transfer(fan.address, ethers.parseEther('1000'));
@@ -172,12 +178,18 @@ describe('OnlyAssPayments', function () {
     });
 
     it('reverts with LaunchpadNotSet when no launchpad has been configured', async function () {
-      const [, platformWallet, creatorWallet, fan] = await ethers.getSigners();
+      const [owner, platformWallet, creatorWallet, fan] = await ethers.getSigners();
       const Token = await ethers.getContractFactory('MockOnlyAssToken');
       const token = await Token.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000'));
       await token.waitForDeployment();
       const Payments = await ethers.getContractFactory('OnlyAssPayments');
-      const paymentsNoLaunchpad = await Payments.deploy(platformWallet.address, FEE_BPS, await token.getAddress(), ethers.ZeroAddress);
+      const paymentsNoLaunchpad = await Payments.deploy(
+        owner.address,
+        platformWallet.address,
+        FEE_BPS,
+        await token.getAddress(),
+        ethers.ZeroAddress
+      );
       await paymentsNoLaunchpad.waitForDeployment();
 
       await expect(
@@ -187,6 +199,33 @@ describe('OnlyAssPayments', function () {
   });
 
   describe('admin controls', function () {
+    it('takes its owner from the constructor, not from whoever broadcast the deploy', async function () {
+      // Matches every other contract in this repo (both launchpads, the hook,
+      // the NFT drops contract): the deploying key and the intended owner are
+      // not necessarily the same address.
+      const [deployer, platformWallet, intendedOwner] = await ethers.getSigners();
+      const Token = await ethers.getContractFactory('MockOnlyAssToken');
+      const token = await Token.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000'));
+      await token.waitForDeployment();
+
+      const Payments = await ethers.getContractFactory('OnlyAssPayments');
+      const payments = await Payments.connect(deployer).deploy(
+        intendedOwner.address,
+        platformWallet.address,
+        FEE_BPS,
+        await token.getAddress(),
+        ethers.ZeroAddress
+      );
+      await payments.waitForDeployment();
+
+      expect(await payments.owner()).to.equal(intendedOwner.address);
+      await expect(payments.connect(deployer).setPlatformFeeBps(500)).to.be.revertedWithCustomError(
+        payments,
+        'OwnableUnauthorizedAccount'
+      );
+      await expect(payments.connect(intendedOwner).setPlatformFeeBps(500)).to.not.be.reverted;
+    });
+
     it('only owner can change the platform wallet', async function () {
       const { payments, other, creatorWallet } = await deploy();
       await expect(payments.connect(other).setPlatformWallet(creatorWallet.address)).to.be.revertedWithCustomError(

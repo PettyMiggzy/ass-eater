@@ -75,6 +75,10 @@ contract OnlyAssLaunchpadHook is IHooks, Ownable {
         address creatorWallet;
         uint96 creatorTaxBps;
         bool registered;
+        /// @dev Which side of this pool is $ONLYASS, pinned once at
+        /// registration so the volume counter below can only ever measure
+        /// the $ONLYASS leg of a swap. See afterSwap.
+        bool onlyAssIsCurrency0;
     }
 
     mapping(PoolId => PoolFeeConfig) public poolConfig;
@@ -166,14 +170,20 @@ contract OnlyAssLaunchpadHook is IHooks, Ownable {
     {
         if (creatorWallet == address(0)) revert ZeroAddress();
         if (creatorTaxBps > MAX_CREATOR_TAX_BPS) revert CreatorTaxTooHigh();
-        if (Currency.unwrap(key.currency0) != onlyAssToken && Currency.unwrap(key.currency1) != onlyAssToken) {
+        bool onlyAssIsCurrency0 = Currency.unwrap(key.currency0) == onlyAssToken;
+        if (!onlyAssIsCurrency0 && Currency.unwrap(key.currency1) != onlyAssToken) {
             revert PoolNotOnlyAss();
         }
 
         PoolId id = key.toId();
         if (poolConfig[id].registered) revert PoolAlreadyRegistered();
 
-        poolConfig[id] = PoolFeeConfig({creatorWallet: creatorWallet, creatorTaxBps: uint96(creatorTaxBps), registered: true});
+        poolConfig[id] = PoolFeeConfig({
+            creatorWallet: creatorWallet,
+            creatorTaxBps: uint96(creatorTaxBps),
+            registered: true,
+            onlyAssIsCurrency0: onlyAssIsCurrency0
+        });
         emit PoolRegistered(id, creatorWallet, creatorTaxBps);
     }
 
@@ -204,17 +214,23 @@ contract OnlyAssLaunchpadHook is IHooks, Ownable {
         if (platformFee > 0) poolManager.take(feeCurrency, platformWallet, platformFee);
         if (creatorFee > 0) poolManager.take(feeCurrency, cfg.creatorWallet, creatorFee);
 
-        // Volume counter for the graduation-bonus milestone. This hook
-        // doesn't store which side is $ONLYASS per pool (only registerPool's
-        // one-time check does), so as a direction-agnostic proxy it counts
-        // the larger-magnitude leg of the swap -- for a two-asset AMM swap
-        // that's a reasonable stand-in for "how much value changed hands",
-        // without needing extra per-pool storage just for this counter.
-        int128 amt0 = delta.amount0();
-        int128 amt1 = delta.amount1();
-        uint256 leg0 = amt0 < 0 ? uint256(uint128(-amt0)) : uint256(uint128(amt0));
-        uint256 leg1 = amt1 < 0 ? uint256(uint128(-amt1)) : uint256(uint128(amt1));
-        cumulativeOnlyAssVolume[id] += leg0 > leg1 ? leg0 : leg1;
+        // Volume counter for the graduation-bonus milestone. It counts the
+        // $ONLYASS leg of the swap specifically -- deliberately NOT the
+        // larger of the two legs, which is what a "direction-agnostic" proxy
+        // would do. The launched token's total supply is a number its own
+        // creator picks out of thin air, so the token leg of a swap is
+        // denominated in units that cost the creator nothing to create:
+        // launch a token with an absurd supply and a swap moving a few cents
+        // of real value registers astronomically on the token side, letting
+        // the creator clear the graduation threshold and collect the bonus
+        // without any real trading ever happening. The $ONLYASS side can't be
+        // inflated that way -- reaching the threshold means actually pushing
+        // that much $ONLYASS through the pool, which costs real money in
+        // price impact and in this hook's own fee. Which side is $ONLYASS is
+        // pinned at registerPool time, so it can't be spoofed per swap
+        // either.
+        int128 onlyAssLeg = cfg.onlyAssIsCurrency0 ? delta.amount0() : delta.amount1();
+        cumulativeOnlyAssVolume[id] += onlyAssLeg < 0 ? uint256(uint128(-onlyAssLeg)) : uint256(uint128(onlyAssLeg));
 
         uint256 totalFee = platformFee + creatorFee;
         emit FeeTaken(id, platformFee, creatorFee);

@@ -130,9 +130,23 @@ export async function charge(
     if (new Date() >= cutoff) return 0;
     return Math.floor((chargeCents * FEES.REFERRAL_BPS) / 10_000);
   };
-  const creatorReferral = referralCut(creator.user.referredById, creator.user.createdAt);
-  const fanReferral = referralCut(fan.referredById, fan.createdAt);
-  const referral = Math.min(fee, creatorReferral + fanReferral);
+  // Referral payouts come out of the platform's fee and nowhere else, so the
+  // cap has to bind what each referrer is actually *paid*, not just the total
+  // reported back: when the creator takes payout in $ONLYASS the fee is
+  // FEES.TOKEN_PAYOUT_BPS (8%), which is less than two FEES.REFERRAL_BPS
+  // (5% + 5%) cuts, so paying both referrers in full moved more out of the
+  // platform than it ever collected -- value minted from nothing. Scale both
+  // down proportionally against the fee actually retained instead; flooring
+  // each share means any rounding remainder stays with the platform rather
+  // than being conjured.
+  let creatorReferral = referralCut(creator.user.referredById, creator.user.createdAt);
+  let fanReferral = referralCut(fan.referredById, fan.createdAt);
+  const claimed = creatorReferral + fanReferral;
+  if (claimed > fee) {
+    creatorReferral = Math.floor((creatorReferral * fee) / claimed);
+    fanReferral = Math.floor((fanReferral * fee) / claimed);
+  }
+  const referral = creatorReferral + fanReferral;
 
   await post(tx, p.fanId, -chargeCents, p.type, p.refId, undefined, payAsset);
   await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, payAsset, originalPriceCents: p.grossCents });

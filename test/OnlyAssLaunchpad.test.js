@@ -243,6 +243,44 @@ describe('OnlyAssLaunchpad', function () {
     );
   });
 
+  describe('token-address squatting (permanent-DoS finding)', function () {
+    async function launchAndGetToken() {
+      const receipt = await (await launchpad.connect(creator).launchToken(launchParams(), { value: LAUNCH_FEE })).wait();
+      const event = receipt.logs
+        .map((log) => { try { return launchpad.interface.parseLog(log); } catch { return null; } })
+        .find((e) => e && e.name === 'TokenLaunched');
+      return event.args.token;
+    }
+
+    it("still launches when the plain-CREATE address's pair has already been squatted", async () => {
+      // The attack this defends against: with a plain `new LaunchedToken(...)`
+      // the next launch's token address is just keccak(rlp(launchpad, nonce)),
+      // which anyone can compute, and createPair is permissionless -- so an
+      // attacker creates that pair first and launchToken reverts with
+      // PAIR_EXISTS. A reverted launch never advances the launchpad's nonce,
+      // so every later launch deploys to the same squatted address and
+      // reverts too. One cheap transaction, bricked forever, for everyone.
+      const onlyAssAddress = await onlyAssToken.getAddress();
+      // A contract account's nonce starts at 1, and this launchpad has not
+      // deployed anything yet, so this is exactly where a plain CREATE would
+      // have put the first launched token.
+      const squatted = ethers.getCreateAddress({ from: await launchpad.getAddress(), nonce: 1 });
+
+      await factory.connect(other).createPair(squatted, onlyAssAddress);
+      expect(await factory.getPair(squatted, onlyAssAddress)).to.not.equal(ethers.ZeroAddress);
+
+      const tokenAddress = await launchAndGetToken();
+      expect(tokenAddress.toLowerCase()).to.not.equal(squatted.toLowerCase());
+      expect(await launchpad.launchCount()).to.equal(1n);
+    });
+
+    it('deploys to a different token address on every launch, even with identical params', async () => {
+      const first = await launchAndGetToken();
+      const second = await launchAndGetToken();
+      expect(first.toLowerCase()).to.not.equal(second.toLowerCase());
+    });
+  });
+
   it('blocks new launches while paused', async () => {
     await launchpad.connect(owner).pause();
     await expect(

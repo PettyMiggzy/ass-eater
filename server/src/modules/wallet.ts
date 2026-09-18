@@ -3,6 +3,11 @@ import { prisma } from '../lib/prisma';
 import { CHAIN_ID, depositAccount, TOKENS } from '../lib/chain';
 import { getUsdPrice } from '../lib/price';
 
+// Namespace for the Postgres advisory lock that serialises deposit-address
+// allocation (see POST /deposit-address). Arbitrary -- it only has to not
+// collide with another advisory lock this app takes, and it doesn't take any.
+const ADDRESS_LOCK_NS = 84120;
+
 export const wallet: FastifyPluginAsync = async (app) => {
   app.get('/balance', { preHandler: app.auth }, async (req) => {
     const a = await prisma.account.findUnique({ where: { userId: req.user.id } });
@@ -22,6 +27,17 @@ export const wallet: FastifyPluginAsync = async (app) => {
     const existing = await prisma.depositAddress.findUnique({ where: { userId_chainId: { userId: req.user.id, chainId: CHAIN_ID } } });
     if (existing) return existing;
     return prisma.$transaction(async (tx) => {
+      // MAX+1 on its own is a read-then-write race: two allocations that read
+      // the same MAX derive the *same* HD address and hand it to two different
+      // users, so one user's incoming deposits get credited to the other. The
+      // advisory lock is held until this transaction commits, so exactly one
+      // allocation per chain is ever in flight. Re-reading the caller's own row
+      // inside the lock also makes a double-clicked request return the address
+      // the first one just created, instead of failing the (userId, chainId)
+      // unique index.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADDRESS_LOCK_NS}::int, ${CHAIN_ID}::int)`;
+      const mine = await tx.depositAddress.findUnique({ where: { userId_chainId: { userId: req.user.id, chainId: CHAIN_ID } } });
+      if (mine) return mine;
       const [{ next }] = await tx.$queryRaw<{ next: number }[]>`SELECT COALESCE(MAX("derivationIndex"),0)+1 AS next FROM "DepositAddress" WHERE "chainId"=${CHAIN_ID}`;
       const address = depositAccount(Number(next)).address;
       return tx.depositAddress.create({ data: { userId: req.user.id, chainId: CHAIN_ID, address, derivationIndex: Number(next) } });

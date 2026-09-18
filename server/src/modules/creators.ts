@@ -5,12 +5,20 @@ import { isAddress } from 'viem';
 import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../core/ledger';
 
 export const creators: FastifyPluginAsync = async (app) => {
+  // Public only once KYC-approved -- the same bar discovery (GET / and /tags)
+  // applies and the same one app.creatorOk gates publishing/selling on. Without
+  // it a brand-new, never-verified signup was fully reachable by direct link
+  // even though nothing on the site ever listed them. Optional auth (no
+  // preHandler) so a creator can still pull up their own page to preview it
+  // while they're waiting on verification.
   app.get('/:username', async (req: any, reply) => {
+    let viewerId: string | null = null;
+    try { await req.jwtVerify(); viewerId = req.user.id; } catch {}
     const c = await prisma.creatorProfile.findFirst({
       where: { user: { username: req.params.username, status: 'ACTIVE' } },
       include: { tiers: { where: { active: true } }, user: { select: { username: true, kycStatus: true } } },
     });
-    if (!c) return reply.code(404).send({ error: 'not_found' });
+    if (!c || (c.user.kycStatus !== 'APPROVED' && c.userId !== viewerId)) return reply.code(404).send({ error: 'not_found' });
     const { payoutAddress, payoutsFrozen, ...pub } = c;
     return pub;
   });

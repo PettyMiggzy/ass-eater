@@ -59,6 +59,12 @@ export default function AdminPanel() {
         trending: !!selected.trending,
         premium: !!selected.premium,
         status: effectiveCreatorStatus(selected) || 'active',
+        // Rides along with `status` on every save because the two are one
+        // coupled decision -- see the comment in pages/api/admin/profile.js,
+        // which is where the pair is actually settled. Sent verbatim so an
+        // automatic suspension still inside its 30 days keeps its own clock
+        // when the admin saves some unrelated field.
+        suspendedUntil: selected.suspendedUntil || null,
         payoutMethod: selected.payoutMethod || 'onlyass',
         walletAddress: selected.walletAddress || '',
         socials: {
@@ -486,7 +492,7 @@ export default function AdminPanel() {
                       >
                         <option value="active">Active (public)</option>
                         <option value="pending">Pending (hidden)</option>
-                        <option value="suspended">Suspended (hidden, temporary)</option>
+                        <option value="suspended">Suspended (hidden, 30 days)</option>
                         <option value="banned">Banned (hidden, permanent)</option>
                       </select>
                     </label>
@@ -495,7 +501,8 @@ export default function AdminPanel() {
                   {(selected.contentViolationCount > 0 || selectedStatus === 'suspended' || selectedStatus === 'banned') && (
                     <p className="text-xs text-red-400">
                       {selected.contentViolationCount || 0} confirmed content violation(s)
-                      {selectedStatus === 'suspended' && selected.suspendedUntil && ` — suspended until ${new Date(selected.suspendedUntil).toLocaleDateString()}`}
+                      {selectedStatus === 'suspended' && selected.suspendedUntil && ` — suspended until ${new Date(selected.suspendedUntil).toLocaleDateString()}, lifts itself on that date`}
+                      {selectedStatus === 'suspended' && !selected.suspendedUntil && ' — suspended with no end date on record (a save from here will set one)'}
                       {selectedStatus === 'active' && selected.status === 'suspended' && ' — suspension has since expired, account is active again'}
                       {selectedStatus === 'banned' && ' — permanently banned'}
                       . Manually changing Status above overrides this (e.g. to reinstate early), but won't reset the
