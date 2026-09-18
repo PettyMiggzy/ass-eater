@@ -7,12 +7,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {IOnlyAssLaunchpadV4Views} from "./OnlyAssPayments.sol";
 
 /// @title OnlyAssCreatorNFT
 /// @notice Self-serve NFT drops: a creator picks an image, how many copies to
-/// mint, what to charge, and what to charge it in (ETH, $ONLYASS, or a token
-/// they themselves launched through OnlyAssLaunchpadV4). A fan mints straight
+/// mint, what to charge, and what to charge it in (ETH or $ONLYASS). A fan
+/// mints straight
 /// from the drop; the mint and the payment split happen atomically in the
 /// same transaction -- there is no separate "buy then wait for a mint" step
 /// and no off-chain relayer with a privileged mint key.
@@ -48,9 +47,6 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
     address public platformWallet;
     uint256 public platformFeeBps;
     address public onlyAssToken;
-    /// @notice The launchpad this contract trusts to say "yes, this creator
-    /// really did launch this token" -- same role as in OnlyAssPayments.
-    IOnlyAssLaunchpadV4Views public launchpad;
 
     struct Drop {
         address creator;
@@ -74,7 +70,6 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
     event PlatformWalletUpdated(address indexed oldWallet, address indexed newWallet);
     event PlatformFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps);
     event OnlyAssTokenUpdated(address indexed oldToken, address indexed newToken);
-    event LaunchpadUpdated(address indexed oldLaunchpad, address indexed newLaunchpad);
     event ERC20Rescued(address indexed token, address indexed to, uint256 amount);
 
     error ZeroAddress();
@@ -88,7 +83,6 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
     error DropSoldOut();
     error NotDropCreator();
     error WrongPaymentValue();
-    error LaunchpadNotSet();
     error InvalidDropId();
 
     constructor(
@@ -96,7 +90,6 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
         address initialPlatformWallet,
         uint256 initialFeeBps,
         address initialOnlyAssToken,
-        address initialLaunchpad,
         string memory contractMetadataURI
     ) ERC1155(contractMetadataURI) Ownable(initialOwner) {
         if (initialPlatformWallet == address(0) || initialOnlyAssToken == address(0)) revert ZeroAddress();
@@ -105,10 +98,6 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
         platformWallet = initialPlatformWallet;
         platformFeeBps = initialFeeBps;
         onlyAssToken = initialOnlyAssToken;
-        // Zero allowed -- payToken must then be address(0) (ETH) or
-        // onlyAssToken until a launchpad is wired up (see OnlyAssPayments'
-        // identical reasoning).
-        launchpad = IOnlyAssLaunchpadV4Views(initialLaunchpad);
     }
 
     /// @notice Start a new drop. Anyone can call this for themselves (there's
@@ -123,7 +112,12 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
         if (editionSize == 0 || editionSize > MAX_EDITION_SIZE) revert InvalidEditionSize();
         if (price == 0) revert ZeroAmount();
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
-        if (payToken != address(0) && payToken != onlyAssToken && !_isLaunchedByCreator(msg.sender, payToken)) {
+        // ETH or $ONLYASS only. A creator's own launched token used to be a
+        // third option, verified live against OnlyAssLaunchpadV4 -- that
+        // launchpad was removed from this repo, so there is no longer any
+        // such thing as a creator-launched token to accept, and an
+        // unverified arbitrary ERC-20 is not a substitute for it.
+        if (payToken != address(0) && payToken != onlyAssToken) {
             revert InvalidPayToken();
         }
 
@@ -198,19 +192,6 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
         return drops.length;
     }
 
-    /// @dev Loops the creator's launches -- same trust model and reasoning as
-    /// OnlyAssPayments._isLaunchedByCreator (view-only calls, launchpad is an
-    /// owner-set trusted address, a real creator's launch count is small).
-    function _isLaunchedByCreator(address creatorWallet, address token) internal view returns (bool) {
-        if (address(launchpad) == address(0)) revert LaunchpadNotSet();
-        uint256[] memory ids = launchpad.launchesOf(creatorWallet);
-        for (uint256 i = 0; i < ids.length; i++) {
-            (address launchedToken,,,,,,) = launchpad.launches(ids[i]);
-            if (launchedToken == token) return true;
-        }
-        return false;
-    }
-
     function _split(uint256 grossAmount) internal view returns (uint256 feeAmount, uint256 creatorAmount) {
         feeAmount = (grossAmount * platformFeeBps) / BPS_DENOMINATOR;
         creatorAmount = grossAmount - feeAmount;
@@ -241,11 +222,6 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
         if (newToken == address(0)) revert ZeroAddress();
         emit OnlyAssTokenUpdated(onlyAssToken, newToken);
         onlyAssToken = newToken;
-    }
-
-    function setLaunchpad(address newLaunchpad) external onlyOwner {
-        emit LaunchpadUpdated(address(launchpad), newLaunchpad);
-        launchpad = IOnlyAssLaunchpadV4Views(newLaunchpad);
     }
 
     function pause() external onlyOwner {

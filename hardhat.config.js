@@ -15,9 +15,13 @@ module.exports = {
         },
       },
       {
-        // Uniswap V4 (contracts/OnlyAssLaunchpadHook.sol, OnlyAssLaunchpadV4.sol,
-        // HookDeployer.sol, contracts/libraries + contracts/interfaces' V4 files)
-        // are pinned to this exact version -- matching @uniswap/v4-core's own
+        // NOTE: the contracts this override existed for (the V4 launchpad,
+        // its hook and HookDeployer) were removed from this repo -- nothing
+        // here compiles at 0.8.26 any more. Left in place rather than ripped
+        // out because @uniswap/v4-core is still a dependency and this is the
+        // settings block that makes it compile if anything pulls it back in.
+        //
+        // Uniswap V4 contracts are pinned to this exact version -- matching @uniswap/v4-core's own
         // foundry.toml (`solc = "0.8.26"`) rather than this repo's existing
         // 0.8.24, since V4 relies on transient storage (TLOAD/TSTORE), which
         // needs `evmVersion: "cancun"` to even be emitted. `viaIR` is on for

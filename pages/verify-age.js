@@ -78,11 +78,7 @@ export default function VerifyAge() {
 
           {!API_KEY ? (
             <p className="text-gray-400 text-sm">
-              Identity verification is still being set up for your state. Check our{' '}
-              <a href="https://t.me/creatorsfirst" target="_blank" rel="noopener noreferrer" className="text-brand-gold underline">
-                Telegram
-              </a>{' '}
-              for updates.
+              Identity verification is still being set up for your state. Please check back soon.
             </p>
           ) : (
             <>

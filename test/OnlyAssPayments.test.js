@@ -13,23 +13,18 @@ describe('OnlyAssPayments', function () {
     const token = await Token.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000000'));
     await token.waitForDeployment();
 
-    const MockLaunchpad = await ethers.getContractFactory('MockLaunchpadViews');
-    const launchpad = await MockLaunchpad.deploy();
-    await launchpad.waitForDeployment();
-
     const Payments = await ethers.getContractFactory('OnlyAssPayments');
     const payments = await Payments.deploy(
       owner.address,
       platformWallet.address,
       FEE_BPS,
-      await token.getAddress(),
-      await launchpad.getAddress()
+      await token.getAddress()
     );
     await payments.waitForDeployment();
 
     await token.transfer(fan.address, ethers.parseEther('1000'));
 
-    return { owner, platformWallet, creatorWallet, fan, other, token, payments, launchpad };
+    return { owner, platformWallet, creatorWallet, fan, other, token, payments };
   }
 
   describe('ETH payments', function () {
@@ -123,86 +118,10 @@ describe('OnlyAssPayments', function () {
     });
   });
 
-  describe('creator-token payments', function () {
-    it('pays a creator in their own token, split the same way as $ONLYASS, once the launchpad confirms they launched it', async function () {
-      const { payments, platformWallet, creatorWallet, fan, launchpad } = await deploy();
-
-      const CreatorToken = await ethers.getContractFactory('MockOnlyAssToken');
-      const creatorToken = await CreatorToken.deploy('Creator Coin', 'CREATOR', ethers.parseEther('1000000'));
-      await creatorToken.waitForDeployment();
-      const creatorTokenAddress = await creatorToken.getAddress();
-      await creatorToken.transfer(fan.address, ethers.parseEther('100'));
-      await launchpad.addLaunch(creatorWallet.address, creatorTokenAddress);
-
-      const amount = ethers.parseEther('100');
-      await creatorToken.connect(fan).approve(await payments.getAddress(), amount);
-
-      await expect(
-        payments.connect(fan).payWithCreatorToken(CREATOR_ID, CONTENT_ID, creatorWallet.address, creatorTokenAddress, amount)
-      )
-        .to.emit(payments, 'Purchase')
-        .withArgs(fan.address, creatorWallet.address, CREATOR_ID, creatorTokenAddress, amount, amount / 10n, amount - amount / 10n, CONTENT_ID);
-
-      expect(await creatorToken.balanceOf(platformWallet.address)).to.equal(amount / 10n);
-      expect(await creatorToken.balanceOf(creatorWallet.address)).to.equal(amount - amount / 10n);
-    });
-
-    it('rejects a token that creator never launched on the launchpad', async function () {
-      const { payments, creatorWallet, fan } = await deploy();
-
-      const RandomToken = await ethers.getContractFactory('MockOnlyAssToken');
-      const randomToken = await RandomToken.deploy('Random', 'RND', ethers.parseEther('1000'));
-      await randomToken.waitForDeployment();
-      await randomToken.transfer(fan.address, ethers.parseEther('10'));
-      await randomToken.connect(fan).approve(await payments.getAddress(), ethers.parseEther('10'));
-
-      await expect(
-        payments.connect(fan).payWithCreatorToken(CREATOR_ID, CONTENT_ID, creatorWallet.address, await randomToken.getAddress(), ethers.parseEther('10'))
-      ).to.be.revertedWithCustomError(payments, 'TokenNotLaunchedByCreator');
-    });
-
-    it('rejects someone else\'s launched token when claiming a different creator wallet', async function () {
-      const { payments, creatorWallet, fan, other, launchpad } = await deploy();
-
-      const CreatorToken = await ethers.getContractFactory('MockOnlyAssToken');
-      const creatorToken = await CreatorToken.deploy('Creator Coin', 'CREATOR', ethers.parseEther('1000'));
-      await creatorToken.waitForDeployment();
-      await creatorToken.transfer(fan.address, ethers.parseEther('10'));
-      await creatorToken.connect(fan).approve(await payments.getAddress(), ethers.parseEther('10'));
-      // "other" launched this token, not "creatorWallet"
-      await launchpad.addLaunch(other.address, await creatorToken.getAddress());
-
-      await expect(
-        payments.connect(fan).payWithCreatorToken(CREATOR_ID, CONTENT_ID, creatorWallet.address, await creatorToken.getAddress(), ethers.parseEther('10'))
-      ).to.be.revertedWithCustomError(payments, 'TokenNotLaunchedByCreator');
-    });
-
-    it('reverts with LaunchpadNotSet when no launchpad has been configured', async function () {
-      const [owner, platformWallet, creatorWallet, fan] = await ethers.getSigners();
-      const Token = await ethers.getContractFactory('MockOnlyAssToken');
-      const token = await Token.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000'));
-      await token.waitForDeployment();
-      const Payments = await ethers.getContractFactory('OnlyAssPayments');
-      const paymentsNoLaunchpad = await Payments.deploy(
-        owner.address,
-        platformWallet.address,
-        FEE_BPS,
-        await token.getAddress(),
-        ethers.ZeroAddress
-      );
-      await paymentsNoLaunchpad.waitForDeployment();
-
-      await expect(
-        paymentsNoLaunchpad.connect(fan).payWithCreatorToken(CREATOR_ID, CONTENT_ID, creatorWallet.address, await token.getAddress(), ethers.parseEther('1'))
-      ).to.be.revertedWithCustomError(paymentsNoLaunchpad, 'LaunchpadNotSet');
-    });
-  });
-
   describe('admin controls', function () {
     it('takes its owner from the constructor, not from whoever broadcast the deploy', async function () {
-      // Matches every other contract in this repo (both launchpads, the hook,
-      // the NFT drops contract): the deploying key and the intended owner are
-      // not necessarily the same address.
+      // Matches OnlyAssCreatorNFT: the deploying key and the intended owner
+      // are not necessarily the same address.
       const [deployer, platformWallet, intendedOwner] = await ethers.getSigners();
       const Token = await ethers.getContractFactory('MockOnlyAssToken');
       const token = await Token.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000'));
@@ -213,8 +132,7 @@ describe('OnlyAssPayments', function () {
         intendedOwner.address,
         platformWallet.address,
         FEE_BPS,
-        await token.getAddress(),
-        ethers.ZeroAddress
+        await token.getAddress()
       );
       await payments.waitForDeployment();
 

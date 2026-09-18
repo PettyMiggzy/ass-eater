@@ -228,14 +228,6 @@ export default function Home({ creators }) {
                 <span className="text-brand-gold font-mono ml-2 break-all">{process.env.NEXT_PUBLIC_CONTRACT_ADDRESS}</span>
               </div>
               <span className="px-3 py-1 rounded-full bg-brand-purple/20 text-brand-purple text-xs font-bold w-fit">Robinhood Chain</span>
-              <a
-                href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="premium-button text-sm py-2 px-5 sm:ml-auto"
-              >
-                Buy $ONLYASS
-              </a>
             </div>
           </div>
         </section>
@@ -253,7 +245,6 @@ export default function Home({ creators }) {
               <a href="/terms" className="hover:text-brand-gold transition">Acceptable Use</a>
               <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">Report Non-Consensual Content</a>
               <a href="mailto:support@onlyass.fun" className="hover:text-brand-gold transition">Contact</a>
-              <a href="https://t.me/creatorsfirst" target="_blank" rel="noopener noreferrer" className="hover:text-brand-gold transition">Telegram</a>
             </div>
             <p className="text-gray-500 text-xs max-w-2xl mx-auto mb-2 text-center">
               18+ only. This site contains adult content. $ONLYASS is a meme token for entertainment purposes —

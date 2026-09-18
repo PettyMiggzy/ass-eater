@@ -28,7 +28,7 @@ async function main() {
   console.log('entire supply minted to deployer:', deployer.address);
   console.log('\nThis is the one and only mint -- there is no mint function on the contract.');
   console.log('Next: set ONLYASS_TOKEN_ADDRESS to the address above everywhere it is read');
-  console.log('(server/.env, contracts/.env for the launchpad deploy, NEXT_PUBLIC_CONTRACT_ADDRESS in Vercel),');
+  console.log('(server/.env, NEXT_PUBLIC_CONTRACT_ADDRESS in Vercel),');
   console.log('then run scripts/seed-onlyass-pool.js to give it an initial market before anyone can trade it.');
 }
 

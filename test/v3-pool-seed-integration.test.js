@@ -9,7 +9,7 @@ const FEE = 3000; // enabled by default in UniswapV3Factory's constructor, unlik
 
 // This exercises seed-onlyass-pool.js's actual price math (sqrtPriceX96FromPrice
 // + sortTokens) against REAL Uniswap V3 factory/pool bytecode -- not a mock --
-// the same pattern already used for the launchpad's V2 tests. It proves the
+// the same pattern used elsewhere for pool math tests. It proves the
 // full pipeline (a human price string -> our math -> a real pool's slot0())
 // round-trips correctly, which is exactly the step where a sign/decimals bug
 // would otherwise only surface after real money is already in the pool.

@@ -11,17 +11,12 @@ describe('OnlyAssCreatorNFT', function () {
     const onlyAss = await OnlyAss.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000000'));
     await onlyAss.waitForDeployment();
 
-    const MockLaunchpad = await ethers.getContractFactory('MockLaunchpadViews');
-    const launchpad = await MockLaunchpad.deploy();
-    await launchpad.waitForDeployment();
-
     const NFT = await ethers.getContractFactory('OnlyAssCreatorNFT');
     const nft = await NFT.deploy(
       owner.address,
       platformWallet.address,
       FEE_BPS,
       await onlyAss.getAddress(),
-      await launchpad.getAddress(),
       'https://onlyass.fun/api/nft-contract-metadata',
     );
     await nft.waitForDeployment();
@@ -29,7 +24,7 @@ describe('OnlyAssCreatorNFT', function () {
     await onlyAss.transfer(fan.address, ethers.parseEther('10000'));
     await onlyAss.transfer(fan2.address, ethers.parseEther('10000'));
 
-    return { owner, platformWallet, creator, fan, fan2, other, onlyAss, launchpad, nft };
+    return { owner, platformWallet, creator, fan, fan2, other, onlyAss, nft };
   }
 
   async function createEthDrop(nft, creator, overrides = {}) {
@@ -52,21 +47,17 @@ describe('OnlyAssCreatorNFT', function () {
         .withArgs(0, creator.address, ethers.ZeroAddress, ethers.parseEther('0.05'), 25, 'https://onlyass.fun/api/nft/1');
     });
 
-    it('allows $ONLYASS as the pay token without needing the launchpad', async function () {
+    it('allows $ONLYASS as the pay token', async function () {
       const { nft, creator, onlyAss } = await deploy();
       await expect(nft.connect(creator).createDrop(await onlyAss.getAddress(), ethers.parseEther('50'), 5, 'uri')).to.not.be.reverted;
     });
 
-    it('allows a token the creator actually launched, verified against the launchpad', async function () {
-      const { nft, creator, launchpad } = await deploy();
-      const CreatorToken = await ethers.getContractFactory('MockOnlyAssToken');
-      const creatorToken = await CreatorToken.deploy('Creator Coin', 'CREATOR', ethers.parseEther('1000'));
-      await launchpad.addLaunch(creator.address, await creatorToken.getAddress());
-
-      await expect(nft.connect(creator).createDrop(await creatorToken.getAddress(), ethers.parseEther('10'), 5, 'uri')).to.not.be.reverted;
-    });
-
-    it('rejects a token the creator never launched', async function () {
+    // ETH and $ONLYASS are the only accepted pay tokens. A creator's own
+    // launched token used to be a third option, verified against
+    // OnlyAssLaunchpadV4; that launchpad was removed from the repo, so an
+    // arbitrary ERC-20 must now be rejected outright rather than accepted on
+    // the strength of a launch record that can no longer exist.
+    it('rejects any other ERC-20 as the pay token', async function () {
       const { nft, creator } = await deploy();
       const RandomToken = await ethers.getContractFactory('MockOnlyAssToken');
       const randomToken = await RandomToken.deploy('Random', 'RND', ethers.parseEther('1000'));
@@ -163,7 +154,7 @@ describe('OnlyAssCreatorNFT', function () {
     });
   });
 
-  describe('mintEdition (ERC-20: $ONLYASS and a creator-launched token)', function () {
+  describe('mintEdition (ERC-20: $ONLYASS)', function () {
     it('pulls $ONLYASS via approval and splits it the same way', async function () {
       const { nft, creator, platformWallet, fan, onlyAss } = await deploy();
       const price = ethers.parseEther('100');
@@ -177,23 +168,6 @@ describe('OnlyAssCreatorNFT', function () {
       expect(await onlyAss.balanceOf(platformWallet.address)).to.equal(price / 10n);
       expect(await onlyAss.balanceOf(creator.address)).to.equal(price - price / 10n);
       expect(await nft.balanceOf(fan.address, dropId)).to.equal(1n);
-    });
-
-    it('pulls a creator-launched token the same way', async function () {
-      const { nft, creator, platformWallet, fan, launchpad } = await deploy();
-      const CreatorToken = await ethers.getContractFactory('MockOnlyAssToken');
-      const creatorToken = await CreatorToken.deploy('Creator Coin', 'CREATOR', ethers.parseEther('1000000'));
-      await launchpad.addLaunch(creator.address, await creatorToken.getAddress());
-      await creatorToken.transfer(fan.address, ethers.parseEther('1000'));
-
-      const price = ethers.parseEther('200');
-      const dropId = await createEthDrop(nft, creator, { payToken: await creatorToken.getAddress(), price });
-      await creatorToken.connect(fan).approve(await nft.getAddress(), price);
-
-      await nft.connect(fan).mintEdition(dropId);
-
-      expect(await creatorToken.balanceOf(platformWallet.address)).to.equal(price / 10n);
-      expect(await creatorToken.balanceOf(creator.address)).to.equal(price - price / 10n);
     });
 
     it('rejects sending ETH value on an ERC-20-priced drop', async function () {

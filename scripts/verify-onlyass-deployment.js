@@ -3,7 +3,7 @@ const { computePoolId, poolStateSlot, decodeSlot0 } = require('./lib/v4-pool-mat
 
 // Run this the moment $ONLYASS actually deploys (Kekfun.xyz auction closing
 // Thursday, or wherever it ends up) -- confirms the address is real before
-// anything downstream (server/.env, Vercel, the launchpad deploy) trusts it.
+// anything downstream (server/.env, Vercel) trusts it.
 // A pre-computed address shown by a launch platform's own UI is normally
 // reliable, but "normally reliable" isn't the same as "confirmed on-chain",
 // and this takes ten seconds to run.

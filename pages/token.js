@@ -28,8 +28,6 @@ const ROADMAP = [
     subtitle: 'Token infrastructure',
     items: [
       { label: '$ONLYASS deployed/bridged onto Robinhood Chain', status: 'planned' },
-      { label: 'OnlyAssLaunchpad (V2): creators launch their own token, paired against $ONLYASS (code done, tested against real Uniswap V2, Slither-clean)', status: 'built' },
-      { label: 'OnlyAssLaunchpad V4: rebuilt on Uniswap V4 -- creators set their own trading tax, platform takes a fixed 1% via a custom hook, plus a 1 ETH graduation bonus (0.5 creator / 0.5 platform) at a volume milestone (code done, tested against real V4 core/periphery locally; needs a professional audit before mainnet)', status: 'built' },
       { label: 'Live price oracle for $ONLYASS (Uniswap pool once one exists)', status: 'planned' },
     ],
   },
@@ -70,14 +68,6 @@ export default function TokenLanding() {
             <span className="text-xl font-black premium-title">$ONLYASS</span>
             <div className="flex items-center gap-4">
               <a href="/get-crypto" className="text-sm text-gray-300 hover:text-brand-gold transition">New to crypto?</a>
-              <a
-                href={process.env.NEXT_PUBLIC_LAUNCHPAD_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-1.5 rounded-full bg-gradient-to-r from-brand-gold to-brand-purple text-black font-bold text-sm hover:scale-105 transition"
-              >
-                Join Auction
-              </a>
             </div>
           </div>
         </nav>
@@ -115,11 +105,7 @@ export default function TokenLanding() {
         </section>
 
         <section className="py-16 px-6 border-t border-brand-purple/10">
-          <div className="max-w-3xl mx-auto grid sm:grid-cols-3 gap-6 text-center">
-            <div className="premium-card p-6">
-              <h3 className="text-lg font-black text-brand-gold mb-2">Live Auction</h3>
-              <p className="text-gray-400 text-sm">4-day fair launch. No VC allocation, no presale.</p>
-            </div>
+          <div className="max-w-3xl mx-auto grid sm:grid-cols-2 gap-6 text-center">
             <div className="premium-card p-6">
               <h3 className="text-lg font-black text-brand-gold mb-2">Real Product</h3>
               <p className="text-gray-400 text-sm">Backs a live creator platform — not just a chart.</p>
