@@ -64,7 +64,7 @@ beforeEach(async () => {
   // PlatformConfig is a true singleton (id 1), shared across every test in
   // this file -- reset it to the real default before each test so a test
   // that lowers the VIP threshold can't leak into whichever test runs next.
-  await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipBurnThresholdTokens: 10_000_000, vipBurnThresholdUsdCents: null }, update: { vipBurnThresholdTokens: 10_000_000, vipBurnThresholdUsdCents: null } });
+  await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipPriceCents: 2000, vipBurnBps: 10_000 }, update: { vipPriceCents: 2000, vipBurnBps: 10_000 } });
 });
 
 afterAll(async () => {
@@ -300,11 +300,11 @@ describe('ledger.charge', () => {
     expect(await balanceOf(fan)).toBe(0n);
   });
 
-  it('gives a VIP fan (burned enough $ONLYASS) 10% off, regardless of which balance they pay from', async () => {
+  it('gives a paid-up VIP member 10% off', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 10_000);
-    await prisma.account.update({ where: { userId: fan }, data: { vipBurnedTokens: 10_000_000 } });
+    await prisma.account.update({ where: { userId: fan }, data: { vipUntil: new Date(Date.now() + 86_400_000) } });
 
     const result = await money(prisma, (tx) =>
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-vip-1' }),
@@ -317,11 +317,10 @@ describe('ledger.charge', () => {
     expect(await balanceOf(creator)).toBe(810n);
   });
 
-  it('gives no discount to a fan who has burned some tokens but not enough to reach the threshold', async () => {
+  it('gives no discount to a fan who has never been VIP', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 10_000);
-    await prisma.account.update({ where: { userId: fan }, data: { vipBurnedTokens: 9_999_999 } });
 
     const result = await money(prisma, (tx) =>
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-vip-2' }),
@@ -331,17 +330,20 @@ describe('ledger.charge', () => {
     expect(result.fee).toBe(100);
   });
 
-  it('respects a lowered VIP threshold retroactively for a fan who already burned enough for the new bar', async () => {
+  // VIP is a membership now, not a permanent badge (decided 2026-09-18). An
+  // expiry in the past must stop discounting -- a lapsed member who kept the
+  // discount would be a paid feature nobody ever needs to renew.
+  it('gives no discount once a VIP membership has lapsed', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 10_000);
-    await prisma.account.update({ where: { userId: fan }, data: { vipBurnedTokens: 6_000_000 } });
-    await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipBurnThresholdTokens: 5_000_000, vipBurnThresholdUsdCents: null }, update: { vipBurnThresholdTokens: 5_000_000, vipBurnThresholdUsdCents: null } });
+    await prisma.account.update({ where: { userId: fan }, data: { vipUntil: new Date(Date.now() - 1000) } });
 
     const result = await money(prisma, (tx) =>
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-vip-3' }),
     );
 
-    expect(result.gross).toBe(900); // now qualifies under the lowered 5,000,000 threshold
+    expect(result.gross).toBe(1000);
+    expect(result.fee).toBe(100);
   });
 });

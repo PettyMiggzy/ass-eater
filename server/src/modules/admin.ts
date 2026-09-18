@@ -12,15 +12,26 @@ export const admin: FastifyPluginAsync = async (app) => {
   // reach VIP (see core/vip.ts) rather than letting the USD cost of VIP
   // status float upward indefinitely.
   app.get('/vip-config', async () =>
-    prisma.platformConfig.findUnique({ where: { id: 1 } }) ?? { id: 1, vipBurnThresholdTokens: 10_000_000 });
+    (await prisma.platformConfig.findUnique({ where: { id: 1 } })) ?? { id: 1, vipPriceCents: 2000, vipBurnBps: 10_000 });
 
   app.patch('/vip-config', async (req: any) => {
-    const { vipBurnThresholdTokens } = z.object({ vipBurnThresholdTokens: z.number().positive() }).parse(req.body);
-    return prisma.platformConfig.upsert({
-      where: { id: 1 },
-      create: { id: 1, vipBurnThresholdTokens },
-      update: { vipBurnThresholdTokens },
-    });
+    const body = z.object({
+      vipPriceCents: z.number().int().positive().optional(),
+      // Capped at 100%: the platform cannot commit to burning more than the
+      // revenue it took in, which would be spending money it does not have.
+      vipBurnBps: z.number().int().min(0).max(10_000).optional(),
+    }).parse(req.body);
+    return prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, ...body }, update: body });
+  });
+
+  /** How much has actually been destroyed, and how much is still owed. */
+  app.get('/token-burns', async () => {
+    const [executed, pending] = await Promise.all([
+      prisma.tokenBurn.findMany({ where: { NOT: { executedAt: null } }, orderBy: { executedAt: 'desc' }, take: 100 }),
+      prisma.tokenBurn.findMany({ where: { executedAt: null }, orderBy: { createdAt: 'asc' }, take: 100 }),
+    ]);
+    const sum = (rows: { usdCents: bigint }[]) => rows.reduce((a, r) => a + r.usdCents, 0n).toString();
+    return { executed, pending, executedCents: sum(executed), pendingCents: sum(pending) };
   });
 
   app.get('/reports', async (req: any) =>

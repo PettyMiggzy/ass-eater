@@ -391,38 +391,51 @@ model Account {
   // Funded only by depositing in $ONLYASS directly (see deposit-indexer.ts).
   // No longer discounted just for spending from here -- see charge()/MEMORY.md.
   onlyAssCents BigInt @default(0)
-  // Cumulative whole $ONLYONE tokens this fan has burned via POST /vip/burn
-  // (core/vip.ts). Lowering the threshold later immediately qualifies anyone
-  // who already burned enough for the new bar.
-  vipBurnedTokens Float @default(0)
-  // Set the first time this account meets the bar, and NEVER cleared.
+  // VIP runs while this is in the future. A paid monthly membership, NOT a
+  // one-time burn: decided 2026-09-18, replacing the earlier "burn tokens for
+  // permanent VIP" design outright.
   //
-  // VIP was sold as permanent -- "a VIP club, not a subscription". Deciding
-  // it live against the current threshold quietly broke that promise in the
-  // other direction: raising the threshold un-VIP'd people who had already
-  // burned their tokens and could not get them back. That becomes constant
-  // once the threshold is priced in dollars (below), because the token count
-  // it takes to reach VIP rises every time the price falls -- every dip would
-  // have revoked everyone. Earned once is earned.
-  vipSince        DateTime?
+  // The fan pays in credits and never touches a token or a wallet -- that
+  // revenue is what buys $ONLYONE on the open market and burns it (see
+  // TokenBurn below), which is a better demand engine than one-off fan burns
+  // because it recurs every month whether or not anyone is paying attention.
+  vipUntil        DateTime?
 }
 
 // Singleton row (id is always 1) for platform-wide numeric knobs that need to
 // change without a redeploy.
 model PlatformConfig {
-  id                      Int   @id @default(1)
-  // Fallback bar, in whole tokens. Only used when the dollar target below is
-  // unset or no price is available (e.g. before the token has a pool).
+  id             Int @id @default(1)
+  // What VIP costs per month, in cents. $20 by default.
+  vipPriceCents  Int @default(2000)
+  // What share of VIP revenue is spent buying $ONLYONE on the open market and
+  // burning it, in basis points. 10000 = all of it.
   //
-  // A FIXED TOKEN COUNT DOES NOT SCALE, which is why it is the fallback and
-  // not the mechanism: at a 1,000,000,000 supply a 10,000,000 bar allows
-  // 100 VIP members in total, ever, and only if every token ever minted were
-  // burned. The real ceiling is a fraction of that.
-  vipBurnThresholdTokens  Float @default(250000)
-  // What VIP should COST, in cents. The token count is derived from this and
-  // the live price, so the bar self-adjusts as the price moves and never
-  // collides with total supply. Null = use the fixed count above.
-  vipBurnThresholdUsdCents Int? @default(7500)
+  // The whole point of charging in dollars rather than asking fans to burn
+  // tokens themselves: a fan needs no wallet, and the buy still lands on the
+  // open market where it moves the price, instead of the platform selling
+  // tokens (which would cap the price at whatever it sold them for).
+  vipBurnBps     Int @default(10000)
+}
+
+// Money committed to buying $ONLYONE on the open market and destroying it.
+//
+// Recorded the moment the revenue arrives, executed later by the token-burn
+// worker, so an outage or a missing pool delays the burn instead of losing
+// it. A row with no txHash is an obligation the platform still owes the
+// supply -- which makes "how much have we actually burned" answerable from
+// the database rather than from memory.
+model TokenBurn {
+  id          String    @id @default(uuid())
+  usdCents    BigInt
+  reason      String    // "vip" -- what the money came from
+  refId       String?   // the charge it came from, for tracing
+  createdAt   DateTime  @default(now())
+  executedAt  DateTime?
+  txHash      String?   // the on-chain swap+burn, once done
+  tokensBurned String?  // raw units actually destroyed
+
+  @@index([executedAt])
 }
 
 model LedgerEntry {

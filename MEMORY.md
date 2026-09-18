@@ -2068,3 +2068,67 @@ rely on having to push a token, it'll push itself"*:
 
 Both built. Neither needs the platform to be a buyer or seller of last
 resort, which is the only way a price is free to move.
+
+## VIP is now $20/month, and its revenue buys-and-burns the token (2026-09-18)
+
+**Decided and built. This REPLACES the burn-for-permanent-VIP design
+outright** -- founder: *"Obviously, VIP is not forever now."* Do not
+reintroduce the old one; everything below is the current design.
+
+A fan pays **$20/month in credits** for the badge and the 10% discount. They
+never touch a token, a wallet or a DEX. That revenue is what buys $ONLYONE on
+the **open market** and destroys it.
+
+Why this is better than the fan-burn version it replaced, in the founder's
+own framing of wanting the token to "push itself":
+- **It recurs.** A one-time burn is a single event; a membership destroys
+  supply every month for as long as the member stays.
+- **The buy lands on the open market**, so it is buy pressure AND a supply
+  cut. Contrast the credits-as-token design, where the platform SELLS tokens
+  at a fixed price -- which caps the price at whatever it sells them for.
+- **No wallet needed**, which is the difference between a perk most fans can
+  buy and one most fans bounce off.
+
+### What was built
+
+- `Account.vipUntil` replaces `vipSince`/`vipBurnedTokens`. VIP runs while
+  that timestamp is in the future. `PlatformConfig` is now `vipPriceCents`
+  (2000) and `vipBurnBps` (10000 = all of VIP revenue goes to the burn);
+  the old threshold fields are gone.
+- `subscribeVip()` charges credits and extends from **the later of the
+  current expiry and now**, so paying early adds a month instead of throwing
+  away the remainder; a lapsed member restarts from today.
+- **New `TokenBurn` table: the obligation is written in the SAME transaction
+  as the charge.** Recording it afterwards would mean a crash between the two
+  silently keeps the money and never buys the tokens -- the one failure here
+  nobody would ever notice, because the fan still gets their badge. Pending
+  rows are what the platform still owes the supply; `GET /admin/token-burns`
+  reports burned vs owed.
+- `workers/token-burn.ts` executes them: batches (a $20 swap costs more in gas
+  and impact than it destroys), checks the treasury can actually cover the
+  batch, swaps stablecoin -> $ONLYONE with the **dead address as the swap
+  recipient** so the tokens are destroyed in the same transaction that buys
+  them, and only marks rows done after a successful receipt, storing the tx
+  hash so "we burned X" is checkable on-chain rather than a dashboard claim.
+  Uses `0x…dEaD`, not `address(0)` -- many ERC-20s revert transfers to zero,
+  which would fail the burn instead of performing it. Every failure mode
+  (no router, thin treasury, reverted swap) leaves obligations pending rather
+  than dropping them.
+- `isVip` moved into `core/ledger.ts`: `charge()` needs it and `core/vip.ts`
+  needs `charge()`'s primitives, so leaving it in vip.ts made the two modules
+  import each other.
+
+### Answered: credits in the database, not a second token
+
+Founder asked whether to record credits in the DB or mint a separate "credit
+token". **Database, decisively.** An on-chain credit means every tip, unlock
+and subscription is a transaction the fan signs and pays gas for -- a $3 tip
+with a gas fee, on the busiest path in the product, for the exact audience he
+described as not knowing how to use crypto. A transferable credit token also
+reopens the second-price problem. A non-transferable one is a database row
+that costs gas. And on-chain credits cannot be reversed for fraud or a
+mistaken charge. The only argument for it is trustlessness, which is already
+gone since the platform custodies the USDC -- it would be theatre with a gas
+bill.
+
+57 server tests pass, tsc clean.

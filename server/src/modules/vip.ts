@@ -1,20 +1,21 @@
 import { FastifyPluginAsync } from 'fastify';
-import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { money } from '../core/ledger';
-import { burnTokens, getVipStatus } from '../core/vip';
+import { subscribeVip, getVipStatus } from '../core/vip';
 
-// "Burn $ONLYASS for VIP" -- a fan permanently gives up tokens (from their
-// $ONLYASS-funded balance) for a platform-wide discount on everything, once
-// their cumulative burn crosses the current threshold. See core/vip.ts's
-// header for exactly what "burn" means here (ledger-side, not yet an
-// on-chain burn transaction) and MEMORY.md's "Fee structure & discounts"
-// section for why this replaced the earlier "stake for a month" idea.
+/**
+ * VIP: $20/month for the badge and a 10% discount on everything.
+ *
+ * Paid in credits like everything else -- the fan never touches a token or a
+ * wallet. The revenue is what buys $ONLYONE on the open market and burns it
+ * (workers/token-burn.ts). Replaced the earlier "burn tokens yourself for
+ * permanent VIP" design on 2026-09-18; see core/vip.ts for why.
+ */
 export const vip: FastifyPluginAsync = async (app) => {
   app.get('/status', { preHandler: app.auth }, async (req) => money(prisma, (tx) => getVipStatus(tx, req.user.id)));
 
-  app.post('/burn', { preHandler: app.auth }, async (req) => {
-    const { tokens } = z.object({ tokens: z.number().positive().max(1_000_000_000) }).parse(req.body);
-    return money(prisma, (tx) => burnTokens(tx, req.user.id, tokens));
-  });
+  // No body: there is one price and one period. Extends from the current
+  // expiry when there is one, so paying early never burns the remainder.
+  app.post('/subscribe', { preHandler: app.auth }, async (req) =>
+    money(prisma, (tx) => subscribeVip(tx, req.user.id)));
 };
