@@ -300,12 +300,10 @@ describe('ledger.charge', () => {
     expect(await balanceOf(fan)).toBe(0n);
   });
 
-  // The discount is the platform's to fund. A creator must earn exactly the
-  // same on a VIP's money as on anyone else's -- it used to come off the top
-  // so the creator took 81 instead of 90 while the platform gave up 1, which
-  // is the creator paying for the platform's loyalty programme out of money
-  // the fan meant for them.
-  it('gives a paid-up VIP member 5% off, entirely out of the platform fee', async () => {
+  // Decided 2026-09-18: the platform keeps a flat 10% and NOTHING reduces it.
+  // VIP is sold on perks alone. These three are the guard on that -- a
+  // discount reappearing anywhere would show up here as a charge below list.
+  it('charges a VIP member exactly the list price, like everyone else', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 10_000);
@@ -316,34 +314,31 @@ describe('ledger.charge', () => {
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-vip-1' }),
     );
 
-    expect(result.gross).toBe(950); // 1000 - 5% VIP discount
-    expect(result.net).toBe(900); // creator's cut is UNCHANGED by the fan being VIP
-    expect(result.fee).toBe(50); // the platform absorbed the whole 50
-    expect(await balanceOf(fan)).toBe(10_000n - 950n);
+    expect(result.gross).toBe(1000);
+    expect(result.fee).toBe(100);
+    expect(result.net).toBe(900);
+    expect(await balanceOf(fan)).toBe(10_000n - 1000n);
     expect(await balanceOf(creator)).toBe(900n);
-    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(50n);
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(100n);
   });
 
-  // The invariant that stops VIP minting money: a discount bigger than the
-  // platform's own cut would have the platform paying the difference on every
-  // single charge. FEES are clamped so the fee can never go negative.
-  it('never lets the VIP discount exceed the platform fee', async () => {
-    expect(FEES.VIP_DISCOUNT_BPS).toBeLessThanOrEqual(FEES.DEFAULT_BPS);
-
-    const fan = await makeUser();
+  it('keeps the full platform cut regardless of VIP', async () => {
     const creator = await makeCreator();
-    await fund(fan, 10_000);
-    await prisma.account.update({ where: { userId: fan }, data: { vipUntil: new Date(Date.now() + 86_400_000) } });
+    const platformBefore = await balanceOf(PLATFORM_ID);
 
-    const result = await money(prisma, (tx) =>
-      charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-vip-clamp' }),
-    );
-
-    expect(result.fee).toBeGreaterThanOrEqual(0);
-    expect(result.gross).toBeGreaterThanOrEqual(result.net);
+    for (const [refId, vip] of [['flat-a', false], ['flat-b', true]] as const) {
+      const fan = await makeUser();
+      await fund(fan, 10_000);
+      if (vip) await prisma.account.update({ where: { userId: fan }, data: { vipUntil: new Date(Date.now() + 86_400_000) } });
+      const r = await money(prisma, (tx) =>
+        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId }),
+      );
+      expect(r.fee).toBe(100);
+    }
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(200n);
   });
 
-  it('gives no discount to a fan who has never been VIP', async () => {
+  it('charges a non-VIP the list price too', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 10_000);
@@ -359,7 +354,7 @@ describe('ledger.charge', () => {
   // VIP is a membership now, not a permanent badge (decided 2026-09-18). An
   // expiry in the past must stop discounting -- a lapsed member who kept the
   // discount would be a paid feature nobody ever needs to renew.
-  it('gives no discount once a VIP membership has lapsed', async () => {
+  it('charges a lapsed VIP the list price', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 10_000);

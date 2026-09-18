@@ -84,8 +84,8 @@ export default function TokenLanding() {
               $ONLYONE
             </h1>
             <p className="text-lg text-gray-300 mb-10 max-w-xl mx-auto">
-              An access token for a real creator platform. Hold it to unlock token-gated creators,
-              burn it once for permanent VIP, and back a live product from day one.
+              An access token for a real creator platform. Hold it to unlock token-gated creators, and
+              back a live product from day one.
             </p>
             {/* Stated up front, not buried, because it is the whole design:
                 content is paid for in dollar credits and this token is
@@ -120,7 +120,7 @@ export default function TokenLanding() {
             </div>
             <div className="premium-card p-6">
               <h3 className="text-lg font-black text-brand-gold mb-2">Holder Perks</h3>
-              <p className="text-gray-400 text-sm">Token-gated creators, and a one-time burn for permanent VIP status.</p>
+              <p className="text-gray-400 text-sm">Hold it to unlock token-gated creators. VIP membership revenue buys it on the open market and burns it.</p>
             </div>
           </div>
         </section>

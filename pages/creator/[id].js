@@ -215,8 +215,9 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                   {creator.founding && (
                     <span
                       title="One of the first 100 creators on OnlyOne"
-                      className="text-[10px] tracking-[0.15em] px-2.5 py-1 rounded-full bg-brand-pink text-white font-black align-middle"
+                      className="inline-flex items-center gap-1.5 text-[10px] tracking-[0.15em] pl-1 pr-2.5 py-1 rounded-full bg-brand-pink text-white font-black align-middle"
                     >
+                      <img src="/images/badges/founding-64.png" alt="" className="h-4 w-4" />
                       FOUNDING CREATOR
                     </span>
                   )}

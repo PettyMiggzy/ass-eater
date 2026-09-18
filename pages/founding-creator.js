@@ -122,6 +122,11 @@ export default function FoundingCreator({ taken, left, paymentsLive }) {
         </header>
 
         <main className="relative max-w-4xl mx-auto px-6 pb-20 pt-10 sm:pt-16">
+          <img
+            src="/images/badges/founding-512.png"
+            alt=""
+            className="h-24 w-24 mb-6 drop-shadow-[0_0_30px_rgba(255,45,120,0.35)]"
+          />
           <p className="text-[11px] tracking-[0.3em] text-brand-pink mb-5">FOUNDING CREATOR PROGRAMME</p>
 
           <h1 className="text-4xl sm:text-6xl font-black tracking-tight leading-[1.05]">

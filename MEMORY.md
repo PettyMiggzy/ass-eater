@@ -2249,3 +2249,56 @@ Three ways out, and it is a real decision rather than a cleanup:
 
 Recommend 1, with the deposit address documented as dollars-only. Ask before
 building it: removing a deposit path has stranded-funds consequences.
+
+## Flat 10%, no discounts at all (decided 2026-09-18)
+
+Founder: *"I keep 10% nothing reduces it drop discounts until build is done
+vip can get perks let creator run or decide there discounts once build
+done."*
+
+**The VIP discount is removed entirely.** `FEES.VIP_DISCOUNT_BPS` is deleted,
+`charge()` has no discount path left, and the marketplace buy handler no
+longer checks VIP. The platform keeps a flat 10% (15% on marketplace) and
+nothing reduces it -- not VIP, not referrals, not any asset.
+
+**This supersedes the "VIP burn is the only fan-facing discount" rule
+recorded earlier in this file.** There are now NO fan-facing discounts.
+Three tests guard it: a VIP, a non-VIP and a lapsed VIP all pay list price
+and the platform's cut is 100 cents on a 1000-cent charge either way.
+
+VIP is sold on perks alone -- early access (built), and the priority-inbox,
+badge and marketplace-first-look ideas that aren't built yet. That is also
+how Twitch subs and YouTube memberships work; none of them discount anything.
+
+**Roadmap, explicitly deferred:** creators deciding their own discounts, once
+the build is done. When that is built it belongs to the CREATOR's side of the
+split, never the platform's cut -- the failure mode already found once today
+was a discount quietly coming out of creator earnings.
+
+## Venice AI is wired up and the key works (2026-09-18)
+
+`VENICE_API_KEY` is in `.env.local` (gitignored, never committed). Confirmed
+live: `GET /api/v1/models` returns 200, and `?type=image` lists ~40 image
+models including flux-2-pro, seedream-v5-pro, nano-banana-pro, qwen-image-3
+and the lustify-* adult models.
+
+Generation: `POST https://api.venice.ai/api/v1/image/generate` with
+`{model, prompt, negative_prompt, width, height, format, safe_mode,
+hide_watermark, return_binary}`; the response carries base64 in `images[0]`.
+
+**Shipped: real badges instead of stock art.** `public/images/badges/`
+holds `founding-{512,128,64}.png` (hot-pink laurel wreath around a numeral
+one) and `vip-{512,128,64}.png` (solid crown in a thick ring). Black
+backgrounds are keyed out to transparency, trimmed to the artwork, padded
+square so nothing distorts in a round slot, and exported at three sizes.
+Wired into the creator profile's FOUNDING chip and the recruitment page hero.
+
+Two things learned worth repeating:
+- **Ask for "thick, solid, one saturated colour, no thin lines, no pale
+  tints"** or the model returns hairline outlines and washed-out fills that
+  disappear on a dark background. The first VIP attempt did exactly that and
+  was regenerated.
+- **For sub-20px UI chrome, hand-drawn SVG still beats generated raster** --
+  sharper at any size, themeable by CSS, a fraction of the bytes.
+  `components/Brand.js` already has that set. Venice is the right tool for
+  emblems, hero art, og:images and promo, not 16px icons.

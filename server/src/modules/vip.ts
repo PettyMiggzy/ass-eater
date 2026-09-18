@@ -4,7 +4,10 @@ import { money } from '../core/ledger';
 import { subscribeVip, getVipStatus } from '../core/vip';
 
 /**
- * VIP: $20/month for the badge and a 10% discount on everything.
+ * VIP: $20/month, sold on perks alone -- early access, priority, status.
+ *
+ * **No discount.** The platform keeps a flat 10% and nothing reduces it
+ * (2026-09-18). That is also how Twitch subs and YouTube memberships work.
  *
  * Paid in credits like everything else -- the fan never touches a token or a
  * wallet. The revenue is what buys $ONLYONE on the open market and burns it
