@@ -5,6 +5,7 @@ import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getCreators, effectiveCreatorStatus } from '../lib/creators-store';
 import { getListings } from '../lib/listings-store';
+import { tokenGateLive, sanitizeGateTokens, gateTokensOf } from '../lib/token-gate';
 import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator, foundingProfileGaps, foundingSlotsLeft, FEE_WAIVER_DAYS } from '../lib/founding';
 
 export async function getServerSideProps({ req }) {
@@ -46,6 +47,8 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     // 'onlyass' is a legacy value from when the token was the payment
     // asset. It no longer is (see lib/brand.js), and nothing was ever
     // paid out under it, so it reads as the dollar stablecoin.
+    locked: !!initialCreator?.locked,
+    gateTokens: gateTokensOf(initialCreator) || '',
     payoutMethod: initialCreator?.payoutMethod === 'eth' ? 'eth' : 'usdg',
     walletAddress: initialCreator?.walletAddress || '',
     socials: {
@@ -364,6 +367,51 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   placeholder="Website (https://...)"
                   className="w-full mt-3 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
                 />
+              </div>
+
+              {/* Token gating. Hold, never spend -- a fan who unlocks this way
+                  has paid nobody, which is exactly why it isn't a payment.
+                  See lib/token-gate.js. */}
+              <div className="rounded-md border border-brand-purple/30 bg-black/20 p-4">
+                <label className="flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!draft.locked}
+                    onChange={(e) => setDraft({ ...draft, locked: e.target.checked })}
+                  />
+                  Token-gate my profile
+                </label>
+                <p className="text-xs text-gray-500 mt-2">
+                  Fans have to <strong>hold</strong> $ONLYONE to see your page. They don't spend it and you
+                  aren't paid from it — it's a gate, not a price, and it works alongside whatever you charge.
+                </p>
+                {draft.locked && (
+                  <div className="mt-3">
+                    <label className="block text-xs text-gray-400 mb-2">How many $ONLYONE must they hold?</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={draft.gateTokens}
+                      onChange={(e) => setDraft({ ...draft, gateTokens: e.target.value })}
+                      placeholder="e.g. 2500000"
+                      className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                    />
+                    {!sanitizeGateTokens(draft.gateTokens) && (
+                      <p className="text-xs text-yellow-400/80 mt-2">
+                        Set a number above zero — a gate with no amount doesn't gate anything, and your page
+                        stays open.
+                      </p>
+                    )}
+                    {!tokenGateLive() && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        $ONLYONE hasn't launched yet, so nobody is locked out in the meantime — your page
+                        shows as "unlocks at launch" and stays visible. The gate starts working the day the
+                        token does.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="grid sm:grid-cols-2 gap-4">

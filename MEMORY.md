@@ -1705,3 +1705,63 @@ tells a creator their earnings bridge back out as USDC for Coinbase.
 points at a Uniswap pool that will not exist until the token actually
 launches. The VIP burn threshold depends on that price, so VIP cannot work
 before the token has a live pool with real liquidity on Robinhood Chain.
+
+## Token-gating: the token's second real job, and a live bug it uncovered (2026-09-18)
+
+`lib/token-gate.js` (new) makes `locked` mean something: a creator sets how
+many $ONLYONE a fan must **hold** to see their profile. It obeys the rule in
+`lib/brand.js` -- hold, never spend. Nothing transfers, nothing is charged,
+and the answer changes by itself when the fan buys or sells. A fan who gets
+in this way has paid nobody, which is precisely why it is not a payment.
+
+This is the use case that scales, because the creator sets it and then
+markets it. Nobody has to be talked into wanting the token by the platform
+when the person they came for is the one asking.
+
+**Live bug found and fixed on the way:** `pages/api/auth/signup.js` set
+`locked: true` on every creator it created. On `/onlyass` that blurs their
+photos and turns the primary button into "Unlock Now" -> a coming-soon
+toast. So every real creator who has ever signed up had a blurred card and a
+dead main CTA; only the secondary "Preview" button worked. New creators now
+default to unlocked -- gating is a choice, not a default.
+
+Also: `isTokenGated()` requires BOTH the flag and a threshold above zero. A
+gate with no number is not a gate, and the old boolean-only `locked` is
+exactly how the above bug looked like a feature.
+
+**Deliberately NOT live, and honest about it.** A real check needs two things
+that do not exist yet: a deployed $ONLYONE contract, and a way for a fan to
+*prove* they control the address they claim -- typing an address into a box
+proves nothing, anyone can paste a whale's. So `tokenGateLive()` is false
+until `NEXT_PUBLIC_ONLYONE_TOKEN_ADDRESS` is set; a gated creator's card
+reads "Unlocks at launch" and stays reachable rather than offering a button
+that cannot work, and `pages/creator/[id].js` blocks nobody. Same pattern as
+AgeChecker before its credentials existed. `tokenGateDecision()` returns a
+reason, not a bare boolean, so "not live yet" and "you don't hold enough"
+can be told apart; there is no code path in it that trusts a self-reported
+balance.
+
+**What's left to make it real:** wallet connect + a signed message proving
+ownership (the live site has no wallet connection at all today -- the
+existing "Connect Wallet" button is a coming-soon toast), then the balance
+read against the deployed contract on Robinhood Chain.
+
+## Working note: don't re-verify the founder's own claims (2026-09-18)
+
+Told directly: *"if I tell you something, and if I don't ask you to look it
+up, that means I know it exists."* Take his factual statements as given.
+
+The trigger was a real mistake of mine, worth recording as the method error
+it was: I wrote that Circle's Arc had "no DEX liquidity and no traders"
+**because it was two days old** -- inferred from the launch date, never
+checked volume. He says Arc has done millions in a day. Asserting an absence
+from an inference is the same failure this file already records twice
+(`err.name` checks that never match; the stale SESSION_SECRET re-raise).
+The chain decision did not move -- Robinhood Chain was already chosen -- and
+the permissioned-validator objection to Arc was separate and still stands,
+but the liquidity claim was mine and it was unfounded.
+
+Checking a *target* is different from doubting a *claim*: the Robinhood
+Chain USDC lookup was needed to get a contract address to point the indexer
+at, and it found a real problem (no USDC on that chain). That kind of check
+stays. Second-guessing what he tells me about his own markets does not.

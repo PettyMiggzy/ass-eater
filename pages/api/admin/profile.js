@@ -3,6 +3,7 @@ import { FOUNDING_LIMIT, foundingSlotsLeft, isFoundingCreator, profileQualifiesF
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { detectPaymentCircumvention } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
+import { sanitizeGateTokens } from '../../../lib/token-gate';
 
 const FIELD_LABELS = { name: 'Display name', handle: 'Handle', bio: 'Bio' };
 
@@ -31,6 +32,7 @@ export default async function handler(req, res) {
   }
   if ('socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if ('tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
+  if ('gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);
 
   // `status` and `suspendedUntil` are one coupled decision, not two
   // independent fields: effectiveCreatorStatus() (lib/creators-store.js)

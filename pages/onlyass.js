@@ -3,6 +3,7 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 import { byPlacement } from '../lib/founding';
+import { isTokenGated, formatGate, tokenGateLive } from '../lib/token-gate';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 
@@ -234,13 +235,13 @@ export default function OnlyAss({ creators, sessionUser }) {
                           loop
                           muted
                           playsInline
-                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${c.locked ? 'blur-md scale-110' : ''}`}
+                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${isTokenGated(c) ? 'blur-md scale-110' : ''}`}
                         />
                       ) : (
                         <img
                           src={c.img}
                           alt={c.name}
-                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${c.locked ? 'blur-md scale-110' : ''}`}
+                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${isTokenGated(c) ? 'blur-md scale-110' : ''}`}
                         />
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
@@ -259,11 +260,14 @@ export default function OnlyAss({ creators, sessionUser }) {
                         {c.price}
                       </div>
 
-                      {c.locked && (
-                        <div className="absolute inset-0 flex items-center justify-center">
+                      {isTokenGated(c) && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                           <div className="bg-black/60 backdrop-blur-sm rounded-full p-5 border border-brand-gold/40">
                             <img src="/icons/lock.png" className="h-8 w-8" alt="" />
                           </div>
+                          <p className="text-[11px] text-brand-gold font-bold bg-black/70 px-2 py-0.5 rounded-full">
+                            {formatGate(c)}
+                          </p>
                         </div>
                       )}
                     </div>
@@ -276,12 +280,22 @@ export default function OnlyAss({ creators, sessionUser }) {
                       <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
                       <p className="text-gray-400 text-xs mb-4">{c.subs} subscribers</p>
                       <div className="flex gap-2">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); c.locked ? showComingSoon() : router.push(`/creator/${c.id}`); }}
-                          className="flex-1 premium-button text-sm py-2"
-                        >
-                          {c.locked ? 'Unlock Now' : 'View'}
-                        </button>
+                        {/* A gated creator gets an honest label, not a button
+                            that can't do its job yet. Holding the tokens is how
+                            you get in -- nothing is spent, so there is nothing
+                            to "buy" here even once it's live. */}
+                        {isTokenGated(c) && !tokenGateLive() ? (
+                          <span className="flex-1 text-sm py-2 px-3 rounded-md border border-brand-gold/30 text-brand-gold/80 text-center">
+                            Unlocks at launch
+                          </span>
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); router.push(`/creator/${c.id}`); }}
+                            className="flex-1 premium-button text-sm py-2"
+                          >
+                            {isTokenGated(c) ? 'Hold to Unlock' : 'View'}
+                          </button>
+                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); router.push(`/creator/${c.id}`); }}
                           className="px-4 py-2 border border-brand-gold/40 rounded-md text-brand-gold text-sm hover:bg-brand-gold/10 transition"

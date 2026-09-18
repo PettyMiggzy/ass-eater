@@ -74,7 +74,10 @@ export default async function handler(req, res) {
         handle: handle.startsWith('@') ? handle : `@${handle}`,
         bio: bio || '',
         status: 'pending',
-        locked: true,
+        // NOT locked. `locked` means token-gated (lib/token-gate.js), and
+        // defaulting it on meant every real creator's photos were blurred on
+        // Explore behind an 'Unlock Now' button that went nowhere.
+        locked: false,
       });
       newCreatorId = creator.id;
     }
