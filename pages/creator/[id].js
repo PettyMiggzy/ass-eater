@@ -130,6 +130,21 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
     ? { type: 'video', src: creator.video }
     : gallery[0] || { type: 'image', src: creator.img };
   const latestPosts = gallery.slice(0, 4);
+
+  const SOCIAL_BASES = {
+    twitter: { label: 'X', base: 'https://x.com/' },
+    instagram: { label: 'Instagram', base: 'https://instagram.com/' },
+    tiktok: { label: 'TikTok', base: 'https://tiktok.com/@' },
+    reddit: { label: 'Reddit', base: 'https://reddit.com/user/' },
+  };
+  const socialLinks = [
+    ...Object.entries(SOCIAL_BASES)
+      .filter(([key]) => creator.socials?.[key])
+      .map(([key, { label, base }]) => ({ label, href: `${base}${creator.socials[key]}`, display: `@${creator.socials[key]}` })),
+    ...(creator.socials?.website
+      ? [{ label: 'Web', href: creator.socials.website, display: creator.socials.website.replace(/^https:\/\//, '') }]
+      : []),
+  ];
   const lockedPreview = gallery.slice(4, 8);
   const socials = creator.socials || {};
   const websiteUrl = socials.website || null;
@@ -223,6 +238,13 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                   )}
                 </h1>
                 <p className="text-gray-400 text-sm">{creator.handle}</p>
+                {(creator.age || creator.location) && (
+                  <p className="text-gray-500 text-xs mt-1 flex items-center gap-2">
+                    {creator.age && <span>{creator.age}</span>}
+                    {creator.age && creator.location && <span aria-hidden="true">·</span>}
+                    {creator.location && <span>📍 {creator.location}</span>}
+                  </p>
+                )}
                 {creator.bio && <p className="text-gray-300 text-sm mt-1 line-clamp-1">{creator.bio}</p>}
               </div>
 
@@ -242,6 +264,12 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                   className="px-5 h-11 rounded-full border border-white/15 font-semibold text-sm hover:border-white/40 transition"
                 >
                   Message
+                </button>
+                <button
+                  onClick={() => showComingSoon('Tipping opens when payments do.')}
+                  className="px-5 h-11 rounded-full border border-white/15 font-semibold text-sm hover:border-brand-pink/60 transition"
+                >
+                  Send a Tip
                 </button>
                 <button
                   onClick={() => showComingSoon()}
@@ -416,6 +444,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                     <div className="rounded-xl border border-white/10 bg-brand-card p-4">
                       <h2 className="font-bold mb-3">About {creator.name}</h2>
                       <ul className="space-y-2 text-sm text-gray-300">
+                        {creator.age && <li>🎂 {creator.age}</li>}
                         {creator.location && <li>📍 {creator.location}</li>}
                         <li>🎬 {creator.media} media items</li>
                         <li>❤️ {creator.likes} likes</li>
@@ -423,6 +452,30 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                         {Array.isArray(creator.tags) && creator.tags.length > 0 && <li>🏷️ {creator.tags.join(', ')}</li>}
                       </ul>
                     </div>
+
+                    {/* Links. Handles are stored bare and the href is built
+                        from a fixed base in sanitizeSocials, so a pasted
+                        "javascript:" string can never become a live link. */}
+                    {socialLinks.length > 0 && (
+                      <div className="rounded-xl border border-white/10 bg-brand-card p-4">
+                        <h2 className="font-bold mb-3">Links</h2>
+                        <ul className="space-y-2 text-sm">
+                          {socialLinks.map((l) => (
+                            <li key={l.label}>
+                              <a
+                                href={l.href}
+                                target="_blank"
+                                rel="noopener noreferrer nofollow"
+                                className="text-gray-300 hover:text-brand-pink transition inline-flex items-center gap-2"
+                              >
+                                <span className="text-gray-500">{l.label}</span>
+                                <span className="truncate">{l.display}</span>
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

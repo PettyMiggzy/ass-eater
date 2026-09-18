@@ -205,7 +205,8 @@ programme.
 ```bash
 npx next build                      # the live site
 node --experimental-test-module-mocks --no-warnings --import ./test-register.mjs \
-  lib/session.test.mjs              # and lib/blob-json-store.test.mjs
+  lib/session.test.mjs              # also blob-json-store.test.mjs,
+                                    # creator-profile.test.mjs
 node lib/payment-circumvention-filter.test.js
 
 cd server

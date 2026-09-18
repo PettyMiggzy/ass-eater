@@ -2302,3 +2302,37 @@ Two things learned worth repeating:
   sharper at any size, themeable by CSS, a fraction of the bytes.
   `components/Brand.js` already has that set. Venice is the right tool for
   emblems, hero art, og:images and promo, not 16px icons.
+
+## Creator profile v2: details, links, tip button (shipped 2026-09-18)
+
+Built the parts of the richer creator-page mockup that can be real, and left
+out the parts that would be theatre.
+
+**Added:** `age` and `location` on the profile (dashboard fields, shown under
+the handle and in About), a **Links** panel built from the existing socials,
+and a **Send a Tip** button that says tipping opens with payments rather than
+doing nothing silently.
+
+**Deliberately NOT added: Live Shows and Upcoming.** Neither exists anywhere
+in this codebase. An empty section that never populates reads as a broken
+site, not a coming feature.
+
+**The age field is the one that matters.** `sanitizeAge()` **throws** on
+anything under 18 rather than clamping it to 18 or dropping it -- a silent
+correction would leave a profile saying one thing and the record saying
+another, on the single most consequential claim anyone can type here. Both
+`/api/me/profile` and `/api/admin/profile` turn that into a refusal, so an
+admin cannot save an under-18 age by hand either. Blank means "not stated";
+garbage (a typo in an optional field) is dropped rather than refused, because
+refusing it would block an unrelated save. 5 tests in
+`lib/creator-profile.test.mjs`.
+
+It is self-reported and must never be mistaken for verification -- that is
+AgeChecker on the fan side and KYC (not built) on the creator side.
+
+**Found while in there: `locked: true` was still the default in two more
+creator-creation paths** (`createCreator` and `addPendingCreator` in
+`creators-store.js`), after the signup path was fixed earlier today. `locked`
+means token-gated, so the default blurred a new creator's photos behind a gate
+they never asked for. Both now default to false -- the same bug, in the last
+two places it lived.

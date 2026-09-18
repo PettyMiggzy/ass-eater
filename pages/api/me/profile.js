@@ -1,5 +1,5 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
-import { updateCreatorProfile, sanitizeSocials, sanitizeTags } from '../../../lib/creators-store';
+import { updateCreatorProfile, sanitizeSocials, sanitizeTags, sanitizeAge, sanitizeLocation, UnderageProfile } from '../../../lib/creators-store';
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
 import { sanitizeGateTokens } from '../../../lib/token-gate';
@@ -21,6 +21,17 @@ export default async function handler(req, res) {
   if (fields && 'socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if (fields && 'tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
   if (fields && 'gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);
+  if (fields && 'location' in fields) safeFields.location = sanitizeLocation(fields.location);
+  if (fields && 'age' in fields) {
+    try {
+      safeFields.age = sanitizeAge(fields.age);
+    } catch (err) {
+      if (err instanceof UnderageProfile) {
+        return res.status(400).json({ error: 'You must be 18 or older to have a creator profile here.' });
+      }
+      throw err;
+    }
+  }
 
   for (const field of ['name', 'handle', 'bio']) {
     if (!(field in safeFields)) continue;

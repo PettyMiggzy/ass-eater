@@ -1,4 +1,4 @@
-import { getCreators, updateCreatorProfile, sanitizeSocials, sanitizeTags } from '../../../lib/creators-store';
+import { getCreators, updateCreatorProfile, sanitizeSocials, sanitizeTags, sanitizeAge, sanitizeLocation, UnderageProfile } from '../../../lib/creators-store';
 import { FOUNDING_LIMIT, foundingSlotsLeft, isFoundingCreator, profileQualifiesForFounding } from '../../../lib/founding';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { detectPaymentCircumvention } from '../../../lib/payment-circumvention-filter';
@@ -33,6 +33,19 @@ export default async function handler(req, res) {
   if ('socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if ('tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
   if ('gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);
+  if ('location' in fields) safeFields.location = sanitizeLocation(fields.location);
+  if ('age' in fields) {
+    // Same refusal as the creator's own editor: an admin must not be able to
+    // save an under-18 age either, by hand or by accident.
+    try {
+      safeFields.age = sanitizeAge(fields.age);
+    } catch (err) {
+      if (err instanceof UnderageProfile) {
+        return res.status(400).json({ error: 'Refused: a creator profile cannot state an age under 18.' });
+      }
+      throw err;
+    }
+  }
 
   // `status` and `suspendedUntil` are one coupled decision, not two
   // independent fields: effectiveCreatorStatus() (lib/creators-store.js)

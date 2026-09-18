@@ -43,6 +43,8 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     handle: initialCreator?.handle || '',
     bio: initialCreator?.bio || '',
     tags: (initialCreator?.tags || []).join(', '),
+    age: initialCreator?.age ?? '',
+    location: initialCreator?.location || '',
     price: initialCreator?.price || '',
     // 'onlyass' is a legacy value from when the token was the payment
     // asset. It no longer is (see lib/brand.js), and nothing was ever
@@ -413,6 +415,33 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   </div>
                 )}
               </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Age</label>
+                  <input
+                    type="number"
+                    min="18"
+                    max="99"
+                    value={draft.age}
+                    onChange={(e) => setDraft({ ...draft, age: e.target.value })}
+                    placeholder="Optional"
+                    className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Location</label>
+                  <input
+                    value={draft.location}
+                    onChange={(e) => setDraft({ ...draft, location: e.target.value })}
+                    placeholder="e.g. Los Angeles, CA"
+                    className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 -mt-2">
+                Both show on your public profile. Leave them blank to keep them off it — plenty of creators do.
+              </p>
 
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
