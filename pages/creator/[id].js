@@ -7,6 +7,7 @@ import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
 import { getWallPostsForCreator } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
+import SiteNav from '../../components/SiteNav';
 
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
@@ -83,8 +84,8 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
   };
 
   const showComingSoon = (msg) => {
-    setToast(msg || 'Launching in 4 days — connect your wallet then to unlock.');
-    setTimeout(() => setToast(null), 3000);
+    setToast(msg || 'Subscriptions arent live yet — you can browse and message for now.');
+    setTimeout(() => setToast(null), 3500);
   };
 
   const openInbox = () => {
@@ -105,246 +106,377 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
 
   if (!creator) {
     return (
-      <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center">
+      <div className="min-h-screen bg-brand-ink text-white flex items-center justify-center">
         <div className="text-center">
-          <p className="text-2xl font-bold text-brand-gold mb-4">Creator not found</p>
-          <a href="/onlyass" className="premium-button inline-block">Back to Only Ass</a>
+          <p className="text-2xl font-bold text-brand-pink mb-4">Creator not found</p>
+          <a href="/onlyass" className="inline-block px-6 py-3 rounded-full bg-brand-pink text-white font-bold">Back to creators</a>
         </div>
       </div>
     );
   }
 
+  const gallery = Array.isArray(creator.gallery) ? creator.gallery : [];
+  const locked = !!creator.locked;
+  // Everything below is drawn from what this creator actually has. Counts
+  // are their stored values, not invented ones, and a section with nothing
+  // real behind it does not render at all rather than showing placeholders.
+  const featured = creator.video
+    ? { type: 'video', src: creator.video }
+    : gallery[0] || { type: 'image', src: creator.img };
+  const latestPosts = gallery.slice(0, 4);
+  const lockedPreview = gallery.slice(4, 8);
+  const socials = creator.socials || {};
+  const websiteUrl = socials.website || null;
+  const isOwner = !!viewerId && String(viewerId) === String(creatorUserId);
+
+  const TABS = [
+    { key: 'posts', label: 'Posts' },
+    { key: 'media', label: 'Media' },
+    { key: 'marketplace', label: 'Marketplace' },
+    { key: 'about', label: 'About' },
+  ];
+
+  const Tile = ({ item, badge }) => (
+    <div className="relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/5">
+      {item?.type === 'video' ? (
+        <video src={item.src} muted loop playsInline className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
+      ) : (
+        <img src={item?.src || creator.img} alt="" className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
+      )}
+      {locked && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+          <span className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center text-lg">🔒</span>
+        </div>
+      )}
+      {item?.aiGenerated && (
+        <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold">AI</span>
+      )}
+      {badge && (
+        <span className="absolute bottom-2 left-2 text-[11px] px-2 py-0.5 rounded bg-black/70 text-white font-semibold">{badge}</span>
+      )}
+    </div>
+  );
+
   return (
     <>
       <Head>
-        <title>{creator.name} - Only Ass</title>
+        <title>{creator.name} — {creator.handle}</title>
       </Head>
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] px-6 py-3 rounded-full bg-brand-gold text-black font-bold shadow-luxury-lg">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] px-6 py-3 rounded-full bg-brand-pink text-white font-bold shadow-lg">
           {toast}
         </div>
       )}
 
-      <div className="min-h-screen bg-gradient-luxury text-white pb-16">
-        {/* Cover */}
-        <div className="relative h-72 md:h-96 w-full overflow-hidden">
-          {creator.video ? (
-            <video src={creator.video} autoPlay loop muted playsInline className="w-full h-full object-cover" />
-          ) : (
-            <img src={creator.img} alt={creator.name} className="w-full h-full object-cover" />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-brand-dark via-black/30 to-black/50"></div>
+      <div className="min-h-screen bg-brand-ink text-white pb-20">
+        <SiteNav signedIn={!!viewerId} />
 
-          {/* Back button */}
-          <button
-            onClick={() => router.push('/onlyass')}
-            className="absolute top-6 left-6 w-10 h-10 rounded-full bg-black/50 backdrop-blur flex items-center justify-center text-xl hover:bg-black/70 transition"
-          >
-            ←
-          </button>
-
-          {/* Stats overlay */}
-          <div className="absolute bottom-6 left-6 flex gap-6 text-sm font-bold">
-            <span className="flex items-center gap-1">
-              <img src="/icons/camera.png" className="h-4 w-4" alt="" /> {creator.media}
-            </span>
-            <span className="flex items-center gap-1">
-              <img src="/icons/fire.png" className="h-4 w-4" alt="" /> {creator.likes}
-            </span>
-            <span className="flex items-center gap-1">
-              <img src="/icons/crown.png" className="h-4 w-4" alt="" /> {creator.subs}
-            </span>
-          </div>
-        </div>
-
-        {/* Profile Header */}
-        <div className="max-w-4xl mx-auto px-6">
-          <div className="flex items-start justify-between -mt-16 relative z-10 mb-4">
-            <div className="w-28 h-28 rounded-full border-4 border-brand-dark overflow-hidden bg-gray-800 shadow-luxury">
-              <img src={creator.img} alt={creator.name} className="w-full h-full object-cover object-top" />
-            </div>
-            <div className="flex gap-3 mt-16">
-              <button
-                onClick={toggleFavorite}
-                title={favorited ? 'Remove from favorites' : 'Save to favorites'}
-                aria-pressed={favorited}
-                className={`w-11 h-11 rounded-full border flex items-center justify-center transition ${
-                  favorited ? 'border-brand-gold bg-brand-gold/20' : 'border-brand-gold/40 hover:bg-brand-gold/10'
-                }`}
-              >
-                <span className={favorited ? 'text-brand-gold text-xl' : 'text-white/70 text-xl'}>{favorited ? '♥' : '♡'}</span>
-              </button>
-              <button
-                onClick={openInbox}
-                className="w-11 h-11 rounded-full border border-brand-gold/40 flex items-center justify-center hover:bg-brand-gold/10 transition"
-              >
-                <img src="/icons/mail.png" className="h-5 w-5" alt="Message" />
-              </button>
-            </div>
-          </div>
-
-          <h1 className="text-3xl font-black premium-title mb-1 flex items-center gap-2">
-            {creator.name}
-            {creator.premium && <img src="/icons/check.png" alt="Premium" className="h-6 w-6" title="Premium creator" />}
-          </h1>
-          <p className="text-gray-400 text-sm mb-1">{creator.handle} · <span className="text-green-400">Online now</span></p>
-          <p className="text-gray-300 mt-3 mb-3">{creator.bio}</p>
-
-          {Array.isArray(creator.tags) && creator.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-4">
-              {creator.tags.map((tag) => (
-                <a
-                  key={tag}
-                  href={`/search?tag=${encodeURIComponent(tag)}`}
-                  className="text-xs px-3 py-1 rounded-full bg-brand-purple/15 border border-brand-purple/30 text-brand-gold hover:bg-brand-purple/30 transition"
-                >
-                  #{tag}
-                </a>
-              ))}
-            </div>
-          )}
-
-          {creator.socials && Object.values(creator.socials).some(Boolean) && (
-            <div className="flex flex-wrap gap-2 mb-6">
-              {creator.socials.twitter && (
-                <a href={`https://x.com/${creator.socials.twitter}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
-                  X/Twitter
-                </a>
-              )}
-              {creator.socials.instagram && (
-                <a href={`https://instagram.com/${creator.socials.instagram}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
-                  Instagram
-                </a>
-              )}
-              {creator.socials.tiktok && (
-                <a href={`https://tiktok.com/@${creator.socials.tiktok}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
-                  TikTok
-                </a>
-              )}
-              {creator.socials.reddit && (
-                <a href={`https://reddit.com/u/${creator.socials.reddit}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
-                  Reddit
-                </a>
-              )}
-              {creator.socials.website && (
-                <a href={creator.socials.website} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-brand-purple/30 text-gray-300 hover:border-brand-gold hover:text-brand-gold transition">
-                  Website
-                </a>
-              )}
-            </div>
-          )}
-
-          {/* Chat CTA -- opens the real inbox (same as the mail icon above) */}
-          <button
-            onClick={openInbox}
-            className="w-full premium-card border-2 border-brand-gold/40 hover:border-brand-gold/70 transition p-4 flex items-center justify-center gap-3 mb-8"
-          >
-            <img src="/icons/chat.png" className="h-6 w-6" alt="" />
-            <span className="font-bold text-brand-gold">Chat with {creator.name}</span>
-          </button>
-
-          {/* Subscription CTA */}
-          <div className="premium-card p-6 border-2 border-brand-gold/40 mb-8">
-            <p className="eyebrow text-brand-secondary text-xs mb-3">Subscription</p>
-            <button onClick={() => showComingSoon()} className="w-full premium-button py-4 text-lg">
-              {creator.locked ? `Subscribe — ${creator.price}` : 'Subscribe — Free'}
-            </button>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex gap-6 border-b border-brand-gold/20 mb-8">
+        <main className="max-w-6xl mx-auto px-4 md:px-6">
+          {/* Cover */}
+          <div className="relative mt-4 h-44 sm:h-56 md:h-64 rounded-2xl overflow-hidden bg-white/5">
+            {creator.video ? (
+              <video src={creator.video} autoPlay loop muted playsInline className="w-full h-full object-cover blur-sm scale-105" />
+            ) : (
+              <img src={creator.img} alt="" className="w-full h-full object-cover blur-sm scale-105" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-brand-ink/30 to-transparent" />
             <button
-              onClick={() => setActiveTab('posts')}
-              className={`pb-3 font-bold text-sm ${activeTab === 'posts' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+              onClick={() => router.push('/onlyass')}
+              aria-label="Back to creators"
+              className="absolute top-4 left-4 w-9 h-9 rounded-full bg-black/50 backdrop-blur flex items-center justify-center hover:bg-black/70 transition"
             >
-              {creator.posts} POSTS
-            </button>
-            <button
-              onClick={() => setActiveTab('media')}
-              className={`pb-3 font-bold text-sm ${activeTab === 'media' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
-            >
-              {creator.media} MEDIA
-            </button>
-            <button
-              onClick={() => setActiveTab('wall')}
-              className={`pb-3 font-bold text-sm ${activeTab === 'wall' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
-            >
-              WALL
+              ←
             </button>
           </div>
 
-          {activeTab === 'wall' ? (
-            <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} isWallOwner={!!viewerId && String(viewerId) === String(creatorUserId)} />
-          ) : (
-            <>
-              {/* Content Grid (locked) */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {(() => {
-                  const items = [
-                    creator.video ? { type: 'video', src: creator.video } : { type: 'image', src: creator.img },
-                    ...(creator.gallery || []),
-                  ];
-                  const filled = Array.from({ length: 6 }, (_, i) => items[i % items.length]);
-                  return filled.map((item, i) => (
-                    <div key={i} className="aspect-square rounded-lg overflow-hidden relative premium-card border border-brand-gold/20">
-                      {item.type === 'video' ? (
-                        <video src={item.src} autoPlay loop muted playsInline className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
-                      ) : (
-                        <img src={item.src} alt="" className={`w-full h-full object-cover ${creator.locked ? 'blur-md scale-110' : ''}`} />
-                      )}
-                      {creator.locked && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                          <img src="/icons/lock.png" className="h-6 w-6" alt="" />
-                        </div>
-                      )}
-                      {item.aiGenerated && (
-                        <span className="absolute bottom-1 left-1 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
-                      )}
-                    </div>
-                  ));
-                })()}
+          {/* Identity row */}
+          <div className="relative px-1 sm:px-4">
+            <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-14 sm:-mt-16">
+              <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full border-4 border-brand-ink overflow-hidden bg-white/10 shrink-0">
+                <img src={creator.img} alt={creator.name} className="w-full h-full object-cover object-top" />
               </div>
-            </>
-          )}
 
-          {/* Marketplace items */}
-          {activeTab !== 'wall' && listings.length > 0 && (
-            <div className="mt-10">
-              <h2 className="text-xl font-black premium-title mb-4">On the Marketplace</h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {listings.map((l) => (
-                  <a
-                    key={l.id}
-                    href="/marketplace"
-                    className="group aspect-square rounded-lg overflow-hidden relative premium-card border-2 border-brand-gold/40 hover:border-brand-gold transition shadow-luxury"
+              <div className="flex-1 sm:pb-2">
+                <h1 className="text-3xl font-black flex items-center gap-2">
+                  {creator.name}
+                  {creator.premium && (
+                    <img src="/icons/check.png" alt="Verified" title="Verified creator" className="h-6 w-6" />
+                  )}
+                </h1>
+                <p className="text-gray-400 text-sm">{creator.handle}</p>
+                {creator.bio && <p className="text-gray-300 text-sm mt-1 line-clamp-1">{creator.bio}</p>}
+              </div>
+
+              <div className="flex items-center gap-2 sm:pb-2">
+                <button
+                  onClick={toggleFavorite}
+                  aria-pressed={favorited}
+                  title={favorited ? 'Remove from saved' : 'Save creator'}
+                  className={`w-11 h-11 rounded-full border flex items-center justify-center text-lg transition ${
+                    favorited ? 'border-brand-pink bg-brand-pink/20 text-brand-pink' : 'border-white/15 text-white/70 hover:border-brand-pink/60'
+                  }`}
+                >
+                  {favorited ? '♥' : '♡'}
+                </button>
+                <button
+                  onClick={openInbox}
+                  className="px-5 h-11 rounded-full border border-white/15 font-semibold text-sm hover:border-white/40 transition"
+                >
+                  Message
+                </button>
+                <button
+                  onClick={() => showComingSoon()}
+                  className="px-6 h-11 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold text-sm transition"
+                >
+                  Subscribe
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Body */}
+          <div className="grid lg:grid-cols-[300px_1fr] gap-6 mt-8 px-1 sm:px-4">
+            {/* Sidebar */}
+            <aside className="space-y-5">
+              <div className="flex gap-6">
+                <div><p className="text-xl font-black">{creator.posts}</p><p className="text-xs text-gray-500">Posts</p></div>
+                <div><p className="text-xl font-black">{creator.subs}</p><p className="text-xs text-gray-500">Followers</p></div>
+                <div><p className="text-xl font-black">{creator.likes}</p><p className="text-xs text-gray-500">Likes</p></div>
+              </div>
+
+              {creator.bio && <p className="text-sm text-gray-300 whitespace-pre-wrap">{creator.bio}</p>}
+
+              {creator.location && (
+                <p className="text-sm text-gray-400 flex items-center gap-2">📍 {creator.location}</p>
+              )}
+              {websiteUrl && (
+                <a href={websiteUrl} target="_blank" rel="noopener noreferrer"
+                   className="text-sm text-brand-pink hover:underline break-all flex items-center gap-2">
+                  🔗 {websiteUrl.replace(/^https?:\/\//, '')}
+                </a>
+              )}
+
+              {Array.isArray(creator.tags) && creator.tags.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {creator.tags.map((tag) => (
+                    <a key={tag} href={`/search?tag=${encodeURIComponent(tag)}`}
+                       className="text-xs px-3 py-1 rounded-full bg-white/5 border border-white/10 text-gray-300 hover:border-brand-pink/50 hover:text-brand-pink transition">
+                      #{tag}
+                    </a>
+                  ))}
+                </div>
+              )}
+
+              {listings.length > 0 && (
+                <button
+                  onClick={() => setActiveTab('marketplace')}
+                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:border-brand-pink/50 transition text-sm font-semibold"
+                >
+                  <span>Visit my Marketplace</span>
+                  <span className="text-brand-pink">›</span>
+                </button>
+              )}
+
+              <div className="rounded-xl border border-white/10 bg-brand-card p-5">
+                <p className="font-bold mb-1">Subscribe to {creator.name}</p>
+                <p className="text-xs text-gray-400 mb-4">Get exclusive content and direct messaging.</p>
+                <p className="text-2xl font-black mb-4">
+                  {locked ? creator.price : 'Free'}
+                  {locked && <span className="text-sm font-normal text-gray-400"> / month</span>}
+                </p>
+                <button onClick={() => showComingSoon()} className="w-full py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition">
+                  Subscribe
+                </button>
+                {/* Stated plainly rather than implied: there is no payment
+                    processing on this site yet, so a Subscribe button that
+                    looked functional would be a promise it cannot keep. */}
+                <p className="text-[11px] text-gray-500 mt-3">
+                  Subscriptions aren&apos;t live yet. Browsing, saving and messaging all work today.
+                </p>
+                <ul className="mt-4 space-y-2 text-sm text-gray-300">
+                  {['Exclusive photos & videos', 'Direct messaging', 'Early access to new content'].map((f) => (
+                    <li key={f} className="flex items-center gap-2"><span className="text-brand-pink">✓</span>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            </aside>
+
+            {/* Main column */}
+            <section>
+              <div className="flex gap-6 border-b border-white/10 mb-6 overflow-x-auto">
+                {TABS.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setActiveTab(t.key)}
+                    className={`pb-3 text-sm font-semibold whitespace-nowrap transition ${
+                      activeTab === t.key ? 'text-white border-b-2 border-brand-pink' : 'text-gray-500 hover:text-gray-300'
+                    }`}
                   >
-                    {l.media?.[0] ? (
-                      l.media[0].type === 'video' ? (
-                        <video src={l.media[0].src} className="w-full h-full object-cover blur-md scale-110 group-hover:scale-125 transition" muted />
-                      ) : (
-                        <img src={l.media[0].src} alt="" className="w-full h-full object-cover blur-md scale-110 group-hover:scale-125 transition" />
-                      )
-                    ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-brand-purple/40 to-brand-gold/20" />
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
-                    <img src="/icons/lock.png" className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-6 w-6" alt="" />
-                    {l.aiGenerated && (
-                      <span className="absolute top-1 left-1 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
-                    )}
-                    <div className="absolute bottom-0 left-0 right-0 p-2">
-                      <p className="text-xs font-bold text-white truncate">{l.title}</p>
-                      <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-brand-gold text-black text-[11px] font-black">
-                        ${(l.priceCents / 100).toFixed(2)}
-                      </span>
-                    </div>
-                  </a>
+                    {t.label}
+                  </button>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
+
+              {activeTab === 'posts' && (
+                <div className="space-y-8">
+                  <div className="grid md:grid-cols-[1.6fr_1fr] gap-4">
+                    <div className="relative rounded-xl overflow-hidden bg-white/5 border border-white/5 aspect-video">
+                      {featured.type === 'video' ? (
+                        <video src={featured.src} muted loop playsInline autoPlay className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
+                      ) : (
+                        <img src={featured.src} alt="" className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
+                      )}
+                      {locked && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40">
+                          <span className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center text-xl">🔒</span>
+                          <p className="font-semibold">Subscribe to unlock</p>
+                          <button onClick={() => showComingSoon()} className="px-5 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white text-sm font-bold transition">
+                            Subscribe Now
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-brand-card p-4 flex flex-col">
+                      <p className="font-bold mb-1">{creator.name}&apos;s Marketplace</p>
+                      <p className="text-xs text-gray-400 mb-3">
+                        {listings.length > 0
+                          ? `${listings.length} item${listings.length === 1 ? '' : 's'} available to buy.`
+                          : 'Nothing listed yet.'}
+                      </p>
+                      {listings[0]?.media?.[0] && (
+                        <div className="relative rounded-lg overflow-hidden aspect-[4/3] mb-3">
+                          <img src={listings[0].media[0].src} alt="" className="w-full h-full object-cover blur-lg scale-110" />
+                          <span className="absolute inset-0 flex items-center justify-center text-lg">🔒</span>
+                        </div>
+                      )}
+                      <button
+                        onClick={() => setActiveTab('marketplace')}
+                        disabled={listings.length === 0}
+                        className="mt-auto w-full py-2.5 rounded-full border border-white/15 text-sm font-semibold hover:border-brand-pink/60 transition disabled:opacity-40 disabled:hover:border-white/15"
+                      >
+                        Browse Marketplace →
+                      </button>
+                    </div>
+                  </div>
+
+                  {latestPosts.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h2 className="font-bold">Latest Posts</h2>
+                        <button onClick={() => setActiveTab('media')} className="text-xs text-brand-pink hover:underline">View all</button>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {latestPosts.map((item, i) => (
+                          <Tile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {lockedPreview.length > 0 && (
+                    <div>
+                      <h2 className="font-bold mb-3">Locked Content Preview</h2>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {lockedPreview.map((item, i) => (
+                          <Tile key={i} item={item} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-white/10 bg-brand-card p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h2 className="font-bold">Fan Messages</h2>
+                        <button onClick={() => setActiveTab('about')} className="text-xs text-brand-pink hover:underline">About</button>
+                      </div>
+                      <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} isWallOwner={isOwner} />
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-brand-card p-4">
+                      <h2 className="font-bold mb-3">About {creator.name}</h2>
+                      <ul className="space-y-2 text-sm text-gray-300">
+                        {creator.location && <li>📍 {creator.location}</li>}
+                        <li>🎬 {creator.media} media items</li>
+                        <li>❤️ {creator.likes} likes</li>
+                        <li>👥 {creator.subs} followers</li>
+                        {Array.isArray(creator.tags) && creator.tags.length > 0 && <li>🏷️ {creator.tags.join(', ')}</li>}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'media' && (
+                gallery.length === 0 ? (
+                  <p className="text-sm text-gray-500">No media yet.</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {gallery.map((item, i) => <Tile key={i} item={item} />)}
+                  </div>
+                )
+              )}
+
+              {activeTab === 'marketplace' && (
+                listings.length === 0 ? (
+                  <p className="text-sm text-gray-500">Nothing listed yet.</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {listings.map((l) => (
+                      <a key={l.id} href="/marketplace"
+                         className="group relative aspect-square rounded-xl overflow-hidden border border-white/10 hover:border-brand-pink/60 transition">
+                        {l.media?.[0] ? (
+                          l.media[0].type === 'video' ? (
+                            <video src={l.media[0].src} muted className="w-full h-full object-cover blur-lg scale-110" />
+                          ) : (
+                            <img src={l.media[0].src} alt="" className="w-full h-full object-cover blur-lg scale-110" />
+                          )
+                        ) : (
+                          <div className="w-full h-full bg-gradient-pink opacity-30" />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
+                        <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-lg">🔒</span>
+                        {l.aiGenerated && (
+                          <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold">AI</span>
+                        )}
+                        <div className="absolute bottom-0 left-0 right-0 p-2">
+                          <p className="text-xs font-bold truncate">{l.title}</p>
+                          <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-brand-pink text-white text-[11px] font-black">
+                            ${(l.priceCents / 100).toFixed(2)}
+                          </span>
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                )
+              )}
+
+              {activeTab === 'about' && (
+                <div className="space-y-4 max-w-xl">
+                  {creator.bio && <p className="text-sm text-gray-300 whitespace-pre-wrap">{creator.bio}</p>}
+                  <ul className="space-y-2 text-sm text-gray-300">
+                    {creator.location && <li>📍 {creator.location}</li>}
+                    <li>📝 {creator.posts} posts</li>
+                    <li>🎬 {creator.media} media items</li>
+                    <li>👥 {creator.subs} followers</li>
+                    <li>❤️ {creator.likes} likes</li>
+                  </ul>
+                  {Object.values(socials).some(Boolean) && (
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      {socials.twitter && <a href={`https://x.com/${socials.twitter}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-300 hover:border-brand-pink/60 hover:text-brand-pink transition">X/Twitter</a>}
+                      {socials.instagram && <a href={`https://instagram.com/${socials.instagram}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-300 hover:border-brand-pink/60 hover:text-brand-pink transition">Instagram</a>}
+                      {socials.tiktok && <a href={`https://tiktok.com/@${socials.tiktok}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-300 hover:border-brand-pink/60 hover:text-brand-pink transition">TikTok</a>}
+                      {socials.reddit && <a href={`https://reddit.com/u/${socials.reddit}`} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-300 hover:border-brand-pink/60 hover:text-brand-pink transition">Reddit</a>}
+                      {websiteUrl && <a href={websiteUrl} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-300 hover:border-brand-pink/60 hover:text-brand-pink transition">Website</a>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          </div>
+        </main>
       </div>
 
       {inboxOpen && (
@@ -404,8 +536,8 @@ function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-      <div className="premium-card w-full max-w-md h-[70vh] sm:h-[560px] flex flex-col overflow-hidden">
-        <div className="flex items-center gap-3 p-4 border-b border-brand-gold/20">
+      <div className="rounded-xl border border-white/10 bg-brand-card w-full max-w-md h-[70vh] sm:h-[560px] flex flex-col overflow-hidden">
+        <div className="flex items-center gap-3 p-4 border-b border-white/10">
           <img src={otherImg} alt={otherName} className="w-9 h-9 rounded-full object-cover object-top" />
           <p className="font-bold text-white flex-1 truncate">{otherName}</p>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
@@ -423,7 +555,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
                 className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
                   String(m.senderId) === String(otherUserId)
                     ? 'bg-black/40 text-gray-200 mr-auto'
-                    : 'bg-brand-gold text-black ml-auto'
+                    : 'bg-brand-pink text-black ml-auto'
                 }`}
               >
                 {m.text}
@@ -434,14 +566,14 @@ function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
 
         {error && <p className="text-red-400 text-xs px-4">{error}</p>}
 
-        <form onSubmit={send} className="p-3 border-t border-brand-gold/20 flex gap-2">
+        <form onSubmit={send} className="p-3 border-t border-white/10 flex gap-2">
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Type a message..."
-            className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+            className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm"
           />
-          <button type="submit" disabled={sending} className="premium-button py-2 px-4 text-sm disabled:opacity-50">
+          <button type="submit" disabled={sending} className="px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
             Send
           </button>
         </form>
@@ -530,7 +662,7 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
     <div>
       {reporting && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-          <form onSubmit={submitReport} className="premium-card w-full max-w-sm p-6">
+          <form onSubmit={submitReport} className="rounded-xl border border-white/10 bg-brand-card w-full max-w-sm p-6">
             <p className="font-bold text-white mb-1">Report this comment</p>
             <p className="text-xs text-gray-500 mb-4">Tell us what's wrong with it.</p>
             <textarea
@@ -538,13 +670,13 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
               onChange={(e) => setReportReason(e.target.value)}
               rows={3}
               placeholder="Reason..."
-              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm mb-4"
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm mb-4"
             />
             <div className="flex gap-2">
-              <button type="button" onClick={() => setReporting(null)} className="flex-1 text-sm px-4 py-2 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition">
+              <button type="button" onClick={() => setReporting(null)} className="flex-1 text-sm px-4 py-2 rounded-md border border-white/10 text-gray-300 hover:bg-white/5 transition">
                 Cancel
               </button>
-              <button type="submit" disabled={reportSending} className="flex-1 premium-button text-sm disabled:opacity-50">
+              <button type="submit" disabled={reportSending} className="flex-1 px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition text-sm disabled:opacity-50">
                 Submit
               </button>
             </div>
@@ -559,10 +691,10 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
           placeholder={viewerId ? 'Say something on their wall...' : 'Log in to post on the wall'}
           rows={2}
           maxLength={500}
-          className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm mb-2"
+          className="w-full px-4 py-3 rounded-md bg-black/40 border border-white/10 text-white text-sm mb-2"
         />
         {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
-        <button type="submit" disabled={sending} className="premium-button text-sm px-6 disabled:opacity-50">
+        <button type="submit" disabled={sending} className="px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition text-sm px-6 disabled:opacity-50">
           Post
         </button>
       </form>
@@ -572,15 +704,15 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
       ) : (
         <div className="space-y-3">
           {posts.map((p) => (
-            <div key={p.id} className="premium-card border border-brand-purple/20 p-4">
+            <div key={p.id} className="rounded-xl border border-white/10 bg-brand-card border border-white/10 p-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="text-sm font-bold text-brand-gold">{p.authorName}</p>
+                  <p className="text-sm font-bold text-brand-pink">{p.authorName}</p>
                   <p className="text-sm text-gray-300 mt-1 whitespace-pre-wrap break-words">{p.text}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {viewerId && String(viewerId) !== String(p.authorId) && (
-                    <button onClick={() => setReporting(p)} className="text-xs text-gray-600 hover:text-brand-gold transition" title="Report">
+                    <button onClick={() => setReporting(p)} className="text-xs text-gray-600 hover:text-brand-pink transition" title="Report">
                       ⚑
                     </button>
                   )}
