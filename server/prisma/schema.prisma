@@ -81,11 +81,6 @@ enum SubStatus {
   EXPIRED
 }
 
-enum PayAsset {
-  USD
-  ONLYASS
-}
-
 enum Visibility {
   PUBLIC
   SUBSCRIBERS
@@ -199,7 +194,6 @@ model Subscription {
   tierId           String
   tier             SubscriptionTier @relation(fields: [tierId], references: [id])
   priceCents       Int // locked at purchase
-  payAsset         PayAsset         @default(USD) // ONLYASS = 10% off, paid from the fan's $ONLYASS balance -- see core/ledger.ts charge()
   status           SubStatus        @default(ACTIVE)
   autoRenew        Boolean          @default(true)
   currentPeriodEnd DateTime

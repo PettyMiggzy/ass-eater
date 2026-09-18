@@ -8,20 +8,35 @@ export const BURNED_ID = '00000000-0000-0000-0000-0000000000b0';
 
 export const FEES = {
   DEFAULT_BPS: 1000, // 10% — standard platform cut
-  TOKEN_PAYOUT_BPS: 800, // 8% if creator takes payout in $ONLYASS (token demand driver)
   REFERRAL_BPS: 500, // 5% of gross to referrer, paid out of the platform's cut
   REFERRAL_MONTHS: 12,
   WITHDRAWAL_FLAT_CENTS: 100, // $1 per payout
   WITHDRAWAL_BPS: 100, // +1%
   INSTANT_PAYOUT_BPS: 200, // +2% on top, for skipping the payout queue -- waived if the creator opted into the token-lock perk
-  VIP_DISCOUNT_BPS: 1000, // 10% off any charge for a fan who has burned enough $ONLYASS (see core/vip.ts) -- the only fan-facing discount
+  VIP_DISCOUNT_BPS: 1000, // 10% off any charge for a fan who has burned enough $ONLYONE (see core/vip.ts) -- the only fan-facing discount
   MIN_PAYOUT_CENTS: 2000,
   MIN_TIP_CENTS: 100,
 };
 
 const DEFAULT_VIP_BURN_THRESHOLD_TOKENS = 10_000_000;
 
-export type PayAsset = 'USD' | 'ONLYASS';
+/**
+ * The two balances an account carries, and they are not interchangeable.
+ *
+ * CREDITS is money: fans buy credits with USDC at 1 credit = $1 (booked here
+ * in cents), spend them on subscriptions, tips, unlocks and the marketplace,
+ * and creators are paid out of it in USDC. Everything charge() touches is
+ * this one.
+ *
+ * ONLYASS is a HOLDING, not a payment source. Tokens a fan has deposited sit
+ * here and the only thing that can be done with them is burn them for VIP
+ * (core/vip.ts). Decided 2026-09-18: the token is deliberately never a way to
+ * pay for anything -- it is far too volatile to denominate what someone is
+ * owed, and a platform that both prices content in its own token and converts
+ * it back to dollars is a redemption desk for its own token. If you are about
+ * to let this reach charge(), that is the line.
+ */
+export type Balance = 'CREDITS' | 'ONLYASS';
 
 export class InsufficientFunds extends Error {
   constructor() {
@@ -52,9 +67,9 @@ export async function isVip(tx: Tx, userId: string): Promise<boolean> {
 }
 
 /** Row-locks the account so concurrent charges against the same balance serialize. */
-export async function lockBalance(tx: Tx, userId: string, asset: PayAsset = 'USD'): Promise<bigint> {
+export async function lockBalance(tx: Tx, userId: string, balance: Balance = 'CREDITS'): Promise<bigint> {
   await tx.account.upsert({ where: { userId }, create: { userId }, update: {} });
-  if (asset === 'ONLYASS') {
+  if (balance === 'ONLYASS') {
     const [row] = await tx.$queryRaw<{ onlyAssCents: bigint }[]>`
       SELECT "onlyAssCents" FROM "Account" WHERE "userId" = ${userId} FOR UPDATE`;
     return row.onlyAssCents;
@@ -71,10 +86,10 @@ export async function post(
   type: TxType,
   refId?: string,
   meta?: object,
-  asset: PayAsset = 'USD',
+  balance: Balance = 'CREDITS',
 ) {
   const amt = BigInt(amountCents);
-  const field = asset === 'ONLYASS' ? 'onlyAssCents' : 'balanceCents';
+  const field = balance === 'ONLYASS' ? 'onlyAssCents' : 'balanceCents';
   await tx.account.upsert({
     where: { userId },
     create: { userId, [field]: amt },
@@ -86,16 +101,17 @@ export async function post(
 }
 
 /**
- * Fan pays creator. Platform takes its cut. Whoever referred the creator and
- * whoever referred the fan each get their own slice of the platform's cut
- * (see referralCut() below). Paying out of a $ONLYASS-denominated balance
- * (payAsset: 'ONLYASS') does not discount the charge on its own -- being VIP
- * (having burned enough $ONLYASS, see core/vip.ts) is the only thing that
- * does, regardless of which balance the charge is paid from.
+ * Fan pays creator, in credits, always. Platform takes its cut. Whoever
+ * referred the creator and whoever referred the fan each get their own slice
+ * of the platform's cut (see referralCut() below).
+ *
+ * There is no choice of payment asset: credits are the only thing anyone
+ * spends here (see Balance above). Being VIP -- having burned enough
+ * $ONLYONE, core/vip.ts -- is the only thing that discounts a charge.
  */
 export async function charge(
   tx: Tx,
-  p: { fanId: string; creatorId: string; grossCents: number; type: TxType; refId: string; payAsset?: PayAsset },
+  p: { fanId: string; creatorId: string; grossCents: number; type: TxType; refId: string },
 ) {
   if (p.fanId === p.creatorId) throw new Error('self_payment');
   if (p.grossCents <= 0) throw new Error('invalid_amount');
@@ -109,15 +125,13 @@ export async function charge(
   ]);
   if (creator.user.status !== 'ACTIVE') throw new Error('creator_unavailable');
 
-  const payAsset: PayAsset = p.payAsset === 'ONLYASS' ? 'ONLYASS' : 'USD';
   const vip = await isVip(tx, p.fanId);
   const chargeCents = vip ? Math.round((p.grossCents * (10_000 - FEES.VIP_DISCOUNT_BPS)) / 10_000) : p.grossCents;
 
-  const bal = await lockBalance(tx, p.fanId, payAsset);
+  const bal = await lockBalance(tx, p.fanId);
   if (bal < BigInt(chargeCents)) throw new InsufficientFunds();
 
-  const feeBps = creator.payoutAsset === 'ONLYASS' ? FEES.TOKEN_PAYOUT_BPS : FEES.DEFAULT_BPS;
-  const fee = Math.floor((chargeCents * feeBps) / 10_000);
+  const fee = Math.floor((chargeCents * FEES.DEFAULT_BPS) / 10_000);
   const net = chargeCents - fee;
 
   // Whoever referred the creator (payee) and whoever referred the fan (payer)
@@ -132,13 +146,14 @@ export async function charge(
   };
   // Referral payouts come out of the platform's fee and nowhere else, so the
   // cap has to bind what each referrer is actually *paid*, not just the total
-  // reported back: when the creator takes payout in $ONLYASS the fee is
-  // FEES.TOKEN_PAYOUT_BPS (8%), which is less than two FEES.REFERRAL_BPS
-  // (5% + 5%) cuts, so paying both referrers in full moved more out of the
-  // platform than it ever collected -- value minted from nothing. Scale both
-  // down proportionally against the fee actually retained instead; flooring
-  // each share means any rounding remainder stays with the platform rather
-  // than being conjured.
+  // reported back. Two FEES.REFERRAL_BPS cuts (5% + 5%) can exceed a fee that
+  // is itself smaller, which moved more out of the platform than it ever
+  // collected -- value minted from nothing. Scale both down proportionally
+  // against the fee actually retained; flooring each share means any rounding
+  // remainder stays with the platform rather than being conjured. The one
+  // case that made this reachable (an 8% payout fee for creators taking
+  // $ONLYASS) is gone, but the cap stays: it is the invariant, not a patch
+  // for one rate.
   let creatorReferral = referralCut(creator.user.referredById, creator.user.createdAt);
   let fanReferral = referralCut(fan.referredById, fan.createdAt);
   const claimed = creatorReferral + fanReferral;
@@ -148,13 +163,13 @@ export async function charge(
   }
   const referral = creatorReferral + fanReferral;
 
-  await post(tx, p.fanId, -chargeCents, p.type, p.refId, undefined, payAsset);
-  await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, payAsset, originalPriceCents: p.grossCents });
+  await post(tx, p.fanId, -chargeCents, p.type, p.refId);
+  await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, originalPriceCents: p.grossCents });
   await post(tx, PLATFORM_ID, fee - referral, 'PLATFORM_FEE', p.refId, { source: p.type });
   if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', p.refId, { for: 'creator' });
   if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', p.refId, { for: 'fan' });
 
-  return { gross: chargeCents, fee, net, referral, payAsset };
+  return { gross: chargeCents, fee, net, referral };
 }
 
 /** Wrap a money operation in a serializable transaction, retrying on serialization conflicts. */

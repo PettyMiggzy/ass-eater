@@ -1528,3 +1528,119 @@ second save to untick. Recoverable; the opposite default fails silently.
 
 The creator's dashboard now lists exactly which gaps remain and how many
 spots are left, so the programme is actionable rather than a lottery.
+
+## The token is not the currency: credits-only ledger built (2026-09-18)
+
+Founder floated, then dropped, making credits *be* the token: creators would
+earn tokens, send them back, and the platform would check the price and pay
+USDC. Talked through why not, and he agreed -- *"only one token will be too
+volatile to be the currency unfortunately."* Recording the reasoning because
+this idea will come back:
+
+- **Price risk lands on whoever didn't choose it.** 1,000 credits earned at
+  $0.01 is 100,000 tokens; cashed out a week later at $0.005 that's $500
+  against $1,000 of fan money spent. The creator will say the platform took
+  it, and something did. Flip the chart and the platform owes $2,000 out of a
+  wallet that took in $1,000 -- the direction that's good for creators is the
+  one that drains the treasury fastest, and the first green month is a run.
+- **It is a stronger version of the thing he was avoiding, not a way round
+  it.** Token as the payment *and* the platform as the desk that buys it back
+  for dollars at a price it quotes. The 40% founder holding sits badly next
+  to a redemption window.
+
+**What was kept from the idea, because it was right:** a treasury wallet he
+funds with USDC that creator payouts come out of. That's just a payout
+treasury and needs no token at all.
+
+### Built: `server/`'s ledger charges credits only
+
+`PayAsset` is gone; `Balance = 'CREDITS' | 'ONLYASS'` replaces it and the two
+are not interchangeable. CREDITS is money (1 credit = $1, booked in cents).
+ONLYASS is a **holding** -- the only thing that can be done with it is a VIP
+burn. `charge()` no longer takes an asset at all, so no endpoint can offer
+one: `payAsset` was removed from tips, subscriptions, live tickets, message
+unlocks, PPV posts, the marketplace buy handler, the renewals worker and the
+`Subscription.payAsset` column (enum dropped from the schema).
+
+`FEES.TOKEN_PAYOUT_BPS` (the 8% rate for creators taking payout in the token)
+is deleted and `payoutAsset` is `USDC | ETH` -- paying a creator in the token
+is still paying someone in a token whose price moves between earning and
+cashing out. Deleting it also removed the only reachable path to the
+referral over-claim recorded earlier in this file; **the proportional cap
+stays anyway**, with a test, because it is the invariant and not a patch for
+one rate.
+
+Two new regression tests are the real guard: a fan holding 1,000,000 in
+tokens and zero credits cannot buy anything, and a fan 600 short on credits
+is not topped up out of their token balance. If either starts passing for the
+wrong reason, the token has become currency again. 57 tests pass against the
+real local Postgres + Redis; `tsc --noEmit` clean.
+
+### Chain: Base for money, and Base is what I'd launch the token on too
+
+- **Coinbase and Base are the same thing, which settles the founder's worry.**
+  Coinbase built Base and runs its sequencer; USDC withdrawals from Coinbase
+  to Base are free and land in under a minute, and free in both directions
+  except on Ethereum mainnet. "Coinbase is the easiest" and "Base" are not in
+  tension -- Base is easiest *because* it's Coinbase's.
+- **Arc: no.** Circle's Arc opened public mainnet 2026-09-16 (two days ago).
+  Deployment is open to anyone, but the **validator set is permissioned and
+  Circle picks it** -- the founding cohort is BlackRock, DTCC, ICE,
+  Mastercard, Visa, MoneyGram, Standard Chartered, Worldpay, SBI, Sumitomo,
+  Galaxy. Block production for an adult-platform token would sit with
+  institutions whose business is not being near it, under an AUP with a
+  catch-all for "any activity that Circle subsequently deems publicly to be
+  impermissible." It is also two days old: no DEX liquidity and no traders,
+  and a token nobody trades has no price -- which the VIP burn threshold
+  depends on.
+
+  **CORRECTION to the earlier note in this file:** an earlier section says
+  Circle's Arc was "confirmed to ban adult content." Re-read Circle's
+  published Acceptable Use Policy directly -- **it does not name adult
+  content anywhere.** The prohibitions are unlawful activity, sanctions,
+  system interference, IP infringement, fraud, market manipulation, mixers
+  and darknet markets, plus that discretionary catch-all. The earlier note
+  overstated it, probably conflating the AUP with Circle Mint account
+  onboarding. The argument against Arc is the permissioned validator set and
+  the dead liquidity, not a written ban.
+- **Recommended: Base for both.** One chain for USDC and the token means one
+  network for a fan to add, one RPC for the site to read balances from, and
+  one wallet -- which matters precisely because the founder's own framing is
+  "people don't really know how to use crypto." Permissionless deployment,
+  real DEX liquidity, cheap. Honest caveat: Base's sequencer is centralised
+  too (Coinbase's), and the fair comparison is that deployment is
+  permissionless and there's no precedent of Coinbase censoring a token
+  contract -- not that nobody could ever touch it.
+- Solana has better memecoin liquidity, but it puts the token in a different
+  ecosystem from the money and makes fans learn two. Robinhood Chain (the
+  original plan, 4663) has the same dead-liquidity problem as Arc.
+
+### Token use cases, ranked (the design rule: HOLD or BURN, never SPEND)
+
+Spending it is currency. Holding it (checked, never moves) and burning it
+(one-way, for a permanent status) are not payments.
+
+Already built or one wire away:
+1. **Burn for VIP** -- permanent 10% off everything, threshold adjustable as
+   the price rises. `server/src/core/vip.ts`. The flagship: sustained buy
+   pressure and permanent supply reduction.
+2. **Token-gated creators** -- the `locked` field exists on every creator
+   record on the live site and has never been wired up. A creator sets "hold
+   X $ONLYONE to see my page," which makes creators market the token.
+3. **Creator token-lock perk** -- `server/src/modules/stake.ts`.
+
+Cheap to add, same rule:
+4. **Early access window** -- holders see new posts/drops 24h before everyone.
+5. **Marketplace first look** -- holders see 1-of-1 listings before public.
+6. **Burn to claim a premium handle**; **burn for profile flair**. One-way,
+   permanent, real scarcity.
+7. **Holders vote the weekly featured creator** on the homepage. No money
+   moves, and creators send their fans to buy tokens to vote for them.
+
+Do NOT: pay creators in it, let it buy credits, spend it for placement, or
+airdrop it as compensation. Each one is the payment path through a side door.
+
+### Also decided
+
+**Todd's "10% off when you join" is shelved, by the founder, not deferred by
+me** -- *"don't worry about discount to join right now."* Don't build it.

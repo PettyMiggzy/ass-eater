@@ -60,14 +60,13 @@ export const posts: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:id/unlock', { preHandler: app.auth }, async (req: any, reply) => {
-    const { payAsset } = z.object({ payAsset: z.enum(['USD', 'ONLYASS']).default('USD') }).parse(req.body ?? {});
     return money(prisma, async (tx) => {
       const p = await tx.post.findUniqueOrThrow({ where: { id: req.params.id } });
       if (p.visibility !== 'PPV' || p.removed) return reply.code(400).send({ error: 'not_ppv' });
       const already = await tx.postUnlock.findUnique({ where: { fanId_postId: { fanId: req.user.id, postId: p.id } } });
       if (already) return { ok: true, already: true };
       await tx.postUnlock.create({ data: { fanId: req.user.id, postId: p.id } });
-      const r = await charge(tx, { fanId: req.user.id, creatorId: p.creatorId, grossCents: p.priceCents, type: 'PPV', refId: p.id, payAsset });
+      const r = await charge(tx, { fanId: req.user.id, creatorId: p.creatorId, grossCents: p.priceCents, type: 'PPV', refId: p.id });
       return { ok: true, ...r };
     });
   });

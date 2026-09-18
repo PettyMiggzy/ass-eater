@@ -11,8 +11,10 @@ const ADDRESS_LOCK_NS = 84120;
 export const wallet: FastifyPluginAsync = async (app) => {
   app.get('/balance', { preHandler: app.auth }, async (req) => {
     const a = await prisma.account.findUnique({ where: { userId: req.user.id } });
-    // onlyAssCents is a separate pool, only funded by depositing in $ONLYASS
-    // directly -- spending from it gets a 10% discount (payAsset: 'ONLYASS'
+    // onlyAssCents is a separate pool, only funded by depositing $ONLYONE
+    // directly. It is NOT spendable: the only thing it can do is a VIP burn
+    // (core/vip.ts). Credits (balanceCents) are what pays for everything.
+    // (was: a discount when spent from -- removed, the token is not money
     // on subscribe/tip/unlock/buy/join-live). See core/ledger.ts charge().
     return { balanceCents: Number(a?.balanceCents ?? 0), onlyAssCents: Number(a?.onlyAssCents ?? 0) };
   });

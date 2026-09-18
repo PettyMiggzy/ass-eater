@@ -3,13 +3,13 @@ import { prisma } from '../lib/prisma';
 import { publicClient, treasury, treasuryClient, TOKENS, DECIMALS, erc20Abi } from '../lib/chain';
 import { impactBpsOf, selectHedgedDeposits } from './treasury-hedge-math';
 
-// Fans can fund their balance in $ONLYASS and get a payment discount for it (see
-// core/ledger.ts's payAsset handling). That balance is booked in fixed USD cents,
-// but the tokens backing it are volatile -- if $ONLYASS drops before the platform
-// does anything with them, the treasury is short. This worker converts most of
-// each new $ONLYASS deposit into the stablecoin right away, keeping a slice as
-// intentional token exposure, and caps trade size so it doesn't crater its own
-// early, thin liquidity in the process.
+// Fans can deposit $ONLYONE to burn for VIP (core/vip.ts). That balance is
+// booked in fixed USD cents at the price on the day it arrived, but the tokens
+// backing it are volatile -- if $ONLYONE drops before the platform does
+// anything with them, the treasury is short against a liability it recorded in
+// dollars. This worker converts most of each new deposit into the stablecoin
+// right away, keeping a slice as intentional token exposure, and caps trade
+// size so it doesn't crater its own early, thin liquidity in the process.
 //
 // No-ops entirely until UNISWAP_V3_ROUTER_ADDRESS / UNISWAP_V3_QUOTER_ADDRESS /
 // ONLYASS_POOL are set -- i.e. until $ONLYASS actually has a live market.

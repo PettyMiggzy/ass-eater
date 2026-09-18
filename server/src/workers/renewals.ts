@@ -49,7 +49,7 @@ new Worker('renewals', async () => {
             data: { currentPeriodEnd: new Date(Math.max(s.currentPeriodEnd.getTime(), Date.now()) + PERIOD_MS) },
           });
           if (!claimed.count) throw new AlreadyRenewed();
-          await charge(tx, { fanId: s.fanId, creatorId: s.creatorId, grossCents: s.priceCents, type: 'SUBSCRIPTION', refId: s.id, payAsset: s.payAsset });
+          await charge(tx, { fanId: s.fanId, creatorId: s.creatorId, grossCents: s.priceCents, type: 'SUBSCRIPTION', refId: s.id });
         });
         await publish(s.fanId, { type: 'renewed', creatorId: s.creatorId, amountCents: s.priceCents });
       } catch (e) {

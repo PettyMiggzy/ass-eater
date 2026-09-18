@@ -40,7 +40,7 @@ export async function placeBid(tx: Tx, listingId: string, bidderId: string, amou
     : listing.priceCents; // starting bid
   if (amountCents < floor) throw statusCode('bid_too_low', 400);
 
-  const bal = await lockBalance(tx, bidderId, 'USD');
+  const bal = await lockBalance(tx, bidderId, 'CREDITS');
   if (bal < BigInt(amountCents)) throw new InsufficientFunds();
 
   // Release the previous leading bid's hold before taking the new one -- covers a bidder raising their own bid too (net effect: the marginal increase is held).

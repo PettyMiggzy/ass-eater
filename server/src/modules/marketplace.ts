@@ -96,9 +96,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     prisma.listing.findMany({ where: { creatorId: req.user.id }, orderBy: { createdAt: 'desc' } }));
 
   app.post('/listings/:id/buy', { preHandler: app.auth }, async (req: any) => {
-    const { payAsset } = z.object({
-      ageConfirmed: z.literal(true), tosAccepted: z.literal(true), payAsset: z.enum(['USD', 'ONLYASS']).default('USD'),
-    }).parse(req.body);
+    z.object({ ageConfirmed: z.literal(true), tosAccepted: z.literal(true) }).parse(req.body);
 
     return money(prisma, async (tx) => {
       const l = await tx.listing.findUniqueOrThrow({ where: { id: req.params.id } });
@@ -111,16 +109,16 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         if (already) return { ok: true, already: true, order: already };
       }
 
-      // A subscription, a token-lock, or paying in $ONLYASS no longer
-      // discount anything on their own -- VIP (having burned enough
-      // $ONLYASS, core/vip.ts) is the only thing that does. Discount applies
-      // to the item price only -- shipping is a pass-through carrier cost.
+      // A subscription or a token-lock does not discount anything on its
+      // own -- VIP (having burned enough $ONLYONE, core/vip.ts) is the only
+      // thing that does. Discount applies to the item price only -- shipping
+      // is a pass-through carrier cost.
       const vip = await isVip(tx, req.user.id);
       const chargeCents = vip ? Math.round((l.priceCents * (10_000 - FEES.VIP_DISCOUNT_BPS)) / 10_000) : l.priceCents;
       const shippingCents = l.kind === 'PHYSICAL' ? l.shippingCents : 0;
       const totalCharge = chargeCents + shippingCents;
 
-      const bal = await lockBalance(tx, req.user.id, payAsset);
+      const bal = await lockBalance(tx, req.user.id);
       if (bal < BigInt(totalCharge)) throw new InsufficientFunds();
 
       const platformFee = Math.floor((chargeCents * PLATFORM_FEE_BPS) / 10_000);
@@ -142,12 +140,12 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         },
       });
 
-      await post(tx, req.user.id, -totalCharge, 'MARKETPLACE_SALE', order.id, undefined, payAsset);
+      await post(tx, req.user.id, -totalCharge, 'MARKETPLACE_SALE', order.id);
       // Paid immediately -- shipping it is the creator's job from here, not the platform's to hold money over.
-      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents, payAsset });
+      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents });
       await post(tx, PLATFORM_ID, platformFee + listingFee, 'PLATFORM_FEE', order.id, { source: 'marketplace', platformFee, listingFee });
 
-      return { ok: true, order, payAsset };
+      return { ok: true, order };
     });
   });
 

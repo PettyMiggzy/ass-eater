@@ -82,13 +82,17 @@ describe('ledger.charge', () => {
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-1' }),
     );
 
-    expect(result).toEqual({ gross: 1000, fee: 100, net: 900, referral: 0, payAsset: 'USD' });
+    expect(result).toEqual({ gross: 1000, fee: 100, net: 900, referral: 0 });
     expect(await balanceOf(fan)).toBe(9000n);
     expect(await balanceOf(creator)).toBe(900n);
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(100n);
   });
 
-  it('charges a lower fee when the creator is paid out in $ONLYASS', async () => {
+  // The 8% token-payout rate is gone: the token is not a payout asset any
+  // more (2026-09-18). A record that still carries the old value -- the Asset
+  // enum can still express it, and a row written before the change would --
+  // must not buy a cheaper fee through the back door.
+  it('charges the standard 10% even for a creator record still set to an ONLYASS payout', async () => {
     const fan = await makeUser();
     const creator = await makeCreator({ payoutAsset: 'ONLYASS' });
     await fund(fan, 10_000);
@@ -97,8 +101,8 @@ describe('ledger.charge', () => {
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-2' }),
     );
 
-    expect(result.fee).toBe(80); // 8% instead of 10%
-    expect(result.net).toBe(920);
+    expect(result.fee).toBe(100);
+    expect(result.net).toBe(900);
   });
 
   it('pays the referrer a cut of the platform fee for a recently referred creator', async () => {
@@ -189,11 +193,11 @@ describe('ledger.charge', () => {
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(0n); // fee(100) - referral(100)
   });
 
-  it('never pays out more in referrals than the fee it collected, even at the lower $ONLYASS payout rate', async () => {
+  it('never pays out more in referrals than the fee it collected', async () => {
     const fanReferrer = await makeUser();
     const creatorReferrer = await makeUser();
     const fan = await makeUser({ referredById: fanReferrer });
-    const creator = await makeCreator({ referredById: creatorReferrer, payoutAsset: 'ONLYASS' });
+    const creator = await makeCreator({ referredById: creatorReferrer });
     await fund(fan, 10_000);
     const platformBefore = await balanceOf(PLATFORM_ID);
 
@@ -201,18 +205,20 @@ describe('ledger.charge', () => {
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-8' }),
     );
 
-    // The fee here is 8% (FEES.TOKEN_PAYOUT_BPS) = 80, but two 5% referral
-    // cuts want 100 between them -- both get scaled down to 40 rather than
-    // the platform paying out 100 against 80 collected.
-    expect(result.fee).toBe(80);
-    expect(result.referral).toBe(80);
-    expect(await balanceOf(fanReferrer)).toBe(40n);
-    expect(await balanceOf(creatorReferrer)).toBe(40n);
+    // Two 5% referral cuts against a 10% fee is the exact-equality case: both
+    // referrers are paid in full and the platform keeps nothing, but not a
+    // cent more leaves than came in. Removing the 8% token-payout rate made
+    // the over-claim unreachable by rate; the cap stays because it is the
+    // invariant, and a future rate change must not be able to mint value.
+    expect(result.fee).toBe(100);
+    expect(result.referral).toBe(100);
+    expect(await balanceOf(fanReferrer)).toBe(50n);
+    expect(await balanceOf(creatorReferrer)).toBe(50n);
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(0n);
     // Nothing created from nothing: what left the fan is exactly what landed
     // in the creator's, the platform's and both referrers' balances.
     expect(await balanceOf(fan)).toBe(9000n);
-    expect(await balanceOf(creator)).toBe(920n);
+    expect(await balanceOf(creator)).toBe(900n);
   });
 
   it('rejects a charge when the fan has insufficient balance, leaving all balances untouched', async () => {
@@ -239,41 +245,40 @@ describe('ledger.charge', () => {
     ).rejects.toThrow('self_payment');
   });
 
-  it('charges the fan\'s $ONLYASS balance at full price, with no discount, leaving the regular balance untouched', async () => {
+  // The token is a holding, not money. These two are the regression tests for
+  // that: a fan sitting on a pile of $ONLYONE cannot buy anything with it, and
+  // the token balance is never quietly reached for to cover a shortfall in
+  // credits. If either of these ever starts passing for the wrong reason, the
+  // token has become currency again.
+  it('will not spend a fan\'s $ONLYONE balance on a charge, however large it is', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
-    await fund(fan, 500); // regular balance -- should be left alone
-    await fundOnlyAss(fan, 10_000);
-
-    const result = await money(prisma, (tx) =>
-      charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-1', payAsset: 'ONLYASS' }),
-    );
-
-    // Staking (not built yet) is meant to be the only fan-facing discount --
-    // paying in $ONLYASS no longer discounts the charge on its own.
-    expect(result.gross).toBe(1000);
-    expect(result.fee).toBe(100); // 10% of the full 1000
-    expect(result.net).toBe(900);
-    expect(result.payAsset).toBe('ONLYASS');
-    expect(await onlyAssBalanceOf(fan)).toBe(9000n); // 10,000 - 1000
-    expect(await balanceOf(fan)).toBe(500n); // regular balance untouched
-    expect(await balanceOf(creator)).toBe(900n);
-  });
-
-  it('rejects an $ONLYASS payment for insufficient $ONLYASS balance even when the regular balance could cover it', async () => {
-    const fan = await makeUser();
-    const creator = await makeCreator();
-    await fund(fan, 10_000); // plenty in the regular pool
-    await fundOnlyAss(fan, 100); // not enough in the token pool
+    await fundOnlyAss(fan, 1_000_000); // a fortune in tokens, no credits at all
 
     await expect(
       money(prisma, (tx) =>
-        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-2', payAsset: 'ONLYASS' }),
+        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-1' }),
       ),
     ).rejects.toThrow(InsufficientFunds);
 
-    expect(await balanceOf(fan)).toBe(10_000n); // untouched
-    expect(await onlyAssBalanceOf(fan)).toBe(100n); // untouched
+    expect(await onlyAssBalanceOf(fan)).toBe(1_000_000n); // untouched
+    expect(await balanceOf(creator)).toBe(0n);
+  });
+
+  it('does not top a short credit balance up out of the token balance', async () => {
+    const fan = await makeUser();
+    const creator = await makeCreator();
+    await fund(fan, 400); // 400 of credits against a 1000 charge
+    await fundOnlyAss(fan, 10_000); // plenty of tokens beside it
+
+    await expect(
+      money(prisma, (tx) =>
+        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-2' }),
+      ),
+    ).rejects.toThrow(InsufficientFunds);
+
+    expect(await balanceOf(fan)).toBe(400n);
+    expect(await onlyAssBalanceOf(fan)).toBe(10_000n);
   });
 
   it('never lets two concurrent charges double-spend a balance that can only cover one', async () => {
