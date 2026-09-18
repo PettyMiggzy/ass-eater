@@ -64,7 +64,7 @@ beforeEach(async () => {
   // PlatformConfig is a true singleton (id 1), shared across every test in
   // this file -- reset it to the real default before each test so a test
   // that lowers the VIP threshold can't leak into whichever test runs next.
-  await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipPriceCents: 2000, vipBurnBps: 10_000 }, update: { vipPriceCents: 2000, vipBurnBps: 10_000 } });
+  await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipPriceCents: 2000, burnBps: 2500 }, update: { vipPriceCents: 2000, burnBps: 2500 } });
 });
 
 afterAll(async () => {

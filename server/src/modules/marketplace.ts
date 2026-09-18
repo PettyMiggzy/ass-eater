@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, isVip, FEES } from '../core/ledger';
+import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, isVip, FEES , postPlatformRevenue} from '../core/ledger';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION } from '../core/marketplace-fees';
 import { placeBid } from '../core/auctions';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
@@ -179,7 +179,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       await post(tx, req.user.id, -totalCharge, 'MARKETPLACE_SALE', order.id);
       // Paid immediately -- shipping it is the creator's job from here, not the platform's to hold money over.
       await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents });
-      await post(tx, PLATFORM_ID, platformFee + listingFee, 'PLATFORM_FEE', order.id, { source: 'marketplace', platformFee, listingFee });
+      await postPlatformRevenue(tx, platformFee + listingFee, order.id, { source: 'marketplace', platformFee, listingFee });
 
       return { ok: true, order };
     });

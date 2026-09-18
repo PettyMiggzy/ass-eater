@@ -2368,3 +2368,42 @@ Still not built: Top Supporter placement, and the badge, which needs VIP to
 exist on the live Next.js site at all (it does not).
 
 74 server tests pass (was 68), tsc clean.
+
+## Burns funded by all platform revenue, executed manually (2026-09-18)
+
+Founder: *"other stuff ppl do that dont go to creator can burn the supply I
+much rather the money sit in my wallet and I do monthly burns."*
+
+**Both parts built.**
+
+**1. Every source of platform revenue now funds the burn, not just VIP.**
+`postPlatformRevenue()` in `core/ledger.ts` posts the platform's cut AND
+records the burn share in the same transaction, and all **eight** places that
+used to post `PLATFORM_FEE` directly now go through it — charges, marketplace,
+auctions, withdrawals, promotions, the deposit fee, VIP. One helper because
+"remember to also write a TokenBurn row" at eight call sites is a rule that
+gets forgotten at the ninth. Money bound for a creator is never touched.
+
+`PlatformConfig.vipBurnBps` became `burnBps`, **default 2500 (a quarter), not
+100%**. Committing every cent of revenue to burns leaves nothing to run the
+platform with, and a burn the platform cannot afford stops happening — which
+is worse for holders than a smaller one that always does.
+
+**2. The burn is manual and that is now the default.** `recordManualBurn()`
+closes every outstanding obligation against a **real transaction hash**,
+format-checked (`0x` + 64 hex) and refused otherwise. The automatic worker
+still exists but requires `TOKEN_BURN_AUTOMATIC=true` -- running it means a
+hot wallet with swap permissions sitting in the server runtime, which is the
+single most valuable thing an attacker could find there. Manual is the better
+trade while volumes are small.
+
+**What keeps it honest:** the ledger records what is owed as revenue arrives,
+so "how much do we owe the supply" is a database answer rather than a memory;
+`GET /admin/token-burns` shows burned vs owed; and closing obligations
+requires a hash anyone can open on an explorer. A burn recorded without one
+would turn a verifiable number into a press release.
+
+`upTo` is captured before the update, so revenue landing mid-call stays owed
+rather than being marked burned by a transaction that predates it. Tested.
+
+77 server tests pass (was 74), tsc clean.

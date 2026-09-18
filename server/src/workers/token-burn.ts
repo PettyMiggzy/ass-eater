@@ -30,6 +30,12 @@ import { publicClient, treasuryClient, treasury, TOKENS, HEDGE_STABLE, erc20Abi 
  *    in gas and price impact than it destroys.
  */
 
+// OFF by default. The founder holds the money and burns manually once a
+// month (POST /admin/token-burns/record), which avoids leaving a hot wallet
+// with swap permissions running on a server -- the single most valuable thing
+// an attacker could find in this runtime. Set TOKEN_BURN_AUTOMATIC=true only
+// if that trade is deliberately being made.
+const AUTOMATIC = process.env.TOKEN_BURN_AUTOMATIC === 'true';
 const ROUTER = process.env.UNISWAP_V3_ROUTER_ADDRESS as Address | undefined;
 const POOL_FEE = Number(process.env.ONLYASS_POOL_FEE ?? 3000);
 const INTERVAL_MS = Number(process.env.TOKEN_BURN_INTERVAL_MS ?? 15 * 60_000);
@@ -123,7 +129,7 @@ function minimumOut(amountIn: bigint): bigint {
   return (expected * (10_000n - MAX_SLIPPAGE_BPS)) / 10_000n;
 }
 
-if (process.env.NODE_ENV !== 'test') {
+if (AUTOMATIC && process.env.NODE_ENV !== 'test') {
   (async function loop() {
     for (;;) {
       try { await runBurnBatch(); } catch (e) { console.error('token-burn', e); }

@@ -418,14 +418,19 @@ model PlatformConfig {
   id             Int @id @default(1)
   // What VIP costs per month, in cents. $20 by default.
   vipPriceCents  Int @default(2000)
-  // What share of VIP revenue is spent buying $ONLYONE on the open market and
-  // burning it, in basis points. 10000 = all of it.
+  // What share of the platform's OWN revenue is committed to buying $ONLYONE
+  // on the open market and burning it, in basis points.
   //
-  // The whole point of charging in dollars rather than asking fans to burn
-  // tokens themselves: a fan needs no wallet, and the buy still lands on the
-  // open market where it moves the price, instead of the platform selling
-  // tokens (which would cap the price at whatever it sold them for).
-  vipBurnBps     Int @default(10000)
+  // Every source counts, not just VIP: the 10% cut, the 2% on buying credits,
+  // withdrawal fees, promotions, marketplace and auction fees. Money bound
+  // for a creator is never touched -- this is only what the platform keeps,
+  // which is the money that would otherwise just sit there.
+  //
+  // Default 2500 (a quarter). Deliberately not 100%: committing every cent of
+  // revenue to burns leaves nothing to run the platform with, and a burn the
+  // platform cannot afford stops happening, which is worse for holders than a
+  // smaller one that always does.
+  burnBps        Int @default(2500)
 }
 
 // Money committed to buying $ONLYONE on the open market and destroying it.

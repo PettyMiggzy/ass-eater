@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { isAddress } from 'viem';
 import { prisma } from '../lib/prisma';
-import { money, lockBalance, post, PLATFORM_ID, FEES, InsufficientFunds } from '../core/ledger';
+import { money, lockBalance, post, PLATFORM_ID, FEES, InsufficientFunds , postPlatformRevenue} from '../core/ledger';
 import { payoutQueue } from '../lib/redis';
 
 export const payouts: FastifyPluginAsync = async (app) => {
@@ -26,7 +26,7 @@ export const payouts: FastifyPluginAsync = async (app) => {
       if (net <= 0) throw Object.assign(new Error('amount_too_small'), { statusCode: 400 });
       const payout = await tx.payout.create({ data: { creatorId: req.user.id, asset: c.payoutAsset, address: c.payoutAddress!, instant, amountCents: BigInt(net), feeCents: BigInt(fee) } });
       await post(tx, req.user.id, -amountCents, 'PAYOUT', payout.id, { fee, net, instant });
-      await post(tx, PLATFORM_ID, fee, 'PLATFORM_FEE', payout.id, { source: 'withdrawal' });
+      await postPlatformRevenue(tx, fee, payout.id, { source: 'withdrawal' });
       return payout;
     });
     await payoutQueue.add('send', { payoutId: p.id }, { attempts: 1, removeOnComplete: 1000, removeOnFail: false, priority: instant ? 1 : 10 });

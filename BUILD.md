@@ -103,10 +103,17 @@ free money for whoever trades it.
 
 **What it actually does:**
 
-1. **VIP revenue buys and burns it.** Every $20 membership buys $ONLYONE on
-   the open market and sends it to the dead address. Recurring buy pressure
-   and permanent supply reduction, funded by revenue.
-   *(server — `core/vip.ts`, `workers/token-burn.ts`)*
+1. **Platform revenue buys and burns it.** A share of everything the platform
+   keeps — the 10% cut, the 2% on buying credits, VIP, withdrawal and
+   marketplace fees — is committed to buying $ONLYONE on the open market and
+   destroying it. Default 25% (`PlatformConfig.burnBps`). Money bound for a
+   creator is never touched. The obligation is recorded as the revenue
+   arrives; **the burn itself is done manually, monthly, from the founder's
+   own wallet**, and closed against a real transaction hash
+   (`POST /admin/token-burns/record`). The automatic on-chain burner exists
+   but is **off by default** — it would need a hot wallet with swap rights
+   living in the runtime. *(server — `core/ledger.ts` `postPlatformRevenue`,
+   `core/vip.ts` `recordManualBurn`, `workers/token-burn.ts`)*
 2. **Token-gated creators.** A creator sets how many tokens a fan must
    **hold** to see their page. Nothing is spent; the creator markets it.
    *(live site — `lib/token-gate.js`, off until the contract exists)*

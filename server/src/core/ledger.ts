@@ -9,6 +9,9 @@ export const BURNED_ID = '00000000-0000-0000-0000-0000000000b0';
 export const FEES = {
   DEFAULT_BPS: 1000, // 10% — standard platform cut
   DEPOSIT_BPS: 200, // 2% taken when a fan buys credits — see creditDeposit()
+  // What share of the platform's OWN revenue is committed to buying $ONLYONE
+  // on the open market and burning it. Overridable in PlatformConfig.burnBps.
+  BURN_BPS: 2500,
   REFERRAL_BPS: 500, // 5% of gross to referrer, paid out of the platform's cut
   REFERRAL_MONTHS: 12,
   WITHDRAWAL_FLAT_CENTS: 100, // $1 per payout
@@ -45,6 +48,40 @@ export class InsufficientFunds extends Error {
 export type Tx = Prisma.TransactionClient;
 
 /**
+ * Posts money the platform keeps, and records the share of it owed to the
+ * token burn in the same transaction.
+ *
+ * Every PLATFORM_FEE posting goes through here so the two can never come
+ * apart. There are eight places revenue lands -- charges, marketplace,
+ * auctions, withdrawals, promotions, deposits, VIP -- and "remember to also
+ * write a TokenBurn row" at eight call sites is a rule that gets forgotten at
+ * the ninth.
+ *
+ * Money bound for a creator is never touched: this is only the platform's own
+ * cut, which is the money that would otherwise just sit there.
+ */
+export async function postPlatformRevenue(
+  tx: Tx,
+  amountCents: number | bigint,
+  refId?: string,
+  meta?: object,
+) {
+  const amount = BigInt(amountCents);
+  await post(tx, PLATFORM_ID, amount, 'PLATFORM_FEE', refId, meta);
+  if (amount <= 0n) return { burnCents: 0n };
+
+  const config = await tx.platformConfig.findUnique({ where: { id: 1 } });
+  const bps = BigInt(config?.burnBps ?? FEES.BURN_BPS);
+  const burnCents = (amount * bps) / 10_000n;
+  if (burnCents > 0n) {
+    await tx.tokenBurn.create({
+      data: { usdCents: burnCents, reason: (meta as any)?.source ?? (meta as any)?.kind ?? 'revenue', refId },
+    });
+  }
+  return { burnCents };
+}
+
+/**
  * Credits a fan's deposit, less the buy-credits fee.
  *
  * $100 of stablecoin arrives, 98 credits are issued, the platform keeps $2.
@@ -79,7 +116,7 @@ export async function creditDeposit(
   const { creditedCents, feeCents } = splitDeposit(grossCents);
   await post(tx, userId, creditedCents, 'DEPOSIT', refId, { ...meta, grossCents: grossCents.toString(), feeCents: feeCents.toString() });
   if (feeCents > 0n) {
-    await post(tx, PLATFORM_ID, feeCents, 'PLATFORM_FEE', refId, { source: 'deposit', fanId: userId });
+    await postPlatformRevenue(tx, feeCents, refId, { source: 'deposit', fanId: userId });
   }
   return { creditedCents, feeCents };
 }
@@ -205,7 +242,7 @@ export async function charge(
 
   await post(tx, p.fanId, -chargeCents, p.type, p.refId);
   await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, originalPriceCents: p.grossCents });
-  await post(tx, PLATFORM_ID, fee - referral, 'PLATFORM_FEE', p.refId, { source: p.type });
+  await postPlatformRevenue(tx, fee - referral, p.refId, { source: p.type });
   if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', p.refId, { for: 'creator' });
   if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', p.refId, { for: 'fan' });
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { money, post, PLATFORM_ID } from '../core/ledger';
 import { deleteObject } from '../lib/s3';
+import { recordManualBurn } from '../core/vip';
 
 export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));
@@ -22,6 +23,30 @@ export const admin: FastifyPluginAsync = async (app) => {
       vipBurnBps: z.number().int().min(0).max(10_000).optional(),
     }).parse(req.body);
     return prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, ...body }, update: body });
+  });
+
+  /**
+   * Close the outstanding burn obligations against a real on-chain burn.
+   *
+   * The founder buys and burns from his own wallet monthly and pastes the
+   * transaction hash here. The hash is required and format-checked: without
+   * one this endpoint would let the platform mark supply destroyed that
+   * nobody can verify.
+   */
+  app.post('/token-burns/record', async (req: any) => {
+    const b = z.object({
+      txHash: z.string(),
+      tokensBurned: z.string().max(80).optional(),
+      note: z.string().max(200).optional(),
+    }).parse(req.body);
+    try {
+      return await money(prisma, (tx) => recordManualBurn(tx, b));
+    } catch (e: any) {
+      if (e.message === 'invalid_tx_hash') {
+        throw Object.assign(new Error('txHash must be a 0x-prefixed 32-byte transaction hash'), { statusCode: 400 });
+      }
+      throw e;
+    }
   });
 
   /** How much has actually been destroyed, and how much is still owed. */

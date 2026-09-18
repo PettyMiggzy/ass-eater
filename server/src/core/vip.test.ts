@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { money, post, isVip, InsufficientFunds, PLATFORM_ID } from './ledger';
-import { subscribeVip, getVipStatus, pendingBurnCents, VIP_PERIOD_MS } from './vip';
+import { subscribeVip, getVipStatus, pendingBurnCents, recordManualBurn, VIP_PERIOD_MS } from './vip';
 
 const prisma = new PrismaClient();
 
@@ -37,8 +37,8 @@ beforeEach(async () => {
   await prisma.account.upsert({ where: { userId: PLATFORM_ID }, create: { userId: PLATFORM_ID }, update: {} });
   await prisma.platformConfig.upsert({
     where: { id: 1 },
-    create: { id: 1, vipPriceCents: 2000, vipBurnBps: 10_000 },
-    update: { vipPriceCents: 2000, vipBurnBps: 10_000 },
+    create: { id: 1, vipPriceCents: 2000, burnBps: 2500 },
+    update: { vipPriceCents: 2000, burnBps: 2500 },
   });
 });
 
@@ -115,15 +115,15 @@ describe('vip token burn obligation', () => {
 
     const rows = await burnsFor(fan);
     expect(rows).toHaveLength(1);
-    expect(rows[0].usdCents).toBe(2000n);
+    expect(rows[0].usdCents).toBe(500n); // 25% of the $20 that the platform kept
     expect(rows[0].reason).toBe('vip');
     expect(rows[0].executedAt).toBeNull();
     // The global tally counts it too.
-    expect(await money(prisma, (tx) => pendingBurnCents(tx))).toBeGreaterThanOrEqual(2000n);
+    expect(await money(prisma, (tx) => pendingBurnCents(tx))).toBeGreaterThanOrEqual(500n);
   });
 
   it('commits only the configured share of revenue to the burn', async () => {
-    await prisma.platformConfig.update({ where: { id: 1 }, data: { vipBurnBps: 5000 } });
+    await prisma.platformConfig.update({ where: { id: 1 }, data: { burnBps: 5000 } });
     const fan = await makeUser();
     await fund(fan, 5_000);
 
@@ -139,12 +139,55 @@ describe('vip token burn obligation', () => {
   });
 
   it('commits nothing when the burn share is set to zero', async () => {
-    await prisma.platformConfig.update({ where: { id: 1 }, data: { vipBurnBps: 0 } });
+    await prisma.platformConfig.update({ where: { id: 1 }, data: { burnBps: 0 } });
     const fan = await makeUser();
     await fund(fan, 5_000);
 
     await money(prisma, (tx) => subscribeVip(tx, fan));
 
     expect(await burnsFor(fan)).toHaveLength(0);
+  });
+});
+
+describe('vip.recordManualBurn', () => {
+  // The founder holds the money and burns monthly from his own wallet, so
+  // closing an obligation is a claim unless it carries something anyone can
+  // check. A bad hash is refused rather than stored.
+  it('refuses to close obligations without a real transaction hash', async () => {
+    for (const bad of ['', 'nope', '0x123', '123'.padEnd(66, 'a')]) {
+      await expect(money(prisma, (tx) => recordManualBurn(tx, { txHash: bad }))).rejects.toThrow('invalid_tx_hash');
+    }
+  });
+
+  it('closes what is owed and stamps it with the hash', async () => {
+    const fan = await makeUser();
+    await fund(fan, 5_000);
+    await money(prisma, (tx) => subscribeVip(tx, fan));
+
+    const hash = `0x${'a'.repeat(64)}`;
+    const r = await money(prisma, (tx) => recordManualBurn(tx, { txHash: hash, tokensBurned: '1234' }));
+
+    expect(r.closed).toBeGreaterThan(0);
+    const rows = await burnsFor(fan);
+    expect(rows[0].executedAt).toBeInstanceOf(Date);
+    expect(rows[0].txHash).toBe(hash);
+    expect(rows[0].tokensBurned).toBe('1234');
+  });
+
+  // Revenue that lands after the burn transaction must not be marked burned
+  // by a transaction that predates it.
+  it('leaves obligations created after the burn still owed', async () => {
+    const first = await makeUser();
+    await fund(first, 5_000);
+    await money(prisma, (tx) => subscribeVip(tx, first));
+    await money(prisma, (tx) => recordManualBurn(tx, { txHash: `0x${'b'.repeat(64)}` }));
+
+    const later = await makeUser();
+    await fund(later, 5_000);
+    await money(prisma, (tx) => subscribeVip(tx, later));
+
+    const rows = await burnsFor(later);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].executedAt).toBeNull();
   });
 });

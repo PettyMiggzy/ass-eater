@@ -1,4 +1,4 @@
-import { post, lockBalance, PLATFORM_ID, InsufficientFunds, type Tx } from './ledger';
+import { post, lockBalance, PLATFORM_ID, InsufficientFunds, type Tx , postPlatformRevenue} from './ledger';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION } from './marketplace-fees';
 
 // eBay-style auctions on the marketplace. Bids settle in the USD-backed
@@ -94,7 +94,7 @@ export async function closeAuction(tx: Tx, listingId: string) {
 
   // The winning bidder's funds already left their balance at bid time (AUCTION_BID_HOLD) -- just route the proceeds, no second debit.
   await post(tx, listing.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { auction: true, gross: chargeCents, platformFee, listingFee, shippingCents });
-  await post(tx, PLATFORM_ID, platformFee + listingFee, 'PLATFORM_FEE', order.id, { source: 'marketplace_auction', platformFee, listingFee });
+  await postPlatformRevenue(tx, platformFee + listingFee, order.id, { source: 'marketplace_auction', platformFee, listingFee });
 
   return { sold: true as const, order };
 }

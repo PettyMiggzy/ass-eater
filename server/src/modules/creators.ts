@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { isAddress } from 'viem';
-import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../core/ledger';
+import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds , postPlatformRevenue} from '../core/ledger';
 import { isSubscribed } from '../core/access';
 
 export const creators: FastifyPluginAsync = async (app) => {
@@ -92,7 +92,7 @@ export const creators: FastifyPluginAsync = async (app) => {
       const bal = await lockBalance(tx, req.user.id);
       if (bal < BigInt(PROMO_CENTS)) throw new InsufficientFunds();
       await post(tx, req.user.id, -PROMO_CENTS, 'ADJUSTMENT', undefined, { reason: 'promotion' });
-      await post(tx, PLATFORM_ID, PROMO_CENTS, 'PLATFORM_FEE', undefined, { source: 'promotion' });
+      await postPlatformRevenue(tx, PROMO_CENTS, undefined, { source: 'promotion' });
       const cur = await tx.creatorProfile.findUniqueOrThrow({ where: { userId: req.user.id } });
       const from = cur.promotedUntil && cur.promotedUntil > new Date() ? cur.promotedUntil : new Date();
       return tx.creatorProfile.update({ where: { userId: req.user.id }, data: { promotedUntil: new Date(from.getTime() + DAYS * 864e5) } });
