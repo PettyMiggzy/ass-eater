@@ -1480,3 +1480,51 @@ is the token's remaining job. The founding-creator fee waiver
 moment. Don't start this without deciding credit expiry and whether unspent
 credits are refundable -- both change the schema and both are legal
 questions before they are code ones.
+
+## "First 100 to do what", and the settled payment answers (2026-09-18)
+
+Founder answered the open questions, and pushed back on two:
+
+**Settled:**
+- **USDC lands on Base.** Native USDC, cents-level gas, the default for USDC
+  payments -- so the deposit watcher targets Base, not Robinhood Chain. The
+  token still launches on Robinhood Chain separately; money and token are on
+  different chains and that is fine, because the token is never money here.
+- **Credits never expire and are not refundable.** Closed-loop, exactly the
+  OnlyFans/Twitch shape. Written into Terms section 5 already.
+
+**"See if only fans charge fans to join" -- researched, answer is no.**
+OnlyFans charges fans nothing to sign up and charges creators nothing either;
+their entire revenue is the 20% commission. Subscriptions run $4.99-$49.99,
+median ~$7.50-$9.99 (2026), and **~31% of creators set their base tier free**
+and monetise through pay-per-view instead. Two consequences:
+  - Todd's "10% OFF when you join through my link" has no join fee to
+    discount -- not on their platform and not on ours. If it happens at all
+    it has to be a discount on what a fan *spends*, which puts it straight
+    back into conflict with the VIP burn being the only fan-facing discount,
+    and still leaves "who absorbs the 10%" unanswered. **Still open.**
+  - The free-tier + PPV pattern is proven and worth supporting deliberately;
+    `price: 'Free'` already exists on the creator record.
+
+**"First 100 to do what" -- answered and built: the first 100 APPROVED WITH A
+FINISHED PROFILE.** Not the first 100 to sign up. That version fills every
+slot in a day with empty profiles and then the perk does the damage --
+priority placement sorts blank pages to the top of Explore, so the programme's
+reward is a browse page full of nothing.
+
+The bar is `foundingProfileGaps()` in `lib/founding.js`: display name, handle,
+a bio of 40+ characters, a real avatar (not the mascot placeholder), at least
+one tag, at least 3 pieces of content. Deliberately modest -- a gate against
+empty pages, not a test of dedication.
+
+Granting is **automatic at approval** (`pages/api/admin/profile.js`, on the
+transition into `active` only, cap still enforced), because a slot that
+depends on an admin remembering to tick a box is a perk that quietly never
+gets given. Known cost, documented at the call site: the admin panel posts
+every field on every save, so an explicit `founding: false` in the same
+request that approves someone is indistinguishable from the panel echoing the
+current value -- approving a qualifying creator *without* the badge takes a
+second save to untick. Recoverable; the opposite default fails silently.
+
+The creator's dashboard now lists exactly which gaps remain and how many
+spots are left, so the programme is actionable rather than a lottery.

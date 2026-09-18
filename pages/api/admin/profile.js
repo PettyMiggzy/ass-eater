@@ -1,5 +1,5 @@
 import { getCreators, updateCreatorProfile, sanitizeSocials, sanitizeTags } from '../../../lib/creators-store';
-import { FOUNDING_LIMIT, foundingSlotsLeft, isFoundingCreator } from '../../../lib/founding';
+import { FOUNDING_LIMIT, foundingSlotsLeft, isFoundingCreator, profileQualifiesForFounding } from '../../../lib/founding';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { detectPaymentCircumvention } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
@@ -85,6 +85,35 @@ export default async function handler(req, res) {
   }
 
   const existing = (await getCreators()).find((c) => String(c.id) === String(creatorId));
+
+  // Founding status is granted at approval, automatically, to the first 100
+  // creators who clear the finished-profile bar in lib/founding.js. Doing it
+  // here rather than by hand is the point: a slot that depends on an admin
+  // remembering to tick a box is a perk that quietly doesn't get given.
+  //
+  // Only on the transition INTO active, so re-saving an approved creator
+  // never re-grants. The known cost: the admin panel posts every field on
+  // every save, so an explicit `founding: false` in the same request that
+  // approves someone is indistinguishable from the panel just echoing the
+  // current value -- meaning an admin who wants to approve a qualifying
+  // creator WITHOUT the badge has to untick it on a second save. Recoverable,
+  // and the opposite default (never auto-grant) fails silently instead.
+  if (
+    safeFields.status === 'active' &&
+    existing &&
+    existing.status !== 'active' &&
+    !isFoundingCreator(existing) &&
+    !safeFields.founding
+  ) {
+    const merged = { ...existing, ...safeFields };
+    if (profileQualifiesForFounding(merged)) {
+      const roster = await getCreators();
+      if (foundingSlotsLeft(roster) > 0) {
+        safeFields.founding = true;
+        safeFields.foundingSince = new Date().toISOString();
+      }
+    }
+  }
 
   // Same check pages/api/me/profile.js runs on the creator's own edits --
   // without it this endpoint was a trivial way around the filter, since it

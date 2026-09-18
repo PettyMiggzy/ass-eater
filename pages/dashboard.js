@@ -5,7 +5,7 @@ import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getCreators, effectiveCreatorStatus } from '../lib/creators-store';
 import { getListings } from '../lib/listings-store';
-import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator, FEE_WAIVER_DAYS } from '../lib/founding';
+import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator, foundingProfileGaps, foundingSlotsLeft, FEE_WAIVER_DAYS } from '../lib/founding';
 
 export async function getServerSideProps({ req }) {
   // getSessionUser rather than a stateless token check, so a session that
@@ -19,8 +19,10 @@ export async function getServerSideProps({ req }) {
 
   let creator = null;
   let listings = [];
+  let foundingLeft = 0;
   if (user.role === 'creator' && user.creatorId) {
     const creators = await getCreators();
+    foundingLeft = foundingSlotsLeft(creators);
     creator = creators.find((c) => String(c.id) === String(user.creatorId)) || null;
     const allListings = await getListings();
     listings = allListings
@@ -28,10 +30,10 @@ export async function getServerSideProps({ req }) {
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
-  return { props: { user: publicUser(user), creator, listings } };
+  return { props: { user: publicUser(user), creator, listings, foundingLeft } };
 }
 
-export default function Dashboard({ user, creator: initialCreator, listings: initialListings }) {
+export default function Dashboard({ user, creator: initialCreator, listings: initialListings, foundingLeft }) {
   const router = useRouter();
   const [creator, setCreator] = useState(initialCreator);
   const [listings, setListings] = useState(initialListings || []);
@@ -396,7 +398,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
 
               <hr className="border-brand-purple/20" />
 
-              <ShareKit creator={creator} />
+              <ShareKit creator={creator} foundingLeft={foundingLeft} />
 
               <hr className="border-brand-purple/20" />
 
@@ -504,7 +506,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
  * the ?ref through to signup via the cookie in lib/referral.js, and the
  * creator's profile is one click past it.
  */
-function ShareKit({ creator }) {
+function ShareKit({ creator, foundingLeft }) {
   const [copiedField, setCopiedField] = useState('');
   const [origin, setOrigin] = useState('');
 
@@ -531,10 +533,39 @@ function ShareKit({ creator }) {
 
   const founding = isFoundingCreator(creator);
   const waiverEnds = feeWaiverEndsAt(creator);
+  const gaps = foundingProfileGaps(creator);
 
   return (
     <div>
       <h3 className="font-bold text-brand-gold mb-2">Share Your Page</h3>
+
+      {/* Not founding yet, slots still open: say exactly what is missing.
+          The programme is decided automatically at approval, so a creator who
+          is told "finish these four things" can actually act on it -- which is
+          the difference between a perk and a lottery. */}
+      {!founding && foundingLeft > 0 && gaps.length > 0 && (
+        <div className="mb-4 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-sm">
+          <p className="font-bold text-brand-gold">
+            {foundingLeft} Founding Creator {foundingLeft === 1 ? 'spot' : 'spots'} left
+          </p>
+          <p className="text-gray-400 mt-1">
+            The first 100 creators approved with a finished profile get the badge, priority placement and
+            a fee-free window. Yours still needs:
+          </p>
+          <ul className="list-disc pl-5 mt-2 text-gray-300 space-y-1">
+            {gaps.map((g) => <li key={g}>{g}</li>)}
+          </ul>
+        </div>
+      )}
+      {!founding && foundingLeft > 0 && gaps.length === 0 && (
+        <div className="mb-4 px-4 py-3 rounded-md bg-black/40 border border-brand-gold/30 text-sm">
+          <p className="font-bold text-brand-gold">Your profile qualifies for Founding Creator</p>
+          <p className="text-gray-400 mt-1">
+            {foundingLeft} of 100 {foundingLeft === 1 ? 'spot is' : 'spots are'} left. The badge is granted
+            when your profile is approved.
+          </p>
+        </div>
+      )}
 
       {founding && (
         <div className="mb-4 px-4 py-3 rounded-md bg-brand-gold/10 border border-brand-gold/30 text-sm">

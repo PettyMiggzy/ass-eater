@@ -209,15 +209,16 @@ export default function FoundingCreator({ taken, left, paymentsLive }) {
             )}
             <p className="text-[11px] tracking-[0.2em] text-gray-500">
               {open
-                ? 'FOUNDING SPOTS ARE CONFIRMED AFTER PROFILE REVIEW'
+                ? 'THE FIRST 100 APPROVED WITH A FINISHED PROFILE'
                 : 'THE FOUNDING PROGRAMME IS CLOSED — CREATOR SIGNUPS ARE STILL OPEN'}
             </p>
           </div>
 
           <p className="mt-8 text-xs text-gray-600 leading-relaxed max-w-2xl">
             18+ only. Creators must complete identity and age verification before their profile is published.
-            Founding spots are granted on review, in the order profiles are completed, and the{' '}
-            {FEE_WAIVER_DAYS}-day fee waiver applies to the platform fee only.
+            A founding spot goes to each of the first {FOUNDING_LIMIT} creators approved with a finished
+            profile — avatar, bio, tags and content up — not simply the first {FOUNDING_LIMIT} to sign up.
+            The {FEE_WAIVER_DAYS}-day fee waiver applies to the platform fee only.
           </p>
         </main>
 
