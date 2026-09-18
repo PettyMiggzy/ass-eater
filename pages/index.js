@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Head from 'next/head';
-import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
+import { getCreators } from '../lib/creators-store';
+import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 
 export async function getServerSideProps() {
   const all = await getCreators();

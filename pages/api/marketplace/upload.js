@@ -1,7 +1,6 @@
 import { put } from '@vercel/blob';
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
-import { getListings } from '../../../lib/listings-store';
-import { updateJsonList } from '../../../lib/blob-json-store';
+import { getListings, addListingMediaForOwner, MEDIA_CAP_EXCEEDED } from '../../../lib/listings-store';
 
 export const config = {
   api: {
@@ -11,13 +10,6 @@ export const config = {
 
 const MAX_LISTING_MEDIA = 10;
 const MEDIA_CAP_MESSAGE = `Listings can have up to ${MAX_LISTING_MEDIA} items.`;
-
-// The manifest lib/listings-store.js owns. The cap has to be counted inside
-// the guarded read-modify-write (two uploads racing both passed a pre-check at
-// 9 items and both appended, landing at 11), and addListingMedia() takes no
-// cap, so the append is done here instead of through that helper -- keep this
-// path in sync if the store's manifest ever moves.
-const LISTINGS_MANIFEST_PATH = 'data/listings.json';
 
 // Same ceiling pages/api/creator/submit.js reads with. Vercel's own
 // request-body limit is stricter in production; this bounds what any other
@@ -95,24 +87,20 @@ export default async function handler(req, res) {
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
-    const updated = await updateJsonList(LISTINGS_MANIFEST_PATH, (list) => {
-      const idx = list.findIndex((l) => String(l.id) === String(listingId));
-      if (idx === -1 || String(list[idx].creatorId) !== String(ctx.creator.id)) {
-        throw new Error('Listing not found');
-      }
-      // Same reasoning as listings-store.js's addListingMedia: `knownMedia` is
-      // a client-captured snapshot and only stands in when the stored list is
-      // missing entirely -- it never wins over what this transform just read.
-      const base = Array.isArray(list[idx].media) ? list[idx].media : Array.isArray(knownMedia) ? knownMedia : [];
-      if (base.length >= MAX_LISTING_MEDIA) throw new Error(MEDIA_CAP_MESSAGE);
-      const next = [...list];
-      next[idx] = { ...list[idx], media: [...base, { type: fileType, src: blob.url }] };
-      return { next, result: next[idx] };
-    });
+    // Ownership and the 10-item cap are both enforced inside the write
+    // itself -- see addListingMediaForOwner. Two uploads racing cannot both
+    // pass a check at 9 items and leave the listing at 11.
+    const updated = await addListingMediaForOwner(
+      listingId,
+      ctx.creator.id,
+      { type: fileType, src: blob.url },
+      knownMedia,
+      MAX_LISTING_MEDIA,
+    );
 
     return res.status(200).json({ ok: true, listing: updated });
   } catch (err) {
-    if (err.message === MEDIA_CAP_MESSAGE) return res.status(403).json({ error: MEDIA_CAP_MESSAGE });
+    if (err.code === MEDIA_CAP_EXCEEDED) return res.status(403).json({ error: MEDIA_CAP_MESSAGE });
     return res.status(500).json({ error: err.message });
   }
 }

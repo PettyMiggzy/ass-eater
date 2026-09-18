@@ -1155,3 +1155,147 @@ lesson: **treat just-written, just-shipped code as the prime suspect in the
 next audit, not as the known-good baseline.** Every pass so far has found
 real bugs the previous pass missed, and the fixes themselves have
 introduced new ones.
+
+
+## Launchpad removed; token launches later from the founder's own launchpad (2026-09-18)
+
+Direct call: **"Remove launch pad not doing that"**, then **"I'll launch from
+my own launch pad once site is ready to go."** Both senses of "launchpad"
+were removed from the repo:
+
+- **The creator-token launchpad** -- `OnlyAssLaunchpad`, `OnlyAssLaunchpadV4`,
+  `OnlyAssLaunchpadHook`, `HookDeployer`, `LaunchedToken`, the V4 sqrt-price
+  library, the V2 interfaces, launchpad-only test helpers, both deploy
+  scripts, the hook-salt miner, their tests, `LAUNCHPAD.md`,
+  `LAUNCHPAD_V4.md`, and the `launchpad:*` npm scripts. Compiled Solidity
+  went from 150 files to 30.
+- **The $ONLYASS auction links** -- the "Join Auction" button on `/token`,
+  the "Live Auction" card, and the homepage's "Buy $ONLYASS" button. All
+  three pointed at `NEXT_PUBLIC_LAUNCHPAD_URL` (the third-party Kekfun
+  auction).
+
+**There is deliberately no "buy the token" link anywhere on the site now,
+and that is not an oversight to fix.** The founder is launching $ONLYASS
+himself, from his own launchpad, once the site is ready. Don't add a
+purchase/auction link back, and don't "restore" the Kekfun URL, until he
+gives a new destination.
+
+**Knock-on change, made as a consequence rather than a separate decision:**
+`OnlyAssPayments.payWithCreatorToken` and the equivalent creator-token
+pricing in `OnlyAssCreatorNFT` were removed too. Both existed only to accept
+a token a creator had launched *through the launchpad*, verified live
+against it -- with no launchpad, no such token can exist, so the check could
+never pass. Accepting an arbitrary unverified ERC-20 in its place would have
+been strictly worse than removing it. ETH and $ONLYASS payments are
+unchanged; both constructors lost their launchpad argument.
+
+**`scripts/deploy.js` was already broken before this** (four arguments to a
+five-argument constructor; it would have failed at deploy time). Fixed --
+and note the trap, because the obvious patch is the dangerous one:
+`OnlyAssPayments` takes its **owner FIRST**, ahead of the platform wallet,
+and both are plain `address`, so appending the missing argument instead
+compiles, deploys, reverts nothing, and silently hands ownership of the
+payments contract to the fee wallet. Unfixable once live.
+
+**Telegram links removed** (`t.me/creatorsfirst`) from the homepage footer,
+`/blocked-region` and `/verify-age`.
+
+**Left in deliberately, not an oversight:** `@uniswap/v4-core` and
+`v4-periphery` are now unused by any contract, as are
+`scripts/postinstall-permit2-link.js` and hardhat's 0.8.26 compiler
+override. Pulling dependencies needs a full reinstall to verify, and this
+branch deploys straight to production -- not worth the risk mid-session.
+
+
+## Storage moved from Vercel Blob JSON files to Postgres (built 2026-09-18, NOT YET DEPLOYED)
+
+### Why -- a live data exposure, confirmed against production
+
+Every store was a single JSON file in Vercel Blob, read whole and written
+whole. Blob objects are served from a **public URL**, the store hostname
+appears in every image URL on the site, and the manifest paths were fixed.
+So they were world-readable. Verified, not theorised:
+
+    GET https://<store>.public.blob.vercel-storage.com/data/creators.json
+    -> 200, two real creator records including walletAddress and payoutMethod
+
+Those are the exact fields `toPublicCreator()` strips from page props -- the
+fix from the earlier audit hid them from the page and left the raw file
+served. `users.json` (bcrypt password hashes), `messages.json` (every private
+DM) and `ncii-reports.json` (takedown victims' names and contact details)
+would have been readable the same way the moment they existed. That is the
+clock: the exposure was small only because almost nobody had signed up yet.
+
+The second reason was the write model. Read-whole-file/write-whole-file has
+no atomicity; the ETag guard bolted onto it narrowed the window without
+closing it, and mishandling a failed read wiped a whole manifest once
+already (see the section above).
+
+### What was built
+
+`lib/db.js` -- a `pg` Pool, an idempotent `create table if not exists`
+schema, `query()` and `withTransaction()`. Ten tables, one row per record,
+each record kept as a `data` jsonb column with a real primary key.
+
+**The jsonb shape is a deliberate trade, not laziness.** It fixes both
+problems (nothing is served at a URL; a write is a row-level UPDATE) while
+leaving every record the same JavaScript object the pages and API routes
+already expect -- so the migration did not also become a rewrite of every
+caller. Fields that get filtered or sorted on have expression indexes.
+Normalise properly later if real queries need it.
+
+Bugs that disappeared as a side effect, rather than being patched again:
+- `max(existing id) + 1` id generation, still present in six stores, was the
+  same collision class already fixed once for users. Identity columns and a
+  sequence now assign ids.
+- Login-identifier uniqueness is a unique index on
+  `lower(btrim(data->>'email'))`, not a read-then-check. It must keep
+  matching `normalizeIdentifier()` in users-store.js -- it trims, so the
+  index has to as well, or " a@b.com" and "a@b.com" become two rows one
+  lookup matches.
+- The whole "a failed read looks like an empty list" hazard is gone: there is
+  no list to overwrite.
+
+**Seeding changed meaning.** The blob version fell back to the demo roster
+whenever the manifest was missing, so wiping every creator made the fake
+demo ones reappear as real. Now seeding happens once, recorded in an
+`app_meta` row, so `deleteAllCreators(includeSeed)` leaves an empty site.
+There is a test for exactly that.
+
+**`lib/creator-status.js` is new and load-bearing for the build.**
+`toPublicCreator`, `effectiveCreatorStatus`, `isPubliclyVisible`,
+`sanitizeSocials` and `sanitizeTags` are pure and are used inside React
+components, so importing them from `creators-store.js` pulls the Postgres
+driver into the client bundle and the build fails outright on `net`/`tls`/
+`dns`. Client code must import them from `creator-status.js`;
+`creators-store.js` re-exports them for server callers.
+
+Vercel Blob is still used, correctly, for actual file uploads (images and
+video). Only the JSON data manifests moved.
+
+### Verified
+
+102 store tests plus 10 session tests, run against a real local Postgres --
+not mocks -- including the concurrency cases that used to lose data: 30
+simultaneous messages into one conversation, 25 simultaneous takedown
+filings, 20 listing-media uploads, 15 gallery uploads, and 10 racing signups
+for the same identifier (exactly one wins). `npx next build` clean.
+
+### NOT DONE -- what has to happen before this is real
+
+1. **A Postgres database has to exist.** Vercel -> Storage -> Create
+   Database -> Neon, attached to the `onlyass` project, which sets
+   `DATABASE_URL`. There is no MCP tool that can provision one.
+2. **This commit is deliberately NOT pushed.** The branch deploys straight
+   to production, and without `DATABASE_URL` every store throws and the site
+   is down. Push only once the env var exists.
+3. **Run `node scripts/migrate-blob-to-postgres.js`** (dry run by default,
+   `--apply` to write) to copy the existing manifests across. Idempotent,
+   never deletes, never touches the blobs.
+4. **Then delete the old manifests in the Vercel Blob dashboard.** Copying
+   the data does not un-publish the copy that is already public. This is the
+   step that actually closes the exposure -- skipping it leaves
+   `data/creators.json` readable by anyone.
+5. `ORDERS_ENCRYPTION_KEY` must be set for marketplace orders (it already
+   throws loudly rather than storing an address unencrypted -- that is
+   correct behaviour, not a bug).

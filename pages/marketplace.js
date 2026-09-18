@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import Head from 'next/head';
 import { getListings } from '../lib/listings-store';
-import { getCreators, isPubliclyVisible } from '../lib/creators-store';
+import { getCreators } from '../lib/creators-store';
+import { isPubliclyVisible } from '../lib/creator-status';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
