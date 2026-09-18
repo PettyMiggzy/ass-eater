@@ -444,13 +444,12 @@ what came of them:
   into "delete real creators" (default) vs. an explicit
   `includeSeed=true` full wipe.
   - **Two things founder/Vercel access needs to confirm, not
-    code fixes**: (1) set an explicit `SESSION_SECRET` env var in Vercel
-    production -- right now it silently falls back to reusing
+    code fixes**: (1) ~~set an explicit `SESSION_SECRET` env var in Vercel
+    production~~ -- **DONE 2026-09-17, founder set it as a Secret and
+    redeployed.** Before that it silently fell back to reusing
     `ADMIN_UPLOAD_KEY` (the admin-panel bearer key) as the session-signing
-    secret, coupling two unrelated trust boundaries
-    (generated one to use: see chat, or run
-    `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
-    for a fresh one). (2) Confirm `BLOB_READ_WRITE_TOKEN` is actually set
+    secret, coupling two unrelated trust boundaries.
+    (2) Confirm `BLOB_READ_WRITE_TOKEN` is actually set
     in the real Vercel production env -- every account/profile/upload/
     message/favorite/wall write silently depends on it and it's not
     visible from inside this repo checkout.
@@ -770,14 +769,20 @@ over)**:
 3. **`SESSION_SECRET` was never actually set -- silently reusing
    `ADMIN_UPLOAD_KEY`** (the admin panel password) to sign both login
    sessions and the age-verification cookie, coupling two unrelated trust
-   boundaries. This can't be fixed from inside the repo -- there's no tool
-   access to Vercel env vars. Generated a real secret and added it to
-   local `.env.local` (gitignored, never committed) so local dev is no
-   longer coupled to the admin key either. **Founder still needs to add a
-   `SESSION_SECRET` env var (Secret type) in Vercel production** -- gave
-   them a freshly generated value in chat plus the
-   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
-   one-liner to make their own.
+   boundaries. Fixed locally by generating a real secret into `.env.local`
+   (gitignored, never committed).
+   **RESOLVED 2026-09-17: the founder set `SESSION_SECRET` in Vercel
+   production as a Secret-type variable and redeployed.** Nothing further
+   is needed here.
+
+   **Do not re-raise this as an open item.** It was reported as still
+   outstanding again on 2026-09-18 purely because this file said so, hours
+   after the founder had already done it -- an audit agent read the stale
+   note and repeated it as a live finding, and it was relayed without being
+   checked against what the founder had already said. There is no tool
+   access to Vercel env vars from here, so this file IS the record: if a
+   future pass wants to flag it, confirm with the founder first rather than
+   trusting the paragraph above.
 4. **Marketplace listing titles/descriptions and creator display
    name/handle completely skipped the payment-circumvention filter**, even
    though the bio field right next to them was already checked -- the two
@@ -1077,3 +1082,76 @@ permanently disabled by anyone for one cheap transaction, and several
 smaller issues) -- none of the server/contracts findings are live since
 neither stack is deployed, but they're real and tracked here for
 whenever that changes.
+
+## This branch deploys straight to production (learned the hard way 2026-09-18)
+
+`claude/ecstatic-ride-g21n07` is not a side branch. Vercel project
+`onlyass` (`prj_HqD55c4fAsUZvbogdPGNolLlSxFf`, team
+`team_IFiqVIqlnExa5XSzMXjYOWeE`) builds **every push to it with
+`target: "production"`** -- confirmed by reading the deployment list, not
+assumed. There is no staging step and no preview-then-promote.
+
+**So there is no such thing as a "safe checkpoint commit" here.** Interim
+commits made during this session to avoid losing work if the container was
+reclaimed went live on onlyass.fun within about a minute of each push, and
+were described to the founder as merely saving work -- which was wrong,
+because nobody had checked where the branch deployed. Check the deploy
+target before calling a push safe.
+
+Practical rule until this changes: **run the real checks before pushing,
+not after.** "It parses" and "it typechecks" are not enough for code that
+is live on a public adult platform a minute later. The suites that exist
+and actually run: `npx next build`; `cd server && npx vitest run` (needs
+Postgres + Redis -- `service postgresql start`, `service redis-server
+start`, then `npx prisma db push`, all available in this container);
+`npx hardhat test` (109 tests); and the plain-node tests
+`node --experimental-test-module-mocks --no-warnings --import
+./test-register.mjs lib/session.test.mjs` and the same for
+`lib/blob-json-store.test.mjs`.
+
+Worth raising with the founder again if it keeps biting: point production
+at a stable branch and let this one build previews.
+
+## Two data-loss bugs shipped and were caught by review, not by their author (2026-09-18)
+
+Both were in code written earlier the same night, and both reached
+production before anyone noticed. Recording the pattern, not just the
+bugs.
+
+1. **`lib/blob-json-store.js` could silently wipe any manifest.**
+   `updateJsonList` captured the blob's ETag from `head()`, then read the
+   body, and caught *every* read failure in one handler commented
+   "manifest doesn't exist yet" -- carrying on with `fallback` as the
+   current state. A transient network error, a 5xx, or a truncated body
+   during any ordinary write therefore wrote `fallback` over the whole
+   file, and the ETag precondition happily matched because nobody else had
+   written. Blast radius: every store (accounts, listings, orders,
+   messages, wall, favorites, reports, violations, and the NCII takedown
+   reports that carry a 48-hour federal clock). For `creators-store`,
+   whose fallback is the demo seed roster, it would have replaced every
+   real creator with the fake ones -- reopening the seed/real merge already
+   recorded above as a launch blocker. Fixed: `fallback` is used ONLY on a
+   confirmed not-found; every other read failure aborts the write.
+   `lib/blob-json-store.test.mjs` is the regression test -- **its first
+   three cases fail against the version that shipped**, so if they ever
+   fail again do not "fix" the test.
+
+2. **The not-found check itself was nearly wrong in the same way.** The
+   obvious `/does not exist/` message test matches BOTH
+   `BlobNotFoundError` ("The requested blob does not exist") and
+   `BlobStoreNotFoundError` ("This store does not exist."), so a
+   misconfigured or deleted blob store would have read as "no data yet"
+   and served the invented demo roster as though those were real people.
+   Now `instanceof` only, which can only fail in the safe direction.
+   Related: **@vercel/blob's error classes do not set a custom `.name`** --
+   it reads `"Error"` on all of them (verified against 2.8.0), so any
+   `err.name === 'BlobSomethingError'` check anywhere in this codebase is
+   dead code that never matches. Use `instanceof`.
+
+Neither was found by the author re-reading their own work. Both came from
+pointing independent hostile reviewers at freshly written code, and one
+came from an agent working on a *different* file disagreeing. The standing
+lesson: **treat just-written, just-shipped code as the prime suspect in the
+next audit, not as the known-good baseline.** Every pass so far has found
+real bugs the previous pass missed, and the fixes themselves have
+introduced new ones.
