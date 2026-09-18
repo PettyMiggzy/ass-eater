@@ -1963,3 +1963,60 @@ help, that's all we can do"* -- and he explicitly asked that all of this keep
 being written down: *"you need to be saving all this stuff somewhere so you
 don't forget what we're doing."* That is this file; it has been kept current
 every session and should continue to be.
+
+## Supply can't be in two places, and the VIP numbers were broken (2026-09-18)
+
+Founder worked the credits-as-token idea to its end himself and hit the wall:
+*"I could put half in the contract and keep half... no we can't do that
+because it needs to be a liquidity pool. Fuck."* That is the right insight and
+it settles it -- **tokens locked in a redemption contract are tokens not in
+the liquidity pool, and the pool is the only reason the token has a price.**
+Once credits stop being tokens, the whole supply is free to do token things.
+
+He also asked the good engineering question first: can the 200M in the
+contract be *marked*, so only those redeem at $1? **Only by making the token
+non-transferable** -- ERC-20s are fungible, there is no serial number, and
+provenance is gone the moment they move. A token that can only move inside
+the platform is a credit balance with gas fees: no listing, no market price,
+no chart. A token with a market price can't be marked; a marked token has no
+market price.
+
+Proposed allocation for 1B supply, **and the auction is the answer to "how do
+I fund the USDC"** -- it isn't his money: liquidity pool 20-30%, public
+auction 30-40% (raises the USDC that fills the pool), founder/treasury 20-30%
+vested (lower than the original 40%, which is the number that scares buyers),
+platform reserve ~10%, redemption contract **zero**.
+
+The framing that answers *"it's pointless unless it has a use case"*:
+**currency is the weakest use a token can have.** Spent as currency it comes
+straight back into circulation -- net demand zero, a hot potato. Held or
+burned it LEAVES circulation. Gating and the VIP burn are the strong ones.
+
+### Two real VIP bugs found and fixed
+
+1. **A fixed burn threshold cannot survive supply.** 10,000,000 tokens against
+   a 1,000,000,000 supply caps the club at **100 members ever**, and only if
+   every token minted were burned; the reachable number is far smaller. The
+   bar is now a **dollar target** (`vipBurnThresholdUsdCents`, default 7500 =
+   $75) with the token count derived from the live price, so it self-adjusts
+   as the price moves -- which is what "make the threshold adjustable" was
+   always for -- and can never collide with supply. Falls back to a fixed
+   count (now 250,000, not 10M) when no price is available, e.g. before the
+   token has a pool. Failing to a known-good number beats failing to zero,
+   which would hand VIP to everyone.
+2. **"VIP forever" was not true.** `isVip()` recomputed live against the
+   current threshold, so raising the bar stripped VIP from people who had
+   already burned tokens they can never get back -- and pricing the bar in
+   dollars would have made that routine, since every dip in the token price
+   raises the token count. `Account.vipSince` is now stamped the first time
+   the bar is met and never cleared. Lowering the bar still qualifies people
+   retroactively; raising it no longer un-qualifies anyone.
+
+**A bug of mine, caught by the new tests:** `getVipStatus` read the account in
+`Promise.all` alongside `isVip()`, which *writes* `vipSince` -- so the very
+call that granted VIP reported `vipSince: null`. Reordered. And one of the
+new tests was wrong rather than the code: `getUsdPrice` caches for 30s in
+Redis, so changing `ONLYASS_PRICE_OVERRIDE` mid-test proved nothing until the
+key was deleted.
+
+60 server tests pass (was 57), tsc clean, live-site build clean.

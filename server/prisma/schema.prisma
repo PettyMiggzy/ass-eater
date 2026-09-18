@@ -391,20 +391,38 @@ model Account {
   // Funded only by depositing in $ONLYASS directly (see deposit-indexer.ts).
   // No longer discounted just for spending from here -- see charge()/MEMORY.md.
   onlyAssCents BigInt @default(0)
-  // Cumulative whole $ONLYASS tokens this fan has burned via POST /vip/burn
-  // (core/vip.ts). Compared live against PlatformConfig.vipBurnThresholdTokens
-  // -- no stored "isVip" flag, so lowering the threshold later immediately
-  // qualifies anyone who already burned enough for the new bar.
+  // Cumulative whole $ONLYONE tokens this fan has burned via POST /vip/burn
+  // (core/vip.ts). Lowering the threshold later immediately qualifies anyone
+  // who already burned enough for the new bar.
   vipBurnedTokens Float @default(0)
+  // Set the first time this account meets the bar, and NEVER cleared.
+  //
+  // VIP was sold as permanent -- "a VIP club, not a subscription". Deciding
+  // it live against the current threshold quietly broke that promise in the
+  // other direction: raising the threshold un-VIP'd people who had already
+  // burned their tokens and could not get them back. That becomes constant
+  // once the threshold is priced in dollars (below), because the token count
+  // it takes to reach VIP rises every time the price falls -- every dip would
+  // have revoked everyone. Earned once is earned.
+  vipSince        DateTime?
 }
 
 // Singleton row (id is always 1) for platform-wide numeric knobs that need to
-// change without a redeploy. Currently just the VIP burn threshold -- as
-// $ONLYASS's price moves, the platform can lower (or raise) how many tokens
-// it takes to reach VIP without touching code.
+// change without a redeploy.
 model PlatformConfig {
   id                      Int   @id @default(1)
-  vipBurnThresholdTokens  Float @default(10000000)
+  // Fallback bar, in whole tokens. Only used when the dollar target below is
+  // unset or no price is available (e.g. before the token has a pool).
+  //
+  // A FIXED TOKEN COUNT DOES NOT SCALE, which is why it is the fallback and
+  // not the mechanism: at a 1,000,000,000 supply a 10,000,000 bar allows
+  // 100 VIP members in total, ever, and only if every token ever minted were
+  // burned. The real ceiling is a fraction of that.
+  vipBurnThresholdTokens  Float @default(250000)
+  // What VIP should COST, in cents. The token count is derived from this and
+  // the live price, so the bar self-adjusts as the price moves and never
+  // collides with total supply. Null = use the fixed count above.
+  vipBurnThresholdUsdCents Int? @default(7500)
 }
 
 model LedgerEntry {

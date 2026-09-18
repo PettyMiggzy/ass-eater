@@ -64,7 +64,7 @@ beforeEach(async () => {
   // PlatformConfig is a true singleton (id 1), shared across every test in
   // this file -- reset it to the real default before each test so a test
   // that lowers the VIP threshold can't leak into whichever test runs next.
-  await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipBurnThresholdTokens: 10_000_000 }, update: { vipBurnThresholdTokens: 10_000_000 } });
+  await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipBurnThresholdTokens: 10_000_000, vipBurnThresholdUsdCents: null }, update: { vipBurnThresholdTokens: 10_000_000, vipBurnThresholdUsdCents: null } });
 });
 
 afterAll(async () => {
@@ -336,7 +336,7 @@ describe('ledger.charge', () => {
     const creator = await makeCreator();
     await fund(fan, 10_000);
     await prisma.account.update({ where: { userId: fan }, data: { vipBurnedTokens: 6_000_000 } });
-    await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipBurnThresholdTokens: 5_000_000 }, update: { vipBurnThresholdTokens: 5_000_000 } });
+    await prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, vipBurnThresholdTokens: 5_000_000, vipBurnThresholdUsdCents: null }, update: { vipBurnThresholdTokens: 5_000_000, vipBurnThresholdUsdCents: null } });
 
     const result = await money(prisma, (tx) =>
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-vip-3' }),

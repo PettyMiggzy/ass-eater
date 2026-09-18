@@ -43,15 +43,29 @@ export async function burnTokens(tx: Tx, userId: string, tokens: number) {
     select: { vipBurnedTokens: true },
   });
 
+  // isVip() stamps vipSince the first time the bar is met, so this burn is
+  // what makes it permanent -- deliberately not re-derived from the numbers
+  // below, which would drift from the real answer the moment the bar moves.
   const threshold = await getVipBurnThresholdTokens(tx);
-  return { burnedTokens: account.vipBurnedTokens, thresholdTokens: threshold, isVip: account.vipBurnedTokens >= threshold, usdCentsSpent: Number(usdCents) };
+  const vip = await isVip(tx, userId);
+  return { burnedTokens: account.vipBurnedTokens, thresholdTokens: threshold, isVip: vip, usdCentsSpent: Number(usdCents) };
 }
 
 export async function getVipStatus(tx: Tx, userId: string) {
+  // isVip() FIRST, and not inside the Promise.all: it stamps vipSince the
+  // first time the bar is met, so reading the account alongside it races the
+  // write and reports vipSince: null for the very call that granted it.
+  const vip = await isVip(tx, userId);
   const [account, threshold] = await Promise.all([
-    tx.account.findUnique({ where: { userId }, select: { vipBurnedTokens: true } }),
+    tx.account.findUnique({ where: { userId }, select: { vipBurnedTokens: true, vipSince: true } }),
     getVipBurnThresholdTokens(tx),
   ]);
-  const burnedTokens = account?.vipBurnedTokens ?? 0;
-  return { burnedTokens, thresholdTokens: threshold, isVip: burnedTokens >= threshold };
+  return {
+    burnedTokens: account?.vipBurnedTokens ?? 0,
+    thresholdTokens: threshold,
+    isVip: vip,
+    // Null until they qualify. Shown so a member can see VIP is dated and
+    // permanent rather than something that might lapse.
+    vipSince: account?.vipSince ?? null,
+  };
 }

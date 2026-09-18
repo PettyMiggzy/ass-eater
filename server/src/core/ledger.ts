@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient, TxType } from '@prisma/client';
+import { getUsdPrice } from '../lib/price';
 
 export const PLATFORM_ID = '00000000-0000-0000-0000-000000000000';
 // Pseudo-account tokens burned via core/vip.ts's burnTokens() are posted to --
@@ -18,7 +19,7 @@ export const FEES = {
   MIN_TIP_CENTS: 100,
 };
 
-const DEFAULT_VIP_BURN_THRESHOLD_TOKENS = 10_000_000;
+const DEFAULT_VIP_BURN_THRESHOLD_TOKENS = 250_000;
 
 /**
  * The two balances an account carries, and they are not interchangeable.
@@ -46,24 +47,53 @@ export class InsufficientFunds extends Error {
 
 export type Tx = Prisma.TransactionClient;
 
-/** Reads the platform-wide VIP burn bar, in whole $ONLYASS tokens. Admin-adjustable (see modules/vip.ts); falls back to the default if the config row hasn't been created yet. */
+/**
+ * The VIP burn bar, in whole $ONLYONE tokens.
+ *
+ * Derived from a DOLLAR target and the live price where possible, rather than
+ * being a fixed token count. A fixed count cannot work for long: at a
+ * 1,000,000,000 supply a 10,000,000 bar caps the club at 100 members ever,
+ * and only if every token minted were burned -- the reachable number is far
+ * smaller. Pricing the bar in dollars means it self-adjusts as the price
+ * moves (which is what "make the threshold adjustable" was for) and can never
+ * collide with supply.
+ *
+ * Falls back to the fixed count whenever the price is unavailable -- before
+ * the token has a pool at all, or if the oracle is down. Failing to a
+ * known-good number beats failing to zero, which would hand VIP to everyone.
+ */
 export async function getVipBurnThresholdTokens(tx: Tx): Promise<number> {
   const config = await tx.platformConfig.findUnique({ where: { id: 1 } });
-  return config?.vipBurnThresholdTokens ?? DEFAULT_VIP_BURN_THRESHOLD_TOKENS;
+  const fixed = config?.vipBurnThresholdTokens ?? DEFAULT_VIP_BURN_THRESHOLD_TOKENS;
+  const targetCents = config?.vipBurnThresholdUsdCents ?? null;
+  if (!targetCents || targetCents <= 0) return fixed;
+  try {
+    const price = await getUsdPrice('ONLYASS');
+    if (!(price > 0)) return fixed;
+    return (targetCents / 100) / price;
+  } catch {
+    return fixed;
+  }
 }
 
 /**
- * A fan is VIP once their cumulative burned tokens meet or exceed the
- * current threshold -- checked live, not cached, so lowering the threshold
- * later immediately qualifies anyone who already burned enough for the new
- * bar (see the Account.vipBurnedTokens schema comment).
+ * A fan is VIP once they have EVER met the bar. Earned once is earned.
+ *
+ * Lowering the threshold still qualifies anyone who already burned enough for
+ * the new bar, because the live check below runs for anyone not yet stamped.
+ * What no longer happens is the reverse: raising it -- or, now that the bar is
+ * priced in dollars, the token price simply falling -- used to strip VIP from
+ * people who had already burned their tokens and could never get them back.
+ * VIP was sold as permanent; this is what makes that true.
  */
 export async function isVip(tx: Tx, userId: string): Promise<boolean> {
-  const [account, threshold] = await Promise.all([
-    tx.account.findUnique({ where: { userId }, select: { vipBurnedTokens: true } }),
-    getVipBurnThresholdTokens(tx),
-  ]);
-  return (account?.vipBurnedTokens ?? 0) >= threshold;
+  const account = await tx.account.findUnique({ where: { userId }, select: { vipBurnedTokens: true, vipSince: true } });
+  if (account?.vipSince) return true;
+  const threshold = await getVipBurnThresholdTokens(tx);
+  if ((account?.vipBurnedTokens ?? 0) < threshold) return false;
+  // First time over the line: stamp it, so no later change can take it back.
+  await tx.account.update({ where: { userId }, data: { vipSince: new Date() } });
+  return true;
 }
 
 /** Row-locks the account so concurrent charges against the same balance serialize. */
