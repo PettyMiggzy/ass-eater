@@ -1207,7 +1207,43 @@ override. Pulling dependencies needs a full reinstall to verify, and this
 branch deploys straight to production -- not worth the risk mid-session.
 
 
-## Storage moved from Vercel Blob JSON files to Postgres (built 2026-09-18, NOT YET DEPLOYED)
+## Storage moved from Vercel Blob JSON files to Postgres (built 2026-09-18, IN HISTORY BUT REVERTED ON THE BRANCH TIP)
+
+**READ THIS FIRST -- the code below is written, tested and in git history, but
+the branch tip deliberately does NOT contain it.** Commit `afff05f` has the
+whole migration; the commit immediately after it reverts it. That is not an
+abandoned attempt, it is a hold:
+
+- This branch deploys straight to production. Every store throws without
+  `DATABASE_URL`, so deploying the migration before that env var exists takes
+  the entire site down.
+- Leaving it uncommitted risked losing it -- this container is ephemeral.
+
+So it was committed (preserving the work in the remote) and immediately
+reverted (keeping production on the working blob code). Both commits push
+together, and Vercel builds only the tip, so production never runs the
+Postgres build.
+
+**To bring it back, once `DATABASE_URL` is set in Vercel production:**
+
+    git revert --no-edit <the revert commit>   # re-applies the whole migration
+    npm install                                # restores the `pg` dependency
+
+then run `node scripts/migrate-blob-to-postgres.js --apply` and delete the old
+blob manifests. Do NOT re-do this by hand -- it is ~1,400 lines across 20
+files with 112 passing tests, and re-deriving it would lose the details below.
+
+Blocker as of 2026-09-18: creating the database in Vercel failed with
+"Cannot create Database... Your integration is pending deletion." Vercel holds
+a removed Marketplace integration for 24 hours before finalising. The
+workaround that avoids waiting is to create the database directly at
+neon.tech and paste its connection string into Vercel as a plain
+`DATABASE_URL` env var -- `lib/db.js` takes any standard Postgres URL and
+already handles the SSL managed providers require, so it does not need the
+Vercel integration at all.
+
+---
+
 
 ### Why -- a live data exposure, confirmed against production
 

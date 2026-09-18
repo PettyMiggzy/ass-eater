@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
-import { effectiveCreatorStatus } from '../../lib/creator-status';
+import { effectiveCreatorStatus } from '../../lib/creators-store';
 
 export default function AdminPanel() {
   const [adminKey, setAdminKey] = useState('');

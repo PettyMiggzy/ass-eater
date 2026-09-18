@@ -1,7 +1,6 @@
 import Head from 'next/head';
 import { getVerifiedSessionUserId } from '../lib/session';
-import { getCreators } from '../lib/creators-store';
-import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
+import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 import { getFavoriteCreatorIds } from '../lib/favorites-store';
 
 export async function getServerSideProps({ req }) {

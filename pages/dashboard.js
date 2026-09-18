@@ -3,8 +3,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
-import { getCreators } from '../lib/creators-store';
-import { effectiveCreatorStatus } from '../lib/creator-status';
+import { getCreators, effectiveCreatorStatus } from '../lib/creators-store';
 import { getListings } from '../lib/listings-store';
 
 export async function getServerSideProps({ req }) {
