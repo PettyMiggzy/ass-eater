@@ -126,9 +126,9 @@ perks alone, the way Twitch and YouTube memberships are.
 | Perk | Status |
 |---|---|
 | Early access to posts (creator sets up to 72h) | built *(server)* |
-| Badge | art done, not wired |
-| Priority in creator inboxes | not built |
-| First look at marketplace listings | not built |
+| First look at marketplace listings (up to 72h) | built *(server)* |
+| Priority in creator inboxes | built *(server)* |
+| Badge | art done; needs VIP on the live site |
 | Top Supporter placement | not built |
 
 Membership extends from the later of the current expiry and now, so paying

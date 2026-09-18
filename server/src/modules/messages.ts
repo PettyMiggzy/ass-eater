@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { charge, money } from '../core/ledger';
+import { charge, money, isVip } from '../core/ledger';
 import { canViewMessage, isSubscribed } from '../core/access';
 import { publish, sub, broadcastQueue } from '../lib/redis';
 
@@ -18,13 +18,30 @@ export const messages: FastifyPluginAsync = async (app) => {
     // itself be a priced one the viewer hasn't unlocked -- redact its text
     // the same way GET /with/:userId does, or a priced message is readable
     // straight off the conversation list without ever opening the thread.
-    return Promise.all(convs.map(async (c) => ({
-      ...c,
-      messages: await Promise.all(c.messages.map(async (m) => {
-        const ok = await canViewMessage(req.user.id, { id: m.id, senderId: m.senderId, priceCents: m.priceCents, conversation: { aId: c.aId, bId: c.bId } });
-        return { ...m, text: ok ? m.text : '', locked: !ok };
-      })),
-    })));
+    const rows = await Promise.all(convs.map(async (c) => {
+      // Who the viewer is talking TO. A VIP's thread is flagged and sorted up
+      // so a creator with a full inbox sees their members first -- the thing
+      // a fan most wants for their money is a reply, and the creator wants
+      // their best customers surfaced. Purely an ordering hint: it changes
+      // nothing about what either side can read.
+      const otherId = c.aId === req.user.id ? c.bId : c.aId;
+      const otherIsVip = await isVip(prisma, otherId);
+      return {
+        ...c,
+        otherIsVip,
+        messages: await Promise.all(c.messages.map(async (m) => {
+          const ok = await canViewMessage(req.user.id, { id: m.id, senderId: m.senderId, priceCents: m.priceCents, conversation: { aId: c.aId, bId: c.bId } });
+          return { ...m, text: ok ? m.text : '', locked: !ok };
+        })),
+      };
+    }));
+
+    // VIP threads first, then most recently active within each group. The
+    // secondary sort has to stay -- ordering by VIP alone would scramble an
+    // inbox into an arbitrary order every time someone subscribed or lapsed.
+    return rows.sort((a, b) =>
+      (b.otherIsVip ? 1 : 0) - (a.otherIsVip ? 1 : 0) ||
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   });
 
   app.get('/with/:userId', { preHandler: app.auth }, async (req: any) => {

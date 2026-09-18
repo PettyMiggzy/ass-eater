@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, FEES } from '../core/ledger';
+import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, isVip, FEES } from '../core/ledger';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION } from '../core/marketplace-fees';
 import { placeBid } from '../core/auctions';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
@@ -12,6 +12,26 @@ import { placeBid } from '../core/auctions';
 // platform's to hold money hostage over or adjudicate. shipStatus below is
 // for buyer/creator visibility only; it never gates a payout. See
 // MARKETPLACE_FULFILLMENT.md.
+
+/**
+ * Hides a listing inside its VIP first-look window from non-VIPs.
+ *
+ * Returned as a where-fragment so it can be AND-ed with whatever else the
+ * query is doing. Filtered out rather than shown-and-refused: on a
+ * one-of-a-kind item, knowing it exists and being unable to buy it is the
+ * annoying half of the experience without the perk.
+ */
+export async function vipFirstLookFilter(viewerId: string | null) {
+  if (viewerId && (await isVip(prisma, viewerId))) return {};
+  const now = new Date();
+  return {
+    OR: [
+      { vipEarlyUntil: null },
+      { vipEarlyUntil: { lte: now } },
+      ...(viewerId ? [{ creatorId: viewerId }] : []),
+    ],
+  };
+}
 
 export const marketplace: FastifyPluginAsync = async (app) => {
   // unlimited: true for digital goods (images/videos) sellable to many buyers
@@ -24,12 +44,17 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       unlimited: z.boolean().default(false), mediaIds: z.array(z.string().uuid()).max(20).default([]),
       kind: z.enum(['DIGITAL', 'PHYSICAL']).default('DIGITAL'), shippingCents: z.number().int().min(0).max(100_000_00).default(0),
       signatureRequired: z.boolean().default(false),
+      // Hours this listing is VIP-only before everyone else sees it. Capped
+      // at 72, same as posts -- past that it stops being a head start and
+      // becomes a second gate on something already for sale.
+      earlyAccessHours: z.number().int().min(0).max(72).default(0),
       saleType: z.enum(['FIXED', 'AUCTION']).default('FIXED'),
       auctionDurationHours: z.number().int().min(1).max(24 * 30).optional(), // required for AUCTION: 1 hour to 30 days
       minBidIncrementCents: z.number().int().min(1).max(100_000_00).optional(),
       reserveCents: z.number().int().min(100).max(100_000_00).optional(),
     }).parse(req.body);
-    const { mediaIds, auctionDurationHours, ...fields } = b;
+    const { mediaIds, auctionDurationHours, earlyAccessHours, ...fields } = b;
+    if (earlyAccessHours) (fields as any).vipEarlyUntil = new Date(Date.now() + earlyAccessHours * 3_600_000);
     // Physical items ship one-at-a-time -- no inventory tracking yet, so "unlimited" doesn't mean anything for them.
     // An auction is one-of-a-kind by nature (bidding on "one of infinite copies" doesn't mean anything either).
     if (fields.kind === 'PHYSICAL' || fields.saleType === 'AUCTION') fields.unlimited = false;
@@ -69,10 +94,18 @@ export const marketplace: FastifyPluginAsync = async (app) => {
   app.get('/listings', async (req: any) => {
     const q = z.string().trim().max(60).optional().parse(req.query.q || undefined);
     const take = Math.min(Number(req.query.limit ?? 30), 100);
+    // Optional auth: browsing works signed out, but a VIP has to be
+    // recognised or their first-look window is worthless.
+    let viewerId: string | null = null;
+    try { await req.jwtVerify(); viewerId = req.user.id; } catch {}
+    // AND, not a second OR key -- spreading another `OR` would silently
+    // replace the search one and return everything.
+    const conditions: any[] = [await vipFirstLookFilter(viewerId)].filter((c) => Object.keys(c).length);
+    if (q) conditions.push({ OR: [{ title: { contains: q, mode: 'insensitive' } }, { description: { contains: q, mode: 'insensitive' } }] });
     return prisma.listing.findMany({
       where: {
         status: 'ACTIVE',
-        ...(q ? { OR: [{ title: { contains: q, mode: 'insensitive' } }, { description: { contains: q, mode: 'insensitive' } }] } : {}),
+        ...(conditions.length ? { AND: conditions } : {}),
       },
       orderBy: { createdAt: 'desc' }, take, skip: Number(req.query.offset ?? 0),
       include: { creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } } },
@@ -101,6 +134,12 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     return money(prisma, async (tx) => {
       const l = await tx.listing.findUniqueOrThrow({ where: { id: req.params.id } });
       if (l.status !== 'ACTIVE') throw Object.assign(new Error('not_available'), { statusCode: 400 });
+      // Hiding it from the list is presentation; this is the actual gate. A
+      // listing id is guessable and shareable, so without this a non-VIP who
+      // has one buys straight through the window.
+      if (l.vipEarlyUntil && l.vipEarlyUntil > new Date() && l.creatorId !== req.user.id && !(await isVip(tx, req.user.id))) {
+        throw Object.assign(new Error('vip_early_access'), { statusCode: 403 });
+      }
       if (l.saleType === 'AUCTION') throw Object.assign(new Error('auction_listing_use_bid'), { statusCode: 400 });
       if (l.creatorId === req.user.id) throw Object.assign(new Error('self_purchase'), { statusCode: 400 });
 

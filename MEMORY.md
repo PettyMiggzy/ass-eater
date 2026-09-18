@@ -2336,3 +2336,35 @@ creator-creation paths** (`createCreator` and `addPendingCreator` in
 means token-gated, so the default blurred a new creator's photos behind a gate
 they never asked for. Both now default to false -- the same bug, in the last
 two places it lived.
+
+## VIP perks: first look and priority inbox (shipped 2026-09-18)
+
+Two more of the four, both server/-side.
+
+**Marketplace first look.** `Listing.vipEarlyUntil` + `earlyAccessHours`
+(0-72) at listing creation, mirroring posts. Hidden from `GET /listings`
+for non-VIPs rather than shown-and-refused -- on a one-of-a-kind item,
+knowing it exists and not being able to buy it is the annoying half of the
+experience without the perk.
+
+**The gate that actually matters is on the buy handler, not the list.** A
+listing id is guessable and shareable, so hiding it from the query alone
+would let any non-VIP holding an id buy straight through the window. The buy
+path now checks the window independently and 403s.
+
+**The filter is AND-ed with the search clause, never spread as a second
+`OR`.** Spreading would have silently replaced the search condition --
+returning listings a search excluded, or leaking the window. There is a
+regression test for exactly that shape, because it is the kind of bug that
+passes every other test.
+
+**Priority inbox.** `GET /conversations` now flags whether the other party is
+VIP and sorts those threads first, then by recency within each group. The
+secondary sort is load-bearing: ordering by VIP alone would reshuffle a
+creator's whole inbox every time someone subscribed or lapsed. It is an
+ordering hint only -- it changes nothing about what either side can read.
+
+Still not built: Top Supporter placement, and the badge, which needs VIP to
+exist on the live Next.js site at all (it does not).
+
+74 server tests pass (was 68), tsc clean.

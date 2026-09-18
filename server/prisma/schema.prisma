@@ -233,12 +233,16 @@ model TokenLock {
 // onlyass.online marketplace: creators list something for sale (merch, digital
 // goods, whatever), platform takes a 10% sale commission + 5% listing fee on
 // top, both cut from the sale price when it sells (see modules/marketplace.ts).
+// A listing a creator has put behind VIP first-look shows only to VIP members
+// (and its creator) until vipEarlyUntil passes. Bites hardest on one-of-a-kind
+// items, where missing the window means missing it for good.
 model Listing {
   id          String         @id @default(uuid())
   creatorId   String
   creator     CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
   title       String
   description String         @default("")
+  vipEarlyUntil DateTime?
   priceCents  Int // FIXED: the price. AUCTION: the starting bid.
   unlimited   Boolean        @default(false) // true = digital good, sellable to many buyers; false = one-of-a-kind, SOLD after first purchase. Always false for AUCTION.
   kind        ListingKind    @default(DIGITAL)
