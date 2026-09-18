@@ -2020,3 +2020,51 @@ Redis, so changing `ONLYASS_PRICE_OVERRIDE` mid-test proved nothing until the
 key was deleted.
 
 60 server tests pass (was 57), tsc clean, live-site build clean.
+
+## Why the $1 peg can't be defended, and why it would cap the token at $1 (2026-09-18)
+
+Founder identified the arbitrage himself -- *"if they go to the market and get
+it for cents on the dollar and then come and get a dollar for dollar, that'll
+wreck us"* -- and asked for a way to control it. There isn't one, and the
+reason is worth keeping because the idea keeps coming back.
+
+**Why no control works.** Redemption can only be limited by something the
+platform knows. It knows what a creator EARNED (the ledger). It cannot know
+which tokens those are -- ERC-20s are fungible, there is no serial number,
+and provenance is gone the moment they move. So the only enforceable cap is
+"redeem no more than you earned" -- at which point the redemption is settled
+by the ledger entry and the tokens are decorative. That cap IS the
+credits-are-dollars design. Every other control (whitelists, vesting,
+non-transferable earned tokens) either fails to fungibility or collapses into
+the same thing. And anyone can sign up as a creator, so "only creators
+redeem" is not a gate.
+
+**The direction he hadn't spotted, and the decisive one: selling tokens at a
+fixed $1 puts a permanent CEILING on the token price at $1.** The peg is
+attacked from whichever side is mispriced, and it is never not mispriced:
+
+    market below $1 -> buy cheap on the DEX, redeem at $1  -> USDC pool drains
+    market above $1 -> buy from the platform at $1, sell high -> token supply drains
+
+The second one is fatal to the entire point. Nobody pays $2 on a DEX for a
+token the issuer sells at $1, so the price cannot rise above $1 while the
+window is open -- and it would not get near $1 anyway (1B x $1 = a $1B market
+cap). A fixed sale price from the issuer is a price ceiling, which is the
+opposite of *"this would send that token."*
+
+**What actually makes it push itself, which was his real goal** -- *"not to
+rely on having to push a token, it'll push itself"*:
+
+    credits-as-tokens: platform sells at $1 -> fan spends -> creator redeems
+                       -> token returns to platform.  Net removed: ZERO.
+                       Nobody ever needs to touch the open market.
+
+    VIP burn:          platform sells nothing. To reach VIP you must buy on
+                       the market and DESTROY them. Permanent supply cut, no
+                       ceiling.
+    token-gating:      to see a gated creator you must buy and HOLD. Tokens
+                       leave the market for as long as access is wanted, and
+                       the creator does the marketing.
+
+Both built. Neither needs the platform to be a buyer or seller of last
+resort, which is the only way a price is free to move.
