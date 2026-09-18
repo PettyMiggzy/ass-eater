@@ -17,9 +17,11 @@ import { checkRateLimit, clearFailures, clientIp, consumeAttempt, recordFailure 
 //   the attacker keeps knocking. Requiring the caller to be "dirty" for
 //   that account keeps the defence (saturating the bucket takes failures,
 //   and failing is exactly what marks you) while never catching the owner,
-//   who shows up with the right password and a clean record. It also
-//   tightens the distributed case: past saturation a fresh host gets one
-//   guess at this account instead of a full budget.
+//   who shows up with the right password and a clean record. Past
+//   saturation a fresh host gets one sequential guess at this account
+//   instead of a full budget -- though a host firing in parallel still
+//   gets its per-IP budget, since the mark only lands once a compare has
+//   come back. The per-IP brake is what bounds that case.
 //
 // See lib/rate-limit.js for what this does and does not guarantee on
 // serverless -- it is a speed bump, not a hard lockout.
