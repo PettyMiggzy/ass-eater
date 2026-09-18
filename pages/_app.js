@@ -1,6 +1,7 @@
 import '../styles/globals.css';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
+import { captureReferralFromQuery } from '../lib/referral';
 
 /**
  * Pages this 18+ notice must NOT cover.
@@ -18,16 +19,27 @@ import { useRouter } from 'next/router';
  *  - It covered the public landing page, which exists so that someone who
  *    has not verified anything can see what this site is. A notice in
  *    front of a page that shows nothing explicit is a notice in front of
- *    nothing.
+ *    nothing. /founding-creator is the same case: a recruitment page with
+ *    no content on it, which also has to survive being pasted into a link
+ *    preview -- and note that this gate returns null during the first
+ *    render, so any page it covers serves an EMPTY document to anything
+ *    that doesn't run JavaScript. For a page whose entire job is to be
+ *    shared, that alone settles it.
  *
  * Everything else still gets it.
  */
-const NO_NOTICE_PATHS = new Set(['/', '/report-content', '/blocked-region', '/verify-age']);
+const NO_NOTICE_PATHS = new Set(['/', '/founding-creator', '/report-content', '/blocked-region', '/verify-age']);
 
 function MyApp({ Component, pageProps }) {
   const router = useRouter();
   const [isVerified, setIsVerified] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  // A creator's ?ref= is stashed on whatever page it arrives at, so it
+  // survives someone browsing for a while before they sign up.
+  useEffect(() => {
+    captureReferralFromQuery(router.query);
+  }, [router.query]);
 
   useEffect(() => {
     const verified = localStorage.getItem('ass-eater-verified');

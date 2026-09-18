@@ -124,6 +124,15 @@ export default function Landing() {
             CREATE. SHARE. CONNECT. EARN.
           </p>
 
+          {/* Creator recruitment. Ungated like this page and for the same
+              reason -- see pages/founding-creator.js. */}
+          <a
+            href="/founding-creator"
+            className="mt-6 text-[11px] tracking-[0.2em] text-gray-400 hover:text-brand-pink transition"
+          >
+            CREATOR? BE ONE OF THE FIRST 100 <span aria-hidden="true">→</span>
+          </a>
+
           <nav className="mt-12 flex flex-wrap justify-center items-center gap-x-5 gap-y-2 text-[10px] tracking-[0.2em] text-gray-500">
             {CATEGORIES.map((c, i) => (
               <span key={c.label} className="flex items-center gap-5">

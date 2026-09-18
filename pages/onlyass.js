@@ -2,13 +2,21 @@ import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
+import { byPlacement } from '../lib/founding';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 
 export async function getServerSideProps({ req }) {
   const creators = await getCreators();
   const sessionUser = publicUser(await getSessionUser(req));
-  return { props: { creators: creators.filter(isPubliclyVisible).map(toPublicCreator), sessionUser } };
+  return {
+    props: {
+      // "Priority placement in Explore" -- Founding Creators lead every
+      // listing on this page. See lib/founding.js.
+      creators: creators.filter(isPubliclyVisible).sort(byPlacement).map(toPublicCreator),
+      sessionUser,
+    },
+  };
 }
 
 export default function OnlyAss({ creators, sessionUser }) {
@@ -237,11 +245,15 @@ export default function OnlyAss({ creators, sessionUser }) {
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
 
-                      {c.trending && (
+                      {c.founding ? (
+                        <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-brand-pink text-white text-xs font-black">
+                          FOUNDING
+                        </div>
+                      ) : c.trending ? (
                         <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-brand-gold/90 text-black text-xs font-black flex items-center gap-1">
                           <img src="/icons/fire.png" className="h-3 w-3" alt="" /> TRENDING
                         </div>
-                      )}
+                      ) : null}
 
                       <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur text-brand-gold text-xs font-bold">
                         {c.price}

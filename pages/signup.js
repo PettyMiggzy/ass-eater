@@ -1,10 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
+import { readReferralCookie } from '../lib/referral';
 
 export default function Signup() {
   const router = useRouter();
   const [role, setRole] = useState('fan');
+  // /founding-creator and the creator-facing links send people here with
+  // ?role=creator so they don't land on the fan form after clicking "become
+  // a creator". Applied once, on the first render where the query is
+  // actually populated -- after that the toggle is the user's to control.
+  const rolePrefilled = useRef(false);
+  useEffect(() => {
+    if (rolePrefilled.current || !router.isReady) return;
+    rolePrefilled.current = true;
+    if (router.query.role === 'creator' || router.query.role === 'fan') {
+      setRole(router.query.role);
+    }
+  }, [router.isReady, router.query.role]);
   const [form, setForm] = useState({ email: '', password: '', displayName: '', handle: '', bio: '' });
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState('');
@@ -24,7 +37,7 @@ export default function Signup() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, role }),
+        body: JSON.stringify({ ...form, role, ref: readReferralCookie() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Signup failed');

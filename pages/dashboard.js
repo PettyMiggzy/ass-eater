@@ -5,6 +5,7 @@ import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getCreators, effectiveCreatorStatus } from '../lib/creators-store';
 import { getListings } from '../lib/listings-store';
+import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator, FEE_WAIVER_DAYS } from '../lib/founding';
 
 export async function getServerSideProps({ req }) {
   // getSessionUser rather than a stateless token check, so a session that
@@ -392,6 +393,10 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
 
               <hr className="border-brand-purple/20" />
 
+              <ShareKit creator={creator} />
+
+              <hr className="border-brand-purple/20" />
+
               <div>
                 {(() => {
                   const limit = creator.premium ? 200 : 50;
@@ -476,6 +481,114 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The creator's own share kit: their referral link and the post that goes
+ * with it.
+ *
+ * This is the actual mechanic behind "creator referral rewards" -- a
+ * creator's audience is the platform's distribution, so the link and the
+ * words have to be one copy-paste away, not something they compose
+ * themselves. The text lives in lib/founding.js so every surface offers
+ * the same one.
+ *
+ * The link goes to "/" (the public landing page), NOT to the creator's own
+ * profile: the profile is behind the age gate, so a fan following it from a
+ * blocked state hits /blocked-region as their first impression of both the
+ * creator and the site. "/" is the one page everyone can open, it carries
+ * the ?ref through to signup via the cookie in lib/referral.js, and the
+ * creator's profile is one click past it.
+ */
+function ShareKit({ creator }) {
+  const [copiedField, setCopiedField] = useState('');
+  const [origin, setOrigin] = useState('');
+
+  // window is not available during SSR, and hardcoding a domain would break
+  // the link on every other host this project serves (onlyone1.fun,
+  // onlyass.fun, preview deployments).
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  const handle = String(creator?.handle || '').replace(/^@/, '');
+  const link = handle && origin ? `${origin}/?ref=${encodeURIComponent(handle)}` : '';
+  const post = link ? creatorShareText(creator, link) : '';
+
+  const copy = async (field, value) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(''), 2000);
+    } catch {
+      setCopiedField('');
+    }
+  };
+
+  const founding = isFoundingCreator(creator);
+  const waiverEnds = feeWaiverEndsAt(creator);
+
+  return (
+    <div>
+      <h3 className="font-bold text-brand-gold mb-2">Share Your Page</h3>
+
+      {founding && (
+        <div className="mb-4 px-4 py-3 rounded-md bg-brand-gold/10 border border-brand-gold/30 text-sm">
+          <p className="font-black tracking-wide text-brand-gold">★ FOUNDING CREATOR</p>
+          <p className="text-gray-300 mt-1">
+            {feeWaiverPending(creator)
+              ? `Your ${FEE_WAIVER_DAYS} days at 0% platform fee start the day payments go live — not today — so you get the full window when there's actually a fee to waive.`
+              : waiverEnds && waiverEnds.getTime() > Date.now()
+                ? `You're paying 0% platform fee until ${waiverEnds.toLocaleDateString()}.`
+                : `Your ${FEE_WAIVER_DAYS}-day fee-free window has ended. The badge and priority placement are permanent.`}
+          </p>
+        </div>
+      )}
+
+      {!handle ? (
+        <p className="text-sm text-gray-400">Set a handle above and save your profile to get your referral link.</p>
+      ) : (
+        <>
+          <p className="text-sm text-gray-400 mb-4">
+            Anyone who joins OnlyOne through this link is credited to you, for 30 days after they first click it.
+          </p>
+
+          <label className="block text-xs text-gray-500 mb-2">YOUR REFERRAL LINK</label>
+          <div className="flex gap-2 mb-5">
+            <input
+              readOnly
+              value={link}
+              onFocus={(e) => e.target.select()}
+              className="flex-1 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white font-mono text-xs"
+            />
+            <button
+              onClick={() => copy('link', link)}
+              disabled={!link}
+              className="px-4 py-3 rounded-md border border-brand-purple/30 text-sm text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+            >
+              {copiedField === 'link' ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+
+          <label className="block text-xs text-gray-500 mb-2">READY-TO-POST</label>
+          <textarea
+            readOnly
+            rows={5}
+            value={post}
+            onFocus={(e) => e.target.select()}
+            className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm resize-none"
+          />
+          <button
+            onClick={() => copy('post', post)}
+            disabled={!post}
+            className="mt-2 px-4 py-2 rounded-md border border-brand-purple/30 text-sm text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+          >
+            {copiedField === 'post' ? 'Copied' : 'Copy Post'}
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 

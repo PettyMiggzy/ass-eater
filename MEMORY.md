@@ -1335,3 +1335,59 @@ for the same identifier (exactly one wins). `npx next build` clean.
 5. `ORDERS_ENCRYPTION_KEY` must be set for marketplace orders (it already
    throws loudly rather than storing an address unencrypted -- that is
    correct behaviour, not a bug).
+
+## Founding Creator programme: first 100 (shipped 2026-09-18)
+
+Todd's pitch, built as specified except for one line held back for a
+decision (below). Everything lives in `lib/founding.js` so the cap and the
+window can't drift apart between the pages that show them.
+
+What's real today:
+- **100-slot cap**, enforced server-side in `pages/api/admin/profile.js`
+  (409 on the 101st grant), mirrored in the admin UI as a live "X of 100
+  taken" counter and a checkbox that disables itself at the cap. Granting
+  again never restarts an existing creator's clock -- `foundingSince` is
+  stamped once, on first grant.
+- **Founding Creator badge** on the profile, the Explore cards, the home
+  strip and the admin roster.
+- **Priority placement** in Explore (`pages/home.js`, `pages/onlyass.js`)
+  and Marketplace (`pages/marketplace.js`) -- a real sort via
+  `byPlacement`, founding first then trending, not a label.
+- **Creator referral link + share kit** on the dashboard: `?ref=<handle>`
+  captured into a 30-day `oa_ref` cookie (`lib/referral.js`, **first-touch
+  wins** so a later creator's link can't overwrite the one that did the
+  work), resolved server-side at signup against a real, publicly visible
+  creator, self-referral rejected. The link points at "/" (the ungated
+  landing), NOT the creator's own profile -- a fan following it from one of
+  the 27 blocked states would otherwise land on `/blocked-region` as their
+  first impression of both the creator and the site.
+- **Crypto payouts** were already how this works: wallet to wallet.
+- `pages/founding-creator.js`, the public recruitment page, exempt from the
+  geoblock in `proxy.js` AND from `_app.js`'s 18+ notice. Both exemptions
+  carry the same hard rule as the landing page: **no creator photos, no
+  content, ever** -- that restraint is the whole basis for it being public.
+  Worth knowing: `_app.js`'s notice `return null`s on first render, so any
+  page it covers serves an EMPTY document to anything that doesn't run JS.
+  A page meant to be pasted into a link preview cannot be behind it.
+
+**The fee-waiver clock is deliberately NOT started.** "0% platform fee for
+your first 30 days" measured from acceptance would burn off entirely before
+this site can charge anyone anything -- there is no payment processing here,
+so a creator joining today would reach launch with the perk already spent
+having never been charged 0% of anything. `PAYMENTS_LIVE_AT` (null today)
+gates it: the window starts at the LATER of acceptance and payments going
+live, `feeWaiverPending()` is true until then, and both the recruitment page
+and the dashboard say so in plain words rather than implying a countdown is
+running. **Set `PAYMENTS_LIVE_AT` when payments go live, and make
+`server/`'s `charge()` consult `feeWaiverActive()`** -- the waiver is
+honoured trivially today only because the fee doesn't exist.
+
+**Held back pending a decision -- Todd's "10% OFF when you join through my
+link".** Deliberately omitted from `creatorShareText()`, because it
+contradicts a decision already made and shipped: staking, then the VIP burn,
+was to be **the only fan-facing discount**, and both
+`TOKEN_PAYMENT_DISCOUNT_BPS` and `LOYALTY_DISCOUNT_BPS` were deleted from
+`server/` for exactly that reason. Adding a referral discount re-opens what
+was closed. Second unanswered question if it goes ahead: **who absorbs the
+10%** -- the platform (its entire cut, since the platform fee is 10%) or the
+creator. Nobody has said. Don't build it until both are answered.

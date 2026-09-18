@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { effectiveCreatorStatus } from '../../lib/creators-store';
+import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
 
 export default function AdminPanel() {
   const [adminKey, setAdminKey] = useState('');
@@ -15,6 +16,11 @@ export default function AdminPanel() {
   const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
 
   const authHeaders = { 'x-admin-key': adminKey };
+
+  // Live off the loaded roster, so the counter and the cap agree with what
+  // the server will decide on save.
+  const foundingCount = countFounding(creators);
+  const foundingCapReached = foundingCount >= FOUNDING_LIMIT;
 
   const loadCreators = async (key) => {
     setLoading(true);
@@ -58,6 +64,7 @@ export default function AdminPanel() {
         locked: !!selected.locked,
         trending: !!selected.trending,
         premium: !!selected.premium,
+        founding: !!selected.founding,
         status: effectiveCreatorStatus(selected) || 'active',
         // Rides along with `status` on every save because the two are one
         // coupled decision -- see the comment in pages/api/admin/profile.js,
@@ -367,7 +374,10 @@ export default function AdminPanel() {
                     {cStatus === 'banned' && (
                       <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">BANNED</span>
                     )}
-                    {!flagged && c.trending && (
+                    {!flagged && isFoundingCreator(c) && (
+                      <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">★ FOUNDING</span>
+                    )}
+                    {!flagged && !isFoundingCreator(c) && c.trending && (
                       <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">HOT</span>
                     )}
                   </button>
@@ -483,6 +493,31 @@ export default function AdminPanel() {
                       />
                       Premium (gold check, 200 content slots)
                     </label>
+                    {/* The 100-slot cap is enforced server-side in
+                        /api/admin/profile -- this only stops the admin from
+                        spending a click on a save that will come back 409.
+                        An already-founding creator stays togglable so a
+                        mis-grant can be taken back. */}
+                    <label
+                      className={`flex items-center gap-2 text-sm cursor-pointer ${
+                        foundingCapReached && !draft.founding ? 'text-gray-600 cursor-not-allowed' : 'text-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!draft.founding}
+                        disabled={foundingCapReached && !draft.founding}
+                        onChange={(e) => setDraft({ ...draft, founding: e.target.checked })}
+                      />
+                      Founding Creator — {foundingCount} of {FOUNDING_LIMIT} taken
+                      {foundingCapReached && !draft.founding && ' (full)'}
+                    </label>
+                    {draft.founding && selected.foundingSince && (
+                      <p className="text-xs text-gray-500 -mt-1">
+                        Founding since {new Date(selected.foundingSince).toLocaleDateString()} — granting again
+                        does not restart the fee-free window.
+                      </p>
+                    )}
                     <label className="flex items-center gap-2 text-sm text-gray-300">
                       Status
                       <select

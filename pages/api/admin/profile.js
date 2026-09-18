@@ -1,4 +1,5 @@
 import { getCreators, updateCreatorProfile, sanitizeSocials, sanitizeTags } from '../../../lib/creators-store';
+import { FOUNDING_LIMIT, foundingSlotsLeft, isFoundingCreator } from '../../../lib/founding';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { detectPaymentCircumvention } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
@@ -23,7 +24,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing creatorId or fields' });
   }
 
-  const allowed = ['name', 'handle', 'bio', 'price', 'subs', 'posts', 'likes', 'locked', 'trending', 'status', 'suspendedUntil', 'payoutMethod', 'walletAddress', 'img', 'premium'];
+  const allowed = ['name', 'handle', 'bio', 'price', 'subs', 'posts', 'likes', 'locked', 'trending', 'status', 'suspendedUntil', 'payoutMethod', 'walletAddress', 'img', 'premium', 'founding'];
   const safeFields = {};
   for (const key of allowed) {
     if (key in fields) safeFields[key] = fields[key];
@@ -57,6 +58,30 @@ export default async function handler(req, res) {
   } else {
     // suspendedUntil only ever moves as part of a status decision.
     delete safeFields.suspendedUntil;
+  }
+
+  // Founding Creator is two coupled facts as well: the flag and the moment
+  // the 30-day 0%-fee window starts. Stamped here so the window cannot be
+  // set by hand, and so re-saving an existing founding creator's profile
+  // doesn't silently restart their clock.
+  //
+  // The 100-slot cap is enforced here rather than trusted to the admin
+  // panel's counter -- that counter is a display, this is the rule.
+  if ('founding' in safeFields) {
+    const creators = await getCreators();
+    const existing = creators.find((c) => String(c.id) === String(creatorId));
+    if (safeFields.founding) {
+      if (!isFoundingCreator(existing)) {
+        if (foundingSlotsLeft(creators) <= 0) {
+          return res.status(409).json({ error: `All ${FOUNDING_LIMIT} Founding Creator slots are taken.` });
+        }
+        safeFields.foundingSince = new Date().toISOString();
+      }
+      // Already founding: leave foundingSince exactly as it was.
+    } else {
+      safeFields.founding = false;
+      safeFields.foundingSince = null;
+    }
   }
 
   const existing = (await getCreators()).find((c) => String(c.id) === String(creatorId));

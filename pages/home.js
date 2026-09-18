@@ -1,12 +1,13 @@
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
+import { byPlacement } from '../lib/founding';
 
 export async function getServerSideProps() {
   const all = await getCreators();
   const creators = all
     .filter(isPubliclyVisible)
-    .sort((a, b) => (b.trending === true) - (a.trending === true))
+    .sort(byPlacement) // Founding Creators first -- see lib/founding.js
     .slice(0, 8)
     .map(toPublicCreator);
   return { props: { creators } };
@@ -205,6 +206,11 @@ export default function Home({ creators }) {
                       <p className="font-bold text-sm truncate">{c.name}</p>
                       <p className="text-[11px] text-gray-400 truncate">{c.handle}</p>
                     </div>
+                    {c.founding && (
+                      <span className="absolute top-2 left-2 text-[9px] tracking-wider px-2 py-0.5 rounded-full bg-brand-pink text-white font-black">
+                        FOUNDING
+                      </span>
+                    )}
                     {c.locked && (
                       <span className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-black/70 text-brand-pink font-bold">
                         🔒

@@ -198,10 +198,18 @@ export default function CreatorProfile({ creator, viewerId, creatorUserId, listi
               </div>
 
               <div className="flex-1 sm:pb-2">
-                <h1 className="text-3xl font-black flex items-center gap-2">
+                <h1 className="text-3xl font-black flex items-center gap-2 flex-wrap">
                   {creator.name}
                   {creator.premium && (
                     <img src="/icons/check.png" alt="Verified" title="Verified creator" className="h-6 w-6" />
+                  )}
+                  {creator.founding && (
+                    <span
+                      title="One of the first 100 creators on OnlyOne"
+                      className="text-[10px] tracking-[0.15em] px-2.5 py-1 rounded-full bg-brand-pink text-white font-black align-middle"
+                    >
+                      FOUNDING CREATOR
+                    </span>
                   )}
                 </h1>
                 <p className="text-gray-400 text-sm">{creator.handle}</p>

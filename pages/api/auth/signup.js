@@ -1,5 +1,6 @@
 import { createUser, findUserByEmail } from '../../../lib/users-store';
-import { createCreator, deleteCreator } from '../../../lib/creators-store';
+import { createCreator, deleteCreator, getCreators, isPubliclyVisible } from '../../../lib/creators-store';
+import { normalizeReferralCode } from '../../../lib/referral';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
 import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
 
@@ -78,7 +79,29 @@ export default async function handler(req, res) {
       newCreatorId = creator.id;
     }
 
-    const user = await createUser({ email, password, role, creatorId: newCreatorId });
+    // Resolve the referral code to a real creator before storing anything,
+    // so a forged or stale cookie credits nobody rather than writing a
+    // dangling handle onto the account. Self-referral is dropped for the
+    // obvious reason.
+    let referredByCreatorId = null;
+    const refCode = normalizeReferralCode(req.body?.ref);
+    if (refCode) {
+      const creators = await getCreators();
+      const referrer = creators.find(
+        (c) => String(c.handle || '').replace(/^@/, '').toLowerCase() === refCode && isPubliclyVisible(c),
+      );
+      if (referrer && String(referrer.id) !== String(newCreatorId)) {
+        referredByCreatorId = String(referrer.id);
+      }
+    }
+
+    const user = await createUser({
+      email,
+      password,
+      role,
+      creatorId: newCreatorId,
+      referredByCreatorId,
+    });
     const token = createSessionToken(user.id, user.sessionVersion);
     setSessionCookie(res, token);
 

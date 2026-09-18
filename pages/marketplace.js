@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Head from 'next/head';
 import { getListings } from '../lib/listings-store';
 import { getCreators, isPubliclyVisible } from '../lib/creators-store';
+import { isFoundingCreator } from '../lib/founding';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
@@ -12,13 +13,24 @@ export async function getServerSideProps() {
   const [listings, creators] = await Promise.all([getListings(), getCreators()]);
   const active = listings
     .filter((l) => l.status === 'active')
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .map((l) => {
       const match = creators.find((c) => String(c.id) === String(l.creatorId));
       // A suspended/banned creator must stay hidden here too -- same rule
       // every other public page enforces via isPubliclyVisible.
       const creator = match && isPubliclyVisible(match) ? match : null;
-      return { ...l, creatorName: creator?.name || 'Unknown', creatorImg: creator?.img || '/images/mascot.png' };
+      return {
+        ...l,
+        creatorName: creator?.name || 'Unknown',
+        creatorImg: creator?.img || '/images/mascot.png',
+        creatorFounding: isFoundingCreator(creator),
+      };
+    })
+    // "Priority placement in Marketplace" for Founding Creators, newest
+    // first within each group. A real sort, not a label.
+    .sort((a, b) => {
+      const founding = (b.creatorFounding ? 1 : 0) - (a.creatorFounding ? 1 : 0);
+      if (founding !== 0) return founding;
+      return new Date(b.createdAt) - new Date(a.createdAt);
     });
   return { props: { listings: active } };
 }

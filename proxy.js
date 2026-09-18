@@ -49,7 +49,12 @@ const BLOCKED_STATE_CODES = new Set([
 // nothing explicit -- which is the whole basis on which an unverified
 // visitor is allowed to see it. If that page ever gains real content, this
 // exemption has to go with it.
-const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/images/logo-final.png']);
+// /founding-creator is exempt for the same reason "/" is: it is a
+// typographic recruitment page with no creator photos and nothing explicit
+// on it, and a recruitment page that only verified adults in non-blocked
+// states can open cannot recruit. Same hard rule applies -- if it ever
+// gains real content, this exemption goes with it.
+const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/founding-creator', '/images/logo-final.png']);
 
 export async function proxy(request) {
   const host = request.headers.get('host') || '';
