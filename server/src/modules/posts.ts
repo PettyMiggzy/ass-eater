@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { charge, money } from '../core/ledger';
+import { charge, money, isVip } from '../core/ledger';
 import { canViewPost } from '../core/access';
 
 // strip locked media down to preview thumbnails, and locked text down to a
@@ -21,15 +21,40 @@ const redact = async (userId: string | null, posts: any[]) =>
       media: p.media.map((m: any) => ok ? { id: m.id, mime: m.mime, status: m.status, previewKey: m.previewKey } : { id: m.id, mime: m.mime, previewKey: m.previewKey, locked: true }) };
   }));
 
+/**
+ * Keeps a post inside its VIP early-access window out of a non-VIP's list
+ * entirely, rather than returning it redacted.
+ *
+ * Filtered in the query on purpose: a redacted row still tells a non-member
+ * that something exists, when it dropped and roughly how big it is, which is
+ * most of what the window is selling. The creator always sees their own.
+ */
+export async function earlyAccessFilter(viewerId: string | null) {
+  const vip = viewerId ? await isVip(prisma, viewerId) : false;
+  if (vip) return {};
+  const now = new Date();
+  return {
+    OR: [
+      { vipEarlyUntil: null },
+      { vipEarlyUntil: { lte: now } },
+      ...(viewerId ? [{ creatorId: viewerId }] : []),
+    ],
+  };
+}
+
 export const posts: FastifyPluginAsync = async (app) => {
   app.post('/', { preHandler: app.creatorOk }, async (req) => {
     const b = z.object({
       text: z.string().max(5000).default(''), visibility: z.enum(['PUBLIC', 'SUBSCRIBERS', 'PPV']).default('SUBSCRIBERS'),
       priceCents: z.number().int().min(0).max(50_000).default(0), mediaIds: z.array(z.string().uuid()).max(20).default([]),
+      // Hours this post is VIP-only before everyone else sees it. Capped at
+      // 72: past that it stops being early access and starts being a second
+      // paywall on content subscribers already paid for.
+      earlyAccessHours: z.number().int().min(0).max(72).default(0),
     }).parse(req.body);
     if (b.visibility === 'PPV' && b.priceCents < 100) throw Object.assign(new Error('ppv_min_price'), { statusCode: 400 });
     return prisma.$transaction(async (tx) => {
-      const p = await tx.post.create({ data: { creatorId: req.user.id, text: b.text, visibility: b.visibility, priceCents: b.visibility === 'PPV' ? b.priceCents : 0 } });
+      const p = await tx.post.create({ data: { creatorId: req.user.id, text: b.text, visibility: b.visibility, priceCents: b.visibility === 'PPV' ? b.priceCents : 0, vipEarlyUntil: b.earlyAccessHours ? new Date(Date.now() + b.earlyAccessHours * 3600_000) : null } });
       if (b.mediaIds.length) {
         const r = await tx.media.updateMany({ where: { id: { in: b.mediaIds }, ownerId: req.user.id, postId: null, messageId: null }, data: { postId: p.id } });
         if (r.count !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
@@ -42,7 +67,7 @@ export const posts: FastifyPluginAsync = async (app) => {
     let userId: string | null = null;
     try { await req.jwtVerify(); userId = req.user.id; } catch {}
     const rows = await prisma.post.findMany({
-      where: { creatorId: req.params.creatorId, removed: false },
+      where: { creatorId: req.params.creatorId, removed: false, ...(await earlyAccessFilter(userId)) },
       include: { media: true, _count: { select: { unlocks: true } } },
       orderBy: { createdAt: 'desc' }, take: 20, skip: Number(req.query.offset ?? 0),
     });
@@ -52,7 +77,7 @@ export const posts: FastifyPluginAsync = async (app) => {
   app.get('/feed', { preHandler: app.auth }, async (req: any) => {
     const subs = await prisma.subscription.findMany({ where: { fanId: req.user.id, currentPeriodEnd: { gt: new Date() } }, select: { creatorId: true } });
     const rows = await prisma.post.findMany({
-      where: { creatorId: { in: subs.map(s => s.creatorId) }, removed: false },
+      where: { creatorId: { in: subs.map(s => s.creatorId) }, removed: false, ...(await earlyAccessFilter(req.user.id)) },
       include: { media: true, creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } } },
       orderBy: { createdAt: 'desc' }, take: 30, skip: Number(req.query.offset ?? 0),
     });

@@ -2132,3 +2132,67 @@ gone since the platform custodies the USDC -- it would be theatre with a gas
 bill.
 
 57 server tests pass, tsc clean.
+
+## VIP perks: who pays for the discount, and early access (2026-09-18)
+
+Founder: *"Need figure out perks for vip so it feels worth it to need a vip."*
+
+### The discount was being paid by the wrong person
+
+`charge()` took the VIP discount off the top, before the fee. On a $100 tip
+from a VIP: fan paid $90, **creator got $81** (not $90), platform gave up $1.
+The creator was funding 90% of the platform's loyalty programme out of money
+the fan intended for them, and would have priced around it the moment they
+noticed.
+
+Fixed: the creator's net is computed from the **full list price** and is
+identical whether or not the fan is VIP; the discount comes entirely out of
+what the platform keeps. Rate dropped 10% -> 5% because at 10% the discount
+exactly equalled the fee, leaving the platform nothing on VIP spending.
+
+**New invariant, with a test: the discount can never exceed the platform's own
+cut.** A larger one would have the platform paying the difference on every
+charge -- minting money per transaction, forever. `discountBps` is clamped to
+`DEFAULT_BPS`.
+
+Note this makes the referral over-claim cap reachable again (5% fee vs two 5%
+referral cuts), which is exactly why that cap was kept when its original
+trigger was removed.
+
+### Why a discount can't be the main perk anyway
+
+At 5% off, VIP pays for itself only above $400/month of spending. Almost
+nobody. So the discount is decoration and the real value has to be access and
+status -- things that cost the platform nothing and take nothing from
+creators.
+
+### Shipped: VIP early access
+
+`Post.vipEarlyUntil` + `earlyAccessHours` (0-72) at post creation. A post
+inside its window is **filtered out of the query entirely** for non-VIPs, not
+returned redacted -- a redacted row still announces that something exists,
+when it landed and roughly how big it is, which is most of what the window is
+selling. The creator always sees their own; a lapsed member does not.
+6 tests (`posts.early-access.test.ts`).
+
+Opt-in per post, not platform-wide: making every post late for paying
+subscribers by default would be selling the same people their own patience.
+Capped at 72 hours, past which it stops being early access and becomes a
+second paywall on content subscribers already bought.
+
+### The rest of the recommended bundle, NOT yet built
+
+Ordered by how much they'd actually move someone to pay $20:
+1. **Priority in creator inboxes** -- VIP DMs sort to the top, flagged. The
+   single most wanted thing on a platform like this is a reply, and creators
+   want their best customers surfaced. Costs nothing.
+2. **First look at marketplace listings** -- a 24h VIP window before public.
+   Bites hardest on one-of-a-kind listings, same mechanism as early access.
+3. **VIP badge everywhere** they appear (comments, DMs, profile) -- pure
+   status, free, and it makes creators treat them differently.
+4. **Top Supporter placement** on a creator's page.
+
+All four are server/-side and none of them are on the live Next.js site,
+which has no VIP at all yet.
+
+64 server tests pass, tsc clean.

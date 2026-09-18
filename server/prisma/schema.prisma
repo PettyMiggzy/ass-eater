@@ -309,6 +309,10 @@ model ListingOrder {
   @@index([shipStatus])
 }
 
+// A post a creator has put behind VIP early access shows only to VIP members
+// (and the creator) until this passes, then behaves like any other post.
+// Opt-in per post rather than platform-wide: making every post late for paying
+// subscribers by default would be selling the same people their own patience.
 model Post {
   id         String         @id @default(uuid())
   creatorId  String
@@ -317,11 +321,13 @@ model Post {
   visibility Visibility     @default(SUBSCRIBERS)
   priceCents Int            @default(0)
   removed    Boolean        @default(false)
+  vipEarlyUntil DateTime?
   createdAt  DateTime       @default(now())
   media      Media[]
   unlocks    PostUnlock[]
 
   @@index([creatorId, createdAt])
+  @@index([vipEarlyUntil])
 }
 
 model PostUnlock {

@@ -300,21 +300,47 @@ describe('ledger.charge', () => {
     expect(await balanceOf(fan)).toBe(0n);
   });
 
-  it('gives a paid-up VIP member 10% off', async () => {
+  // The discount is the platform's to fund. A creator must earn exactly the
+  // same on a VIP's money as on anyone else's -- it used to come off the top
+  // so the creator took 81 instead of 90 while the platform gave up 1, which
+  // is the creator paying for the platform's loyalty programme out of money
+  // the fan meant for them.
+  it('gives a paid-up VIP member 5% off, entirely out of the platform fee', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 10_000);
+    const platformBefore = await balanceOf(PLATFORM_ID);
     await prisma.account.update({ where: { userId: fan }, data: { vipUntil: new Date(Date.now() + 86_400_000) } });
 
     const result = await money(prisma, (tx) =>
       charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-vip-1' }),
     );
 
-    expect(result.gross).toBe(900); // 1000 - 10% VIP discount
-    expect(result.fee).toBe(90);
-    expect(result.net).toBe(810);
-    expect(await balanceOf(fan)).toBe(10_000n - 900n);
-    expect(await balanceOf(creator)).toBe(810n);
+    expect(result.gross).toBe(950); // 1000 - 5% VIP discount
+    expect(result.net).toBe(900); // creator's cut is UNCHANGED by the fan being VIP
+    expect(result.fee).toBe(50); // the platform absorbed the whole 50
+    expect(await balanceOf(fan)).toBe(10_000n - 950n);
+    expect(await balanceOf(creator)).toBe(900n);
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(50n);
+  });
+
+  // The invariant that stops VIP minting money: a discount bigger than the
+  // platform's own cut would have the platform paying the difference on every
+  // single charge. FEES are clamped so the fee can never go negative.
+  it('never lets the VIP discount exceed the platform fee', async () => {
+    expect(FEES.VIP_DISCOUNT_BPS).toBeLessThanOrEqual(FEES.DEFAULT_BPS);
+
+    const fan = await makeUser();
+    const creator = await makeCreator();
+    await fund(fan, 10_000);
+    await prisma.account.update({ where: { userId: fan }, data: { vipUntil: new Date(Date.now() + 86_400_000) } });
+
+    const result = await money(prisma, (tx) =>
+      charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-vip-clamp' }),
+    );
+
+    expect(result.fee).toBeGreaterThanOrEqual(0);
+    expect(result.gross).toBeGreaterThanOrEqual(result.net);
   });
 
   it('gives no discount to a fan who has never been VIP', async () => {

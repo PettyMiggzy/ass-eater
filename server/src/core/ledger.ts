@@ -13,7 +13,7 @@ export const FEES = {
   WITHDRAWAL_FLAT_CENTS: 100, // $1 per payout
   WITHDRAWAL_BPS: 100, // +1%
   INSTANT_PAYOUT_BPS: 200, // +2% on top, for skipping the payout queue -- waived if the creator opted into the token-lock perk
-  VIP_DISCOUNT_BPS: 1000, // 10% off any charge for a paid-up VIP member (see core/vip.ts) -- the only fan-facing discount
+  VIP_DISCOUNT_BPS: 500, // 5% off any charge for a paid-up VIP member (see core/vip.ts) -- the only fan-facing discount, and it comes out of the PLATFORM's cut, never the creator's
   MIN_PAYOUT_CENTS: 2000,
   MIN_TIP_CENTS: 100,
 };
@@ -116,14 +116,28 @@ export async function charge(
   ]);
   if (creator.user.status !== 'ACTIVE') throw new Error('creator_unavailable');
 
+  // The VIP discount is the PLATFORM's to fund, not the creator's.
+  //
+  // It used to come off the charge before the fee was taken, which meant a
+  // creator earned 81 instead of 90 on a 100 tip from a VIP while the
+  // platform gave up 1 -- the creator paying 90% of the platform's loyalty
+  // programme, out of money the fan intended for them. Creators would have
+  // priced around it the moment they noticed.
+  //
+  // So the creator's net is computed from the FULL list price and is
+  // identical either way; the discount is taken from what the platform keeps.
+  // Clamped to the fee, because a discount larger than the platform's own cut
+  // would have the platform paying the difference on every transaction --
+  // minting money out of nothing, per charge, forever.
   const vip = await isVip(tx, p.fanId);
-  const chargeCents = vip ? Math.round((p.grossCents * (10_000 - FEES.VIP_DISCOUNT_BPS)) / 10_000) : p.grossCents;
+  const discountBps = vip ? Math.min(FEES.VIP_DISCOUNT_BPS, FEES.DEFAULT_BPS) : 0;
+  const chargeCents = Math.round((p.grossCents * (10_000 - discountBps)) / 10_000);
 
   const bal = await lockBalance(tx, p.fanId);
   if (bal < BigInt(chargeCents)) throw new InsufficientFunds();
 
-  const fee = Math.floor((chargeCents * FEES.DEFAULT_BPS) / 10_000);
-  const net = chargeCents - fee;
+  const net = p.grossCents - Math.floor((p.grossCents * FEES.DEFAULT_BPS) / 10_000);
+  const fee = chargeCents - net;
 
   // Whoever referred the creator (payee) and whoever referred the fan (payer)
   // each earn a cut of the platform's fee for FEES.REFERRAL_MONTHS after the
