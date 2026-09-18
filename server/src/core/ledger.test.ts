@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
-import { charge, FEES, InsufficientFunds, money, PLATFORM_ID, post } from './ledger';
+import { charge, creditDeposit, FEES, InsufficientFunds, money, PLATFORM_ID, post, splitDeposit } from './ledger';
 
 const prisma = new PrismaClient();
 
@@ -371,5 +371,48 @@ describe('ledger.charge', () => {
 
     expect(result.gross).toBe(1000);
     expect(result.fee).toBe(100);
+  });
+});
+
+describe('ledger.creditDeposit (buy-credits fee)', () => {
+  it('credits the deposit less 2% and pays the rest to the platform', async () => {
+    const fan = await makeUser();
+    const platformBefore = await balanceOf(PLATFORM_ID);
+
+    const r = await money(prisma, (tx) => creditDeposit(tx, fan, 10_000n, 'dep-1'));
+
+    expect(r.feeCents).toBe(200n); // 2% of $100
+    expect(r.creditedCents).toBe(9_800n);
+    expect(await balanceOf(fan)).toBe(9_800n);
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(200n);
+  });
+
+  // The float must never owe more than it holds. Taking the fee out of the
+  // credited amount leaves the pool holding the full deposit against fewer
+  // credits, which is the safe direction -- and the floor on the fee has to
+  // keep it that way rather than rounding a cent into existence.
+  it('never issues more credits than the dollars that arrived', async () => {
+    for (const gross of [1n, 7n, 49n, 99n, 101n, 12_345n, 999_999n]) {
+      const { creditedCents, feeCents } = splitDeposit(gross);
+      expect(creditedCents + feeCents).toBe(gross);
+      expect(creditedCents).toBeLessThanOrEqual(gross);
+      expect(feeCents).toBeGreaterThanOrEqual(0n);
+    }
+  });
+
+  it('posts no platform entry when the deposit is too small to round a fee', async () => {
+    const fan = await makeUser();
+    const platformBefore = await balanceOf(PLATFORM_ID);
+
+    const r = await money(prisma, (tx) => creditDeposit(tx, fan, 10n, 'dep-2')); // 10c -> 0.2c fee
+
+    expect(r.feeCents).toBe(0n);
+    expect(r.creditedCents).toBe(10n);
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(0n);
+  });
+
+  it('matches the configured rate rather than a hardcoded 2%', async () => {
+    const { feeCents } = splitDeposit(100_000n);
+    expect(feeCents).toBe((100_000n * BigInt(FEES.DEPOSIT_BPS)) / 10_000n);
   });
 });

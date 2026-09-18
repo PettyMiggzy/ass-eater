@@ -3,7 +3,7 @@ import { formatUnits, parseEther } from 'viem';
 import { prisma } from '../lib/prisma';
 import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, depositWalletClient, treasury, treasuryClient, erc20Abi, assertTokenDecimals } from '../lib/chain';
 import { getUsdPrice, rawToUsdCents } from '../lib/price';
-import { money, post } from '../core/ledger';
+import { money, post, creditDeposit } from '../core/ledger';
 import { publish, sweepQueue, connection } from '../lib/redis';
 
 const BATCH = 1000n;
@@ -27,11 +27,17 @@ async function credit(d: { userId: string; txHash: string; logIndex: number; ass
   try {
     await money(prisma, async (tx) => {
       const dep = await tx.deposit.create({ data: { userId: d.userId, chainId: CHAIN_ID, txHash: d.txHash, logIndex: d.logIndex, asset: d.asset, stableSymbol: d.token?.symbol ?? null, rawAmount: d.raw.toString(), usdCents: cents, priceUsed: px } });
-      // $ONLYONE deposits land in their own pool, which is NOT spendable:
-      // the only thing that can be done with it is a VIP burn (core/vip.ts).
-      // Stablecoin and ETH deposits become credits, which is what actually
-      // pays for things. See the Balance type in core/ledger.ts.
-      await post(tx, d.userId, cents, 'DEPOSIT', dep.id, { asset: d.asset, raw: d.raw.toString(), px }, d.asset === 'ONLYASS' ? 'ONLYASS' : 'CREDITS');
+      if (d.asset === 'ONLYASS') {
+        // Its own pool, and deliberately not credits -- see the Balance type
+        // in core/ledger.ts. No buy-credits fee, because no credits are
+        // bought. NOTE: nothing currently spends this balance; see MEMORY.md.
+        await post(tx, d.userId, cents, 'DEPOSIT', dep.id, { asset: d.asset, raw: d.raw.toString(), px }, 'ONLYASS');
+        return;
+      }
+      // Buying credits: the fan gets the deposit less FEES.DEPOSIT_BPS, the
+      // platform keeps the rest.
+      const { feeCents } = await creditDeposit(tx, d.userId, cents, dep.id, { asset: d.asset, raw: d.raw.toString(), px });
+      await tx.deposit.update({ where: { id: dep.id }, data: { feeCents } });
     });
   } catch (e: any) { if (e.code === 'P2002') return; throw e; }   // already credited
   await publish(d.userId, { type: 'deposit', asset: d.token?.symbol ?? d.asset, amount: formatUnits(d.raw, decimals), usdCents: Number(cents) });

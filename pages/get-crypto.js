@@ -135,8 +135,9 @@ export default function GetCrypto() {
               </div>
               <p className="text-gray-300 text-sm">
                 Once payments are live, your dashboard will show a unique deposit address — send your USDG
-                there and it becomes credits, ready to subscribe, tip, and unlock. One credit is one dollar.
-                This step launches with the platform's payment system — not live yet.
+                there and it becomes credits, ready to subscribe, tip, and unlock. One credit is one dollar,
+                less a 2% purchase fee, so $100 lands as 98 credits. This step launches with the platform's
+                payment system — not live yet.
               </p>
             </div>
           </div>

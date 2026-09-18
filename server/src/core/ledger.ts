@@ -8,6 +8,7 @@ export const BURNED_ID = '00000000-0000-0000-0000-0000000000b0';
 
 export const FEES = {
   DEFAULT_BPS: 1000, // 10% — standard platform cut
+  DEPOSIT_BPS: 200, // 2% taken when a fan buys credits — see creditDeposit()
   REFERRAL_BPS: 500, // 5% of gross to referrer, paid out of the platform's cut
   REFERRAL_MONTHS: 12,
   WITHDRAWAL_FLAT_CENTS: 100, // $1 per payout
@@ -43,6 +44,46 @@ export class InsufficientFunds extends Error {
 }
 
 export type Tx = Prisma.TransactionClient;
+
+/**
+ * Credits a fan's deposit, less the buy-credits fee.
+ *
+ * $100 of stablecoin arrives, 98 credits are issued, the platform keeps $2.
+ * Note which direction that leaves the books: the pool holds the full $100
+ * against $98 of credits, so taking this fee makes the float MORE than fully
+ * backed, never less. The fee is floored, so any rounding remainder also
+ * stays on the safe side.
+ *
+ * Returns the split so the caller can record both halves against the
+ * deposit row -- the gross is what actually landed on-chain and must stay
+ * recoverable, so it is never overwritten with the net.
+ */
+export function splitDeposit(grossCents: bigint): { creditedCents: bigint; feeCents: bigint } {
+  const feeCents = (grossCents * BigInt(FEES.DEPOSIT_BPS)) / 10_000n;
+  return { creditedCents: grossCents - feeCents, feeCents };
+}
+
+/**
+ * Posts both halves of a deposit: credits to the fan, fee to the platform.
+ *
+ * One function so the two can never drift apart -- crediting the net without
+ * posting the fee would quietly destroy the platform's revenue, and posting
+ * the fee without netting the credit would hand it out twice.
+ */
+export async function creditDeposit(
+  tx: Tx,
+  userId: string,
+  grossCents: bigint,
+  refId: string,
+  meta?: object,
+) {
+  const { creditedCents, feeCents } = splitDeposit(grossCents);
+  await post(tx, userId, creditedCents, 'DEPOSIT', refId, { ...meta, grossCents: grossCents.toString(), feeCents: feeCents.toString() });
+  if (feeCents > 0n) {
+    await post(tx, PLATFORM_ID, feeCents, 'PLATFORM_FEE', refId, { source: 'deposit', fanId: userId });
+  }
+  return { creditedCents, feeCents };
+}
 
 /**
  * VIP membership is live while vipUntil is in the future.

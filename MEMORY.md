@@ -2196,3 +2196,56 @@ All four are server/-side and none of them are on the live Next.js site,
 which has no VIP at all yet.
 
 64 server tests pass, tsc clean.
+
+## 2% buy-credits fee (shipped 2026-09-18)
+
+Direct ask. `FEES.DEPOSIT_BPS = 200`: a fan deposits $100 of stablecoin and
+receives **98 credits**; the platform keeps $2.
+
+Note which way this leaves the books -- **it makes the float MORE than fully
+backed, never less.** The pool holds the full $100 against $98 of issued
+credits, and the fee is floored so the rounding remainder also lands on the
+safe side. There is a test that iterates awkward amounts asserting
+`credited + fee === gross` and `credited <= gross`.
+
+`splitDeposit()` and `creditDeposit()` are one pair in `core/ledger.ts` so the
+two halves cannot drift: crediting the net without posting the fee silently
+destroys the platform's revenue, and posting the fee without netting the
+credit hands it out twice. `Deposit.usdCents` stays the **gross** (the only
+figure reconcilable against the on-chain transaction) with `feeCents`
+recorded beside it.
+
+**Disclosed before it can be charged**, in Terms section 5 and on
+`/get-crypto` ("$100 lands as 98 credits"). An undisclosed fee on the way in
+is how disputes start.
+
+Not applied to $ONLYONE deposits -- no credits are bought, so there is
+nothing to take a buy-credits fee on.
+
+## FOUND: the $ONLYONE deposit balance now has no consumer at all
+
+Not fixed, needs a decision. After VIP became a paid monthly membership
+(above), `burnTokens()` was removed -- and it was the only thing that ever
+spent `Account.onlyAssCents`. Checked the alternatives before saying so:
+`stake.ts`'s TokenLock charges through `charge()`, which is credits, and
+nothing else touches the field.
+
+So today: the deposit indexer still watches the token contract, still credits
+`onlyAssCents`, and `GET /wallet` still reports it -- **a balance a fan can
+never spend on anything.** That is worse than not accepting it, because it
+looks like the platform took their tokens.
+
+Three ways out, and it is a real decision rather than a cleanup:
+1. **Stop watching the token contract.** Fans have no reason to send tokens
+   to the platform under the new design -- VIP is dollars and token-gating
+   reads their own wallet on-chain. Risk: someone sends anyway and the tokens
+   are stranded at a deposit address.
+2. **Credit token deposits as credits at the live price.** Convenient, and
+   exactly the thing that was deliberately removed -- it makes the token a
+   way to buy credits, i.e. currency, with the arbitrage that follows.
+   **Don't.**
+3. Keep the balance and give it a use again (a fan-side burn alongside the
+   paid membership).
+
+Recommend 1, with the deposit address documented as dollars-only. Ask before
+building it: removing a deposit path has stranded-funds consequences.

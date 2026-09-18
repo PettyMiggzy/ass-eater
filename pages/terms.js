@@ -75,7 +75,8 @@ export default function Terms() {
             <Section title="5. Payments">
               <p>
                 Fans buy <strong>credits</strong> with a dollar-pegged stablecoin (USDG on Robinhood
-                Chain; USDC bridged in converts to USDG automatically). One credit is one US dollar.
+                Chain; USDC bridged in converts to USDG automatically). One credit is one US dollar, less a
+                <strong>2% purchase fee</strong> — $100 buys 98 credits.
                 Credits are an in-platform balance used to subscribe, tip, and unlock content. They are not
                 money, not a cryptocurrency, and not an investment: they can only be spent on this
                 Platform, they cannot be transferred to another person, and they cannot be cashed back out.

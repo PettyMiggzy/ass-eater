@@ -481,7 +481,12 @@ model Deposit {
   // Null for ETH and ONLYASS.
   stableSymbol String?
   rawAmount String // wei / 6-dec units as string
+  // What actually landed on-chain, BEFORE the buy-credits fee. Never
+  // overwritten with the net: the gross is the only figure that can be
+  // reconciled against the transaction.
   usdCents  BigInt
+  // The buy-credits fee taken out of it (FEES.DEPOSIT_BPS).
+  feeCents  BigInt @default(0)
   priceUsed Float
   createdAt DateTime  @default(now())
   hedgedAt  DateTime? // set once the treasury-hedge worker has converted this $ONLYASS deposit's share; null = pending. Unused for non-ONLYASS assets.
