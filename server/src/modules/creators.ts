@@ -39,7 +39,7 @@ export const creators: FastifyPluginAsync = async (app) => {
       tags: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
       // Never ONLYASS: paying a creator in the token is still paying
       // someone in a token whose price moves between earning and cashing out.
-      payoutAsset: z.enum(['USDC', 'ETH']).optional(),
+      payoutAsset: z.enum(['USDG', 'ETH']).optional(),
       payoutAddress: z.string().refine(isAddress, 'bad_address').optional(),
     }).parse(req.body);
     return prisma.creatorProfile.update({ where: { userId: req.user.id }, data: b });

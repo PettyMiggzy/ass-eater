@@ -183,7 +183,7 @@ export default async function handler(req, res) {
     // Price ends up as a display string on the public creator card, so it has
     // to be a number here -- an unauthenticated form must not be able to write
     // arbitrary text into a field shown site-wide. Dollars per month, matching
-    // what fans actually pay in: USDC credits, never the token.
+    // what fans actually pay in: dollar credits, never the token.
     const priceUsd = Number(fields.price);
     const price = Number.isFinite(priceUsd) && priceUsd > 0 ? `$${priceUsd.toFixed(2)} / month` : '$9.99 / month';
 

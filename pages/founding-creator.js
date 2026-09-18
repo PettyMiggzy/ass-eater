@@ -83,8 +83,8 @@ const PERKS = [
   {
     Icon: Icons.heart,
     title: 'CRYPTO PAYOUTS',
-    sub: 'PAID OUT IN USDC',
-    body: 'Earnings settle in USDC, not in a token you have to sell first and not in a currency that moves overnight.'
+    sub: 'PAID OUT IN DOLLARS',
+    body: 'Earnings settle in a dollar stablecoin — not in a token you have to sell first, and not in something that moves overnight.'
   },
 ];
 

@@ -32,7 +32,7 @@ export default function GetCrypto() {
     <>
       <Head>
         <title>New to Crypto? - OnlyOne</title>
-        <meta name="description" content="A step-by-step guide to getting a wallet and USDC so you can buy credits on OnlyOne." />
+        <meta name="description" content="A step-by-step guide to getting a wallet and dollars on-chain so you can buy credits on OnlyOne." />
       </Head>
 
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-12">
@@ -100,18 +100,23 @@ export default function GetCrypto() {
             <div className="premium-card p-6">
               <div className="flex items-center gap-3 mb-3">
                 <span className="w-8 h-8 rounded-full bg-brand-gold text-black font-black flex items-center justify-center shrink-0">3</span>
-                <h2 className="font-black text-lg">Get USDC (and a little ETH)</h2>
+                <h2 className="font-black text-lg">Get USDC, bridge it over</h2>
               </div>
               <p className="text-gray-300 text-sm mb-2">
-                Credits on OnlyOne are bought with <strong>USDC</strong>, a dollar-pegged stablecoin — one USDC is
-                one dollar, so what you spend is what you meant to spend. You also need a small amount of ETH on
-                Robinhood Chain to cover network fees. The easiest path:
+                Credits are bought with dollars on-chain. You buy <strong>USDC</strong> — a stablecoin worth one
+                dollar — and bridge it to Robinhood Chain, where it arrives as <strong>USDG</strong>. That's the
+                dollar stablecoin this chain uses, also worth exactly one dollar, and the bridge swaps it for you
+                in the same transaction. You also need a little ETH for network fees.
               </p>
               <ol className="text-gray-300 text-sm list-decimal list-inside space-y-1 mb-3">
                 <li>Open MetaMask and tap <strong>Buy</strong> — it lets you buy USDC or ETH with a card directly into your wallet, no separate exchange signup needed</li>
-                <li>Bridge to Robinhood Chain — <a href="https://across.to" target="_blank" rel="noopener noreferrer" className="text-brand-gold hover:underline">Across</a> supports this from Ethereum, Base, Arbitrum, and others</li>
-                <li>Keep a little ETH for fees; the rest in USDC is what buys credits</li>
+                <li>Bridge to Robinhood Chain with <a href="https://across.to" target="_blank" rel="noopener noreferrer" className="text-brand-gold hover:underline">Across</a> — from Ethereum, Base, Arbitrum, Optimism, Polygon, Solana and others. Your USDC lands as USDG</li>
+                <li>Keep a little ETH for fees; the USDG is what buys credits</li>
               </ol>
+              <p className="text-xs text-gray-500 mb-3">
+                USDG is the Global Dollar, issued by Paxos and redeemable one-to-one for US dollars. Going the
+                other way, USDG bridges back out as USDC on any of those same chains.
+              </p>
               <p className="text-xs text-gray-500 mb-3">
                 (MetaMask's Buy button uses its own on-ramp partners behind the scenes — that's between you and
                 MetaMask, not something we run or integrate with.)
@@ -129,8 +134,8 @@ export default function GetCrypto() {
                 <h2 className="font-black text-lg">Buy credits on OnlyOne</h2>
               </div>
               <p className="text-gray-300 text-sm">
-                Once payments are live, your dashboard will show a unique deposit address — send USDC there from
-                your wallet and it becomes credits, ready to subscribe, tip, and unlock. One credit is one USDC.
+                Once payments are live, your dashboard will show a unique deposit address — send your USDG
+                there and it becomes credits, ready to subscribe, tip, and unlock. One credit is one dollar.
                 This step launches with the platform's payment system — not live yet.
               </p>
             </div>

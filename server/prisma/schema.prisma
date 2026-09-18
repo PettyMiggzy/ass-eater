@@ -26,9 +26,9 @@ enum KycStatus {
   REJECTED
 }
 
-// USDC/ETH are settlement assets fans deposit in; ONLYASS is the platform token.
+// USDG/ETH are settlement assets fans deposit in; ONLYASS is the platform token.
 enum Asset {
-  USDC
+  USDG
   ETH
   ONLYASS
 }
@@ -156,7 +156,7 @@ model CreatorProfile {
   avatarKey     String?
   bannerKey     String?
   tags          String[]  @default([]) // creator-picked discovery categories
-  payoutAsset   Asset     @default(USDC)
+  payoutAsset   Asset     @default(USDG)
   payoutAddress String?
   payoutsFrozen Boolean   @default(false)
   promotedUntil DateTime? // paid discovery placement

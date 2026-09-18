@@ -17,7 +17,7 @@ const ROADMAP = [
     items: [
       { label: 'Custodial payment backend deployed (Postgres/Fastify, already built and tested)', status: 'built' },
       { label: 'Real subscriptions, tips, and pay-per-view unlocks', status: 'built' },
-      { label: 'Fans buy credits with USDC; creators are paid out in USDC', status: 'planned' },
+      { label: 'Fans buy credits with dollars (USDG on Robinhood Chain); creators are paid out the same way', status: 'planned' },
       { label: 'Instant creator payouts (+2% fee, waived for token-lock creators) and scheduled payouts', status: 'built' },
       { label: 'Marketplace buying', status: 'built' },
       { label: 'Creator token-lock perk: fans lock $ONLYONE for a creator-defined perk', status: 'built' },
@@ -88,11 +88,11 @@ export default function TokenLanding() {
               burn it once for permanent VIP, and back a live product from day one.
             </p>
             {/* Stated up front, not buried, because it is the whole design:
-                content is paid for in USDC credits and this token is
+                content is paid for in dollar credits and this token is
                 deliberately kept out of that path. See lib/brand.js. */}
             <p className="text-sm text-gray-500 max-w-xl mx-auto">
-              $ONLYONE is not a payment method. Subscriptions, tips and unlocks are paid for in USDC
-              credits — you never need to hold this token to use the platform.
+              $ONLYONE is not a payment method. Subscriptions, tips and unlocks are paid for with credits
+              bought in dollars — you never need to hold this token to use the platform.
             </p>
           </div>
         </section>

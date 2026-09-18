@@ -15,7 +15,7 @@ async function makeUser() {
 async function makeCreator() {
   const userId = await makeUser();
   await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR' } });
-  await prisma.creatorProfile.create({ data: { userId, displayName: 'Test Creator', payoutAsset: 'USDC' } });
+  await prisma.creatorProfile.create({ data: { userId, displayName: 'Test Creator', payoutAsset: 'USDG' } });
   return userId;
 }
 

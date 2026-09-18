@@ -1644,3 +1644,64 @@ airdrop it as compensation. Each one is the payment path through a side door.
 
 **Todd's "10% off when you join" is shelved, by the founder, not deferred by
 me** -- *"don't worry about discount to join right now."* Don't build it.
+
+## Settlement is USDG on Robinhood Chain, because USDC does not exist there (2026-09-18)
+
+Founder's constraint, which overrides the Base recommendation from earlier
+today: **his launchpad only supports Robinhood Chain and Arc**, so the token
+launches on one of those, and he chose Robinhood Chain for the money too --
+*"use USDC on the Robinhood chain."*
+
+**Checked before building, and the literal instruction isn't possible:
+Robinhood Chain has no USDC contract.** Its official on-chain asset registry
+(docs.robinhood.com/chain/contracts) lists WETH and **USDG** — the Global
+Dollar, issued by Paxos, redeemable 1:1 for US dollars — at
+`0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`.
+
+**The intent works anyway, and better than expected, because the bridge
+converts at both ends.** Across is live on Robinhood Chain: USDC bridged in
+from 13 chains (Ethereum, Base, Arbitrum, Optimism, Polygon, Solana and
+others) is delivered as USDG in a single transaction, no swap step and no
+wrapped placeholder; USDG bridged out returns as USDC on those same chains.
+So "USDC" stays the right word for what someone brings and what they leave
+with, and USDG is what the balance actually is. **Say both, in that order** —
+only "USDC" sends someone looking for a balance that doesn't exist, only
+"USDG" sends them hunting an asset they've never heard of.
+
+Creator cash-out path, end to end: earn USDG → bridge out via Across → USDC
+on Base → Coinbase, free withdrawal, lands in under a minute (Coinbase built
+Base and runs its sequencer). One extra hop versus settling on Base natively,
+and it depends on a third-party bridge, which is the real cost of keeping
+token and money on one chain.
+
+### Built
+
+`server/`: settlement asset renamed USDC → USDG throughout (schema `Asset`
+enum, `lib/chain.ts`, `lib/price.ts`, deposit indexer, treasury hedge,
+wallet, creators' `payoutAsset`, tests). The canonical mainnet address above
+is the default in `lib/chain.ts`, overridable by env for testnet.
+
+**`assertTokenDecimals()` is new and is called at deposit-indexer startup.**
+Wrong decimals is the one configuration mistake here that is silent and
+total: a 6-decimal token read as 18 misprices every deposit by a factor of a
+trillion, in the direction that credits a fan a fortune for a dollar, and
+nothing downstream would notice because the arithmetic stays internally
+consistent. It now reads `decimals()` off each contract at startup and throws
+rather than warns. USDG's decimals were NOT guessed — the env default is 6
+and the assertion is what actually settles it against the chain.
+
+Local dev DB needed `--force-reset` (existing rows held the old enum value).
+Local only; nothing is deployed. 57 server tests pass, `tsc --noEmit` clean,
+live-site build clean, 34 live-site tests pass.
+
+Live-site copy updated to the two-word rule above: `/get-crypto` now explains
+the bridge conversion explicitly, Terms section 5 names USDG as the
+settlement asset, payout options read "USDG (dollars)", and the dashboard
+tells a creator their earnings bridge back out as USDC for Coinbase.
+
+### Still open from the chain question
+
+`ONLYASS_POOL` / `ONLYASS_V4_*` price-oracle env config in `server/lib/price.ts`
+points at a Uniswap pool that will not exist until the token actually
+launches. The VIP burn threshold depends on that price, so VIP cannot work
+before the token has a live pool with real liquidity on Robinhood Chain.

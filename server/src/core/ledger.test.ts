@@ -20,11 +20,11 @@ async function makeUser(opts: { referredById?: string } = {}) {
   return id;
 }
 
-async function makeCreator(opts: { referredById?: string; payoutAsset?: 'USDC' | 'ONLYASS' } = {}) {
+async function makeCreator(opts: { referredById?: string; payoutAsset?: 'USDG' | 'ONLYASS' } = {}) {
   const userId = await makeUser({ referredById: opts.referredById });
   await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR' } });
   await prisma.creatorProfile.create({
-    data: { userId, displayName: 'Test Creator', payoutAsset: opts.payoutAsset ?? 'USDC' },
+    data: { userId, displayName: 'Test Creator', payoutAsset: opts.payoutAsset ?? 'USDG' },
   });
   return userId;
 }
@@ -72,7 +72,7 @@ afterAll(async () => {
 });
 
 describe('ledger.charge', () => {
-  it('splits a standard USDC-payout purchase 90/10', async () => {
+  it('splits a standard USDG-payout purchase 90/10', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 10_000);

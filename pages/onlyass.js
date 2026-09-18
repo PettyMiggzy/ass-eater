@@ -153,7 +153,7 @@ export default function OnlyAss({ creators, sessionUser }) {
             <h1 className="text-7xl md:text-8xl font-black mb-3 premium-title">ONLY ASS</h1>
             <p className="text-brand-secondary font-bold text-xl mb-3">Support the creators you actually love.</p>
             <p className="text-gray-400 max-w-xl mx-auto mb-10">
-              Subscribe, tip and unlock with credits you buy in USDC — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for.
+              Subscribe, tip and unlock with credits — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for.
             </p>
 
             {/* Stats Bar */}
@@ -417,7 +417,7 @@ export default function OnlyAss({ creators, sessionUser }) {
         <section className="py-16 px-6 border-t border-brand-gold/20">
           <div className="max-w-2xl mx-auto text-center premium-card p-10 border-2 border-brand-gold/40">
             <h2 className="text-3xl font-black text-brand-gold mb-3">Become a Subscriber</h2>
-            <p className="text-gray-300 mb-6">Top up with USDC and spend credits on the creators you want. No token required.</p>
+            <p className="text-gray-300 mb-6">Top up with dollars and spend credits on the creators you want. No token required.</p>
             <button onClick={() => showComingSoon()} className="premium-button">Buy Credits</button>
           </div>
         </section>

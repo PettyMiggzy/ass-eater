@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { formatUnits, parseEther } from 'viem';
 import { prisma } from '../lib/prisma';
-import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, depositWalletClient, treasury, treasuryClient, erc20Abi } from '../lib/chain';
+import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, depositWalletClient, treasury, treasuryClient, erc20Abi, assertTokenDecimals } from '../lib/chain';
 import { getUsdPrice, rawToUsdCents } from '../lib/price';
 import { money, post } from '../core/ledger';
 import { publish, sweepQueue, connection } from '../lib/redis';
@@ -15,7 +15,7 @@ async function addressMap() {
   return new Map(rows.map(r => [r.address.toLowerCase(), r]));
 }
 
-async function credit(d: { userId: string; txHash: string; logIndex: number; asset: 'USDC' | 'ETH' | 'ONLYASS'; raw: bigint; derivationIndex: number }) {
+async function credit(d: { userId: string; txHash: string; logIndex: number; asset: 'USDG' | 'ETH' | 'ONLYASS'; raw: bigint; derivationIndex: number }) {
   const px = await getUsdPrice(d.asset);
   let cents = rawToUsdCents(d.raw, DECIMALS[d.asset], px);
   if (d.asset === 'ONLYASS' && ONLYASS_BONUS_BPS) cents += (cents * BigInt(ONLYASS_BONUS_BPS)) / 10_000n;   // token deposit bonus
@@ -25,7 +25,7 @@ async function credit(d: { userId: string; txHash: string; logIndex: number; ass
       const dep = await tx.deposit.create({ data: { userId: d.userId, chainId: CHAIN_ID, txHash: d.txHash, logIndex: d.logIndex, asset: d.asset, rawAmount: d.raw.toString(), usdCents: cents, priceUsed: px } });
       // $ONLYONE deposits land in their own pool, which is NOT spendable:
       // the only thing that can be done with it is a VIP burn (core/vip.ts).
-      // USDC/ETH deposits become credits, which is what actually pays for
+      // USDG/ETH deposits become credits, which is what actually pays for
       // things. See the Balance type in core/ledger.ts.
       await post(tx, d.userId, cents, 'DEPOSIT', dep.id, { asset: d.asset, raw: d.raw.toString(), px }, d.asset === 'ONLYASS' ? 'ONLYASS' : 'CREDITS');
     });
@@ -46,8 +46,8 @@ async function scan() {
   while (from <= safe) {
     const to = from + BATCH - 1n > safe ? safe : from + BATCH - 1n;
 
-    // ERC20: USDC + $ONLYASS transfers to any of our addresses
-    const logs = await publicClient.getLogs({ address: [TOKENS.USDC.address, TOKENS.ONLYASS.address], event: TRANSFER_EVENT, args: { to: [...addrs.values()].map(a => a.address as `0x${string}`) }, fromBlock: from, toBlock: to });
+    // ERC20: USDG + $ONLYASS transfers to any of our addresses
+    const logs = await publicClient.getLogs({ address: [TOKENS.USDG.address, TOKENS.ONLYASS.address], event: TRANSFER_EVENT, args: { to: [...addrs.values()].map(a => a.address as `0x${string}`) }, fromBlock: from, toBlock: to });
     for (const l of logs) {
       const row = addrs.get(l.args.to!.toLowerCase()); const asset = ADDR_TO_ASSET.get(l.address.toLowerCase());
       if (!row || !asset || !l.args.value) continue;
@@ -70,6 +70,11 @@ async function scan() {
 }
 
 (async function loop() {
+  // Before crediting anyone anything: confirm the configured token scales
+  // match the contracts. Dying at startup on a mismatch is the correct
+  // behaviour -- an indexer that runs with the wrong decimals mints balances.
+  await assertTokenDecimals();
+
   for (;;) {
     try { await scan(); } catch (e) { console.error('indexer', e); }
     await new Promise(r => setTimeout(r, Number(process.env.INDEXER_INTERVAL_MS ?? 6000)));
@@ -78,7 +83,7 @@ async function scan() {
 
 /** Move funds from deposit address → treasury. ERC20 sweeps need gas first. */
 new Worker('sweep', async (job) => {
-  const { derivationIndex, asset } = job.data as { derivationIndex: number; asset: 'USDC' | 'ETH' | 'ONLYASS' };
+  const { derivationIndex, asset } = job.data as { derivationIndex: number; asset: 'USDG' | 'ETH' | 'ONLYASS' };
   const wc = depositWalletClient(derivationIndex); const me = wc.account.address;
   if (asset === 'ETH') {
     const bal = await publicClient.getBalance({ address: me });

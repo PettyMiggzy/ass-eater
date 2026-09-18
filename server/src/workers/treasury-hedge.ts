@@ -43,10 +43,10 @@ async function sizeSwap(desiredRaw: bigint, spot: number): Promise<{ amountIn: b
   for (let i = 0; i < 5 && amountIn > 0n; i++) {
     const { result } = await publicClient.simulateContract({
       address: QUOTER!, abi: quoterAbi, functionName: 'quoteExactInputSingle',
-      args: [{ tokenIn: TOKENS.ONLYASS.address, tokenOut: TOKENS.USDC.address, amountIn, fee: POOL_FEE, sqrtPriceLimitX96: 0n }],
+      args: [{ tokenIn: TOKENS.ONLYASS.address, tokenOut: TOKENS.USDG.address, amountIn, fee: POOL_FEE, sqrtPriceLimitX96: 0n }],
     });
     const [amountOut] = result as unknown as [bigint, bigint, number, bigint];
-    const impactBps = impactBpsOf(amountIn, amountOut, spot, DECIMALS.ONLYASS, DECIMALS.USDC);
+    const impactBps = impactBpsOf(amountIn, amountOut, spot, DECIMALS.ONLYASS, DECIMALS.USDG);
     if (impactBps <= MAX_IMPACT_BPS) return { amountIn, amountOut, amountOutMin: (amountOut * 99n) / 100n, impactBps };
     amountIn = amountIn / 2n; // pool's thin at this size -- try half, re-quote against it
   }
@@ -74,7 +74,7 @@ async function sweep() {
 
   const hash = await treasuryClient.writeContract({
     address: ROUTER, abi: routerAbi, functionName: 'exactInputSingle',
-    args: [{ tokenIn: TOKENS.ONLYASS.address, tokenOut: TOKENS.USDC.address, fee: POOL_FEE, recipient: treasury.address, amountIn: sized.amountIn, amountOutMinimum: sized.amountOutMin, sqrtPriceLimitX96: 0n }],
+    args: [{ tokenIn: TOKENS.ONLYASS.address, tokenOut: TOKENS.USDG.address, fee: POOL_FEE, recipient: treasury.address, amountIn: sized.amountIn, amountOutMinimum: sized.amountOutMin, sqrtPriceLimitX96: 0n }],
   });
   const rcpt = await publicClient.waitForTransactionReceipt({ hash });
   if (rcpt.status !== 'success') { console.error('treasury-hedge: swap reverted', hash); return; }

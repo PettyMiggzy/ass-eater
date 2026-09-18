@@ -45,8 +45,8 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     price: initialCreator?.price || '',
     // 'onlyass' is a legacy value from when the token was the payment
     // asset. It no longer is (see lib/brand.js), and nothing was ever
-    // paid out under it, so it reads as USDC.
-    payoutMethod: initialCreator?.payoutMethod === 'eth' ? 'eth' : 'usdc',
+    // paid out under it, so it reads as the dollar stablecoin.
+    payoutMethod: initialCreator?.payoutMethod === 'eth' ? 'eth' : 'usdg',
     walletAddress: initialCreator?.walletAddress || '',
     socials: {
       twitter: initialCreator?.socials?.twitter || '',
@@ -251,7 +251,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
             <div className="premium-card p-8">
               <p className="text-gray-300 mb-2">Logged in as <span className="text-brand-gold font-bold">{user.email}</span></p>
               <p className="text-gray-400 text-sm mb-6">
-                You're set up as a fan. Head to the platform to browse creators — unlocks are paid for in USDC credits.
+                You're set up as a fan. Head to the platform to browse creators — unlocks are paid for with credits, which you top up with dollars.
               </p>
               <a href="/onlyass" className="premium-button inline-block">Browse Creators</a>
             </div>
@@ -374,7 +374,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                     onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
                     className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                   >
-                    <option value="usdc">USDC</option>
+                    <option value="usdg">USDG (dollars)</option>
                     <option value="eth">ETH</option>
                   </select>
                 </div>
@@ -389,7 +389,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 </div>
               </div>
               <p className="text-xs text-gray-500 -mt-2">
-                Your earnings are paid out to this wallet in USDC. The platform takes a 10% fee.
+                Your earnings are paid out to this wallet in USDG — the dollar stablecoin on Robinhood Chain, worth $1 each. Bridge it out and it arrives as USDC, which Coinbase accepts. The platform takes a 10% fee.
               </p>
 
               <button onClick={saveProfile} disabled={busy || isRestricted} className="premium-button disabled:opacity-50">

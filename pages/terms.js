@@ -74,11 +74,12 @@ export default function Terms() {
 
             <Section title="5. Payments">
               <p>
-                Fans pay in <strong>USDC</strong> and receive <strong>credits</strong>, an in-platform
-                balance used to subscribe, tip, and unlock content. Credits are not money, not a
-                cryptocurrency, and not an investment: they can only be spent on this Platform, they cannot
-                be transferred to another person, and they cannot be cashed back out. Creators are paid in
-                USDC, less a platform fee (currently 10%).
+                Fans buy <strong>credits</strong> with a dollar-pegged stablecoin (USDG on Robinhood
+                Chain; USDC bridged in converts to USDG automatically). One credit is one US dollar.
+                Credits are an in-platform balance used to subscribe, tip, and unlock content. They are not
+                money, not a cryptocurrency, and not an investment: they can only be spent on this
+                Platform, they cannot be transferred to another person, and they cannot be cashed back out.
+                Creators are paid in USDG, less a platform fee (currently 10%).
               </p>
               <ul className="list-disc pl-5 space-y-2 mt-3">
                 <li>

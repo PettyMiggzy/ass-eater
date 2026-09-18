@@ -24,7 +24,7 @@ export const wallet: FastifyPluginAsync = async (app) => {
     return rows.map(r => ({ ...r, amountCents: Number(r.amountCents) }));
   });
 
-  /** One address per user per chain, derived deterministically. Accepts USDC, ETH and $ONLYASS on that address. */
+  /** One address per user per chain, derived deterministically. Accepts USDG, ETH and $ONLYASS on that address. */
   app.post('/deposit-address', { preHandler: app.auth }, async (req) => {
     const existing = await prisma.depositAddress.findUnique({ where: { userId_chainId: { userId: req.user.id, chainId: CHAIN_ID } } });
     if (existing) return existing;
@@ -53,7 +53,7 @@ export const wallet: FastifyPluginAsync = async (app) => {
 
   app.get('/rates', async () => ({
     chainId: CHAIN_ID, tokens: TOKENS,
-    USDC: 1, ETH: await getUsdPrice('ETH'), ONLYASS: await getUsdPrice('ONLYASS'),
+    USDG: 1, ETH: await getUsdPrice('ETH'), ONLYASS: await getUsdPrice('ONLYASS'),
     assDepositBonusBps: Number(process.env.ONLYASS_DEPOSIT_BONUS_BPS ?? 0),
   }));
 };
