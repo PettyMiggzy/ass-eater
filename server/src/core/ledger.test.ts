@@ -20,11 +20,11 @@ async function makeUser(opts: { referredById?: string } = {}) {
   return id;
 }
 
-async function makeCreator(opts: { referredById?: string; payoutAsset?: 'USDG' | 'ONLYASS' } = {}) {
+async function makeCreator(opts: { referredById?: string; payoutAsset?: 'STABLE' | 'ONLYASS' } = {}) {
   const userId = await makeUser({ referredById: opts.referredById });
   await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR' } });
   await prisma.creatorProfile.create({
-    data: { userId, displayName: 'Test Creator', payoutAsset: opts.payoutAsset ?? 'USDG' },
+    data: { userId, displayName: 'Test Creator', payoutAsset: opts.payoutAsset ?? 'STABLE' },
   });
   return userId;
 }

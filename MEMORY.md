@@ -1765,3 +1765,81 @@ Checking a *target* is different from doubting a *claim*: the Robinhood
 Chain USDC lookup was needed to get a contract address to point the indexer
 at, and it found a real problem (no USDC on that chain). That kind of check
 stays. Second-guessing what he tells me about his own markets does not.
+
+## Accept any dollar stablecoin, not one hardcoded ticker (2026-09-18)
+
+Founder: *"we can take anything, right? If you can build something that can
+read these stable tokens."* Built.
+
+`Asset.USDG` is now `Asset.STABLE`, and `lib/chain.ts` carries `STABLECOINS`,
+an **allowlist of contracts** (default: USDG at the canonical Robinhood
+registry address) configurable as
+`STABLECOINS="SYM:0xaddr:decimals,SYM2:0xaddr2:6"`. Every entry is worth a
+dollar by definition, so `getUsdPrice('STABLE')` returns 1 with no oracle and
+no staleness window, and the ledger books cents without caring which one
+arrived. `Deposit.stableSymbol` keeps the ticker for the audit trail.
+
+Two things done deliberately:
+- **The deposit indexer filters logs by contract address, never by ticker.**
+  A token that calls itself USDG from a different contract is never looked
+  at. Robinhood's own docs warn about exactly this for their stock tokens.
+- **Each stablecoin's decimals come from its own allowlist entry**, checked
+  against the contract at startup by `assertTokenDecimals()`, because two
+  dollar tokens on one chain do not have to agree on scale.
+
+Payouts settle in `HEDGE_STABLE` (the first configured stablecoin, i.e. the
+chain's primary dollar). Which one a creator happened to deposit has nothing
+to do with what they are paid -- the ledger owes them cents.
+
+57 server tests pass, tsc clean.
+
+## Credits-as-token, second attempt: the pool is structurally short (2026-09-18)
+
+Founder came back to it with a concrete design: hold 30-40% of supply, park
+20% (200M tokens) in a contract/wallet; a fan pays USDC, the USDC goes into a
+pool and the fan receives the equivalent tokens from that wallet at the
+current price; credits ARE the tokens; a creator trades them back, something
+checks the price at that moment, and the pool pays USDC out. *"No need for a
+swap, because they're getting the tokens from us."*
+
+**Not built. The objection is arithmetic, not legal, and the reframing did
+not address it** -- it made it more explicit.
+
+Worked example. Fan pays $100; pool holds $100; fan gets 10M tokens at
+$0.00001. Fan tips it all to a creator. Creator trades in the same day at the
+same price: pool pays $100, tokens come back, even. Now the token 3x's, which
+is the entire point of launching it: those same 10M tokens are "worth" $300,
+so the pool must pay $300 against the $100 it ever received. **Short $200 on
+a single $100 sale**, and it compounds -- every unspent credit in the system
+is a dollar claim that grows with the token price against a pool that only
+ever took in the original dollars. The 200M tokens don't help: handing out
+more tokens does not create USDC. The mirror case is worse for creators: the
+token halves, someone who earned $1,000 can withdraw $500, and they will say
+the platform took it.
+
+There is no price path where this is fine. The only safe one is the token
+never moving.
+
+**The fix uses his own ingredients: that IS a liquidity pool with the safety
+removed.** "My tokens plus USDC in a contract that people trade against" is
+an AMM. The difference is that an AMM *reprices itself* as inventory shifts
+-- buying pushes the price up so the next buyer gets fewer, selling pushes it
+down -- which is precisely the invariant that stops it ever owing more than
+it holds. His version replaces that with a quoted oracle price and pays out
+against it regardless of inventory, which is the one change that makes
+bankruptcy possible. Put the same 200M plus USDC into a real Uniswap pool on
+Robinhood Chain: same ingredients, same one-click feel, he earns the trading
+fees, he is not the one quoting the price, and it cannot be drained.
+
+Platform money stays boring and stays as built: credits are dollars, backed
+1:1 by stablecoin actually received, creator withdraws exactly what they
+earned. Token demand comes from the things that need no redemption promise --
+VIP burn, token-gating.
+
+**Worth keeping from this message: the referral discount should apply to the
+VIP burn threshold, not to a charge.** *"Instead of needing to burn 10
+million... half off VIP."* That resolves the Todd conflict cleanly: it
+discounts no transaction (so "VIP is the only fan-facing discount" still
+holds), costs the platform nothing in cash, and gives creators something real
+to offer. Founder deferred it himself -- *"we'll think of that later"* -- so
+it is NOT built, but this is the shape to build when he comes back to it.

@@ -26,9 +26,17 @@ enum KycStatus {
   REJECTED
 }
 
-// USDG/ETH are settlement assets fans deposit in; ONLYASS is the platform token.
+// STABLE/ETH are settlement assets fans deposit in; ONLYASS is the platform
+// token, which is never a payment (see core/ledger.ts's Balance type).
+//
+// STABLE is deliberately not a specific ticker. Robinhood Chain's dollar
+// stablecoin is USDG today, USDC has no contract there, and which dollar
+// tokens exist on a chain changes. Every one of them is worth a dollar, so
+// the ledger does not need to care which arrived -- it books cents. The
+// symbol is kept on the Deposit row for the audit trail, and which contracts
+// are accepted is configuration (lib/chain.ts STABLECOINS), not code.
 enum Asset {
-  USDG
+  STABLE
   ETH
   ONLYASS
 }
@@ -156,7 +164,7 @@ model CreatorProfile {
   avatarKey     String?
   bannerKey     String?
   tags          String[]  @default([]) // creator-picked discovery categories
-  payoutAsset   Asset     @default(USDG)
+  payoutAsset   Asset     @default(STABLE)
   payoutAddress String?
   payoutsFrozen Boolean   @default(false)
   promotedUntil DateTime? // paid discovery placement
@@ -432,6 +440,9 @@ model Deposit {
   txHash    String
   logIndex  Int
   asset     Asset
+  // Which dollar stablecoin it actually was ("USDG"), for STABLE deposits.
+  // Null for ETH and ONLYASS.
+  stableSymbol String?
   rawAmount String // wei / 6-dec units as string
   usdCents  BigInt
   priceUsed Float

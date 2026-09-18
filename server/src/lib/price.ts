@@ -61,8 +61,10 @@ async function assUsd(): Promise<number> {
   return process.env.ONLYASS_POOL_VERSION === 'v3' ? assUsdV3() : assUsdV4();
 }
 
-export async function getUsdPrice(asset: 'USDG' | 'ETH' | 'ONLYASS'): Promise<number> {
-  if (asset === 'USDG') return 1;
+export async function getUsdPrice(asset: 'STABLE' | 'ETH' | 'ONLYASS'): Promise<number> {
+  // Every accepted stablecoin is a dollar by definition -- that is the whole
+  // reason they are on the allowlist. No oracle, no staleness window.
+  if (asset === 'STABLE') return 1;
   const cached = await redis.get(`px:${asset}`);
   if (cached) return Number(cached);
   const px = asset === 'ETH' ? await ethUsd() : await assUsd();

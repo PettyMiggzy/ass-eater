@@ -1,6 +1,6 @@
 import { parseAbi, type Address } from 'viem';
 import { prisma } from '../lib/prisma';
-import { publicClient, treasury, treasuryClient, TOKENS, DECIMALS, erc20Abi } from '../lib/chain';
+import { publicClient, treasury, treasuryClient, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi } from '../lib/chain';
 import { impactBpsOf, selectHedgedDeposits } from './treasury-hedge-math';
 
 // Fans can deposit $ONLYONE to burn for VIP (core/vip.ts). That balance is
@@ -43,10 +43,10 @@ async function sizeSwap(desiredRaw: bigint, spot: number): Promise<{ amountIn: b
   for (let i = 0; i < 5 && amountIn > 0n; i++) {
     const { result } = await publicClient.simulateContract({
       address: QUOTER!, abi: quoterAbi, functionName: 'quoteExactInputSingle',
-      args: [{ tokenIn: TOKENS.ONLYASS.address, tokenOut: TOKENS.USDG.address, amountIn, fee: POOL_FEE, sqrtPriceLimitX96: 0n }],
+      args: [{ tokenIn: TOKENS.ONLYASS.address, tokenOut: HEDGE_STABLE.address, amountIn, fee: POOL_FEE, sqrtPriceLimitX96: 0n }],
     });
     const [amountOut] = result as unknown as [bigint, bigint, number, bigint];
-    const impactBps = impactBpsOf(amountIn, amountOut, spot, DECIMALS.ONLYASS, DECIMALS.USDG);
+    const impactBps = impactBpsOf(amountIn, amountOut, spot, DECIMALS.ONLYASS, HEDGE_STABLE.decimals);
     if (impactBps <= MAX_IMPACT_BPS) return { amountIn, amountOut, amountOutMin: (amountOut * 99n) / 100n, impactBps };
     amountIn = amountIn / 2n; // pool's thin at this size -- try half, re-quote against it
   }
@@ -74,7 +74,7 @@ async function sweep() {
 
   const hash = await treasuryClient.writeContract({
     address: ROUTER, abi: routerAbi, functionName: 'exactInputSingle',
-    args: [{ tokenIn: TOKENS.ONLYASS.address, tokenOut: TOKENS.USDG.address, fee: POOL_FEE, recipient: treasury.address, amountIn: sized.amountIn, amountOutMinimum: sized.amountOutMin, sqrtPriceLimitX96: 0n }],
+    args: [{ tokenIn: TOKENS.ONLYASS.address, tokenOut: HEDGE_STABLE.address, fee: POOL_FEE, recipient: treasury.address, amountIn: sized.amountIn, amountOutMinimum: sized.amountOutMin, sqrtPriceLimitX96: 0n }],
   });
   const rcpt = await publicClient.waitForTransactionReceipt({ hash });
   if (rcpt.status !== 'success') { console.error('treasury-hedge: swap reverted', hash); return; }
