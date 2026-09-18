@@ -1391,3 +1391,92 @@ was to be **the only fan-facing discount**, and both
 was closed. Second unanswered question if it goes ahead: **who absorbs the
 10%** -- the platform (its entire cut, since the platform fee is 10%) or the
 creator. Nobody has said. Don't build it until both are answered.
+
+## Payments become USDC credits; token renamed $ONLYONE and taken off the payment path (2026-09-18)
+
+Founder's call, verbatim: *"payments will be in usdc they buy credits our
+token will be only one not only ass need find way to use it can't be
+payments cause will be violation."*
+
+Three separate decisions in one line, all now reflected on the live site:
+
+1. **Fans pay in USDC and spend credits.** 1 credit = 1 USDC, deliberately,
+   so nobody has to do arithmetic to know what they're spending.
+2. **The token is `$ONLYONE`, not `$ONLYASS`.** Nothing is deployed yet
+   (the launchpad and the Kekfun auction were removed earlier the same
+   day), so the rename cost nothing.
+3. **The token is never a payment method.** Not for subscriptions, tips,
+   unlocks, marketplace, or creator payouts -- paying a creator in the
+   token is still paying someone in the token. `lib/brand.js` states this
+   rule in one place; the failure mode is copy drifting back to "pay with
+   the token" one page at a time.
+
+### The token's actual use, since it can't be payment
+
+Already built, just needs to become the *only* thing it does:
+- **Burn for VIP** (`server/src/core/vip.ts`) -- a one-way burn past an
+  admin-adjustable threshold buys permanent VIP. Status, not currency.
+- **Token-gating** -- the `locked` field on a creator ("requires token
+  holding") already exists on the live site and was never wired up.
+- **Creator token-lock perk** (`server/src/modules/stake.ts`) -- a fan
+  locks tokens for a creator-defined perk.
+
+Deliberately NOT recommended: paying creators bonuses in the token,
+spending it to boost placement, or letting it buy credits. Each one puts it
+back on the payment path through a side door.
+
+### The thing that actually changed legally, and it isn't the token
+
+Credits make the platform **custodial**. Terms of Service section 5 used to
+say, accurately, that payments were wallet-to-wallet and *"the Platform
+does not hold, custody, or have the ability to reverse funds."* Under
+credits that is false: the platform holds fan money and remits to creators.
+That is the money-transmission question, and it is a bigger deal than the
+token ever was. The Terms were rewritten, not patched.
+
+**The design constraint that follows, and it has to survive into the
+ledger:** credits are **closed-loop** -- spendable only here, never
+transferable between users, never cashed back out to a fan. That is what
+OnlyFans/Twitch/Patreon do and it is the defensible shape. The moment a fan
+can withdraw credits back to money, this stops being closed-loop. Creator
+payouts are different and are fine (that's remitting earnings, not running
+an exchange), but they are still the platform holding other people's money.
+**Get this in front of a lawyer before taking the first dollar** -- not as a
+punt, as the one item on this list that code cannot settle.
+
+**USDC and Circle:** accepting USDC as a plain on-chain transfer into the
+platform's own wallet needs nobody's permission. What is off-limits is
+Circle's *business products* -- Circle Mint, Arc -- which ban adult content
+the same way Stripe and Transak do (already recorded above). Same for any
+fiat->USDC on-ramp the platform embeds: that vendor's adult-content policy
+applies. Don't sign up for a Circle account expecting it to work.
+
+### Shipped (live site, copy and labels only -- no payments exist here)
+
+`lib/brand.js` (new, the rule); `pages/token.js` leads with "you never need
+to hold this token to use the platform"; `pages/get-crypto.js` teaches USDC
+instead of swapping into the token; `pages/onlyass.js` tiers re-denominated
+in dollars; payout selects are USDC/ETH in both the dashboard and admin
+(legacy stored `'onlyass'` reads as USDC rather than being migrated --
+nothing ever paid out under it); creator subscription prices are dollars in
+the seed roster, the become-a-creator form and `api/creator/submit.js`;
+Terms section 2 and 5 rewritten.
+
+**`lib/payment-circumvention-filter.js` keeps `'onlyass'` exempt alongside
+`'onlyone'`.** Dropping the old ticker would flag every existing listing and
+DM that mentions it as an attempt to route payment off-platform -- a rename
+would become a queue of false violations. Leave it in.
+
+### NOT built -- the credits ledger itself
+
+`server/` still denominates in `ONLYASS` end to end (`payAsset`/
+`payoutAsset`, the deposit indexer, the price oracle, treasury-hedge) and is
+still not deployed. Turning it into the credits ledger means: `payAsset`
+becomes credits-only, deposits watch USDC instead of the token, payouts
+settle in USDC, the $ONLYASS price oracle stops being load-bearing for
+pricing (a stablecoin doesn't need one), and VIP keeps its burn since that
+is the token's remaining job. The founding-creator fee waiver
+(`PAYMENTS_LIVE_AT` in `lib/founding.js`) starts its clock at that same
+moment. Don't start this without deciding credit expiry and whether unspent
+credits are refundable -- both change the schema and both are legal
+questions before they are code ones.
