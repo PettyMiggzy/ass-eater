@@ -17,12 +17,6 @@ const HOST_ROUTES = {
   'www.onlyass.shop': '/marketplace',
 };
 
-// Hosts that never serve adult content, so the state age-verification block
-// below doesn't apply to them -- everything else (the main platform, the
-// marketplace, preview/vercel.app URLs, custom domains not listed here) is
-// treated as adult-content-serving by default (fail closed, not open).
-const SFW_HOSTS = new Set(['onlyass.xyz', 'www.onlyass.xyz', 'onlyass.online', 'www.onlyass.online']);
-
 // States with an enacted, currently-in-effect law requiring real age
 // verification (not a self-attestation checkbox) to access adult content --
 // 27 states as of September 2026, cross-checked against AVPA's tracker and
@@ -49,19 +43,30 @@ const BLOCKED_STATE_CODES = new Set([
 // process (TAKE IT DOWN Act), and gating it behind age verification would
 // undermine the "clearly and conspicuous, freely accessible" requirement
 // that process has to meet.
-const SFW_PATHS = new Set(['/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/images/logo-final.png']);
+//
+// "/" is the public landing page (pages/index.js). It is exempt because it
+// is deliberately typographic -- no creator photos, no content grid,
+// nothing explicit -- which is the whole basis on which an unverified
+// visitor is allowed to see it. If that page ever gains real content, this
+// exemption has to go with it.
+const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/images/logo-final.png']);
 
 export async function proxy(request) {
   const host = request.headers.get('host') || '';
   const { pathname } = request.nextUrl;
 
-  // SFW_HOSTS only ever serve real content at the root path (rewritten to
-  // /gateway or /token below) -- any other path on those hosts still
-  // resolves to the actual platform (same Next.js app, routed by pathname
-  // regardless of hostname), so only root is exempt from the check.
-  const isSfwRoot = pathname === '/' && SFW_HOSTS.has(host);
+  // Decide against the path that will ACTUALLY be served, not the one the
+  // visitor typed. Some hosts rewrite their root to a different page, and
+  // one of them (onlyass.shop -> /marketplace) rewrites to adult content:
+  // exempting "/" by the requested path alone would hand that host an
+  // ungated marketplace. Resolving the rewrite first means onlyass.fun/
+  // gets the public landing and is exempt, onlyass.xyz/ gets /token and is
+  // exempt, and onlyass.shop/ gets /marketplace and is checked like any
+  // other page.
+  const hostTarget = HOST_ROUTES[host];
+  const servedPath = hostTarget && pathname === '/' ? hostTarget : pathname;
 
-  if (!SFW_PATHS.has(pathname) && !isSfwRoot) {
+  if (!SFW_PATHS.has(servedPath)) {
     const country = request.headers.get('x-vercel-ip-country');
     const region = request.headers.get('x-vercel-ip-country-region');
     if (country === 'US' && BLOCKED_STATE_CODES.has(region)) {
@@ -73,9 +78,8 @@ export async function proxy(request) {
     }
   }
 
-  const target = HOST_ROUTES[host];
-  if (target && pathname === '/') {
-    return NextResponse.rewrite(new URL(target, request.url));
+  if (hostTarget && pathname === '/') {
+    return NextResponse.rewrite(new URL(hostTarget, request.url));
   }
 
   return NextResponse.next();

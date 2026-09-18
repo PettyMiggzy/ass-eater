@@ -1,7 +1,31 @@
 import '../styles/globals.css';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
+
+/**
+ * Pages this 18+ notice must NOT cover.
+ *
+ * This gate is a localStorage self-attestation -- it is not the real age
+ * check (that is AgeChecker, via proxy.js), it is the "this site contains
+ * adult content" notice. It was previously applied to every route, which
+ * had two real costs:
+ *
+ *  - It hid /report-content, the non-consensual-content takedown form,
+ *    behind a click and rendered it as a blank page with JavaScript off.
+ *    The TAKE IT DOWN Act requires that process be clearly available, and
+ *    proxy.js already exempts the same path from the state block for
+ *    exactly this reason -- the two exemptions have to agree.
+ *  - It covered the public landing page, which exists so that someone who
+ *    has not verified anything can see what this site is. A notice in
+ *    front of a page that shows nothing explicit is a notice in front of
+ *    nothing.
+ *
+ * Everything else still gets it.
+ */
+const NO_NOTICE_PATHS = new Set(['/', '/report-content', '/blocked-region', '/verify-age']);
 
 function MyApp({ Component, pageProps }) {
+  const router = useRouter();
   const [isVerified, setIsVerified] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -12,6 +36,10 @@ function MyApp({ Component, pageProps }) {
     }
     setIsLoading(false);
   }, []);
+
+  if (NO_NOTICE_PATHS.has(router.pathname)) {
+    return <Component {...pageProps} />;
+  }
 
   if (isLoading) return null;
 
