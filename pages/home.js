@@ -259,14 +259,14 @@ export default function Home({ creators }) {
               <a href="/terms" className="hover:text-brand-pink transition">DMCA / Takedown</a>
               <a href="/terms" className="hover:text-brand-pink transition">Complaints Policy</a>
               <a href="/terms" className="hover:text-brand-pink transition">Acceptable Use</a>
-              <a href="/token" className="hover:text-brand-pink transition">$ONLYASS</a>
+              <a href="/token" className="hover:text-brand-pink transition">$ONLYONE</a>
               <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">
                 Report Non-Consensual Content
               </a>
               <a href="mailto:support@onlyass.fun" className="hover:text-brand-pink transition">Contact</a>
             </div>
             <p className="text-gray-500 text-xs max-w-2xl mx-auto mb-2 text-center">
-              18+ only. This site contains adult content. $ONLYASS is a meme token for entertainment purposes —
+              18+ only. This site contains adult content. $ONLYONE is a meme token for entertainment purposes —
               not an investment, and not financial advice.
             </p>
             <p className="text-gray-600 text-xs text-center">© 2026 OnlyOne</p>

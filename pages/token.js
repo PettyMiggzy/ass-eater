@@ -17,9 +17,10 @@ const ROADMAP = [
     items: [
       { label: 'Custodial payment backend deployed (Postgres/Fastify, already built and tested)', status: 'built' },
       { label: 'Real subscriptions, tips, and pay-per-view unlocks', status: 'built' },
+      { label: 'Fans buy credits with USDC; creators are paid out in USDC', status: 'planned' },
       { label: 'Instant creator payouts (+2% fee, waived for token-lock creators) and scheduled payouts', status: 'built' },
-      { label: 'Marketplace buying, with 10% off for any subscriber or staker', status: 'built' },
-      { label: 'Creator token-lock perk: fans lock $ONLYASS for a creator-defined perk', status: 'built' },
+      { label: 'Marketplace buying', status: 'built' },
+      { label: 'Creator token-lock perk: fans lock $ONLYONE for a creator-defined perk', status: 'built' },
       { label: 'Referral payouts to whoever brought a creator or a fan onto the platform', status: 'built' },
     ],
   },
@@ -27,8 +28,8 @@ const ROADMAP = [
     title: 'Phase 2',
     subtitle: 'Token infrastructure',
     items: [
-      { label: '$ONLYASS deployed/bridged onto Robinhood Chain', status: 'planned' },
-      { label: 'Live price oracle for $ONLYASS (Uniswap pool once one exists)', status: 'planned' },
+      { label: '$ONLYONE launched onto Robinhood Chain', status: 'planned' },
+      { label: 'Live price oracle for $ONLYONE (Uniswap pool once one exists)', status: 'planned' },
     ],
   },
   {
@@ -48,7 +49,7 @@ const ROADMAP = [
     items: [
       { label: 'onlyass.store: a real merch store, separate from the peer-to-peer marketplace', status: 'planned' },
       { label: 'Forensic/invisible watermarking for video (images already get a traceable per-viewer mark)', status: 'planned' },
-      { label: 'Public read-only API for $ONLYASS price/stats', status: 'planned' },
+      { label: 'Public read-only API for $ONLYONE price/stats', status: 'planned' },
     ],
   },
 ];
@@ -57,15 +58,15 @@ export default function TokenLanding() {
   return (
     <>
       <Head>
-        <title>$ONLYASS Token</title>
-        <meta name="description" content="$ONLYASS — the token behind the Only Ass creator platform." />
+        <title>$ONLYONE Token</title>
+        <meta name="description" content="$ONLYONE — the access token for the OnlyOne creator platform. Not a payment method." />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
 
       <div className="min-h-screen bg-gradient-luxury text-white overflow-x-hidden">
         <nav className="w-full py-6 px-6">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
-            <span className="text-xl font-black premium-title">$ONLYASS</span>
+            <span className="text-xl font-black premium-title">$ONLYONE</span>
             <div className="flex items-center gap-4">
               <a href="/get-crypto" className="text-sm text-gray-300 hover:text-brand-gold transition">New to crypto?</a>
             </div>
@@ -80,11 +81,18 @@ export default function TokenLanding() {
               FAIR LAUNCH — NO PRESALE
             </div>
             <h1 className="text-5xl md:text-6xl font-black leading-[0.95] mb-6 premium-title">
-              $ONLYASS
+              $ONLYONE
             </h1>
             <p className="text-lg text-gray-300 mb-10 max-w-xl mx-auto">
-              A degen-run token backing a real creator platform. Hold $ONLYASS to unlock content
-              across the network, get creator payout discounts, and back a live product from day one.
+              An access token for a real creator platform. Hold it to unlock token-gated creators,
+              burn it once for permanent VIP, and back a live product from day one.
+            </p>
+            {/* Stated up front, not buried, because it is the whole design:
+                content is paid for in USDC credits and this token is
+                deliberately kept out of that path. See lib/brand.js. */}
+            <p className="text-sm text-gray-500 max-w-xl mx-auto">
+              $ONLYONE is not a payment method. Subscriptions, tips and unlocks are paid for in USDC
+              credits — you never need to hold this token to use the platform.
             </p>
           </div>
         </section>
@@ -112,7 +120,7 @@ export default function TokenLanding() {
             </div>
             <div className="premium-card p-6">
               <h3 className="text-lg font-black text-brand-gold mb-2">Holder Perks</h3>
-              <p className="text-gray-400 text-sm">Unlock content and lower creator fees by paying in $ONLYASS.</p>
+              <p className="text-gray-400 text-sm">Token-gated creators, and a one-time burn for permanent VIP status.</p>
             </div>
           </div>
         </section>

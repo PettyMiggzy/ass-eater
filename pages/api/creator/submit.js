@@ -182,10 +182,10 @@ export default async function handler(req, res) {
 
     // Price ends up as a display string on the public creator card, so it has
     // to be a number here -- an unauthenticated form must not be able to write
-    // arbitrary text into a field shown site-wide. The form asks for millions
-    // of $ONLYASS, which is the format data/creators.js already uses.
-    const priceMillions = Number(fields.price);
-    const price = Number.isFinite(priceMillions) && priceMillions > 0 ? `${priceMillions}M $ONLYASS` : '1M $ONLYASS';
+    // arbitrary text into a field shown site-wide. Dollars per month, matching
+    // what fans actually pay in: USDC credits, never the token.
+    const priceUsd = Number(fields.price);
+    const price = Number.isFinite(priceUsd) && priceUsd > 0 ? `$${priceUsd.toFixed(2)} / month` : '$9.99 / month';
 
     const creator = await addPendingCreator({
       name,

@@ -10,7 +10,7 @@ const MAX_HANDLE = 40;
 const MAX_BIO = 1000;
 
 export default function BecomeCreator() {
-  const [form, setForm] = useState({ name: '', handle: '', bio: '', email: '', price: '1' });
+  const [form, setForm] = useState({ name: '', handle: '', bio: '', email: '', price: '9.99' });
   const [avatar, setAvatar] = useState(null);
   const [galleryFiles, setGalleryFiles] = useState([]);
   const [agreed, setAgreed] = useState(false);
@@ -112,8 +112,8 @@ export default function BecomeCreator() {
               <input type="email" value={form.email} onChange={update('email')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
             </div>
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Subscription Price ($ONLYASS, millions)</label>
-              <input type="number" value={form.price} onChange={update('price')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+              <label className="block text-sm text-gray-400 mb-2">Subscription Price (USD per month)</label>
+              <input type="number" min="0" step="0.01" value={form.price} onChange={update('price')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
             </div>
             <div>
               <label className="block text-sm text-gray-400 mb-2">Profile Photo</label>

@@ -166,7 +166,7 @@ export default function Landing() {
             <a href="/privacy" className="hover:text-brand-pink transition">Privacy</a>
             <a href="/terms" className="hover:text-brand-pink transition">18 U.S.C. §2257</a>
             <a href="/terms" className="hover:text-brand-pink transition">DMCA</a>
-            <a href="/token" className="hover:text-brand-pink transition">$ONLYASS</a>
+            <a href="/token" className="hover:text-brand-pink transition">$ONLYONE</a>
             <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">
               Report Non-Consensual Content
             </a>

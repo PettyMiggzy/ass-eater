@@ -153,7 +153,7 @@ export default function OnlyAss({ creators, sessionUser }) {
             <h1 className="text-7xl md:text-8xl font-black mb-3 premium-title">ONLY ASS</h1>
             <p className="text-brand-secondary font-bold text-xl mb-3">Support the creators you actually love.</p>
             <p className="text-gray-400 max-w-xl mx-auto mb-10">
-              Hold $ONLYASS to unlock premium galleries, chat with our characters, and get early drops. No ads, no algorithm — just exclusive content on our own token.
+              Subscribe, tip and unlock with credits you buy in USDC — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for.
             </p>
 
             {/* Stats Bar */}
@@ -305,8 +305,8 @@ export default function OnlyAss({ creators, sessionUser }) {
             <div className="grid md:grid-cols-3 gap-6">
               <div className="premium-card p-8 border-2 border-brand-gold/30 text-center">
                 <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">STARTER</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">1M</p>
-                <p className="text-gray-400 text-sm mb-6">$ONLYASS / month</p>
+                <p className="text-4xl font-black text-brand-gold mb-1">$9.99</p>
+                <p className="text-gray-400 text-sm mb-6">in credits / month</p>
                 <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Access to 3 creators</li>
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Weekly content drops</li>
@@ -316,8 +316,8 @@ export default function OnlyAss({ creators, sessionUser }) {
               <div className="premium-card p-8 border-2 border-brand-gold text-center relative scale-105 shadow-luxury-lg">
                 <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-brand-gold text-black text-xs font-black rounded-full">MOST POPULAR</div>
                 <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">ALL ACCESS</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">3M</p>
-                <p className="text-gray-400 text-sm mb-6">$ONLYASS / month</p>
+                <p className="text-4xl font-black text-brand-gold mb-1">$19.99</p>
+                <p className="text-gray-400 text-sm mb-6">in credits / month</p>
                 <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> All creators unlocked</li>
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Daily content drops</li>
@@ -327,8 +327,8 @@ export default function OnlyAss({ creators, sessionUser }) {
               </div>
               <div className="premium-card p-8 border-2 border-brand-gold/30 text-center">
                 <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">VIP</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">8M</p>
-                <p className="text-gray-400 text-sm mb-6">$ONLYASS / month</p>
+                <p className="text-4xl font-black text-brand-gold mb-1">$49.99</p>
+                <p className="text-gray-400 text-sm mb-6">in credits / month</p>
                 <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Everything in All Access</li>
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Priority requests</li>
@@ -417,8 +417,8 @@ export default function OnlyAss({ creators, sessionUser }) {
         <section className="py-16 px-6 border-t border-brand-gold/20">
           <div className="max-w-2xl mx-auto text-center premium-card p-10 border-2 border-brand-gold/40">
             <h2 className="text-3xl font-black text-brand-gold mb-3">Become a Subscriber</h2>
-            <p className="text-gray-300 mb-6">Connect your wallet and hold $ONLYASS to unlock exclusive content across all creators.</p>
-            <button onClick={() => showComingSoon()} className="premium-button">Connect Wallet to Unlock</button>
+            <p className="text-gray-300 mb-6">Top up with USDC and spend credits on the creators you want. No token required.</p>
+            <button onClick={() => showComingSoon()} className="premium-button">Buy Credits</button>
           </div>
         </section>
 

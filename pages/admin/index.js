@@ -72,7 +72,7 @@ export default function AdminPanel() {
         // automatic suspension still inside its 30 days keeps its own clock
         // when the admin saves some unrelated field.
         suspendedUntil: selected.suspendedUntil || null,
-        payoutMethod: selected.payoutMethod || 'onlyass',
+        payoutMethod: selected.payoutMethod === 'eth' ? 'eth' : 'usdc',
         walletAddress: selected.walletAddress || '',
         socials: {
           twitter: selected.socials?.twitter || '',
@@ -455,7 +455,7 @@ export default function AdminPanel() {
                         onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
                         className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                       >
-                        <option value="onlyass">$ONLYASS</option>
+                        <option value="usdc">USDC</option>
                         <option value="eth">ETH</option>
                       </select>
                     </div>

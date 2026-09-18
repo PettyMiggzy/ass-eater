@@ -83,8 +83,8 @@ const PERKS = [
   {
     Icon: Icons.heart,
     title: 'CRYPTO PAYOUTS',
-    sub: '$ONLYASS OR ETH',
-    body: 'Fans pay your wallet directly. No platform balance holding your money, no payout schedule.',
+    sub: 'PAID OUT IN USDC',
+    body: 'Earnings settle in USDC, not in a token you have to sell first and not in a currency that moves overnight.'
   },
 ];
 

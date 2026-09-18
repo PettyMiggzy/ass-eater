@@ -41,7 +41,10 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     bio: initialCreator?.bio || '',
     tags: (initialCreator?.tags || []).join(', '),
     price: initialCreator?.price || '',
-    payoutMethod: initialCreator?.payoutMethod || 'onlyass',
+    // 'onlyass' is a legacy value from when the token was the payment
+    // asset. It no longer is (see lib/brand.js), and nothing was ever
+    // paid out under it, so it reads as USDC.
+    payoutMethod: initialCreator?.payoutMethod === 'eth' ? 'eth' : 'usdc',
     walletAddress: initialCreator?.walletAddress || '',
     socials: {
       twitter: initialCreator?.socials?.twitter || '',
@@ -246,7 +249,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
             <div className="premium-card p-8">
               <p className="text-gray-300 mb-2">Logged in as <span className="text-brand-gold font-bold">{user.email}</span></p>
               <p className="text-gray-400 text-sm mb-6">
-                You're set up as a fan. Head to the platform to browse creators and unlock content with $ONLYASS.
+                You're set up as a fan. Head to the platform to browse creators — unlocks are paid for in USDC credits.
               </p>
               <a href="/onlyass" className="premium-button inline-block">Browse Creators</a>
             </div>
@@ -369,7 +372,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                     onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
                     className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                   >
-                    <option value="onlyass">$ONLYASS</option>
+                    <option value="usdc">USDC</option>
                     <option value="eth">ETH</option>
                   </select>
                 </div>
@@ -384,7 +387,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 </div>
               </div>
               <p className="text-xs text-gray-500 -mt-2">
-                Fans pay you directly to this wallet when they unlock your content. The platform takes a 10% fee on top, sent separately.
+                Your earnings are paid out to this wallet in USDC. The platform takes a 10% fee.
               </p>
 
               <button onClick={saveProfile} disabled={busy || isRestricted} className="premium-button disabled:opacity-50">

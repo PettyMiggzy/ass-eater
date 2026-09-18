@@ -24,8 +24,8 @@ export default function Terms() {
 
             <Section title="2. Nature of the Platform">
               <p>
-                The Platform hosts adult content created and uploaded by independent creators, and is
-                token-gated using the $ONLYASS cryptocurrency. By using the Platform you acknowledge you
+                The Platform hosts adult content created and uploaded by independent creators. By
+                using the Platform you acknowledge you
                 will encounter sexually explicit and mature content, and that such content is intended
                 solely for consenting adults.
               </p>
@@ -74,26 +74,30 @@ export default function Terms() {
 
             <Section title="5. Payments">
               <p>
-                Content on the Platform is unlocked using cryptocurrency payments (ETH or $ONLYASS), sent
-                directly from a Fan's wallet to a Creator's wallet, with a platform fee (currently 10%) sent
-                separately to the Platform's wallet. These are peer-to-peer blockchain transactions — the
-                Platform does not hold, custody, or have the ability to reverse funds once a transaction is
-                confirmed on-chain.
+                Fans pay in <strong>USDC</strong> and receive <strong>credits</strong>, an in-platform
+                balance used to subscribe, tip, and unlock content. Credits are not money, not a
+                cryptocurrency, and not an investment: they can only be spent on this Platform, they cannot
+                be transferred to another person, and they cannot be cashed back out. Creators are paid in
+                USDC, less a platform fee (currently 10%).
               </p>
               <ul className="list-disc pl-5 space-y-2 mt-3">
-                <li>All payments are final. There are no refunds for completed on-chain transactions.</li>
                 <li>
-                  You are solely responsible for the security of your own wallet, private keys, and seed
-                  phrases. The Platform never has access to your private keys and cannot recover lost or
-                  stolen funds.
+                  Credit purchases are final. There are no refunds for credits once purchased or for
+                  content once unlocked.
                 </li>
                 <li>
-                  Cryptocurrency values are volatile. The Platform makes no representation about the value,
-                  liquidity, or future price of $ONLYASS or any other token.
+                  Credits have no cash value, expire only as described here, and confer no ownership,
+                  equity, or claim against the Platform.
                 </li>
                 <li>
-                  You are responsible for any network/gas fees and for complying with tax obligations
-                  arising from your transactions.
+                  <strong>$ONLYONE is not a payment method.</strong> It cannot be used to buy credits,
+                  subscribe, tip, or unlock content. It is a separate token offering access and status
+                  features only, and the Platform makes no representation about its value, liquidity, or
+                  future price.
+                </li>
+                <li>
+                  You are responsible for the security of your own wallet and private keys, for any
+                  network/gas fees, and for complying with tax obligations arising from your transactions.
                 </li>
               </ul>
             </Section>

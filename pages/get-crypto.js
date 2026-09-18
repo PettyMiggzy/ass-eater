@@ -31,15 +31,15 @@ export default function GetCrypto() {
   return (
     <>
       <Head>
-        <title>New to Crypto? - Only Ass</title>
-        <meta name="description" content="A step-by-step guide to getting a wallet and buying $ONLYASS." />
+        <title>New to Crypto? - OnlyOne</title>
+        <meta name="description" content="A step-by-step guide to getting a wallet and USDC so you can buy credits on OnlyOne." />
       </Head>
 
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-12">
         <div className="max-w-2xl mx-auto">
           <h1 className="text-4xl font-black premium-title mb-3 text-center">New to Crypto?</h1>
           <p className="text-gray-400 text-center mb-12">
-            Four steps to go from "never touched crypto" to spending on Only Ass. Takes about 10 minutes.
+            Four steps to go from "never touched crypto" to spending on OnlyOne. Takes about 10 minutes.
           </p>
 
           <div className="space-y-6">
@@ -75,8 +75,8 @@ export default function GetCrypto() {
                 <h2 className="font-black text-lg">Add Robinhood Chain</h2>
               </div>
               <p className="text-gray-300 text-sm mb-3">
-                $ONLYASS lives on Robinhood Chain, a network your wallet doesn't know about by default. Click below
-                to add it automatically (MetaMask will ask you to confirm).
+                OnlyOne settles on Robinhood Chain, a network your wallet doesn't know about by default. Click
+                below to add it automatically (MetaMask will ask you to confirm).
               </p>
               <button onClick={addNetwork} className="premium-button text-sm">
                 Add Robinhood Chain to MetaMask
@@ -100,24 +100,25 @@ export default function GetCrypto() {
             <div className="premium-card p-6">
               <div className="flex items-center gap-3 mb-3">
                 <span className="w-8 h-8 rounded-full bg-brand-gold text-black font-black flex items-center justify-center shrink-0">3</span>
-                <h2 className="font-black text-lg">Get ETH, then swap for $ONLYASS</h2>
+                <h2 className="font-black text-lg">Get USDC (and a little ETH)</h2>
               </div>
               <p className="text-gray-300 text-sm mb-2">
-                You need a small amount of ETH on Robinhood Chain to pay network fees, plus more ETH (or USDC/USDG)
-                to swap into $ONLYASS. The easiest path:
+                Credits on OnlyOne are bought with <strong>USDC</strong>, a dollar-pegged stablecoin — one USDC is
+                one dollar, so what you spend is what you meant to spend. You also need a small amount of ETH on
+                Robinhood Chain to cover network fees. The easiest path:
               </p>
               <ol className="text-gray-300 text-sm list-decimal list-inside space-y-1 mb-3">
-                <li>Open MetaMask and tap <strong>Buy</strong> — it lets you buy ETH with a card directly into your wallet, no separate exchange signup needed</li>
-                <li>Bridge it to Robinhood Chain — <a href="https://across.to" target="_blank" rel="noopener noreferrer" className="text-brand-gold hover:underline">Across</a> supports this from Ethereum, Base, Arbitrum, and others</li>
-                <li>Swap ETH for $ONLYASS on a Robinhood Chain DEX (Uniswap)</li>
+                <li>Open MetaMask and tap <strong>Buy</strong> — it lets you buy USDC or ETH with a card directly into your wallet, no separate exchange signup needed</li>
+                <li>Bridge to Robinhood Chain — <a href="https://across.to" target="_blank" rel="noopener noreferrer" className="text-brand-gold hover:underline">Across</a> supports this from Ethereum, Base, Arbitrum, and others</li>
+                <li>Keep a little ETH for fees; the rest in USDC is what buys credits</li>
               </ol>
               <p className="text-xs text-gray-500 mb-3">
                 (MetaMask's Buy button uses its own on-ramp partners behind the scenes — that's between you and
                 MetaMask, not something we run or integrate with.)
               </p>
-              <p className="text-xs text-yellow-400/80 bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
-                $ONLYASS hasn't launched on Robinhood Chain yet (see the <a href="/token" className="underline">roadmap</a>) —
-                once it has, the swap link goes here. Steps 1 and 2 above work today regardless.
+              <p className="text-xs text-gray-500">
+                You do <strong>not</strong> need $ONLYONE to use OnlyOne. That token is a separate, optional thing
+                — access and VIP status, never a way to pay. See the <a href="/token" className="underline">token page</a>.
               </p>
             </div>
 
@@ -125,18 +126,18 @@ export default function GetCrypto() {
             <div className="premium-card p-6 opacity-75">
               <div className="flex items-center gap-3 mb-3">
                 <span className="w-8 h-8 rounded-full bg-brand-purple/40 text-white font-black flex items-center justify-center shrink-0">4</span>
-                <h2 className="font-black text-lg">Deposit into Only Ass</h2>
+                <h2 className="font-black text-lg">Buy credits on OnlyOne</h2>
               </div>
               <p className="text-gray-300 text-sm">
-                Once payments are live, your dashboard will show a unique deposit address — send $ONLYASS (or
-                USDC/ETH) there from your wallet and it shows up as your balance, ready to subscribe, tip, and buy.
+                Once payments are live, your dashboard will show a unique deposit address — send USDC there from
+                your wallet and it becomes credits, ready to subscribe, tip, and unlock. One credit is one USDC.
                 This step launches with the platform's payment system — not live yet.
               </p>
             </div>
           </div>
 
           <div className="text-center mt-12">
-            <a href="/" className="premium-button inline-block">Back to Only Ass</a>
+            <a href="/" className="premium-button inline-block">Back to OnlyOne</a>
           </div>
         </div>
       </div>
