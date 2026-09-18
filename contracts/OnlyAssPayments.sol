@@ -86,6 +86,17 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
     /// that should end up owning the contract, and silently making the
     /// deployer the owner is how a live contract ends up owned by a hot key
     /// that was only ever meant to broadcast a transaction.
+    ///
+    /// Watch the ORDER when calling this: `initialOwner` and
+    /// `initialPlatformWallet` are adjacent and both plain `address`, so
+    /// passing them the wrong way round compiles, deploys and reverts
+    /// nothing -- it just hands ownership to the fee wallet (or the fee
+    /// stream to the owner key). setPlatformWallet/setPlatformFeeBps are both
+    /// onlyOwner, so that mistake is unfixable once it is live. Every caller
+    /// must pass five arguments, owner first; see
+    /// scripts/deploy-launchpad.js/deploy-launchpad-v4.js for the same
+    /// owner-first shape, and test/OnlyAssPayments.test.js's "takes its owner
+    /// from the constructor" case, which pins the order.
     constructor(
         address initialOwner,
         address initialPlatformWallet,

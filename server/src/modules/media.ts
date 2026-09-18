@@ -40,12 +40,18 @@ export const media: FastifyPluginAsync = async (app) => {
       const cur = await prisma.media.findUniqueOrThrow({ where: { id: m.id }, select: { status: true } });
       return { ok: true, status: cur.status };
     }
-    // Deterministic jobId: BullMQ ignores an add() for an id already in the
-    // queue, so even a re-queue by hand can't stack a second live job for the
-    // same media. It's dropped on completion (removeOnComplete), which keeps a
-    // genuine later re-transcode possible. No ':' in the id -- BullMQ rejects
-    // custom ids containing one.
-    await transcodeQueue.add('transcode', { mediaId: m.id }, { jobId: `transcode-${m.id}`, attempts: 3, backoff: { type: 'exponential', delay: 10_000 }, removeOnComplete: 500 });
+    // Deterministic jobId: BullMQ ignores an add() for an id that already
+    // exists, so even a re-queue by hand can't stack a second live job for the
+    // same media. That dedup is only wanted while a job is still pending,
+    // though -- BullMQ matches *retained* completed and failed jobs too, so any
+    // retention here burns `transcode-<id>` and silently swallows every later
+    // re-add for that media. A count (removeOnComplete: 500) is not a drop
+    // either; it keeps the last 500. Both are therefore true, so a transcode
+    // that failed all its attempts can actually be re-queued by hand. The
+    // durable record of how one ended is the Media row (READY or REJECTED,
+    // written by workers/transcode.ts), not BullMQ's job sets. No ':' in the id
+    // -- BullMQ rejects custom ids containing one.
+    await transcodeQueue.add('transcode', { mediaId: m.id }, { jobId: `transcode-${m.id}`, attempts: 3, backoff: { type: 'exponential', delay: 10_000 }, removeOnComplete: true, removeOnFail: true });
     return { ok: true, status: 'PROCESSING' };
   });
 

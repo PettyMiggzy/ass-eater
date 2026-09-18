@@ -30,7 +30,12 @@ new Worker('renewals', async () => {
     const due = await prisma.subscription.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { status: true } } } });
     for (const s of due) {
       if (!s.autoRenew || s.status === 'CANCELLED' || s.creator.status !== 'ACTIVE') {
-        await prisma.subscription.update({ where: { id: s.id }, data: { status: 'EXPIRED' } }); continue;
+        // Expire against the same snapshot the decision was made from, not by id
+        // alone. `due` is read up to 500 rows earlier, and a fan who re-subscribed
+        // (and paid) in between has a brand-new ACTIVE period sitting in this row
+        // -- stamping EXPIRED over it revokes access they just bought, and the due
+        // query above never picks EXPIRED rows back up, so it never self-heals.
+        await prisma.subscription.updateMany({ where: { id: s.id, status: s.status, currentPeriodEnd: s.currentPeriodEnd }, data: { status: 'EXPIRED' } }); continue;
       }
       try {
         await money(prisma, async (tx) => {
@@ -50,8 +55,13 @@ new Worker('renewals', async () => {
       } catch (e) {
         if (e instanceof AlreadyRenewed) continue;
         if (e instanceof InsufficientFunds) {
-          await prisma.subscription.update({ where: { id: s.id }, data: { status: 'EXPIRED' } });
-          await publish(s.fanId, { type: 'renewal_failed', creatorId: s.creatorId, reason: 'insufficient_funds' });
+          // Same snapshot guard as above -- the charge rolled the claim back, so
+          // the row should still look exactly as it was read unless someone
+          // renewed it meanwhile. Only tell the fan it failed if we really did
+          // expire the period we read; otherwise the notice is about a period
+          // that no longer exists.
+          const expired = await prisma.subscription.updateMany({ where: { id: s.id, status: s.status, currentPeriodEnd: s.currentPeriodEnd }, data: { status: 'EXPIRED' } });
+          if (expired.count) await publish(s.fanId, { type: 'renewal_failed', creatorId: s.creatorId, reason: 'insufficient_funds' });
         } else console.error('renewal', s.id, e);
       }
     }
@@ -60,7 +70,8 @@ new Worker('renewals', async () => {
     const dueLocks = await prisma.tokenLock.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { status: true, creator: { select: { stakePerkEnabled: true } } } } } });
     for (const l of dueLocks) {
       if (!l.autoRenew || l.status === 'CANCELLED' || l.creator.status !== 'ACTIVE' || !l.creator.creator?.stakePerkEnabled) {
-        await prisma.tokenLock.update({ where: { id: l.id }, data: { status: 'EXPIRED' } }); continue;
+        // Snapshot-guarded for the same reason the subscription loop above is.
+        await prisma.tokenLock.updateMany({ where: { id: l.id, status: l.status, currentPeriodEnd: l.currentPeriodEnd }, data: { status: 'EXPIRED' } }); continue;
       }
       try {
         await money(prisma, async (tx) => {
@@ -75,8 +86,8 @@ new Worker('renewals', async () => {
       } catch (e) {
         if (e instanceof AlreadyRenewed) continue;
         if (e instanceof InsufficientFunds) {
-          await prisma.tokenLock.update({ where: { id: l.id }, data: { status: 'EXPIRED' } });
-          await publish(l.fanId, { type: 'lock_renewal_failed', creatorId: l.creatorId, reason: 'insufficient_funds' });
+          const expired = await prisma.tokenLock.updateMany({ where: { id: l.id, status: l.status, currentPeriodEnd: l.currentPeriodEnd }, data: { status: 'EXPIRED' } });
+          if (expired.count) await publish(l.fanId, { type: 'lock_renewal_failed', creatorId: l.creatorId, reason: 'insufficient_funds' });
         } else console.error('lock renewal', l.id, e);
       }
     }

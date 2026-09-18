@@ -1,10 +1,10 @@
 import Head from 'next/head';
-import { getSessionUserId } from '../lib/session';
+import { getVerifiedSessionUserId } from '../lib/session';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 import { getFavoriteCreatorIds } from '../lib/favorites-store';
 
 export async function getServerSideProps({ req }) {
-  const uid = getSessionUserId(req);
+  const uid = await getVerifiedSessionUserId(req);
   if (!uid) {
     return { redirect: { destination: '/login?next=/favorites', permanent: false } };
   }

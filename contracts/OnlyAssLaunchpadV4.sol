@@ -89,8 +89,13 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     uint48 public constant PERMIT2_EXPIRATION_BUFFER = 900;
     /// @notice How many candidate token addresses a single launch will try
     /// before giving up. See _deployTokenForFreshPool for why more than one
-    /// is needed.
-    uint256 public constant MAX_ADDRESS_ATTEMPTS = 8;
+    /// is needed, and why this is 16x the V2 launchpad's own 8: squatting a
+    /// candidate costs an attacker one cheap `PoolManager.initialize` here,
+    /// versus a whole pair-contract deployment on V2, so the candidate set
+    /// has to be correspondingly wider to keep the grief uneconomical. Costs
+    /// nothing on the happy path -- an unsquatted launch still returns on
+    /// attempt 0.
+    uint256 public constant MAX_ADDRESS_ATTEMPTS = 128;
 
     address public immutable onlyAssToken;
     IPoolManager public immutable poolManager;
@@ -271,13 +276,11 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     /// squatted address and hit the same pool -- the launchpad would be
     /// bricked permanently, for every creator, with no way to recover it.
     ///
-    /// Two independent defenses, either of which alone closes that:
-    /// (1) CREATE2 with a salt mixing in `block.prevrandao` and the previous
-    /// blockhash, so the address can't be known before the block this launch
-    /// actually lands in -- a same-block front-runner can still squat one
-    /// attempt, but the address is different again in the next block, so it's
-    /// a per-attempt grief that costs the attacker a transaction every time,
-    /// never a permanent brick; and (2) a bounded retry, so a pool that IS
+    /// Two independent defenses, either of which alone closes the permanent
+    /// brick: (1) CREATE2 with a salt mixing in `block.prevrandao` and the
+    /// previous blockhash, so the address can't be known before the block
+    /// this launch actually lands in -- whatever an attacker squats is stale
+    /// again in the next block; and (2) a bounded retry, so a pool that IS
     /// already initialized is skipped rather than fatal. Do not "simplify"
     /// this back to `new LaunchedToken(...)`.
     ///
@@ -288,6 +291,42 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
     /// blockhash; if both turned out to be constants there, those two alone
     /// still keep every block's candidate addresses different, which is the
     /// property that makes "permanently bricked" impossible.
+    ///
+    /// WHAT THIS DOES NOT CLOSE, and the reason MAX_ADDRESS_ATTEMPTS is much
+    /// larger here than on the V2 launchpad: none of the salt inputs are
+    /// secret from a transaction earlier in the SAME block. `msg.sender` and
+    /// `creationCodeHash` are both recoverable from the victim's own pending
+    /// calldata, `launches.length` is public via launchCount(), the block
+    /// fields are shared by every transaction in the block, and `attempt`
+    /// just enumerates MAX_ADDRESS_ATTEMPTS. So a searcher watching the
+    /// mempool can compute every candidate, initialize each of their pools
+    /// first, and force this launch to revert with NoAvailableTokenAddress --
+    /// a live, repeatable, same-block grief, not a theoretical one.
+    ///
+    /// Do NOT copy V2's cost framing onto this: there, squatting one
+    /// candidate means `UniswapV2Factory.createPair`, which deploys a whole
+    /// pair contract (~2.5M gas), so squatting the full set is close to
+    /// infeasible. Here it is one `PoolManager.initialize` per candidate
+    /// (~35k gas -- no contract is deployed, and this hook declares no
+    /// beforeInitialize permission, so there isn't even a hook callback to
+    /// pay for). The two are roughly two orders of magnitude apart.
+    ///
+    /// A wider candidate set is deliberate cost-scaling, not a cure. The
+    /// attacker has to squat EVERY candidate to stop one launch, pay for all
+    /// of them again in every block they want to keep the launchpad down, and
+    /// win the ordering race each time; skipping a squatted candidate costs
+    /// this loop only an EXTCODESIZE plus one extsload, roughly a sixth of
+    /// what the squat cost. The actual cure is to make initializing a pool
+    /// that carries this hook permissioned -- give the hook a
+    /// `beforeInitialize` permission that accepts only a PoolKey the
+    /// launchpad has already passed to registerPool, which an attacker can't
+    /// reach (onlyLaunchpad). That is not a contract-local change: a V4
+    /// hook's permissions live in the low bits of its own ADDRESS, so turning
+    /// that bit on changes the salt the hook must be mined at, and
+    /// scripts/lib/hook-miner.js pins the flag set to
+    /// AFTER_SWAP | AFTER_SWAP_RETURNS_DELTA. It needs the hook, the miner,
+    /// the V4 deploy script and the V4 tests moved together. Tracked as the
+    /// outstanding fix here; until it lands, this is cost-scaling only.
     function _deployTokenForFreshPool(LaunchParams calldata p, uint256 liquidityTokens)
         private
         returns (address token, PoolKey memory key, uint256 amount0, uint256 amount1)
@@ -460,6 +499,16 @@ contract OnlyAssLaunchpadV4 is Ownable, ReentrancyGuard, Pausable {
         platformSupplyBps = newBps;
     }
 
+    /// @notice Sets the graduation milestone and its two bonus amounts.
+    /// @dev Size these against what the volume actually COSTS to produce, not
+    /// against its face value. The hook's counter measures throughput in both
+    /// directions with POOL_FEE at 0, and the creator-tax half of the hook's
+    /// fee is paid back to the same creator who collects the bonus, so a
+    /// creator can manufacture the threshold by round-tripping their own
+    /// capital for roughly 1% of it -- see the long comment in
+    /// OnlyAssLaunchpadHook.afterSwap. If creatorBonusWei is worth more than
+    /// ~1% of onlyAssVolumeThreshold, wash-trading the milestone is
+    /// profitable and drains the shared reserve fundGraduationPool fills.
     function setGraduationParams(uint256 onlyAssVolumeThreshold, uint256 creatorBonusWei, uint256 platformBonusWei)
         external
         onlyOwner

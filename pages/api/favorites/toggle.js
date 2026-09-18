@@ -1,4 +1,4 @@
-import { getSessionUserId } from '../../../lib/session';
+import { getVerifiedSessionUserId } from '../../../lib/session';
 import { toggleFavorite } from '../../../lib/favorites-store';
 
 export default async function handler(req, res) {
@@ -6,7 +6,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const uid = getSessionUserId(req);
+  const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to save creators' });
 
   const { creatorId } = req.body || {};

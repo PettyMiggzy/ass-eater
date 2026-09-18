@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../../lib/creators-store';
-import { getSessionUserId } from '../../lib/session';
+import { getVerifiedSessionUserId } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
 import { getWallPostsForCreator } from '../../lib/wall-store';
@@ -11,7 +11,7 @@ import { isFavorite } from '../../lib/favorites-store';
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
   let creator = creators.find((c) => String(c.id) === String(params.id)) || null;
-  const viewerId = getSessionUserId(req);
+  const viewerId = await getVerifiedSessionUserId(req);
   const creatorUser = creator ? await findUserByCreatorId(creator.id) : null;
 
   // Pending applicants, suspended, and banned creators aren't public --

@@ -1,4 +1,4 @@
-import { getSessionUserId } from '../../../../lib/session';
+import { getVerifiedSessionUserId } from '../../../../lib/session';
 import { getListings, findListing } from '../../../../lib/listings-store';
 import { createOrder } from '../../../../lib/orders-store';
 
@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   // charge succeeds; remove this guard at that point, not before.
   return res.status(501).json({ error: 'Marketplace checkout is not live yet.' });
 
-  const uid = getSessionUserId(req);
+  const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to place an order' });
 
   const { listingId, shippingAddress, ageConfirmed, tosAccepted } = req.body || {};

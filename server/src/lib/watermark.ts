@@ -40,16 +40,23 @@ async function tile(width: number, height: number, label: string) {
 
 /** Returns a JPEG buffer with the watermark burned in. Any aspect ratio. */
 export async function watermarkImage(original: Buffer, label: string): Promise<Buffer> {
-  // Auto-orient (.rotate() with no args applies the EXIF orientation) and
-  // settle the pixels before measuring. metadata() reports the *stored* size
-  // and ignores pending operations, and a phone portrait photo is stored
-  // landscape behind an orientation flag -- so sizing the overlay from
-  // metadata() made it wider than the rotated image and sharp refused the
-  // composite ("Image to composite must have same dimensions or smaller"),
-  // failing every such upload outright. info is the real post-rotation size.
-  const { data: upright, info } = await sharp(original).rotate().toBuffer({ resolveWithObject: true });
-  const overlay = await tile(info.width, info.height, label);
-  return sharp(upright).composite([{ input: overlay, top: 0, left: 0 }]).jpeg({ quality: 88 }).toBuffer();
+  // metadata().width/height are the *stored* size and ignore EXIF orientation,
+  // and a phone portrait photo is stored landscape behind an orientation flag
+  // -- so sizing the overlay from those made it wider than the displayed image
+  // and sharp refused the composite ("Image to composite must have same
+  // dimensions or smaller"), failing every such upload outright.
+  // metadata().autoOrient is the size the image actually has once the flag is
+  // applied, which is what the { autoOrient: true } pipeline below produces.
+  //
+  // Measured this way rather than by rotating into an intermediate buffer
+  // first: toBuffer() with no format re-encodes (JPEG in, JPEG back out at
+  // sharp's default quality) before the final .jpeg() here, and two lossy
+  // passes over a paid photo is a real quality hit -- the result is cached per
+  // (media, viewer), so the degraded copy is what every later view serves.
+  const img = sharp(original, { autoOrient: true });
+  const { autoOrient } = await img.metadata();
+  const overlay = await tile(autoOrient.width, autoOrient.height, label);
+  return img.composite([{ input: overlay, top: 0, left: 0 }]).jpeg({ quality: 88 }).toBuffer();
 }
 
 const wmKey = (mediaId: string, viewerId: string) => `wm/${mediaId}/${viewerId}.jpg`;

@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
 import { authPlugin } from './plugins/auth';
 import * as m from './modules';
 
@@ -21,6 +22,19 @@ app.get('/health', async () => ({ ok: true }));
 // fall-through below treats anything unlabelled as a server fault.
 const CLIENT_ERRORS = new Set(['self_payment', 'invalid_amount', 'creator_unavailable']);
 
+// Prisma's own errors carry a `code` but never a statusCode, so they used to
+// fall all the way through to the 500 branch -- and since that branch redacts
+// the body, a request naming an id that simply doesn't exist came back as an
+// opaque { error: 'internal' }. Every code here describes the *request* being
+// wrong, not the server: P2025 is raised by each findUniqueOrThrow that
+// resolves a caller-supplied id (subscriptions, marketplace, posts, messages,
+// admin), which zod happily passes as a well-formed uuid first.
+const PRISMA_STATUS: Record<string, [number, string]> = {
+  P2025: [404, 'not_found'],   // required record does not exist
+  P2003: [400, 'bad_request'], // foreign key -- an id pointing at nothing
+  P2002: [409, 'conflict'],    // unique violation -- usually a request racing itself
+};
+
 app.setErrorHandler((err: any, _req, reply) => {
   if (err.message === 'insufficient_funds') return reply.code(402).send({ error: 'insufficient_funds' });
   if (err.validation) return reply.code(400).send({ error: 'bad_request', details: err.validation });
@@ -31,6 +45,13 @@ app.setErrorHandler((err: any, _req, reply) => {
   // reported as a 500 server fault.
   if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', details: err.issues });
   if (CLIENT_ERRORS.has(err.message)) return reply.code(400).send({ error: err.message });
+  if (err instanceof Prisma.PrismaClientKnownRequestError && PRISMA_STATUS[err.code]) {
+    const [code, error] = PRISMA_STATUS[err.code];
+    // A unique violation is normally a double-submit racing itself, which is
+    // worth seeing in the logs even though the caller gets a 4xx for it.
+    if (err.code === 'P2002') app.log.warn(err);
+    return reply.code(code).send({ error });
+  }
   const status = err.statusCode ?? 500;
   if (status < 500) return reply.code(status).send({ error: err.message ?? 'bad_request' });
   // Genuine server faults: log the real error, but don't hand the raw message

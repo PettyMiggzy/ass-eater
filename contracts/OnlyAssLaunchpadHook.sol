@@ -224,11 +224,37 @@ contract OnlyAssLaunchpadHook is IHooks, Ownable {
         // of real value registers astronomically on the token side, letting
         // the creator clear the graduation threshold and collect the bonus
         // without any real trading ever happening. The $ONLYASS side can't be
-        // inflated that way -- reaching the threshold means actually pushing
-        // that much $ONLYASS through the pool, which costs real money in
-        // price impact and in this hook's own fee. Which side is $ONLYASS is
-        // pinned at registerPool time, so it can't be spoofed per swap
-        // either.
+        // inflated that way -- it can only ever count $ONLYASS that really
+        // moved in or out of the pool. Which side is $ONLYASS is pinned at
+        // registerPool time, so it can't be spoofed per swap either.
+        //
+        // What this does NOT do -- do not write the old claim ("reaching the
+        // threshold costs real money in price impact and in this hook's own
+        // fee") back into this comment, it does not hold with these
+        // parameters. This counts THROUGHPUT, so the capital recycles: both
+        // directions are added, so one buy-then-sell round trip of X $ONLYASS
+        // credits ~2X, and that round trip is nearly free here.
+        // OnlyAssLaunchpadV4.POOL_FEE is 0 (this hook is deliberately the
+        // only fee mechanism), so a round trip pays no LP fee and leaves the
+        // pool at roughly its starting price -- the price impact nets out
+        // rather than being a cost. Of the fee this hook does take, the
+        // creator-tax half goes to cfg.creatorWallet, which the launchpad
+        // sets to the launching creator, i.e. straight back to the same
+        // person who collects the graduation bonus. Only PLATFORM_FEE_BPS is
+        // a real outflow. Manufacturing the volume therefore costs on the
+        // order of 1% of the threshold, not the threshold, so
+        // graduationOnlyAssVolumeThreshold and the two bonus amounts have to
+        // be sized against that real cost -- otherwise wash-trading the
+        // milestone is profitable and drains the shared, pre-funded bonus
+        // reserve that every launch draws from. That sizing is a business
+        // decision, not a code one, which is why it is written down here
+        // rather than silently assumed away.
+        //
+        // `delta` is the swap's pre-hook delta, so what is added below is the
+        // GROSS $ONLYASS leg, including the cut taken just above -- the fee
+        // counts toward the threshold too. Left as-is on purpose: it is a
+        // couple of percent next to the above, and
+        // test/OnlyAssLaunchpadV4.security.test.js pins the gross value.
         int128 onlyAssLeg = cfg.onlyAssIsCurrency0 ? delta.amount0() : delta.amount1();
         cumulativeOnlyAssVolume[id] += onlyAssLeg < 0 ? uint256(uint128(-onlyAssLeg)) : uint256(uint128(onlyAssLeg));
 

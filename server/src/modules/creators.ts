@@ -3,14 +3,15 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { isAddress } from 'viem';
 import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds } from '../core/ledger';
+import { isSubscribed } from '../core/access';
 
 export const creators: FastifyPluginAsync = async (app) => {
   // Public only once KYC-approved -- the same bar discovery (GET / and /tags)
   // applies and the same one app.creatorOk gates publishing/selling on. Without
   // it a brand-new, never-verified signup was fully reachable by direct link
   // even though nothing on the site ever listed them. Optional auth (no
-  // preHandler) so a creator can still pull up their own page to preview it
-  // while they're waiting on verification.
+  // preHandler) so the two people who must never be 404'd here still aren't:
+  // the creator previewing their own page, and an existing subscriber.
   app.get('/:username', async (req: any, reply) => {
     let viewerId: string | null = null;
     try { await req.jwtVerify(); viewerId = req.user.id; } catch {}
@@ -18,7 +19,15 @@ export const creators: FastifyPluginAsync = async (app) => {
       where: { user: { username: req.params.username, status: 'ACTIVE' } },
       include: { tiers: { where: { active: true } }, user: { select: { username: true, kycStatus: true } } },
     });
-    if (!c || (c.user.kycStatus !== 'APPROVED' && c.userId !== viewerId)) return reply.code(404).send({ error: 'not_found' });
+    if (!c) return reply.code(404).send({ error: 'not_found' });
+    // The subscriber exception is load-bearing, not politeness: kycStatus
+    // defaults to NONE, and the Sumsub webhook can demote an already-approved
+    // creator to PENDING/REJECTED at any time (modules/kyc.ts). Neither
+    // POST /subscriptions nor workers/renewals.ts looks at kycStatus, so those
+    // fans keep being billed either way -- hiding the page behind the gate
+    // would take away access they are still paying for.
+    const visible = c.user.kycStatus === 'APPROVED' || c.userId === viewerId || (!!viewerId && await isSubscribed(viewerId, c.userId));
+    if (!visible) return reply.code(404).send({ error: 'not_found' });
     const { payoutAddress, payoutsFrozen, ...pub } = c;
     return pub;
   });

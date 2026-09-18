@@ -2,13 +2,12 @@ import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
-import { getSessionUserId } from '../lib/session';
-import { findUserById, publicUser } from '../lib/users-store';
+import { getSessionUser } from '../lib/session';
+import { publicUser } from '../lib/users-store';
 
 export async function getServerSideProps({ req }) {
   const creators = await getCreators();
-  const uid = getSessionUserId(req);
-  const sessionUser = uid ? publicUser(await findUserById(uid)) : null;
+  const sessionUser = publicUser(await getSessionUser(req));
   return { props: { creators: creators.filter(isPubliclyVisible).map(toPublicCreator), sessionUser } };
 }
 

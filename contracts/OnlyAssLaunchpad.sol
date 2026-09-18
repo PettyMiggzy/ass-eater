@@ -222,6 +222,15 @@ contract OnlyAssLaunchpad is Ownable, ReentrancyGuard, Pausable {
     /// IS taken is skipped rather than fatal. Do not "simplify" this back to
     /// `new LaunchedToken(...)`.
     ///
+    /// MAX_ADDRESS_ATTEMPTS is only 8 here, against 128 on the V4 launchpad,
+    /// and that difference is deliberate -- do not "harmonize" the two.
+    /// Squatting one candidate on this contract means calling
+    /// `createPair`, which deploys a whole ~4.5KB UniswapV2Pair (millions of
+    /// gas), so covering even a handful of candidates is already close to
+    /// infeasible. V4's equivalent squat is a bare `PoolManager.initialize`
+    /// that deploys nothing, roughly two orders of magnitude cheaper, so it
+    /// needs a correspondingly wider candidate set to stay uneconomical.
+    ///
     /// `block.number`/`block.timestamp` are in the salt as well, not because
     /// they're unpredictable (they aren't) but because they're guaranteed to
     /// differ from one block to the next on any chain. This repo has never

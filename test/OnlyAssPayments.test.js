@@ -219,6 +219,13 @@ describe('OnlyAssPayments', function () {
       await payments.waitForDeployment();
 
       expect(await payments.owner()).to.equal(intendedOwner.address);
+      // Pins the ORDER of the first two constructor arguments, not just that
+      // an owner arg exists. Both are plain `address`, so a caller that swaps
+      // them compiles, deploys and reverts nothing -- it just silently makes
+      // the fee wallet the owner (or the owner the fee recipient), and both
+      // setters are onlyOwner, so the mistake is only discoverable once the
+      // contract is live.
+      expect(await payments.platformWallet()).to.equal(platformWallet.address);
       await expect(payments.connect(deployer).setPlatformFeeBps(500)).to.be.revertedWithCustomError(
         payments,
         'OwnableUnauthorizedAccount'

@@ -1,17 +1,17 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import { getSessionUserId } from '../lib/session';
-import { findUserById, publicUser } from '../lib/users-store';
+import { getSessionUser } from '../lib/session';
+import { publicUser } from '../lib/users-store';
 import { getCreators, effectiveCreatorStatus } from '../lib/creators-store';
 import { getListings } from '../lib/listings-store';
 
 export async function getServerSideProps({ req }) {
-  const uid = getSessionUserId(req);
-  if (!uid) {
-    return { redirect: { destination: '/login', permanent: false } };
-  }
-  const user = await findUserById(uid);
+  // getSessionUser rather than a stateless token check, so a session that
+  // has been logged out elsewhere lands on /login here too. It also covers
+  // the old "token is valid but the account no longer exists" case, which
+  // used to need a separate lookup.
+  const user = await getSessionUser(req);
   if (!user) {
     return { redirect: { destination: '/login', permanent: false } };
   }

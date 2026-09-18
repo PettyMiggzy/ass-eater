@@ -51,7 +51,17 @@ export const live: FastifyPluginAsync = async (app) => {
           // rolls its whole transaction back -- the charge with it, which is what
           // keeps the fan from paying twice. They already own the ticket the
           // winning request bought, so let them in instead of erroring out.
+          //
+          // The error code alone is NOT proof of that, though: charge() upserts
+          // Account rows for the creator, the platform and any referrers, and
+          // two *different* fans buying tickets to the same stream at the same
+          // instant collide on those shared rows instead. That rolls the ticket
+          // back too, so admitting on the code alone hands out a free seat to a
+          // paid stream. Only the ticket actually existing proves someone paid
+          // for it -- re-read it, and let a genuine conflict surface otherwise.
           if ((e as { code?: string }).code !== 'P2002') throw e;
+          const bought = await prisma.liveTicket.findUnique({ where: { fanId_streamId: { fanId: req.user.id, streamId: s.id } } });
+          if (!bought) throw e;
         }
       }
       allowed = true;
