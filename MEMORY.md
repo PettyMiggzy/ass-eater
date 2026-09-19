@@ -2869,3 +2869,191 @@ decision rather than changed silently.
 Verified against a real production server on the local test database (not
 just a clean build): `/`, `/home`, `/creators` all 200, all six new image
 files serve correctly. 107 store tests pass, `next build` clean.
+
+## Full three-way audit, and the OnlyAss sweep finished properly (2026-09-19)
+
+Founder's ask, verbatim: *"audit the entire build like u know its wrong so u
+arent assuming find and fix bugs and identify things that dont work etc"*,
+plus *"no cartoon looking models please ... u made cartoon versions that will
+get me fined please fix"*, and then mid-session *"no only ass ref any place
+its now Only One"*.
+
+Three agents audited `pages/`, `pages/api/` and `lib/`+`proxy.js`
+independently, each told to read full files and trust nothing. 50-odd
+findings. Every one was re-checked against the real code before being fixed
+-- two of the agents' own claims turned out to describe comments rather than
+behaviour, and one flagged a "bug" that was correct as written.
+
+### The two age-gate bypasses (both real, both now closed)
+
+1. **`/_next/data/<buildId>/<page>.json`.** Pages Router serves every
+   `getServerSideProps` payload there, and `proxy.js`'s matcher excluded
+   `_next/` wholesale -- so those requests never reached the proxy. A visitor
+   in a blocked state loads `/` (exempt), reads `buildId` out of
+   `__NEXT_DATA__`, and fetches `creators.json` / `creator/7.json` /
+   `marketplace.json` for the full props. **This is the third instance of the
+   same class** (after the host exemption and the `images/` exclusion), which
+   is the pattern: every blanket exclusion in that matcher is a bypass until
+   proven otherwise.
+   Worth knowing for next time: **Next normalises `nextUrl.pathname` for a
+   data request back to the page it belongs to**, so once the request reaches
+   the proxy the existing rules just work. Detecting that it IS a data request
+   (to answer 451 rather than rewriting to a page of HTML) needs the
+   `x-nextjs-data` header, not the path -- the path no longer says so.
+2. **`/api/*` was excluded entirely.** Only `/api/age-verify/` and
+   `/api/report-content` actually need to work from a blocked state; both are
+   exempt by path now and everything else is checked, answering 451 JSON so a
+   `fetch()` gets a refusal instead of a page.
+
+Also exempted, deliberately: `/terms`, `/privacy`, `/2257`. Pure text, no
+creator content, and a payment processor doing onboarding review should not
+hit a wall.
+
+**Verified against a real `next start` with spoofed Vercel geo headers**, not
+read over: blocked state gets 451 on `/api/*` and on data props, the gate page
+on a page request, and HTML instead of the file for `/images/demo_female_1.jpg`;
+an unblocked state gets real props back.
+
+### The worst non-security bug: one account could 500 the public site
+
+`/api/me/profile` and `/api/marketplace/create` copied text fields off the
+request body with no type check. Several public pages `.toLowerCase()` those
+values inside `getServerSideProps` -- optional chaining does not save a `{}`.
+So `POST /api/me/profile {"fields":{"name":{}}}` from any free creator account
+500s `/search` for every visitor. **`detectPaymentCircumvention` cannot catch
+this**: it does `String(text || '')`, so `{}` reads as the harmless
+`"[object Object]"`. `lib/field-validation.js` is the shared guard now.
+`marketplace/update.js` already had the right check and `create.js` never got
+it -- worth remembering that a fix applied to one of a pair is half a fix.
+
+### Uploads were storing whatever Content-Type the caller sent
+
+The four creator/admin gallery and avatar routes buffered an unbounded body
+and passed the request's `content-type` straight to `put()`. Blobs share one
+public origin, so `text/html` (or SVG-with-script) was stored XSS against
+every other blob in the store. `lib/upload-guard.js` now holds the allowlist
+and the 50MB cap the marketplace route already had.
+
+### Everything else fixed this pass
+
+- **NCII resolve was a TOCTOU** and its comment claimed it wasn't: it read
+  `status`, updated, then re-checked the *stale JS value* before applying the
+  enforcement ladder. Two concurrent resolves each ran it -> permanent ban off
+  a single report. The guard is part of the UPDATE now.
+- **A malformed cookie 500'd the whole site for that visitor.**
+  `decodeURIComponent` throws `URIError` on `%E0%A4%A`; one stray cookie set
+  on the domain by anything and every page and API route fails for them, with
+  no recovery but clearing cookies.
+- **`/api/marketplace/list` used the unfiltered roster**, leaking a pending
+  applicant's name/handle unauthenticated and keeping a banned creator's merch
+  on sale. `/marketplace` and `/search` masked the name to "Unknown" but still
+  rendered the listing with a working Buy button -- they drop it now, and
+  `applyContentViolation` marks listings `removed` on a **ban only** (a
+  suspension lifts itself after 30 days; marking them removed would not
+  un-mark them).
+- Gallery delete accepted `index: -1` (deletes the LAST photo) and
+  non-numeric (deletes the first). `sanitizeAge(' ')` was `Number(' ') === 0`
+  -> under 18 -> the whole profile save refused as underage. One undecryptable
+  order 500'd a creator's entire shipping queue. The owner age-verify redirect
+  accepted `//evil.com`. Login threw away `?next=`.
+- **`locked` was being read as a subscription paywall on the two biggest
+  pages.** `creator/[id].js` and `home.js` blurred whole profiles behind a
+  "Subscribe to unlock" button wired to `showComingSoon()`, and the profile
+  advertised **"Free"** to every creator who was not token-gated, whatever
+  price they had set. The admin editor exposed the `locked` checkbox with **no
+  threshold field**, which is exactly the flag-with-no-number state
+  `lib/token-gate.js` exists to prevent and which the creator cannot see or
+  fix from their own dashboard.
+- Rate limits where there were none: the NCII queue (oldest-first, federal
+  48-hour clock -- flooding it buries real victims), DMs and wall posts.
+- Handle uniqueness is a partial unique index now. It matters because signup
+  resolves `?ref=` by matching a handle. **The index is created inside a DO
+  block that swallows its own failure on purpose** -- the schema runs on every
+  boot, and a bare `CREATE UNIQUE INDEX` against already-colliding rows would
+  take the site down rather than leave one duplicate in place. Verified by
+  planting duplicates and confirming startup survives.
+- The inbox endpoint read every user row (every bcrypt hash included) per poll.
+- `@tailwindcss/postcss` was a devDependency that `postcss.config.js` requires
+  at build time -- any `--omit=dev` install would have failed outright.
+
+### Copy that was not true
+
+- **`/token` published the pre-computed `$ONLYASS` contract address from the
+  cancelled Kekfun auction**, under the words "FAIR LAUNCH -- NO PRESALE",
+  while the same page's roadmap said the token launch was "planned". Anyone
+  copying it would have sent funds to nothing. It reads
+  `NEXT_PUBLIC_ONLYONE_TOKEN_ADDRESS` now and says "Not launched yet".
+- **Four pages and the privacy policy described creator identity verification
+  -- government ID and a selfie, via "an identity verification vendor" -- that
+  no code performs.** A privacy policy describing collection that never
+  happens is the worst-shaped version of this. All reworded to the manual
+  review that actually happens; KYC stays "planned" on the roadmap.
+- `/creators` had a fabricated Creator Dashboard (4.2M earnings, 312
+  subscribers, an invented subscriber table) under "track your earnings in
+  real time", "12.4K Members / 340+ Exclusive Drops / 6 Creators" against a
+  roster of 2, tier perks for features that do not exist, and a "Launching in
+  4 days" toast. Replaced with what a creator actually gets and a plain line
+  saying payments are not on.
+- Footer legal links all pointed at bare `/terms`, and two of them had no
+  section to point at. `/2257` now exists, terms gained a Complaints section,
+  the rest deep-link.
+
+### The rename, finished
+
+Swept contracts (`OnlyAssToken.sol` -> `OnlyOneToken.sol` + its test and the
+three deploy/seed/verify scripts), `server/`'s `ONLYASS` ledger balance and
+every `ONLYASS_*` env name including the Prisma enum, the deploy unit/nginx
+files, the dev-only secret fallback, the scratch test DB name,
+`package.json`'s own name, the README, and `localStorage`'s
+`ass-eater-verified` key. `contracts/ONLYASS_LAUNCH.md` is deleted -- it
+documented the Kekfun auction and the launchpad, both already removed.
+**server/ migrations were regenerated from the schema rather than patched**:
+nothing is deployed and there is no database to migrate, so a clean init beats
+an enum-rename migration nobody will read.
+
+**Domain literals (`onlyass.fun/.xyz/.online/.shop`) stay in `proxy.js`.**
+They are live registered mirrors that DNS points here; renaming them in code
+just stops them routing. Told the founder this explicitly rather than leaving
+it as a silent exception.
+
+### Imagery
+
+`public/images/logo-final.png` **rendered the words "OnlyAss" in its pixels**
+and was displayed on five surfaces including both age-gate pages, under
+`alt="OnlyOne"`. It survived the 09-19 text sweep because it is an image --
+a grep cannot read pixels. Replaced by an inline SVG lockup (`Mark` +
+`Lockup` in `components/Brand.js`), deleted along with four orphaned
+old-brand icons.
+
+The anime mascot is replaced with a neutral placeholder at the same path
+(stored records point at it) and at `avatar-placeholder.png`.
+
+The Founding/VIP badges were raster made by keying a black background out of
+a generated image, which left a **dark halo around every laurel leaf** --
+always shown on dark cards, so always visible. Redrawn as SVG. **General rule
+confirmed twice now: generated raster with a keyed background is wrong for
+any mark shown on a dark surface; draw it.**
+
+The 18+ content notice in `_app.js` had never been redesigned -- navy card,
+grey buttons, a yellow warning emoji, on a pink-and-ink site -- and it is the
+first thing most visitors see. Rebuilt on the site's own primitives. Its
+"Exit" button called `window.close()`, a no-op in a normally-opened tab, so
+**the one control offered to someone who is NOT 18 was the one that did
+nothing.**
+
+### Still open, needs the founder
+
+- **The §2257 statement's records-custodian block** needs the operating
+  entity's name and a physical business address. That is a real-world fact and
+  was deliberately not invented; the page asks people to write in for it,
+  which is weaker than the regulation wants.
+- **`require-creator-owner` allows a `pending` creator to create listings and
+  write blobs.** Their listings are now hidden from every public surface, so
+  the exposure is gone, but whether an unreviewed account should be able to
+  write at all is a product decision, not a bug to fix silently.
+- **Real creator uploads live on public Vercel Blob URLs and cannot be gated
+  by `proxy.js` at all** -- different origin. Unchanged from previous
+  sessions; same missing piece as the NFT blur-until-purchased gap and the
+  burned-in watermark. All three want one signed, expiring, per-request media
+  endpoint.
+- AgeChecker per-state rule configuration is still not done on the account.
