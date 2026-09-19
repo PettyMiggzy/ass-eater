@@ -2750,15 +2750,69 @@ closest trace found:
   to the client, comment naming the exact concern (Prisma/driver errors
   quoting table/column names). Same no-test caveat as above and same
   reasoning for not building route-level test infra just for this.
-- Renewals double-charging across instances; deposit addresses assignable
-  to two users at once; duplicate transcode jobs; a double-click on
-  live-join throwing instead of succeeding; portrait photos skipping
-  watermarking -- none independently re-verified.
+- **Renewals double-charging across instances: CONFIRMED FIXED.**
+  `server/src/workers/renewals.ts` -- a Redis lock serializes ticks across
+  instances, but the real guard is per-row: each renewal `updateMany`s the
+  subscription/token-lock only if it still matches the exact snapshot read
+  (id + status + currentPeriodEnd), inside the same transaction as the
+  charge. A losing race matches nothing, throws `AlreadyRenewed`, and rolls
+  the charge back with it. Comment states the design principle directly:
+  "Idempotency lives here, in the database, not in how the job happens to
+  be scheduled."
+- **Deposit addresses assignable to two users at once: CONFIRMED FIXED.**
+  `server/src/modules/wallet.ts`'s `POST /deposit-address` -- a Postgres
+  advisory lock (`pg_advisory_xact_lock`) held for the whole transaction
+  serializes address allocation per chain, so two concurrent requests can
+  never read the same `MAX(derivationIndex)` and derive the same HD
+  address for two different users. The comment names the exact failure
+  mode this closes. This was the one finding in the batch that turned out
+  to still be a real bug shape (same "MAX+1 read-then-write race" class
+  this file already recorded fixing elsewhere) -- just already fixed by
+  the time this check happened, not freshly caught.
+- **Duplicate transcode jobs: CONFIRMED FIXED.** `server/src/modules/
+  media.ts` enqueues with `jobId: \`transcode-${m.id}\``, so BullMQ
+  dedupes -- calling this twice for the same media produces one job, not
+  two racing workers.
+- **Double-click on live-join throwing instead of succeeding: CONFIRMED
+  FIXED.** `server/src/modules/live.ts`'s `POST /:id/join` -- a genuine
+  double-click hits `LiveTicket`'s `(fanId, streamId)` primary key,
+  rolls the losing transaction (and its charge) back, then re-reads the
+  ticket and admits the fan since they already paid on the winning
+  request. Carefully distinguishes this from two *different* fans
+  colliding on shared `Account` rows (creator/platform/referrer upserts)
+  -- only admits when the ticket provably exists, never on the error
+  code alone, so two strangers racing each other can't get a free seat.
+- **Portrait photos skipping watermarking: CONFIRMED FIXED.**
+  `server/src/lib/watermark.ts` -- fixed by reading `metadata().autoOrient`
+  (the size after EXIF rotation is applied) instead of the raw stored
+  dimensions, which is what made every portrait phone photo (stored
+  landscape behind an orientation flag) fail the composite outright before
+  this. Comment documents the exact failure and why the fix is measured
+  this way rather than by pre-rotating into an intermediate buffer (a
+  second lossy JPEG pass on a paid photo, cached forever).
+- **`rescueERC20` not blocking $ONLYASS despite its own comment claiming
+  it did: NOT ACTUALLY A BUG on inspection of current code.** Both
+  `OnlyOnePayments.sol` and `OnlyOneCreatorNFT.sol`'s `rescueERC20` let
+  the owner recover any ERC-20, with no comment anywhere claiming it
+  excludes the settlement token -- the existing comment only says the
+  contract never intentionally holds a balance between transactions,
+  which is what the function is *for* (recovering the accidental case).
+  Both contracts are non-custodial by design and the function is
+  owner-only, so this isn't a new privilege beyond what the owner already
+  has. Adding an exclusion would make this worse, not better (it would
+  block recovering settlement-token dust from a reverted payment). Likely
+  an overstated finding from the original audit, or describing an earlier
+  version of the comment that no longer exists -- either way, current code
+  is correct as-is.
 
-None of this is launch-blocking (server/ still isn't deployed), but the
-KYC-approval and error-leak items in particular are worth a real look
-before it ever is, rather than trusting a day-old commit message that
-they were fixed.
+**Every finding from the original 2026-09-17 "14 confirmed" server/
+contracts audit is now accounted for and closed**: fixed, moot (the code
+it applied to was deleted), or determined not to be a real bug on direct
+inspection of current code -- not by trusting a day-old commit message.
+None of it was launch-blocking to begin with (`server/` still isn't
+deployed), and there is nothing left open on this list. If `server/` is
+ever slated to deploy, this is a clean baseline to re-audit from, not a
+backlog to work through first.
 
 ## Cartoon demo roster replaced with two photorealistic personas (2026-09-19)
 
