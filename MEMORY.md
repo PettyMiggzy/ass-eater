@@ -2731,10 +2731,25 @@ closest trace found:
   claiming it did (contract-specific, not independently re-checked
   against today's `OnlyOnePayments.sol`/`OnlyOneCreatorNFT.sol`).
 - A Sumsub KYC webhook missing `externalUserId` that could mass-approve
-  every user's KYC via an unscoped `updateMany` -- **not independently
-  re-verified, worth checking directly before this stack ever deploys.**
+  every user's KYC via an unscoped `updateMany` -- **CONFIRMED FIXED
+  2026-09-19.** `server/src/modules/kyc.ts:46-50` rejects any
+  `applicantReviewed`/`applicantWorkflowCompleted`/`applicantReset` event
+  with a non-string `externalUserId` with a 400 before it reaches either
+  `updateMany`, with a comment naming this exact failure mode. Webhook
+  signature check is also correctly timing-safe (`timingSafeEqual` on
+  fixed-length buffers). No dedicated regression test exists for this --
+  every other server/ test hits Prisma/pure functions directly, none use
+  Fastify's `.inject()` to test routes at the HTTP layer, so adding one
+  would mean building that harness from scratch. Skipped for now since the
+  code itself is unambiguous and this module isn't deployed; add a route-
+  level test alongside whenever that harness gets built for other reasons.
 - A global error handler leaking `err.message` (DB table/column names) to
-  unauthenticated callers on a 5xx -- **same, not re-verified.**
+  unauthenticated callers on a 5xx -- **CONFIRMED FIXED 2026-09-19.**
+  `server/src/index.ts:55-61` -- any status >= 500 logs the real error
+  server-side (`app.log.error`) and returns only `{ error: 'internal' }`
+  to the client, comment naming the exact concern (Prisma/driver errors
+  quoting table/column names). Same no-test caveat as above and same
+  reasoning for not building route-level test infra just for this.
 - Renewals double-charging across instances; deposit addresses assignable
   to two users at once; duplicate transcode jobs; a double-click on
   live-join throwing instead of succeeding; portrait photos skipping
