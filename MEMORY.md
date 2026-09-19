@@ -3216,3 +3216,61 @@ Vercel's own scanner flags `AGECHECKER_SECRET_KEY` as `readable-secret` (it is
 stored as a Config variable rather than a Secret). The founder already made
 that call explicitly — recorded above, not re-raised as a blocker — but it is
 a one-click change if he is in the env settings anyway.
+
+## Keys set, deployed, verified live (2026-09-19)
+
+Founder: *"ya do what u can then ping me when u need me to do something"*, and
+separately, sharply: **the custodian address question is closed — his home
+address is not going public, stop raising it.** Do not bring it up again; if
+the §2257 custodian block ever gets filled it will be because he supplies a
+commercial address unprompted.
+
+Checked and confirmed the EIN-notice address never reached the repo or its
+git history (`git grep` + `git log -S` over all refs, both clean). It was only
+ever echoed in chat.
+
+**Set in Vercel production as Secrets, by me via the API, and redeployed:**
+- `RECORDS_ENCRYPTION_KEY` — §2257 records can now be saved.
+- `OWNER_ACCESS_KEY` — owner bypass now exists.
+
+**Verified against the real production site**, not the dashboard:
+- `GET /api/age-verify/owner?key=<real>` → **302 to /home with a signed
+  `oa_age_verified` cookie**, 180 days. A wrong key 404s, which is by design
+  (the endpoint refuses to advertise that a bypass exists) — so a 404 is NOT
+  evidence the key is unset, and testing it needs the real key.
+- `/api/admin/performer-records` → 401 without the admin key.
+
+**Found on the live site and fixed the same pass:** `/2257` and `/terms` were
+serving a **2.4KB empty document** — `_app.js`'s 18+ notice returns null on
+first render, and those pages were not in `NO_NOTICE_PATHS`. That silently
+undid the geoblock exemption they had been given hours earlier for exactly
+this audience (a processor doing onboarding review, a regulator reading the
+§2257 statement). Added `/terms`, `/privacy`, `/2257` to `NO_NOTICE_PATHS`;
+`/2257` now serves 8.1KB of real content. **The lesson: `proxy.js`'s
+exemptions and `_app.js`'s exemptions have to be changed together — exempting
+a page from one while it stays behind the other yields a blank page, which
+looks like nothing is wrong.**
+
+### Two things read off Vercel worth keeping
+
+1. **Every apex domain 308-redirects to its `www` form** (joinonlyone.com →
+   www.joinonlyone.com, and the same for shoponeonly.com, onlyone1.fun,
+   onlyass.fun, onlyass.shop). Age-verification cookies are host-scoped, so
+   the canonical host for a bypass or a real verification is the **www** one;
+   the apex redirect means either URL ends up there. `shoponeonly.com` is a
+   separate host and needs its own visit.
+2. **`onlyass.xyz` and `onlyass.online` are NOT attached to this Vercel
+   project.** `proxy.js`'s `HOST_ROUTES` still maps them to `/token` and
+   `/gateway`, so those two entries are dead config — harmless, but the SFW
+   gateway host and the token-landing host do not actually resolve here.
+   Not removed: they may be parked elsewhere, and removing routing for a
+   domain that later gets pointed at this project would be the worse error.
+
+### The geoblock cannot be tested from this container, and the founder is the test
+
+Vercel's edge **sets `x-vercel-ip-country` itself from the real client IP**,
+overwriting any client-supplied value — so spoofed headers against the live
+site prove nothing (TX and NY returned byte-identical responses, which is the
+container's own geo both times, not a broken block). It was verified against
+a real local `next start`. The genuine end-to-end test is the founder opening
+the site from Indiana, which is on the block list.
