@@ -2598,3 +2598,149 @@ held for gating, not spent).
 
 122 live-site tests pass (102 store + 10 session + 5 profile + 5 brand),
 filter suite passes, `next build` clean.
+
+## Backlog cleared: route rename, filter gap, admin/signup hardening, contract rename, nav consistency, audit re-triage (2026-09-19)
+
+Direct instruction: "bro dont stop please build all this" -- worked through
+the items this file had flagged-but-not-done across earlier sessions, in
+priority order. Everything below is committed and pushed to
+`claude/ecstatic-ride-g21n07`.
+
+- **`/onlyass` -> `/creators`.** SiteNav's own link to this page was
+  already labeled "Creators" while pointing at `/onlyass` -- a leftover
+  from before the OnlyOne rename. Renamed the page file/component, updated
+  every internal link, added a permanent redirect from `/onlyass` for old
+  bookmarks.
+- **Payment-circumvention filter's last gap: social links.**
+  `sanitizeSocials` only bounds shape/length, so a "handle" field could
+  still read "cashapp \$me, text 555-123-4567" and display publicly on a
+  creator's profile untouched. Name/handle/bio and the become-a-creator
+  form already had the filter from an earlier pass (this file's own
+  09-17 audit note calling them unfiltered was itself stale) -- social/
+  website fields were the one real remaining gap, now closed in both the
+  creator's own editor and the admin editor.
+- **Admin-key timing safety: already fixed.** Checked rather than assumed
+  -- `lib/admin-auth.js`'s `requireAdminKey()` already hashes both sides to
+  a fixed 32 bytes and compares with `crypto.timingSafeEqual`, and all 14
+  `/api/admin/*` routes go through it. Nothing to do here; this file's own
+  backlog note was stale.
+- **Creator deletion now cleans up the login account too.** Deleting a
+  creator via admin (single or bulk) removed the creator record but left
+  their user/login account behind -- a real account nobody could ever use
+  again but that also never got removed. `deleteOrphanedCreatorUsers()`
+  (`lib/users-store.js`) sweeps any user row whose `creatorId` no longer
+  matches an existing creator; `deleteCreator()`/`deleteAllCreators()` call
+  it after deleting. A plain NOT EXISTS sweep rather than a delete keyed on
+  one id, so it self-heals any deletion from before this fix too.
+- **Creator signup is now one transaction, not a manual rollback.**
+  `pages/api/auth/signup.js` used to write the creator profile, then the
+  account that owns it, as two separate writes with a catch-and-delete
+  fallback if the second one threw. That fallback couldn't do anything
+  about a hard process kill between the two awaits (a timeout, an OOM
+  kill) -- which would leave a ghost pending application with no login
+  that could ever claim it. `createCreator()`/`createUser()` now take an
+  optional pg client so both inserts run inside one
+  `db.withTransaction()`: either both commit or neither does, and Postgres
+  rolls back on its own if the connection drops mid-way, which no JS catch
+  block can do anything about.
+- **Solidity contracts renamed:** `OnlyAssPayments.sol` ->
+  `OnlyOnePayments.sol`, `OnlyAssCreatorNFT.sol` -> `OnlyOneCreatorNFT.sol`,
+  their tests, the shared `MockOnlyAssToken.sol` -> `MockOnlyOneToken.sol`,
+  deploy scripts, `hardhat.config.js`'s per-file compiler override, and
+  `BUILD.md`. Constructor argument order (owner first, then platform
+  wallet -- the documented unfixable-once-live trap) is untouched, only
+  identifiers were renamed. **Found and fixed along the way:**
+  `contracts/README.md` and `contracts/NFT.md` were themselves stale --
+  both still documented a `payWithCreatorToken`/launchpad-verification
+  path that had already been deleted from the actual `.sol` files back on
+  2026-09-18 when the launchpad was removed, so the docs and the code had
+  drifted apart without anyone noticing. Rewrote both to match current
+  reality and re-ran `slither` rather than carrying over stale finding
+  counts (2 findings now, both the same already-accepted low-level-`.call`
+  pattern -- the `_isLaunchedByCreator`/launchpad-related findings are
+  gone because that code is gone). **Deliberately NOT renamed:**
+  `contracts/OnlyAssToken.sol` (the real $ONLYASS/$ONLYONE ERC-20 token
+  contract) and its Kekfun-auction-era deploy/verify/seed-pool scripts --
+  tied to the pre-pivot token-launch plan, a separate and bigger decision,
+  same as this file already flagged it before.
+- **SiteNav added to the last bespoke-header pages:** search, login,
+  signup, favorites, become-creator. Every other page (home, marketplace,
+  dashboard, creator profile) already got its nav from the shared
+  component; these five were the last holdouts from before the redesign.
+  Verified against a real production server on the local test database,
+  not just a clean build.
+
+### Re-triage of the "14 confirmed" server/contracts audit findings
+
+This file's own 2026-09-17 note named only 6 of the 14 explicitly and
+said the rest were "relayed to founder," not written down here. Asked a
+research pass to re-check the 6 named ones against CURRENT code, since a
+lot changed underneath them since that audit (the whole launchpad
+deleted, VIP redesigned twice, the referral-cap logic touched multiple
+times). Findings, not yet independently re-verified by me beyond what the
+pass reported:
+
+- **Referral-payout combo minting more than the platform's fee: FIXED.**
+  Already capped in `server/src/core/ledger.ts` (`claimed > fee` scales
+  both referral shares down proportionally) -- fixed in commit `4bc350b`,
+  one day after the original audit. The cap is kept as a general invariant
+  now, not tied to the original trigger, which is exactly why it still
+  matters after the VIP-discount changes reopened the numbers that make it
+  reachable (already noted in this file's "VIP perks" section above).
+- **One-of-a-kind listing sellable twice: looks fixed, can't confirm it's
+  the SAME bug the audit found.** `server/src/modules/marketplace.ts`'s
+  buy handler does an atomic `updateMany` guarded on `status: 'ACTIVE'`
+  inside a Serializable transaction, throwing if nothing matched -- but
+  that guard predates the audit (added 09-15, audit was 09-17), so this
+  may not be the code path that was actually flagged.
+- **No-bid auction double-refund: current code looks safe, same caveat.**
+  `server/src/core/auctions.ts`'s `closeAuction()` only attempts a refund
+  when there's a real bidder/bid on record, and a regression test asserts
+  a second close on the same listing throws. This module also predates
+  the audit (09-16) with no refund-logic changes since -- unresolved
+  whether this is the bug the audit meant or a different one already gone.
+- **Paid message text readable free from the inbox preview: FIXED.**
+  `server/src/modules/messages.ts`'s conversation-list endpoint now runs
+  the same `canViewMessage()` redaction the single-DM endpoint already
+  had. Fixed in the same `4bc350b` commit. That commit's message also
+  surfaced an **unnamed finding from the same batch**: a short paid POST
+  (not a DM) was shown in full to people who hadn't paid
+  (`server/src/modules/posts.ts`) -- also claimed fixed there, not
+  independently re-verified.
+- **VIP burn discount gameable via price timing: MOOT.** The entire
+  mechanism it depended on is gone -- VIP has been a flat $20/month
+  membership with no burn threshold and no token-price dependency since
+  the redesign recorded above in this file.
+- **Launchpad graduation-bonus volume-gaming: MOOT.** The whole launchpad
+  was removed from the repo. (Also: the underlying bug had already been
+  fixed once, in the same `4bc350b` commit, before the feature was deleted
+  entirely.)
+
+**The other 8 findings are still not recovered.** No standalone
+audit-findings document exists anywhere in the repo or its history --
+the "14 confirmed" phrase appears exactly once, in this file. Commit
+`4bc350b`'s own message (2026-09-18, "creator form, marketplace, filter,
+ledger, backend and contract fixes") describes a longer list of fixes
+from what looks like the same or an overlapping audit batch, which is the
+closest trace found:
+- A predictable next-launch-token address that could permanently DoS the
+  launchpad and force an attacker-priced pool (moot -- launchpad gone).
+- A V4 pool that could fail to initialize silently instead of reverting
+  (moot -- launchpad gone).
+- `rescueERC20` not actually blocking $ONLYASS despite its own comment
+  claiming it did (contract-specific, not independently re-checked
+  against today's `OnlyOnePayments.sol`/`OnlyOneCreatorNFT.sol`).
+- A Sumsub KYC webhook missing `externalUserId` that could mass-approve
+  every user's KYC via an unscoped `updateMany` -- **not independently
+  re-verified, worth checking directly before this stack ever deploys.**
+- A global error handler leaking `err.message` (DB table/column names) to
+  unauthenticated callers on a 5xx -- **same, not re-verified.**
+- Renewals double-charging across instances; deposit addresses assignable
+  to two users at once; duplicate transcode jobs; a double-click on
+  live-join throwing instead of succeeding; portrait photos skipping
+  watermarking -- none independently re-verified.
+
+None of this is launch-blocking (server/ still isn't deployed), but the
+KYC-approval and error-leak items in particular are worth a real look
+before it ever is, rather than trusting a day-old commit message that
+they were fixed.
