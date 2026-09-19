@@ -104,7 +104,7 @@ export default function Home({ creators }) {
 
             <div className="relative min-h-[320px] lg:min-h-[560px]">
               <img
-                src="/images/content_lingerie_1.jpg"
+                src="/images/demo_female_1.jpg"
                 alt=""
                 className="absolute inset-0 w-full h-full object-cover object-top"
               />
@@ -129,8 +129,8 @@ export default function Home({ creators }) {
 
             <div className="grid md:grid-cols-2 gap-5">
               {[
-                { title: 'For Creators', copy: 'Take control of your content, your income and your freedom.', points: CREATOR_POINTS, cta: 'Start Creating', href: '/become-creator', img: '/images/content_lingerie_2.jpg', primary: true },
-                { title: 'For Fans', copy: 'Discover real creators, exclusive content and genuine connections.', points: FAN_POINTS, cta: 'Start Exploring', href: '/creators', img: '/images/content_night_2.jpg', primary: false },
+                { title: 'For Creators', copy: 'Take control of your content, your income and your freedom.', points: CREATOR_POINTS, cta: 'Start Creating', href: '/become-creator', img: '/images/demo_male_1.jpg', primary: true },
+                { title: 'For Fans', copy: 'Discover real creators, exclusive content and genuine connections.', points: FAN_POINTS, cta: 'Start Exploring', href: '/creators', img: '/images/demo_female_2.jpg', primary: false },
               ].map((card) => (
                 <div key={card.title} className="relative rounded-2xl overflow-hidden border border-white/10 bg-brand-card">
                   <img src={card.img} alt="" className="absolute left-0 top-0 h-full w-40 object-cover opacity-70" />
@@ -225,7 +225,7 @@ export default function Home({ creators }) {
 
         {/* Closing CTA */}
         <section className="relative border-t border-white/5">
-          <img src="/images/content_night_3.jpg" alt="" className="absolute inset-0 w-full h-full object-cover object-center" />
+          <img src="/images/demo_male_avatar.jpg" alt="" className="absolute inset-0 w-full h-full object-cover object-center" />
           <div className="absolute inset-0 bg-brand-ink/70" />
           <div className="absolute inset-0 bg-gradient-to-r from-brand-ink via-brand-ink/85 to-transparent" />
           <div className="relative max-w-6xl mx-auto px-6 py-16 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
