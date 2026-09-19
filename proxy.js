@@ -69,7 +69,40 @@ const BLOCKED_STATE_CODES = new Set([
 // on it, and a recruitment page that only verified adults in non-blocked
 // states can open cannot recruit. Same hard rule applies -- if it ever
 // gains real content, this exemption goes with it.
-const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/founding-creator', '/images/logo-final.png']);
+const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/founding-creator']);
+
+// Prefix exemptions, for assets an exempt page actually renders. Without
+// this, /founding-creator serves to a blocked-state visitor with its hero
+// badge broken -- the image request is a separate trip through this proxy
+// and would be rewritten to /blocked-region HTML. Only brand/badge art
+// lives here; creator content never does.
+const SFW_PREFIXES = ['/images/badges/'];
+
+// The verify-age flow has to be able to complete from a blocked state, and
+// the takedown form is required by the TAKE IT DOWN Act to be freely
+// reachable. Every other API route is gated like a page -- several of them
+// return creator data, and an ungated /api/* is the same bypass shape as
+// the /images/ one already fixed here.
+const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content'];
+
+// Pages Router serves every getServerSideProps payload at
+// /_next/data/<buildId>/<page>.json. Middleware sees that URL, not the
+// page's, so without mapping it back a blocked-state visitor can read
+// buildId out of any exempt page's __NEXT_DATA__ and then fetch
+// /_next/data/<id>/creators.json for the full props of a gated page.
+// Normalise first, then apply the same rules to the page it belongs to.
+function servedPageFor(pathname) {
+  const m = /^\/_next\/data\/[^/]+\/(.*)\.json$/.exec(pathname);
+  if (!m) return pathname;
+  return m[1] === 'index' ? '/' : `/${m[1]}`;
+}
+
+function isExempt(path) {
+  if (SFW_PATHS.has(path)) return true;
+  if (SFW_PREFIXES.some((p) => path.startsWith(p))) return true;
+  if (SFW_API_PREFIXES.some((p) => path === p || path.startsWith(p))) return true;
+  return false;
+}
 
 export async function proxy(request) {
   const host = request.headers.get('host') || '';
@@ -85,15 +118,25 @@ export async function proxy(request) {
   // (and onlyass.shop/) get /marketplace and are checked like any other
   // page.
   const hostTarget = HOST_ROUTES[host];
-  const servedPath = hostTarget && pathname === '/' ? hostTarget : pathname;
+  const requested = servedPageFor(pathname);
+  const servedPath = hostTarget && requested === '/' ? hostTarget : requested;
 
-  if (!SFW_PATHS.has(servedPath)) {
+  if (!isExempt(servedPath)) {
     const country = request.headers.get('x-vercel-ip-country');
     const region = request.headers.get('x-vercel-ip-country-region');
     if (country === 'US' && BLOCKED_STATE_CODES.has(region)) {
       const token = request.cookies.get(AGE_VERIFIED_COOKIE_NAME)?.value;
       const verified = await verifyAgeVerificationToken(ageVerificationSecret(), token);
       if (!verified) {
+        // An API caller gets JSON. Rewriting it to the blocked-region page
+        // would hand a fetch() a 200 full of HTML, which reads as a parse
+        // bug rather than a refusal.
+        if (pathname.startsWith('/api/')) {
+          return new NextResponse(JSON.stringify({ error: 'age_verification_required' }), {
+            status: 451,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
         return NextResponse.rewrite(new URL('/blocked-region', request.url));
       }
     }
@@ -107,9 +150,11 @@ export async function proxy(request) {
 }
 
 // images/ and videos/ hold real creator content (seed demo photos/videos are
-// adult content) and must go through the age check -- only icons/favicon/
-// framework assets (never content) and api/ (needs to stay reachable so the
-// verify-age flow itself can complete from a blocked state) are exempt.
+// adult content) and must go through the age check -- only icons/favicon and
+// framework assets (never content) are excluded outright. api/ and
+// _next/data/ deliberately DO run through the proxy: both serve the same
+// data the pages do, and the routes that must stay reachable from a blocked
+// state are exempted by path above, not by skipping the check entirely.
 export const config = {
-  matcher: ['/((?!api/|_next/|favicon|icons/).*)'],
+  matcher: ['/((?!_next/(?!data/)|favicon|icons/).*)'],
 };

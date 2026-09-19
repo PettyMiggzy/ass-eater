@@ -66,7 +66,12 @@ export default async function handler(req, res) {
   res.setHeader('Set-Cookie', `${AGE_VERIFIED_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 180}${secure}`);
   console.warn(`[owner-access] bypass granted on host ${req.headers.host || 'unknown'}`);
 
-  const next = typeof req.query.next === 'string' && req.query.next.startsWith('/') ? req.query.next : '/home';
+  // "//evil.com" and "/\evil.com" both start with "/" and both are resolved
+  // by browsers as a protocol-relative URL to another origin, so
+  // startsWith('/') alone was an open redirect out of the site.
+  const requested = typeof req.query.next === 'string' ? req.query.next : '';
+  const safeNext = requested.startsWith('/') && !requested.startsWith('//') && !requested.startsWith('/\\');
+  const next = safeNext ? requested : '/home';
   res.writeHead(302, { Location: next });
   return res.end();
 }

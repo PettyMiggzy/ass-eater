@@ -2,6 +2,7 @@ import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { createListing } from '../../../lib/listings-store';
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
+import { validateTextFields } from '../../../lib/field-validation';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -12,10 +13,19 @@ export default async function handler(req, res) {
   if (!ctx) return;
 
   const { title, description, priceCents, unlimited, kind, shippingCents, signatureRequired, aiGenerated } = req.body || {};
-  if (!title || !priceCents || priceCents < 100) {
+  // `!title` lets an object through (truthy) and `"abc" < 100` is false, so
+  // the original check accepted both a non-string title and a non-numeric
+  // price -- each of which 500s /search and /marketplace for every visitor
+  // once stored. update.js had the right guard; create.js never got it.
+  const invalid = validateTextFields({ title, description }, ['title', 'description']);
+  if (invalid) return res.status(400).json({ error: invalid });
+
+  const price = Math.round(Number(priceCents));
+  if (!title.trim() || !Number.isFinite(price) || price < 100) {
     return res.status(400).json({ error: 'Title and a price of at least $1 are required' });
   }
-  if (kind === 'physical' && (shippingCents == null || shippingCents < 0)) {
+  const shipping = shippingCents == null ? null : Math.round(Number(shippingCents));
+  if (kind === 'physical' && (shipping == null || !Number.isFinite(shipping) || shipping < 0)) {
     return res.status(400).json({ error: 'Physical items need a shipping fee (can be 0 for free shipping)' });
   }
 
@@ -28,7 +38,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    const listing = await createListing(ctx.creator.id, { title, description, priceCents, unlimited, kind, shippingCents, signatureRequired, aiGenerated });
+    const listing = await createListing(ctx.creator.id, {
+      title,
+      description,
+      priceCents: price,
+      unlimited: !!unlimited,
+      kind: kind === 'physical' ? 'physical' : 'digital',
+      shippingCents: shipping,
+      signatureRequired: !!signatureRequired,
+      aiGenerated: !!aiGenerated,
+    });
     return res.status(200).json({ ok: true, listing });
   } catch (err) {
     return res.status(500).json({ error: err.message });

@@ -1,5 +1,10 @@
 import Head from 'next/head';
 
+// Empty until the token is actually deployed. Deliberately NOT
+// NEXT_PUBLIC_CONTRACT_ADDRESS, which still holds the address from the
+// cancelled launch.
+const ONLYONE_ADDRESS = process.env.NEXT_PUBLIC_ONLYONE_TOKEN_ADDRESS || '';
+
 const ROADMAP = [
   {
     title: 'Phase 0',
@@ -8,7 +13,7 @@ const ROADMAP = [
       { label: 'Creator profiles, galleries, Premium tier (gold check, 200 content slots)', status: 'live' },
       { label: 'Real DM messaging + in-profile chat', status: 'live' },
       { label: 'Marketplace: creators list images/videos/merch at any price, browse, search, report a listing', status: 'live' },
-      { label: 'Multi-domain setup: joinonlyone.com (platform), shoponeonly.com (marketplace), onlyass.fun/.xyz/.online/.shop (mirrors)', status: 'live' },
+      { label: 'Multi-domain setup: joinonlyone.com (platform), shoponeonly.com (marketplace), plus mirror domains', status: 'live' },
     ],
   },
   {
@@ -102,13 +107,28 @@ export default function TokenLanding() {
             <div className="grid md:grid-cols-2 gap-6 text-sm">
               <div className="flex justify-between border-b border-brand-purple/10 pb-3">
                 <span className="text-gray-400">Contract</span>
-                <span className="text-brand-gold font-mono break-all">{process.env.NEXT_PUBLIC_CONTRACT_ADDRESS}</span>
+                {/* Reads the OnlyOne token address, and only once it is really
+                    set. This card used to print NEXT_PUBLIC_CONTRACT_ADDRESS,
+                    which is the pre-computed address from the cancelled
+                    $ONLYASS auction -- a live, copyable address for a
+                    contract that was never launched, sitting under the words
+                    "FAIR LAUNCH". Anyone who sent funds to it would have been
+                    sending them nowhere. */}
+                <span className="text-brand-gold font-mono break-all text-right">
+                  {ONLYONE_ADDRESS || 'Not launched yet'}
+                </span>
               </div>
               <div className="flex justify-between border-b border-brand-purple/10 pb-3">
                 <span className="text-gray-400">Network</span>
                 <span className="text-brand-gold font-bold">Robinhood Chain (4663)</span>
               </div>
             </div>
+            {!ONLYONE_ADDRESS && (
+              <p className="text-gray-500 text-xs mt-4">
+                $ONLYONE has not been deployed yet. There is no contract address, no pool and
+                nothing to buy — anything claiming otherwise is not us.
+              </p>
+            )}
           </div>
         </section>
 
@@ -120,7 +140,7 @@ export default function TokenLanding() {
             </div>
             <div className="premium-card p-6">
               <h3 className="text-lg font-black text-brand-gold mb-2">Holder Perks</h3>
-              <p className="text-gray-400 text-sm">Hold it to unlock token-gated creators. VIP membership revenue buys it on the open market and burns it.</p>
+              <p className="text-gray-400 text-sm">Hold it to unlock token-gated creators. Once payments are live, VIP membership revenue will buy it on the open market and burn it.</p>
             </div>
           </div>
         </section>

@@ -1,4 +1,5 @@
 import { put } from '@vercel/blob';
+import { readLimitedBody, acceptedUploadType, UPLOAD_TYPE_MESSAGE, UPLOAD_SIZE_MESSAGE } from '../../../lib/upload-guard';
 import { setCreatorAvatar } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 
@@ -7,12 +8,6 @@ export const config = {
     bodyParser: false,
   },
 };
-
-async function readBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  return Buffer.concat(chunks);
-}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -28,11 +23,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing creator id' });
   }
 
+  // Allowlisted, not taken from the header -- see lib/upload-guard.js.
+  const uploadType = acceptedUploadType(req);
+  if (!uploadType) return res.status(400).json({ error: UPLOAD_TYPE_MESSAGE });
+
   try {
-    const body = await readBody(req);
+    const body = await readLimitedBody(req);
+    if (!body) return res.status(413).json({ error: UPLOAD_SIZE_MESSAGE });
     const blob = await put(`avatars/${creatorId}/${Date.now()}-${fileName}`, body, {
       access: 'public',
-      contentType: req.headers['content-type'] || 'application/octet-stream',
+      contentType: uploadType,
       allowOverwrite: true,
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });

@@ -120,7 +120,7 @@ export default function Signup() {
                   <textarea value={form.bio} onChange={update('bio')} rows={2} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
                 </div>
                 <p className="text-xs text-gray-500">
-                  Creator profiles require ID and age verification before going public. You can build out your profile now — our team reviews it before it appears on the platform.
+                  You must be 18 or older to create a creator profile. Build it out now — our team reviews every profile before it appears on the platform.
                 </p>
               </>
             )}

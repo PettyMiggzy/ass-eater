@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { effectiveCreatorStatus } from '../../lib/creator-status';
 import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
+import { gateTokensOf, sanitizeGateTokens } from '../../lib/token-gate';
 
 export default function AdminPanel() {
   const [adminKey, setAdminKey] = useState('');
@@ -62,6 +63,7 @@ export default function AdminPanel() {
         posts: selected.posts ?? 0,
         likes: selected.likes || '',
         locked: !!selected.locked,
+        gateTokens: gateTokensOf(selected) || '',
         trending: !!selected.trending,
         premium: !!selected.premium,
         founding: !!selected.founding,
@@ -475,8 +477,30 @@ export default function AdminPanel() {
                         checked={draft.locked}
                         onChange={(e) => setDraft({ ...draft, locked: e.target.checked })}
                       />
-                      Locked (requires token holding)
+                      Token-gated (must hold $ONLYONE)
                     </label>
+                    {/* The threshold has to be editable wherever the flag is.
+                        Without it this panel could only produce the flag-with-
+                        no-number state that lib/token-gate.js exists to
+                        prevent -- which the creator can't see or fix from
+                        their own dashboard. */}
+                    {draft.locked && (
+                      <label className="flex items-center gap-2 text-sm text-gray-300">
+                        Amount
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={draft.gateTokens}
+                          onChange={(e) => setDraft({ ...draft, gateTokens: e.target.value })}
+                          placeholder="e.g. 2500000"
+                          className="w-40 px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                        />
+                        {!sanitizeGateTokens(draft.gateTokens) && (
+                          <span className="text-xs text-yellow-400/80">Set an amount, or the gate does nothing.</span>
+                        )}
+                      </label>
+                    )}
                     <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                       <input
                         type="checkbox"

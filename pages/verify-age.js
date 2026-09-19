@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
+import { Lockup } from '../components/Brand';
 
 // AgeChecker.Net's client widget is documented for a checkout button, not a
 // site-entry gate -- adapted here by pointing it at this page's own button.
@@ -73,7 +74,7 @@ export default function VerifyAge() {
 
       <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6">
         <div className="max-w-md w-full premium-card p-8 text-center">
-          <img src="/images/logo-final.png" alt="OnlyOne" className="h-16 w-auto mx-auto mb-6" />
+          <Lockup className="h-12 justify-center mb-6" />
           <h1 className="text-2xl font-black premium-title mb-3">Verify Your Age</h1>
 
           {!API_KEY ? (

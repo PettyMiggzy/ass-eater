@@ -22,14 +22,15 @@ export async function getServerSideProps({ query }) {
 
   const listings = !tag && q
     ? allListings
-        .filter((l) => l.status === 'active' && (l.title.toLowerCase().includes(q) || (l.description || '').toLowerCase().includes(q)))
+        .filter((l) => l.status === 'active' && (String(l.title || '').toLowerCase().includes(q) || String(l.description || '').toLowerCase().includes(q)))
         .map((l) => {
-          // visibleCreators, not allCreators -- a suspended/banned
-          // creator's listing must show "Unknown" here too, matching
-          // every other public surface.
           const creator = visibleCreators.find((c) => String(c.id) === String(l.creatorId));
-          return { ...l, creatorName: creator?.name || 'Unknown' };
+          return creator ? { ...l, creatorName: creator.name } : null;
         })
+        // Dropped outright, not shown as "Unknown": hiding a suspended or
+        // banned creator has to hide what they are selling too, the same way
+        // /marketplace and /api/marketplace/list now do.
+        .filter(Boolean)
     : [];
 
   // Every distinct tag any creator has set, for the browse-by-tag cloud shown

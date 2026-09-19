@@ -22,7 +22,14 @@ export default function Login() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
-      router.push('/dashboard');
+      // Honour ?next=. Every "you need to log in for this" redirect on the
+      // site sets it -- saving a creator, commenting on a wall -- and
+      // ignoring it dumped a fan on a near-empty dashboard with no way back
+      // to the creator they were trying to interact with. Same-origin only:
+      // "//evil.com" starts with "/" and browsers resolve it off-site.
+      const next = typeof router.query.next === 'string' ? router.query.next : '';
+      const safe = next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\');
+      router.push(safe ? next : '/dashboard');
     } catch (err) {
       setError(err.message);
     } finally {

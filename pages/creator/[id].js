@@ -10,6 +10,7 @@ import { getListings } from '../../lib/listings-store';
 import { getWallPostsForCreator } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
 import { viewerMarkFor } from '../../lib/viewer-mark';
+import { isTokenGated, tokenGateLive, formatGate } from '../../lib/token-gate';
 import SiteNav from '../../components/SiteNav';
 
 export async function getServerSideProps({ req, params }) {
@@ -123,7 +124,14 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
   }
 
   const gallery = Array.isArray(creator.gallery) ? creator.gallery : [];
-  const locked = !!creator.locked;
+  // `locked` means TOKEN-GATED, not "subscribers only" -- see lib/token-gate.js.
+  // Reading the bare flag here blurred this whole profile behind a
+  // "Subscribe to unlock" button that only called showComingSoon(), for any
+  // creator whose record had the flag set with no threshold behind it. A gate
+  // needs both the flag and a real number.
+  const locked = isTokenGated(creator);
+  const gateLabel = formatGate(creator);
+  const gateLive = tokenGateLive();
   // Everything below is drawn from what this creator actually has. Counts
   // are their stored values, not invented ones, and a section with nothing
   // real behind it does not render at all rather than showing placeholders.
@@ -328,10 +336,12 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
               <div className="rounded-xl border border-white/10 bg-brand-card p-5">
                 <p className="font-bold mb-1">Subscribe to {creator.name}</p>
                 <p className="text-xs text-gray-400 mb-4">Get exclusive content and direct messaging.</p>
-                <p className="text-2xl font-black mb-4">
-                  {locked ? creator.price : 'Free'}
-                  {locked && <span className="text-sm font-normal text-gray-400"> / month</span>}
-                </p>
+                {/* Always the creator's own subscription price. This used to
+                    show "Free" to anyone who wasn't token-gated, which is a
+                    different field entirely -- so every creator who had set
+                    $19.99/month and no token gate advertised themselves as
+                    free. */}
+                <p className="text-2xl font-black mb-4">{creator.price || 'Free'}</p>
                 <button onClick={() => showComingSoon()} className="w-full py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition">
                   Subscribe
                 </button>
@@ -375,12 +385,17 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                         <img src={featured.src} alt="" className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
                       )}
                       {locked && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40">
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/40">
                           <span className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center text-xl">🔒</span>
-                          <p className="font-semibold">Subscribe to unlock</p>
-                          <button onClick={() => showComingSoon()} className="px-5 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white text-sm font-bold transition">
-                            Subscribe Now
-                          </button>
+                          <p className="font-semibold">Hold {gateLabel} to unlock</p>
+                          {/* No button. The balance check needs a deployed
+                              token and a wallet the fan has proved they own,
+                              and neither exists yet -- so this says what the
+                              gate is instead of offering a control that can't
+                              do anything. Matches /creators. */}
+                          <p className="text-xs text-gray-300">
+                            {gateLive ? 'Connect a wallet that holds enough to view.' : 'Unlocks when $ONLYONE launches.'}
+                          </p>
                         </div>
                       )}
                     </div>

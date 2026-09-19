@@ -9,9 +9,13 @@ export default async function handler(req, res) {
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
 
-  const { index, knownGallery } = req.body || {};
-  if (index === undefined) {
-    return res.status(400).json({ error: 'Missing index' });
+  // Range-checked, not just present. `removeGalleryItem` splices: index -1
+  // deletes the LAST item and a non-numeric index coerces to 0 and deletes
+  // the first, so a typo or a stale client silently removes the wrong photo.
+  const { index: rawIndex, knownGallery } = req.body || {};
+  const index = Number(rawIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= (ctx.creator.gallery || []).length) {
+    return res.status(400).json({ error: 'That item is no longer in your gallery' });
   }
 
   try {

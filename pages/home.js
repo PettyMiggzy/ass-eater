@@ -2,6 +2,9 @@ import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 import { byPlacement } from '../lib/founding';
+// `locked` on its own is not a gate -- see lib/token-gate.js. Blurring on the
+// bare flag put a blur and a padlock on creators with no threshold set.
+import { isTokenGated, formatGate } from '../lib/token-gate';
 
 export async function getServerSideProps() {
   const all = await getCreators();
@@ -199,7 +202,7 @@ export default function Home({ creators }) {
                     <img
                       src={c.img}
                       alt={c.name}
-                      className={`w-full h-full object-cover object-top transition group-hover:scale-105 ${c.locked ? 'blur-sm' : ''}`}
+                      className={`w-full h-full object-cover object-top transition group-hover:scale-105 ${isTokenGated(c) ? 'blur-sm' : ''}`}
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                     <div className="absolute bottom-0 left-0 right-0 p-3">
@@ -211,8 +214,8 @@ export default function Home({ creators }) {
                         FOUNDING
                       </span>
                     )}
-                    {c.locked && (
-                      <span className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-black/70 text-brand-pink font-bold">
+                    {isTokenGated(c) && (
+                      <span title={`Hold ${formatGate(c)} to unlock`} className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-black/70 text-brand-pink font-bold">
                         🔒
                       </span>
                     )}

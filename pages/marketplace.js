@@ -20,17 +20,21 @@ const KINDS = [
 
 export async function getServerSideProps() {
   const [listings, creators] = await Promise.all([getListings(), getCreators()]);
+  // A suspended or banned creator's listings come OFF the marketplace, not
+  // just their name. Masking the seller to "Unknown" left a banned creator's
+  // merch on sale with a working Buy button and a link to a profile that
+  // renders "Creator not found" -- which is not what hiding them means.
+  const visible = new Map(
+    creators.filter(isPubliclyVisible).map((c) => [String(c.id), c]),
+  );
   const active = listings
-    .filter((l) => l.status === 'active')
+    .filter((l) => l.status === 'active' && visible.has(String(l.creatorId)))
     .map((l) => {
-      const match = creators.find((c) => String(c.id) === String(l.creatorId));
-      // A suspended/banned creator must stay hidden here too -- same rule
-      // every other public page enforces via isPubliclyVisible.
-      const creator = match && isPubliclyVisible(match) ? match : null;
+      const creator = visible.get(String(l.creatorId));
       return {
         ...l,
-        creatorName: creator?.name || 'Unknown',
-        creatorImg: creator?.img || '/images/mascot.png',
+        creatorName: creator.name,
+        creatorImg: creator.img || '/images/avatar-placeholder.png',
         creatorFounding: isFoundingCreator(creator),
       };
     })

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
+import { Mark } from './Brand';
 
 /**
  * The top bar from the OnlyOne designs: brand, section links, creator
@@ -29,7 +30,7 @@ export default function SiteNav({ signedIn = false, viewerAvatar = null, viewerH
     <header className="sticky top-0 z-50 bg-brand-ink/95 backdrop-blur border-b border-white/5">
       <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center gap-4">
         <a href="/home" className="flex items-center gap-2 shrink-0">
-          <img src="/images/logo-final.png" alt="" className="h-8 w-8 object-contain" />
+          <Mark className="h-7 w-auto text-brand-pink" lockFill="#0d0709" />
           <span className="font-black tracking-tight text-lg hidden sm:inline">
             {BRAND_NAME.slice(0, 4)}<span className="text-brand-pink">{BRAND_NAME.slice(4)}</span>
           </span>

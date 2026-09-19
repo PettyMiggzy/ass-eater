@@ -220,7 +220,7 @@ export default function FoundingCreator({ taken, left, paymentsLive }) {
           </div>
 
           <p className="mt-8 text-xs text-gray-600 leading-relaxed max-w-2xl">
-            18+ only. Creators must complete identity and age verification before their profile is published.
+            18+ only. Every creator profile is reviewed by our team before it is published.
             A founding spot goes to each of the first {FOUNDING_LIMIT} creators approved with a finished
             profile — avatar, bio, tags and content up — not simply the first {FOUNDING_LIMIT} to sign up.
             The {FEE_WAIVER_DAYS}-day fee waiver applies to the platform fee only.

@@ -3,6 +3,7 @@ import { updateCreatorProfile, sanitizeSocials, sanitizeTags, sanitizeAge, sanit
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
 import { sanitizeGateTokens } from '../../../lib/token-gate';
+import { validateTextFields } from '../../../lib/field-validation';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -18,6 +19,13 @@ export default async function handler(req, res) {
   for (const key of allowed) {
     if (fields && key in fields) safeFields[key] = fields[key];
   }
+  // Before anything else touches these: a non-string here is stored verbatim
+  // in jsonb and then 500s /search and /creators for every visitor, from one
+  // ordinary creator account. See lib/field-validation.js.
+  const invalid = validateTextFields(safeFields, ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress', 'img']);
+  if (invalid) return res.status(400).json({ error: invalid });
+  if ('locked' in safeFields) safeFields.locked = !!safeFields.locked;
+
   if (fields && 'socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if (fields && 'tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
   if (fields && 'gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);

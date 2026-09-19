@@ -6,6 +6,7 @@ import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { byPlacement } from '../lib/founding';
 import { isTokenGated, formatGate, tokenGateLive } from '../lib/token-gate';
 import { getSessionUser } from '../lib/session';
+import { Lockup } from '../components/Brand';
 import { publicUser } from '../lib/users-store';
 
 export async function getServerSideProps({ req }) {
@@ -116,7 +117,7 @@ export default function Creators({ creators, sessionUser }) {
         <nav className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
             <a href="/" className="flex items-center bg-white/95 rounded-lg px-3 py-1.5">
-              <img src="/images/logo-final.png" alt="OnlyOne" className="h-8 md:h-9 w-auto" />
+              <Lockup className="h-7 md:h-8" />
             </a>
             <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
               <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
@@ -443,7 +444,7 @@ export default function Creators({ creators, sessionUser }) {
             <a href="/privacy" className="hover:text-brand-gold transition">Privacy Policy</a>
             <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">Report Non-Consensual Content</a>
           </div>
-          <p>OnlyOne — an independent platform. Not affiliated with any other service. 18+ only, all creators verify identity & age.</p>
+          <p>OnlyOne — an independent platform. Not affiliated with any other service. 18+ only; every creator profile is reviewed before it goes live.</p>
         </footer>
       </div>
     </>

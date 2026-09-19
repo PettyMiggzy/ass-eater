@@ -19,7 +19,14 @@ export default async function handler(req, res) {
   if (!existing) return res.status(404).json({ error: 'Report not found' });
 
   try {
-    const updated = await updateNciiReportStatus(id, action, 'admin');
+    // Guarded on 'open' inside the UPDATE. A second resolve of the same
+    // report gets null back and changes nothing -- previously this re-read a
+    // stale JS value, so two concurrent resolves each applied the enforcement
+    // ladder and jumped a creator straight to a permanent ban off one report.
+    const updated = await updateNciiReportStatus(id, action, 'admin', 'open');
+    if (!updated) {
+      return res.status(409).json({ error: 'That report was already resolved.' });
+    }
     // Attributing a confirmed violation to a creator account triggers the
     // enforcement ladder (30-day suspension on the 1st, permanent ban on
     // the 2nd) -- optional because not every valid report is a creator's
@@ -27,13 +34,10 @@ export default async function handler(req, res) {
     // admin decides whether/who to attribute it to rather than this being
     // automatic just because the report was confirmed.
     //
-    // Only counts when the report was still open going in: the ladder is
-    // per-report, and re-resolving one already resolved (a retried request,
-    // a second admin acting on the same row) would otherwise stack a second
-    // violation onto the same complaint and permanently ban the creator off
-    // a single report.
+    // Reaching here means this request is the one that moved the report out
+    // of 'open', so the ladder runs at most once per report.
     let creator = null;
-    if (action === 'removed' && creatorId && existing.status === 'open') {
+    if (action === 'removed' && creatorId) {
       creator = await applyContentViolation(creatorId);
     }
     return res.status(200).json({ ok: true, report: updated, creator });

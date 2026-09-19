@@ -11,31 +11,61 @@
  * 2026-09-19.
  */
 
-export function Mark({ className = 'h-16 w-auto' }) {
+/**
+ * The "01" mark: a thick pink ring with a padlock sitting in its centre, and a
+ * ribbon-folded 1 beside it. Matches the reference artwork the founder set the
+ * brand from.
+ *
+ * `lockFill` is the colour showing THROUGH the padlock's cut-out, so it has to
+ * match whatever sits behind the mark -- the padlock is punched out of the
+ * disc rather than drawn on top of it, which is what keeps it crisp at 32px
+ * instead of turning into a grey smudge. Defaults to the app's ink background.
+ */
+export function Mark({ className = 'h-16 w-auto', lockFill = '#120a10' }) {
   return (
-    <svg viewBox="0 0 132 72" className={className} role="img" aria-label="OnlyOne">
-      {/* The "0" is a ring with a padlock sitting inside it. */}
-      <circle cx="36" cy="36" r="30" fill="none" stroke="currentColor" strokeWidth="11" />
+    <svg viewBox="0 0 150 80" className={className} role="img" aria-label="OnlyOne">
+      <defs>
+        {/* Punches the padlock silhouette out of the inner disc so the page
+            background reads through it, exactly like the reference. */}
+        <mask id="oo-lock-mask">
+          <rect x="0" y="0" width="150" height="80" fill="black" />
+          <circle cx="40" cy="40" r="19" fill="white" />
+          <g fill="black">
+            <rect x="31.5" y="39" width="17" height="13.5" rx="3" />
+            <path d="M34.5 39v-4.5a5.5 5.5 0 0 1 11 0V39" fill="none" stroke="black" strokeWidth="3.6" strokeLinecap="round" />
+          </g>
+        </mask>
+      </defs>
+
+      {/* The "0" -- thick outer ring. */}
+      <circle cx="40" cy="40" r="31" fill="none" stroke="currentColor" strokeWidth="15" />
+      {/* Inner disc with the padlock knocked out of it. */}
+      <circle cx="40" cy="40" r="19" fill={lockFill} mask="url(#oo-lock-mask)" />
+      <circle cx="40" cy="40" r="19" fill="currentColor" mask="url(#oo-lock-mask)" />
+
+      {/* The "1", with the ribbon fold across its top like the reference. */}
       <g fill="currentColor">
-        <rect x="26" y="34" width="20" height="16" rx="3.5" />
-        <path
-          d="M30 34v-5a6 6 0 0 1 12 0v5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="4"
-          strokeLinecap="round"
-        />
+        <path d="M96 71V23h15v48z" />
+        <path d="M96 23L79 33l7 12 25-15z" opacity="0.72" />
       </g>
-      {/* The "1". */}
-      <path
-        d="M88 66V16l-12 8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="11"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
     </svg>
+  );
+}
+
+/**
+ * Mark + ONLYONE wordmark, the full horizontal lockup. Used anywhere the old
+ * `/images/logo-final.png` used to sit -- that file still had the previous
+ * brand name baked into its pixels, so it survived the text rename sweep and
+ * kept saying the old name on the age-gate pages for days.
+ */
+export function Lockup({ className = 'h-12 w-auto' }) {
+  return (
+    <span className={`inline-flex items-center gap-2.5 ${className}`}>
+      <Mark className="h-full w-auto text-brand-pink" />
+      <span className="font-black tracking-tight leading-none text-[1.55em]">
+        ONLY<span className="text-brand-pink">ONE</span>
+      </span>
+    </span>
   );
 }
 

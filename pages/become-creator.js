@@ -72,8 +72,8 @@ export default function BecomeCreator() {
           <div className="premium-card p-10 max-w-md text-center">
             <h1 className="text-3xl font-black text-brand-gold mb-4">Submission Received</h1>
             <p className="text-gray-300 mb-6">
-              Your profile is pending review. Real creators require identity and age verification before going live —
-              we'll follow up at the email you provided with next steps.
+              Your profile is pending review. Every creator profile is reviewed by our team before it goes
+              live — we'll follow up at the email you provided with next steps.
             </p>
             <a href="/creators" className="premium-button inline-block">Back to OnlyOne</a>
           </div>
@@ -94,7 +94,7 @@ export default function BecomeCreator() {
           <div className="premium-card p-6 mb-8 border-2 border-brand-purple/30">
             <p className="text-sm text-brand-secondary font-bold mb-2">⚠️ Verification Required</p>
             <p className="text-sm text-gray-400">
-              Real creators must be 18+ and pass identity verification before content goes live. This form collects
+              Creators must be 18+, and every profile is reviewed by our team before content goes live. This form collects
               your submission — our team will follow up with the verification process before anything is published.
             </p>
           </div>

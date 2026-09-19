@@ -8,9 +8,12 @@ export default async function handler(req, res) {
 
   if (!requireAdminKey(req, res)) return;
 
-  const { creatorId, index, knownGallery } = req.body || {};
-  if (!creatorId || index === undefined) {
-    return res.status(400).json({ error: 'Missing creatorId or index' });
+  // See pages/api/me/gallery-delete.js -- a negative or non-numeric index
+  // splices out a different photo than the one that was clicked.
+  const { creatorId, index: rawIndex, knownGallery } = req.body || {};
+  const index = Number(rawIndex);
+  if (!creatorId || !Number.isInteger(index) || index < 0) {
+    return res.status(400).json({ error: 'Missing creatorId or a valid index' });
   }
 
   try {

@@ -19,10 +19,10 @@ export default function Privacy() {
                   choose — see Section 2, Fan Anonymity.
                 </li>
                 <li>
-                  <strong>Creator verification info.</strong> Creators must complete identity and age
-                  verification before their profile goes public. That may include a government-issued ID
-                  and a selfie, handled by our verification process and retained only as long as required
-                  to keep that verification valid and to meet our legal recordkeeping obligations.
+                  <strong>Creator profile info.</strong> What a creator puts on their own profile —
+                  display name, handle, bio, tags, avatar, and a payout wallet address. We do not
+                  currently collect government-issued ID or a selfie from creators. If we add formal
+                  identity verification, this policy will say so before that collection starts.
                 </li>
                 <li>
                   <strong>Fan age-verification info.</strong> Some states now require real age verification
@@ -75,7 +75,7 @@ export default function Privacy() {
             <Section title="3. How We Use It">
               <ul className="list-disc pl-5 space-y-2">
                 <li>To operate your account, log you in, and show you the content you've paid to unlock.</li>
-                <li>To verify a creator's age and identity before their profile goes public.</li>
+                <li>To review a creator's profile before it goes public.</li>
                 <li>To process payments and calculate fees.</li>
                 <li>To detect and prevent fraud, abuse, and violations of our Terms of Service.</li>
                 <li>To respond to a valid legal request (subpoena, court order) where we're required to.</li>
@@ -105,12 +105,12 @@ export default function Privacy() {
 
             <Section title="6. Third-Party Services">
               <p>
-                We use infrastructure providers (hosting, file storage, an identity verification vendor
-                for creators, and an age-verification vendor, AgeChecker.Net, for fans in states that
-                require it) to run the Platform. Those providers can access the specific data needed to
-                perform their function (e.g., storage providers hold uploaded files; the verification
-                vendors handle ID documents) under their own confidentiality and security obligations — we
-                don't hand any of them more than what's needed for that purpose.
+                We use infrastructure providers (hosting, file storage, and an age-verification vendor,
+                AgeChecker.Net, for fans in states that require it) to run the Platform. Those providers
+                can access the specific data needed to perform their function (e.g., storage providers
+                hold uploaded files; AgeChecker.Net handles age-verification documents) under their own
+                confidentiality and security obligations — we don't hand any of them more than what's
+                needed for that purpose.
               </p>
             </Section>
 
