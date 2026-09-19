@@ -328,6 +328,12 @@ export default function AdminPanel() {
             >
               TAKEDOWN REQUESTS
             </button>
+            <button
+              onClick={() => setPage('records')}
+              className={`pb-3 font-bold text-sm ${page === 'records' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+            >
+              §2257 RECORDS
+            </button>
           </div>
 
           {status && (
@@ -342,6 +348,8 @@ export default function AdminPanel() {
             <ViolationsPanel adminKey={adminKey} />
           ) : page === 'takedowns' ? (
             <NciiReportsPanel adminKey={adminKey} creators={creators} />
+          ) : page === 'records' ? (
+            <PerformerRecordsPanel adminKey={adminKey} creators={creators} />
           ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
@@ -1028,6 +1036,354 @@ function NciiReportsPanel({ adminKey, creators }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+const BLANK_RECORD = {
+  legalName: '', dateOfBirth: '', aliases: '', idType: 'Driver’s licence',
+  idIssuer: '', idNumber: '', idExpiry: '', creatorId: '', producedAt: '',
+  contentUrls: '', notes: '',
+};
+
+/**
+ * 18 U.S.C. §2257 performer records.
+ *
+ * Everything shown here is legally sensitive and none of it exists anywhere
+ * else in the product -- no public page, no creator dashboard, no API
+ * outside the two admin-key routes behind this panel. The ID document is
+ * never rendered inline from a URL anyone could share; opening one is an
+ * authenticated fetch that becomes a blob URL in this tab and is revoked
+ * when it closes.
+ */
+function PerformerRecordsPanel({ adminKey, creators }) {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [search, setSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [form, setForm] = useState(BLANK_RECORD);
+  const [file, setFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/admin/performer-records', { headers: { 'x-admin-key': adminKey } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load records');
+      setRecords(data.records);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const update = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setNotice('');
+    if (!form.legalName.trim()) { setError('A legal name is required.'); return; }
+    if (!form.dateOfBirth) { setError('A date of birth is required.'); return; }
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/performer-records', {
+        method: 'POST',
+        headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save that record');
+
+      // The document is a second call on purpose: the record must exist
+      // before an ID scan is attached to it, so a failed upload leaves a
+      // record with no document rather than an orphaned document.
+      if (file) {
+        const up = await fetch(`/api/admin/performer-record-document?id=${data.record.id}`, {
+          method: 'POST',
+          headers: {
+            'x-admin-key': adminKey,
+            'Content-Type': file.type || 'application/octet-stream',
+            'x-file-name': file.name,
+          },
+          body: file,
+        });
+        const upData = await up.json();
+        if (!up.ok) throw new Error(`Record saved, but the ID document did not attach: ${upData.error}`);
+      }
+
+      setForm(BLANK_RECORD);
+      setFile(null);
+      setNotice(`Record saved for ${data.record.aliases[0] || form.legalName}.`);
+      await load();
+    } catch (err) {
+      setError(err.message);
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openDocument = async (id) => {
+    setBusyId(id);
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/performer-record-document?id=${id}`, { headers: { 'x-admin-key': adminKey } });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not open that document');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      // Revoked after the new tab has had a moment to read it, so the
+      // object URL doesn't linger in this page for the rest of the session.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const archive = async (id) => {
+    const reason = window.prompt('Why is this record being archived? (kept on the record)');
+    if (reason === null) return;
+    setBusyId(id);
+    try {
+      const res = await fetch('/api/admin/performer-records', {
+        method: 'POST',
+        headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'archive', id, reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not archive that record');
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const q = search.trim().toLowerCase();
+  const visible = records
+    .filter((r) => (showArchived ? r.status === 'archived' : r.status !== 'archived'))
+    .filter((r) => !q
+      || (r.aliases || []).some((a) => a.includes(q))
+      || (r.contentUrls || []).some((u) => u.toLowerCase().includes(q))
+      || String(r.legalName || '').toLowerCase().includes(q));
+
+  return (
+    <div className="space-y-8">
+      <div className="premium-card p-5 text-sm text-gray-400 leading-relaxed">
+        <p className="text-white font-bold mb-2">18 U.S.C. §2257 performer records</p>
+        <p className="mb-2">
+          One record per performer who appears in sexually explicit content on the platform: legal
+          name, date of birth, every name they have worked under, a copy of their photo ID, when the
+          content was produced and where it appears. Records are kept for seven years.
+        </p>
+        <p className="mb-2">
+          Legal name, date of birth, ID number and the document itself are encrypted at rest with a
+          key that is not the one used anywhere else on this site. Stage names and URLs are stored
+          in the clear because they are already public and they are what the index has to be
+          searchable by.
+        </p>
+        <p className="text-gray-500">
+          Record-keeping, not legal advice. Have an attorney who works in this industry confirm your
+          process before you rely on it.
+        </p>
+      </div>
+
+      <form onSubmit={submit} className="premium-card p-6 space-y-4">
+        <p className="font-bold text-white">Add a record</p>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">Legal name *</span>
+            <input value={form.legalName} onChange={update('legalName')} required
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">Date of birth *</span>
+            <input type="date" value={form.dateOfBirth} onChange={update('dateOfBirth')} required
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="block text-xs text-gray-400 mb-1">
+            Every name they work under, comma separated — stage names, handles, past names
+          </span>
+          <input value={form.aliases} onChange={update('aliases')} placeholder="luna, lunax, luna rae"
+            className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+        </label>
+
+        <div className="grid md:grid-cols-4 gap-4">
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">ID type</span>
+            <input value={form.idType} onChange={update('idType')}
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">Issued by</span>
+            <input value={form.idIssuer} onChange={update('idIssuer')} placeholder="State of Indiana"
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">ID number</span>
+            <input value={form.idNumber} onChange={update('idNumber')}
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">ID expires</span>
+            <input type="date" value={form.idExpiry} onChange={update('idExpiry')}
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+          </label>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">Creator account (optional)</span>
+            <select value={form.creatorId} onChange={update('creatorId')}
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm">
+              <option value="">— not linked —</option>
+              {creators.map((c) => (
+                <option key={c.id} value={c.id}>{c.name} ({c.handle})</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs text-gray-400 mb-1">Date the content was produced</span>
+            <input type="date" value={form.producedAt} onChange={update('producedAt')}
+              className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="block text-xs text-gray-400 mb-1">
+            Where the content appears — URLs, one per line or comma separated
+          </span>
+          <textarea value={form.contentUrls} onChange={update('contentUrls')} rows={2}
+            className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+        </label>
+
+        <label className="block">
+          <span className="block text-xs text-gray-400 mb-1">
+            Photo ID — JPEG, PNG, WebP, HEIC or PDF, under 4MB. Encrypted; never served publicly.
+          </span>
+          <input type="file" accept="image/*,application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)}
+            className="w-full text-sm text-gray-300 file:mr-3 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-brand-pink file:text-white file:text-sm file:font-semibold" />
+        </label>
+
+        <label className="block">
+          <span className="block text-xs text-gray-400 mb-1">Notes</span>
+          <textarea value={form.notes} onChange={update('notes')} rows={2}
+            className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+        </label>
+
+        {error && <p className="text-sm text-red-400">{error}</p>}
+        {notice && <p className="text-sm text-green-400">{notice}</p>}
+
+        <button type="submit" disabled={saving} className="premium-button text-sm disabled:opacity-50">
+          {saving ? 'Saving…' : 'Save Record'}
+        </button>
+      </form>
+
+      <div>
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by stage name, legal name or URL…"
+            className="flex-1 min-w-[240px] px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+          />
+          <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+            Show archived
+          </label>
+          <span className="text-xs text-gray-500">{visible.length} record{visible.length === 1 ? '' : 's'}</span>
+        </div>
+
+        {loading ? (
+          <p className="text-gray-500 text-sm">Loading…</p>
+        ) : visible.length === 0 ? (
+          <p className="text-gray-500 text-sm">
+            {records.length === 0 ? 'No records yet.' : 'Nothing matches that search.'}
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {visible.map((r) => (
+              <div key={r.id} className="premium-card p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+                  <div>
+                    <p className="font-bold text-white">
+                      {r.unreadable ? <span className="text-red-400">Record #{r.id} cannot be decrypted</span> : r.legalName}
+                      {r.aliases?.length > 0 && (
+                        <span className="text-gray-400 font-normal"> — {r.aliases.join(', ')}</span>
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      DOB {r.dateOfBirth} · {r.ageAtProduction} at production · produced {r.producedAt} ·
+                      keep until {String(r.retainUntil).slice(0, 10)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {r.document ? (
+                      <button onClick={() => openDocument(r.id)} disabled={busyId === r.id}
+                        className="text-xs px-3 py-1.5 rounded-full border border-brand-pink/50 text-brand-pink hover:bg-brand-pink/10 transition disabled:opacity-50">
+                        {busyId === r.id ? 'Opening…' : 'View ID'}
+                      </button>
+                    ) : (
+                      <span className="text-xs px-3 py-1.5 rounded-full border border-yellow-500/40 text-yellow-400">
+                        {r.documentLocation === 'offline' ? 'ID held offline' : 'No ID on file'}
+                      </span>
+                    )}
+                    {r.status !== 'archived' && (
+                      <button onClick={() => archive(r.id)} disabled={busyId === r.id}
+                        className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-400 hover:text-white transition disabled:opacity-50">
+                        Archive
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {(r.idType || r.idIssuer || r.idNumber) && (
+                  <p className="text-xs text-gray-400">
+                    {[r.idType, r.idIssuer, r.idNumber && `no. ${r.idNumber}`, r.idExpiry && `expires ${r.idExpiry}`]
+                      .filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                {r.contentUrls?.length > 0 && (
+                  <p className="text-xs text-gray-500 mt-1 break-all">{r.contentUrls.join('  ·  ')}</p>
+                )}
+                {r.unreadable && (
+                  <p className="text-xs text-red-400 mt-2">
+                    The encrypted fields on this record will not open with the current
+                    RECORDS_ENCRYPTION_KEY ({r.unreadableReason}). The row is intact — this is a key
+                    problem, not lost data. Do not delete it; restore the key that wrote it.
+                  </p>
+                )}
+                {r.notes && <p className="text-xs text-gray-400 mt-2">{r.notes}</p>}
+                {r.status === 'archived' && (
+                  <p className="text-xs text-yellow-400/80 mt-2">
+                    Archived {String(r.archivedAt).slice(0, 10)}
+                    {r.archiveReason ? ` — ${r.archiveReason}` : ''} (kept, not deleted)
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

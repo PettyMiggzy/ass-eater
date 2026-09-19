@@ -4,18 +4,26 @@ import SiteNav from '../components/SiteNav';
 /**
  * 18 U.S.C. §2257 / §2257A statement.
  *
- * This page exists because the footer linked one and there was none -- the
- * link pointed at /terms, which has no such section. A missing statement and
- * a link that lies about having one are both problems; this fixes the second
- * and gives the first somewhere real to live.
+ * The custodian's name and a physical business address are what the
+ * regulation actually requires be posted, and they are real-world facts
+ * about the operating entity rather than something this file can invent.
+ * They come from env so they can be filled in the moment the LLC exists,
+ * with no code change:
  *
- * INCOMPLETE UNTIL THE CUSTODIAN BLOCK IS FILLED IN. The regulation requires
- * the records custodian's name and a physical business address to be posted.
- * That is a real-world fact about the operating entity, not something that
- * can be written here, so it is stated as a request contact and flagged to
- * the operator. Processors (CCBill, Segpay, Epoch, Vendo) check for this page
- * during onboarding.
+ *   RECORDS_CUSTODIAN_NAME     e.g. "Jane Doe, Custodian of Records"
+ *   RECORDS_CUSTODIAN_ADDRESS  the registered business address, one line
+ *                              per line break
+ *
+ * Until both are set the page says plainly that the designation is being
+ * completed, rather than printing a half-statement that reads as compliant
+ * and is not. Same pattern as AgeChecker before its credentials existed.
+ *
+ * The records themselves live in the admin panel -- see
+ * lib/performer-records-store.js.
  */
+const CUSTODIAN_NAME = process.env.NEXT_PUBLIC_RECORDS_CUSTODIAN_NAME || '';
+const CUSTODIAN_ADDRESS = process.env.NEXT_PUBLIC_RECORDS_CUSTODIAN_ADDRESS || '';
+
 export default function Statement2257() {
   return (
     <>
@@ -38,14 +46,20 @@ export default function Statement2257() {
             </p>
 
             <p>
-              OnlyOne is an online service provider as described in 47 U.S.C. §230(c). Content on
-              this Platform is uploaded by its users. With respect to that content, OnlyOne acts as
-              a provider of a computer service and not as a producer as defined in 18 U.S.C. §2257
-              and 28 C.F.R. §75. Each creator who uploads content to this Platform is the producer
-              of that content and is required, by our{' '}
-              <a href="/terms" className="text-brand-pink hover:underline">Terms of Service</a>, to
-              create and keep the records that §2257 requires of a producer, and to be able to
+              Content on this Platform is uploaded by its creators, and each creator is the producer
+              of their own content. Our{' '}
+              <a href="/terms" className="text-brand-pink hover:underline">Terms of Service</a>{' '}
+              require every creator to create and keep the records §2257 asks of a producer and to
               produce them on request.
+            </p>
+            <p>
+              In addition, and regardless of how that obligation is allocated, OnlyOne maintains its
+              own records for performers appearing in sexually explicit content on the Platform —
+              legal name, date of birth, every name the performer has worked under, a copy of a
+              government-issued photo identification, the date of production, and where the content
+              appears. Those records are kept for seven years, indexed so that a record can be found
+              from any name the performer uses or any URL on which the content appears, and are held
+              encrypted and accessible only to the records custodian.
             </p>
 
             <p>
@@ -56,13 +70,27 @@ export default function Statement2257() {
             </p>
 
             <h2 className="text-lg font-bold text-white pt-4">Records Custodian</h2>
-            <p>
-              Requests relating to records maintained under 18 U.S.C. §2257 for content on this
-              Platform should be directed in writing to{' '}
-              <a href="mailto:team@onlyone1.fun" className="text-brand-pink hover:underline">team@onlyone1.fun</a>,
-              which will provide the custodian of records&apos; name and the physical address at
-              which those records are maintained.
-            </p>
+            {CUSTODIAN_NAME && CUSTODIAN_ADDRESS ? (
+              <>
+                <p>
+                  The records required by 18 U.S.C. §2257 and 28 C.F.R. §75 for content appearing on
+                  this Platform are kept by the Custodian of Records at the address below, and are
+                  available for inspection as the regulations provide.
+                </p>
+                <p className="whitespace-pre-line rounded-lg border border-white/10 bg-black/30 p-4 not-italic">
+                  {CUSTODIAN_NAME}
+                  {'\n'}
+                  {CUSTODIAN_ADDRESS}
+                </p>
+              </>
+            ) : (
+              <p>
+                The Custodian of Records designation for this Platform is being completed. Until it
+                is posted here, requests relating to records maintained under 18 U.S.C. §2257 should
+                be directed in writing to{' '}
+                <a href="mailto:team@onlyone1.fun" className="text-brand-pink hover:underline">team@onlyone1.fun</a>.
+              </p>
+            )}
 
             <h2 className="text-lg font-bold text-white pt-4">Reporting</h2>
             <p>
