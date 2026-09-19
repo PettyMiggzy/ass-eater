@@ -2,7 +2,8 @@ import { useState } from 'react';
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
 import { getListings } from '../lib/listings-store';
-import { getCreators, isPubliclyVisible } from '../lib/creators-store';
+import { getCreators } from '../lib/creators-store';
+import { isPubliclyVisible } from '../lib/creator-status';
 import { isFoundingCreator } from '../lib/founding';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's

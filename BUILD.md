@@ -30,8 +30,8 @@ There is also a token, `$ONLYONE`. **It is not money** — see [Token](#token).
 ## Two stacks, and only one is deployed
 
 **1. The live site** — Next.js 16 on Vercel, in `pages/` `lib/` `components/`
-`proxy.js`. Data in Vercel Blob JSON manifests (a Postgres migration is
-written and waiting — see [Blocked](#blocked-on-the-founder)). **This is what
+`proxy.js`. Data in **Postgres** (Neon, `lib/db.js`); Vercel Blob is still
+used for image and video uploads, which is what it is good at. **This is what
 is actually running.** It has no payments of any kind.
 
 **2. `server/`** — Fastify + Postgres + Prisma + Redis. The whole money
@@ -194,12 +194,12 @@ programme.
 
 ## Blocked on the founder
 
-1. **A Postgres database.** Create at neon.tech, put the connection string in
-   Vercel as `DATABASE_URL`. The migration is written, tested and committed —
-   then reverted on the branch tip so production stays up without it. Until
-   this is done, `data/creators.json` and every other manifest is **readable
-   by anyone with the URL**. This is the most urgent item.
-2. **`onlyone1.fun` returns 403** from Vercel Firewall.
+1. **`onlyone1.fun` returns 403** from Vercel Firewall.
+2. **`ORDERS_ENCRYPTION_KEY`** is not set in production. Marketplace orders
+   throw without it — correct behaviour rather than storing a shipping
+   address in the clear — and order creation is 501 anyway until payments
+   exist, so this is needed before the marketplace can sell, not before it
+   can browse.
 3. Rotate the Venice key when this build is finished (it has been pasted into
    a transcript).
 4. Decide: the `$ONLYONE` deposit balance has no consumer since VIP became

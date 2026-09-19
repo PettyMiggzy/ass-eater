@@ -118,16 +118,10 @@ export default async function handler(req, res) {
     // can ever log into -- sitting in the admin applicant queue forever, and
     // piling up another ghost every time someone retried. Roll it back.
     //
-    // Only genuinely rare failures reach here now (a storage error, or a
-    // duplicate that raced past the pre-flight check above), and that is
-    // deliberate: deleteCreator rewrites data/creators.json, whose read
-    // falls back to the hardcoded demo roster in data/creators.js, so a
-    // rollback that runs while storage is misbehaving can replace every real
-    // creator with the seed rows -- the merge that MEMORY.md records as a
-    // previously launch-blocking bug. That hazard lives in
-    // lib/blob-json-store.js's read (it cannot tell a missing manifest from
-    // a failed one) and has to be fixed there; keeping this path off the
-    // everyday duplicate-email request is what this file can do about it.
+    // The hazard this used to carry is gone: deleteCreator no longer
+    // rewrites a whole manifest whose failed read fell back to the demo
+    // roster, so a rollback during a storage wobble can no longer replace
+    // every real creator with the seed rows. It is now a single-row DELETE.
     if (newCreatorId !== null) {
       try {
         await deleteCreator(newCreatorId);

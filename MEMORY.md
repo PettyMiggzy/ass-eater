@@ -1207,43 +1207,7 @@ override. Pulling dependencies needs a full reinstall to verify, and this
 branch deploys straight to production -- not worth the risk mid-session.
 
 
-## Storage moved from Vercel Blob JSON files to Postgres (built 2026-09-18, IN HISTORY BUT REVERTED ON THE BRANCH TIP)
-
-**READ THIS FIRST -- the code below is written, tested and in git history, but
-the branch tip deliberately does NOT contain it.** Commit `afff05f` has the
-whole migration; the commit immediately after it reverts it. That is not an
-abandoned attempt, it is a hold:
-
-- This branch deploys straight to production. Every store throws without
-  `DATABASE_URL`, so deploying the migration before that env var exists takes
-  the entire site down.
-- Leaving it uncommitted risked losing it -- this container is ephemeral.
-
-So it was committed (preserving the work in the remote) and immediately
-reverted (keeping production on the working blob code). Both commits push
-together, and Vercel builds only the tip, so production never runs the
-Postgres build.
-
-**To bring it back, once `DATABASE_URL` is set in Vercel production:**
-
-    git revert --no-edit <the revert commit>   # re-applies the whole migration
-    npm install                                # restores the `pg` dependency
-
-then run `node scripts/migrate-blob-to-postgres.js --apply` and delete the old
-blob manifests. Do NOT re-do this by hand -- it is ~1,400 lines across 20
-files with 112 passing tests, and re-deriving it would lose the details below.
-
-Blocker as of 2026-09-18: creating the database in Vercel failed with
-"Cannot create Database... Your integration is pending deletion." Vercel holds
-a removed Marketplace integration for 24 hours before finalising. The
-workaround that avoids waiting is to create the database directly at
-neon.tech and paste its connection string into Vercel as a plain
-`DATABASE_URL` env var -- `lib/db.js` takes any standard Postgres URL and
-already handles the SSL managed providers require, so it does not need the
-Vercel integration at all.
-
----
-
+## Storage moved from Vercel Blob JSON files to Postgres (built 2026-09-18, NOT YET DEPLOYED)
 
 ### Why -- a live data exposure, confirmed against production
 
@@ -2407,3 +2371,61 @@ would turn a verifiable number into a press release.
 rather than being marked burned by a transaction that predates it. Tested.
 
 77 server tests pass (was 74), tsc clean.
+
+## Postgres is live; the blob exposure is closed (2026-09-19)
+
+Done, on the founder's own Neon project ("Only one", `falling-heart-96044726`,
+Postgres 18, us-east-2, paid plan). The Vercel<->Neon *integration* would not
+connect -- that is the same "pending deletion" wall as before and it does not
+matter: the integration only exists to auto-create a database and auto-set the
+variable, and neither was needed. A hand-added `DATABASE_URL` env var does the
+same job.
+
+**Re-applying the migration was not one command.** `git revert b4b4962`
+conflicted in 7 files, because the migration was written a day before a full
+session of work on those same files (token gating, founding creators, age and
+location, the marketplace redesign). Resolutions, all "Postgres storage plus
+today's features":
+- Five page conflicts were the import block: keep today's imports but point
+  the PURE helpers at `lib/creator-status.js`.
+- `users-store`: took the Postgres `createUser` (a unique index replaces a
+  read-then-check race) and carried `referredByCreatorId` onto it.
+- `creators-store`: took the Postgres inserts (a sequence replaces
+  `max(id)+1`) and carried over `locked: false` and the dollar price.
+- Re-added `sanitizeAge`/`sanitizeLocation`/`UnderageProfile` into
+  `creator-status.js` rather than the store, and re-exported them.
+
+**Two build failures worth remembering, both the same trap from two sides:**
+1. `pg` reached the BROWSER bundle via `pages/index.js`. The landing page is
+   static now with no `getServerSideProps`, so a store import there is never
+   tree-shaken. Carrying an import across a merge into a page that no longer
+   fetches anything is all it takes.
+2. `next.config.js` needed `serverExternalPackages: ['pg']` so Turbopack
+   stops trying to trace a TCP driver into the server bundle.
+
+**This container cannot open a raw Postgres connection** -- outbound 5432 is
+blocked by the sandbox proxy, so the app could not be tested against Neon from
+here. Tests ran against a local Postgres instead (`onlyone_test`), and Neon
+itself was reachable only over HTTPS through the MCP connector. Vercel has no
+such restriction.
+
+### The blob data is gone, and that is close to fine
+
+The founder deleted the manifests before reading the warning not to. What was
+actually lost, checked rather than guessed: **all six live creators were seed
+records** (pulled from the live page props before the deletion, every one
+`seed: true` with local `/images/` paths), so no real creator and no
+blob-hosted upload existed. The seeds live in `data/creators.js` and reinsert
+themselves. Any fan accounts, messages or favourites that existed are gone --
+on a pre-launch site with no real creators and no payments, likely nothing.
+
+He deleted the FILES, not the store: the live site kept serving because
+`readJsonList` fell back to the seed roster, which a missing store would have
+thrown on instead. Uploads still work.
+
+**The exposure is closed**, which was the urgent part.
+`scripts/migrate-blob-to-postgres.js` and the one-time admin migration
+endpoint were both deleted -- there is nothing left to migrate, and a working
+"bulk-write the whole database" admin route has no reason to outlive its job.
+
+102 store tests, 10 session, 5 profile, filter suite, `next build` clean.

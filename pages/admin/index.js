@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
-import { effectiveCreatorStatus } from '../../lib/creators-store';
+import { effectiveCreatorStatus } from '../../lib/creator-status';
 import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
 
 export default function AdminPanel() {

@@ -4,6 +4,12 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // `pg` opens real TCP sockets, so it must stay a Node require at runtime
+  // rather than being bundled. Without this, Turbopack tries to trace it into
+  // the server bundle and fails on net/tls/dns/fs -- the same class of error
+  // that shows up if a client component ever imports a store module, but from
+  // the other direction: here it is the SSR bundle, not the browser one.
+  serverExternalPackages: ['pg'],
 };
 
 module.exports = nextConfig;

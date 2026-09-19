@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
+import { getCreators } from '../lib/creators-store';
+import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { byPlacement } from '../lib/founding';
 import { isTokenGated, formatGate, tokenGateLive } from '../lib/token-gate';
 import { getSessionUser } from '../lib/session';

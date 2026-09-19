@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
+import { getCreators } from '../lib/creators-store';
+import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { getListings } from '../lib/listings-store';
 
 export async function getServerSideProps({ query }) {
