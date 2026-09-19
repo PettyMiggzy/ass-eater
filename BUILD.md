@@ -45,8 +45,8 @@ system: ledger, fees, payouts, subscriptions, VIP, referrals, marketplace
 orders, deposit indexing, the token burn worker. **Not deployed.** Everything
 below marked *(server)* exists, is tested, and is not live.
 
-A third piece, `contracts/`, holds `OnlyAssPayments.sol` (direct
-wallet-to-wallet payment) and `OnlyAssCreatorNFT.sol` (ERC-1155 creator
+A third piece, `contracts/`, holds `OnlyOnePayments.sol` (direct
+wallet-to-wallet payment) and `OnlyOneCreatorNFT.sol` (ERC-1155 creator
 drops). Neither is deployed. The launchpad contracts were removed.
 
 ---

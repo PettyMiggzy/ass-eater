@@ -7,13 +7,13 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-/// @title OnlyAssPayments
-/// @notice Non-custodial paywall payments for the Only Ass platform. A fan pays
-/// ETH or the $ONLYASS token in one transaction; the contract splits it
+/// @title OnlyOnePayments
+/// @notice Non-custodial paywall payments for the OnlyOne platform. A fan pays
+/// ETH or the $ONLYONE token in one transaction; the contract splits it
 /// atomically between the creator's wallet and the platform fee wallet. The contract never holds funds between
 /// transactions — every payment is pushed straight to its destination in the
 /// same call that receives it.
-contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
+contract OnlyOnePayments is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
@@ -25,8 +25,8 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
     address public platformWallet;
     /// @notice Current platform fee, in basis points (1000 = 10%).
     uint256 public platformFeeBps;
-    /// @notice ERC-20 contract address for the $ONLYASS token.
-    address public onlyAssToken;
+    /// @notice ERC-20 contract address for the $ONLYONE token.
+    address public onlyOneToken;
 
     event Purchase(
         address indexed fan,
@@ -41,7 +41,7 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
 
     event PlatformWalletUpdated(address indexed oldWallet, address indexed newWallet);
     event PlatformFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps);
-    event OnlyAssTokenUpdated(address indexed oldToken, address indexed newToken);
+    event OnlyOneTokenUpdated(address indexed oldToken, address indexed newToken);
     event ERC20Rescued(address indexed token, address indexed to, uint256 amount);
 
     error ZeroAddress();
@@ -50,7 +50,7 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
     error TransferFailed();
 
     /// @dev `initialOwner` is passed in rather than taken from `msg.sender`,
-    /// matching OnlyAssCreatorNFT: the address that runs the deploy script is
+    /// matching OnlyOneCreatorNFT: the address that runs the deploy script is
     /// not necessarily the address that should end up owning the contract,
     /// and silently making the deployer the owner is how a live contract ends
     /// up owned by a hot key that was only ever meant to broadcast a
@@ -63,21 +63,21 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
     /// stream to the owner key). setPlatformWallet/setPlatformFeeBps are both
     /// onlyOwner, so that mistake is unfixable once it is live. Every caller
     /// must pass four arguments, owner first; see
-    /// test/OnlyAssPayments.test.js's "takes its owner from the constructor"
+    /// test/OnlyOnePayments.test.js's "takes its owner from the constructor"
     /// case, which pins the order.
     constructor(
         address initialOwner,
         address initialPlatformWallet,
         uint256 initialFeeBps,
-        address initialOnlyAssToken
+        address initialOnlyOneToken
     ) Ownable(initialOwner) {
         if (initialPlatformWallet == address(0)) revert ZeroAddress();
-        if (initialOnlyAssToken == address(0)) revert ZeroAddress();
+        if (initialOnlyOneToken == address(0)) revert ZeroAddress();
         if (initialFeeBps > MAX_FEE_BPS) revert FeeTooHigh();
 
         platformWallet = initialPlatformWallet;
         platformFeeBps = initialFeeBps;
-        onlyAssToken = initialOnlyAssToken;
+        onlyOneToken = initialOnlyOneToken;
     }
 
     /// @notice Pay a creator in ETH to unlock `contentId`. Splits the payment
@@ -106,9 +106,9 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
         emit Purchase(msg.sender, creatorWallet, creatorId, address(0), msg.value, feeAmount, creatorAmount, contentId);
     }
 
-    /// @notice Pay a creator in $ONLYASS to unlock `contentId`. Caller must have
+    /// @notice Pay a creator in $ONLYONE to unlock `contentId`. Caller must have
     /// approved this contract for at least `amount` beforehand.
-    function payWithOnlyAss(uint256 creatorId, uint256 contentId, address creatorWallet, uint256 amount)
+    function payWithOnlyOne(uint256 creatorId, uint256 contentId, address creatorWallet, uint256 amount)
         external
         nonReentrant
         whenNotPaused
@@ -116,7 +116,7 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
         if (amount == 0) revert ZeroAmount();
         if (creatorWallet == address(0)) revert ZeroAddress();
 
-        IERC20 token = IERC20(onlyAssToken);
+        IERC20 token = IERC20(onlyOneToken);
         (uint256 feeAmount, uint256 creatorAmount) = _split(amount);
 
         if (feeAmount > 0) {
@@ -124,7 +124,7 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
         }
         token.safeTransferFrom(msg.sender, creatorWallet, creatorAmount);
 
-        emit Purchase(msg.sender, creatorWallet, creatorId, onlyAssToken, amount, feeAmount, creatorAmount, contentId);
+        emit Purchase(msg.sender, creatorWallet, creatorId, onlyOneToken, amount, feeAmount, creatorAmount, contentId);
     }
 
     function _split(uint256 grossAmount) internal view returns (uint256 feeAmount, uint256 creatorAmount) {
@@ -146,10 +146,10 @@ contract OnlyAssPayments is Ownable, ReentrancyGuard, Pausable {
         platformFeeBps = newFeeBps;
     }
 
-    function setOnlyAssToken(address newToken) external onlyOwner {
+    function setOnlyOneToken(address newToken) external onlyOwner {
         if (newToken == address(0)) revert ZeroAddress();
-        emit OnlyAssTokenUpdated(onlyAssToken, newToken);
-        onlyAssToken = newToken;
+        emit OnlyOneTokenUpdated(onlyOneToken, newToken);
+        onlyOneToken = newToken;
     }
 
     function pause() external onlyOwner {

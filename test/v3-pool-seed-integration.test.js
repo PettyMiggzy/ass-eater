@@ -23,7 +23,7 @@ describe('seed-onlyass-pool math against real Uniswap V3 bytecode', () => {
   }
 
   async function deployToken(decimals) {
-    const Token = await ethers.getContractFactory('MockOnlyAssToken');
+    const Token = await ethers.getContractFactory('MockOnlyOneToken');
     const token = await Token.deploy('Mock', 'MOCK', ethers.parseUnits('1000000', decimals));
     await token.waitForDeployment();
     return token;
@@ -71,8 +71,8 @@ describe('seed-onlyass-pool math against real Uniswap V3 bytecode', () => {
     const slot0 = await pool.slot0();
     // decodePriceFromSlot0 always returns "token1 per token0" in human units; convert back to "quote per ONLYASS-like" for the assertion.
     const decodedToken1PerToken0 = decodePriceFromSlot0(slot0.sqrtPriceX96, decimals0, decimals1);
-    const decodedQuotePerOnlyAss = swapped ? 1 / decodedToken1PerToken0 : decodedToken1PerToken0;
-    expect(decodedQuotePerOnlyAss).to.be.closeTo(targetPrice, targetPrice * 1e-6);
+    const decodedQuotePerOnlyOne = swapped ? 1 / decodedToken1PerToken0 : decodedToken1PerToken0;
+    expect(decodedQuotePerOnlyOne).to.be.closeTo(targetPrice, targetPrice * 1e-6);
   });
 
   it('produces a pool that real swaps can actually execute against (not just a stored number)', async () => {

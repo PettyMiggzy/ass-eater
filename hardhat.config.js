@@ -64,7 +64,7 @@ module.exports = {
       // even though ERC1155 itself never calls those specific helpers.
       // Same unverified-Robinhood-Chain-EVM-support caveat as the V4
       // compiler entry above applies here too.
-      'contracts/OnlyAssCreatorNFT.sol': {
+      'contracts/OnlyOneCreatorNFT.sol': {
         version: '0.8.24',
         settings: {
           optimizer: { enabled: true, runs: 200 },

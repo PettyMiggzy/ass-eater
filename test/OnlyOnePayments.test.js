@@ -1,7 +1,7 @@
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
 
-describe('OnlyAssPayments', function () {
+describe('OnlyOnePayments', function () {
   const FEE_BPS = 1000n; // 10%
   const CREATOR_ID = 42n;
   const CONTENT_ID = 7n;
@@ -9,11 +9,11 @@ describe('OnlyAssPayments', function () {
   async function deploy() {
     const [owner, platformWallet, creatorWallet, fan, other] = await ethers.getSigners();
 
-    const Token = await ethers.getContractFactory('MockOnlyAssToken');
-    const token = await Token.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000000'));
+    const Token = await ethers.getContractFactory('MockOnlyOneToken');
+    const token = await Token.deploy('Only One', 'ONLYONE', ethers.parseEther('1000000'));
     await token.waitForDeployment();
 
-    const Payments = await ethers.getContractFactory('OnlyAssPayments');
+    const Payments = await ethers.getContractFactory('OnlyOnePayments');
     const payments = await Payments.deploy(
       owner.address,
       platformWallet.address,
@@ -80,18 +80,18 @@ describe('OnlyAssPayments', function () {
     });
   });
 
-  describe('$ONLYASS token payments', function () {
+  describe('$ONLYONE token payments', function () {
     it('splits token payment 90/10 and requires prior approval', async function () {
       const { payments, platformWallet, creatorWallet, fan, token } = await deploy();
       const amount = ethers.parseEther('100');
 
       await expect(
-        payments.connect(fan).payWithOnlyAss(CREATOR_ID, CONTENT_ID, creatorWallet.address, amount)
+        payments.connect(fan).payWithOnlyOne(CREATOR_ID, CONTENT_ID, creatorWallet.address, amount)
       ).to.be.reverted; // no approval yet
 
       await token.connect(fan).approve(await payments.getAddress(), amount);
 
-      await expect(payments.connect(fan).payWithOnlyAss(CREATOR_ID, CONTENT_ID, creatorWallet.address, amount))
+      await expect(payments.connect(fan).payWithOnlyOne(CREATOR_ID, CONTENT_ID, creatorWallet.address, amount))
         .to.emit(payments, 'Purchase')
         .withArgs(
           fan.address,
@@ -112,7 +112,7 @@ describe('OnlyAssPayments', function () {
       const { payments, fan, creatorWallet, token } = await deploy();
       const amount = ethers.parseEther('50');
       await token.connect(fan).approve(await payments.getAddress(), amount);
-      await payments.connect(fan).payWithOnlyAss(CREATOR_ID, CONTENT_ID, creatorWallet.address, amount);
+      await payments.connect(fan).payWithOnlyOne(CREATOR_ID, CONTENT_ID, creatorWallet.address, amount);
 
       expect(await token.balanceOf(await payments.getAddress())).to.equal(0);
     });
@@ -120,14 +120,14 @@ describe('OnlyAssPayments', function () {
 
   describe('admin controls', function () {
     it('takes its owner from the constructor, not from whoever broadcast the deploy', async function () {
-      // Matches OnlyAssCreatorNFT: the deploying key and the intended owner
+      // Matches OnlyOneCreatorNFT: the deploying key and the intended owner
       // are not necessarily the same address.
       const [deployer, platformWallet, intendedOwner] = await ethers.getSigners();
-      const Token = await ethers.getContractFactory('MockOnlyAssToken');
-      const token = await Token.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000'));
+      const Token = await ethers.getContractFactory('MockOnlyOneToken');
+      const token = await Token.deploy('Only One', 'ONLYONE', ethers.parseEther('1000'));
       await token.waitForDeployment();
 
-      const Payments = await ethers.getContractFactory('OnlyAssPayments');
+      const Payments = await ethers.getContractFactory('OnlyOnePayments');
       const payments = await Payments.connect(deployer).deploy(
         intendedOwner.address,
         platformWallet.address,

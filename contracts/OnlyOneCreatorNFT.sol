@@ -8,9 +8,9 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-/// @title OnlyAssCreatorNFT
+/// @title OnlyOneCreatorNFT
 /// @notice Self-serve NFT drops: a creator picks an image, how many copies to
-/// mint, what to charge, and what to charge it in (ETH or $ONLYASS). A fan
+/// mint, what to charge, and what to charge it in (ETH or $ONLYONE). A fan
 /// mints straight
 /// from the drop; the mint and the payment split happen atomically in the
 /// same transaction -- there is no separate "buy then wait for a mint" step
@@ -33,12 +33,12 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 /// is just a string -- so it's a hard requirement on whatever UI calls
 /// `createDrop`, not something this code can guarantee by itself. Read this
 /// before wiring up a creator-facing minting flow.
-contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
+contract OnlyOneCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
     /// @notice Hard ceiling on the platform fee so the owner can never set an
-    /// abusive rate, same reasoning as OnlyAssPayments' identical constant.
+    /// abusive rate, same reasoning as OnlyOnePayments' identical constant.
     uint256 public constant MAX_FEE_BPS = 3_000;
     /// @notice Sanity ceiling, not a real-world limit anyone would hit --
     /// guards against a fat-fingered edition size doing something absurd.
@@ -46,11 +46,11 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
     address public platformWallet;
     uint256 public platformFeeBps;
-    address public onlyAssToken;
+    address public onlyOneToken;
 
     struct Drop {
         address creator;
-        address payToken; // address(0) = ETH, else must be $ONLYASS or a token this creator launched
+        address payToken; // address(0) = ETH, else must be $ONLYONE or a token this creator launched
         uint256 price; // per-copy price, in wei (ETH) or the token's smallest unit
         uint256 editionSize;
         uint256 minted;
@@ -69,7 +69,7 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
     );
     event PlatformWalletUpdated(address indexed oldWallet, address indexed newWallet);
     event PlatformFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps);
-    event OnlyAssTokenUpdated(address indexed oldToken, address indexed newToken);
+    event OnlyOneTokenUpdated(address indexed oldToken, address indexed newToken);
     event ERC20Rescued(address indexed token, address indexed to, uint256 amount);
 
     error ZeroAddress();
@@ -89,15 +89,15 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
         address initialOwner,
         address initialPlatformWallet,
         uint256 initialFeeBps,
-        address initialOnlyAssToken,
+        address initialOnlyOneToken,
         string memory contractMetadataURI
     ) ERC1155(contractMetadataURI) Ownable(initialOwner) {
-        if (initialPlatformWallet == address(0) || initialOnlyAssToken == address(0)) revert ZeroAddress();
+        if (initialPlatformWallet == address(0) || initialOnlyOneToken == address(0)) revert ZeroAddress();
         if (initialFeeBps > MAX_FEE_BPS) revert FeeTooHigh();
 
         platformWallet = initialPlatformWallet;
         platformFeeBps = initialFeeBps;
-        onlyAssToken = initialOnlyAssToken;
+        onlyOneToken = initialOnlyOneToken;
     }
 
     /// @notice Start a new drop. Anyone can call this for themselves (there's
@@ -112,12 +112,12 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
         if (editionSize == 0 || editionSize > MAX_EDITION_SIZE) revert InvalidEditionSize();
         if (price == 0) revert ZeroAmount();
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
-        // ETH or $ONLYASS only. A creator's own launched token used to be a
-        // third option, verified live against OnlyAssLaunchpadV4 -- that
+        // ETH or $ONLYONE only. A creator's own launched token used to be a
+        // third option, verified live against a launchpad contract -- that
         // launchpad was removed from this repo, so there is no longer any
         // such thing as a creator-launched token to accept, and an
         // unverified arbitrary ERC-20 is not a substitute for it.
-        if (payToken != address(0) && payToken != onlyAssToken) {
+        if (payToken != address(0) && payToken != onlyOneToken) {
             revert InvalidPayToken();
         }
 
@@ -218,10 +218,10 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
         platformFeeBps = newFeeBps;
     }
 
-    function setOnlyAssToken(address newToken) external onlyOwner {
+    function setOnlyOneToken(address newToken) external onlyOwner {
         if (newToken == address(0)) revert ZeroAddress();
-        emit OnlyAssTokenUpdated(onlyAssToken, newToken);
-        onlyAssToken = newToken;
+        emit OnlyOneTokenUpdated(onlyOneToken, newToken);
+        onlyOneToken = newToken;
     }
 
     function pause() external onlyOwner {
@@ -234,7 +234,7 @@ contract OnlyAssCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Recover ERC-20 tokens sent to this contract by mistake (this
     /// contract never intentionally holds a balance between transactions --
-    /// every mint pays out immediately, same as OnlyAssPayments).
+    /// every mint pays out immediately, same as OnlyOnePayments).
     function rescueERC20(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
         IERC20(token).safeTransfer(to, amount);

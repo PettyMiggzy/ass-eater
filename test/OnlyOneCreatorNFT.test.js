@@ -1,30 +1,30 @@
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
 
-describe('OnlyAssCreatorNFT', function () {
+describe('OnlyOneCreatorNFT', function () {
   const FEE_BPS = 1000n; // 10%
 
   async function deploy() {
     const [owner, platformWallet, creator, fan, fan2, other] = await ethers.getSigners();
 
-    const OnlyAss = await ethers.getContractFactory('MockOnlyAssToken');
-    const onlyAss = await OnlyAss.deploy('Only Ass', 'ONLYASS', ethers.parseEther('1000000'));
-    await onlyAss.waitForDeployment();
+    const OnlyOne = await ethers.getContractFactory('MockOnlyOneToken');
+    const onlyOne = await OnlyOne.deploy('Only One', 'ONLYONE', ethers.parseEther('1000000'));
+    await onlyOne.waitForDeployment();
 
-    const NFT = await ethers.getContractFactory('OnlyAssCreatorNFT');
+    const NFT = await ethers.getContractFactory('OnlyOneCreatorNFT');
     const nft = await NFT.deploy(
       owner.address,
       platformWallet.address,
       FEE_BPS,
-      await onlyAss.getAddress(),
+      await onlyOne.getAddress(),
       'https://onlyass.fun/api/nft-contract-metadata',
     );
     await nft.waitForDeployment();
 
-    await onlyAss.transfer(fan.address, ethers.parseEther('10000'));
-    await onlyAss.transfer(fan2.address, ethers.parseEther('10000'));
+    await onlyOne.transfer(fan.address, ethers.parseEther('10000'));
+    await onlyOne.transfer(fan2.address, ethers.parseEther('10000'));
 
-    return { owner, platformWallet, creator, fan, fan2, other, onlyAss, nft };
+    return { owner, platformWallet, creator, fan, fan2, other, onlyOne, nft };
   }
 
   async function createEthDrop(nft, creator, overrides = {}) {
@@ -47,19 +47,19 @@ describe('OnlyAssCreatorNFT', function () {
         .withArgs(0, creator.address, ethers.ZeroAddress, ethers.parseEther('0.05'), 25, 'https://onlyass.fun/api/nft/1');
     });
 
-    it('allows $ONLYASS as the pay token', async function () {
-      const { nft, creator, onlyAss } = await deploy();
-      await expect(nft.connect(creator).createDrop(await onlyAss.getAddress(), ethers.parseEther('50'), 5, 'uri')).to.not.be.reverted;
+    it('allows $ONLYONE as the pay token', async function () {
+      const { nft, creator, onlyOne } = await deploy();
+      await expect(nft.connect(creator).createDrop(await onlyOne.getAddress(), ethers.parseEther('50'), 5, 'uri')).to.not.be.reverted;
     });
 
-    // ETH and $ONLYASS are the only accepted pay tokens. A creator's own
-    // launched token used to be a third option, verified against
-    // OnlyAssLaunchpadV4; that launchpad was removed from the repo, so an
+    // ETH and $ONLYONE are the only accepted pay tokens. A creator's own
+    // launched token used to be a third option, verified against a
+    // launchpad contract; that launchpad was removed from the repo, so an
     // arbitrary ERC-20 must now be rejected outright rather than accepted on
     // the strength of a launch record that can no longer exist.
     it('rejects any other ERC-20 as the pay token', async function () {
       const { nft, creator } = await deploy();
-      const RandomToken = await ethers.getContractFactory('MockOnlyAssToken');
+      const RandomToken = await ethers.getContractFactory('MockOnlyOneToken');
       const randomToken = await RandomToken.deploy('Random', 'RND', ethers.parseEther('1000'));
 
       await expect(
@@ -154,27 +154,27 @@ describe('OnlyAssCreatorNFT', function () {
     });
   });
 
-  describe('mintEdition (ERC-20: $ONLYASS)', function () {
-    it('pulls $ONLYASS via approval and splits it the same way', async function () {
-      const { nft, creator, platformWallet, fan, onlyAss } = await deploy();
+  describe('mintEdition (ERC-20: $ONLYONE)', function () {
+    it('pulls $ONLYONE via approval and splits it the same way', async function () {
+      const { nft, creator, platformWallet, fan, onlyOne } = await deploy();
       const price = ethers.parseEther('100');
-      const dropId = await createEthDrop(nft, creator, { payToken: await onlyAss.getAddress(), price });
+      const dropId = await createEthDrop(nft, creator, { payToken: await onlyOne.getAddress(), price });
 
       await expect(nft.connect(fan).mintEdition(dropId)).to.be.reverted; // no approval yet
-      await onlyAss.connect(fan).approve(await nft.getAddress(), price);
+      await onlyOne.connect(fan).approve(await nft.getAddress(), price);
 
       await nft.connect(fan).mintEdition(dropId);
 
-      expect(await onlyAss.balanceOf(platformWallet.address)).to.equal(price / 10n);
-      expect(await onlyAss.balanceOf(creator.address)).to.equal(price - price / 10n);
+      expect(await onlyOne.balanceOf(platformWallet.address)).to.equal(price / 10n);
+      expect(await onlyOne.balanceOf(creator.address)).to.equal(price - price / 10n);
       expect(await nft.balanceOf(fan.address, dropId)).to.equal(1n);
     });
 
     it('rejects sending ETH value on an ERC-20-priced drop', async function () {
-      const { nft, creator, fan, onlyAss } = await deploy();
+      const { nft, creator, fan, onlyOne } = await deploy();
       const price = ethers.parseEther('100');
-      const dropId = await createEthDrop(nft, creator, { payToken: await onlyAss.getAddress(), price });
-      await onlyAss.connect(fan).approve(await nft.getAddress(), price);
+      const dropId = await createEthDrop(nft, creator, { payToken: await onlyOne.getAddress(), price });
+      await onlyOne.connect(fan).approve(await nft.getAddress(), price);
 
       await expect(nft.connect(fan).mintEdition(dropId, { value: 1 })).to.be.revertedWithCustomError(nft, 'WrongPaymentValue');
     });
@@ -225,12 +225,12 @@ describe('OnlyAssCreatorNFT', function () {
     });
 
     it('lets the owner rescue ERC-20 tokens sent to the contract by mistake', async function () {
-      const { nft, owner, other, onlyAss } = await deploy();
-      await onlyAss.transfer(await nft.getAddress(), ethers.parseEther('10'));
-      const onlyAssAddress = await onlyAss.getAddress();
+      const { nft, owner, other, onlyOne } = await deploy();
+      await onlyOne.transfer(await nft.getAddress(), ethers.parseEther('10'));
+      const onlyOneAddress = await onlyOne.getAddress();
       await expect(() =>
-        nft.connect(owner).rescueERC20(onlyAssAddress, other.address, ethers.parseEther('10')),
-      ).to.changeTokenBalance(onlyAss, other, ethers.parseEther('10'));
+        nft.connect(owner).rescueERC20(onlyOneAddress, other.address, ethers.parseEther('10')),
+      ).to.changeTokenBalance(onlyOne, other, ethers.parseEther('10'));
     });
   });
 });

@@ -1,25 +1,29 @@
-# OnlyAssCreatorNFT
+# OnlyOneCreatorNFT
 
 Self-serve NFT drops: a creator picks an image, how many copies to mint,
-what to charge, and what to charge it in. See `OnlyAssCreatorNFT.sol` for
-the implementation, `test/OnlyAssCreatorNFT.test.js` for the test suite
-(24 tests).
+what to charge, and what to charge it in. See `OnlyOneCreatorNFT.sol` for
+the implementation, `test/OnlyOneCreatorNFT.test.js` for the test suite
+(28 tests).
 
 ## What it does
 
 `createDrop(payToken, price, editionSize, metadataURI)`: any address can
 start a drop for itself (no allowlist, same as every other contract in this
 repo) -- `msg.sender` is permanently that drop's creator and payout address.
-`payToken` is `address(0)` for ETH, `$ONLYASS`, or a token that creator
-actually launched through `OnlyAssLaunchpadV4` (checked live on-chain
-against the launchpad's real records, same `_isLaunchedByCreator` pattern
-`OnlyAssPayments.sol` already uses -- no admin allowlist, nothing cached).
+`payToken` is `address(0)` for ETH or the deployed $ONLYONE token address --
+those are the only two accepted payment methods. An earlier version also
+accepted a token the creator had launched through a creator-token launchpad,
+verified live on-chain against the launchpad's records; that launchpad was
+removed from this repo (the founder is launching $ONLYONE from his own
+launchpad instead), so `createDrop` now rejects any other ERC-20 outright
+rather than accepting one on the strength of a launch record that can no
+longer exist.
 
 `mintEdition(dropId)`: a fan mints the next copy. Payment and mint happen
 atomically in the same transaction -- there's no scenario where a fan pays
 and doesn't get the token, or gets the token without paying. The platform
 takes its cut (`platformFeeBps`, 10% by default) the same way
-`OnlyAssPayments.sol` already does; the rest goes straight to the creator.
+`OnlyOnePayments.sol` already does; the rest goes straight to the creator.
 
 A drop is one ERC-1155 token id with `editionSize` identical copies. A
 1-of-1 ("this is the one true original") is just `editionSize == 1` --
@@ -73,7 +77,7 @@ into this field.**
 
 ## Design decisions for an auditor
 
-- **Non-custodial, same as `OnlyAssPayments.sol`.** No escrow, no balance
+- **Non-custodial, same as `OnlyOnePayments.sol`.** No escrow, no balance
   held between transactions -- every mint pays out immediately.
 - **Checks-effects-interactions in `mintEdition`.** Drop state (`minted`
   count) and the actual `_mint` happen *before* the ETH/ERC-20 payment
@@ -82,44 +86,32 @@ into this field.**
   atomicity (the whole transaction still reverts together on any failure)
   but it's the correct order regardless, and it's free to fix, so it was
   fixed rather than just documented as accepted.
-- **`payToken` validation reuses `OnlyAssPayments.sol`'s exact trust model**:
-  loop the creator's launchpad records (view-only, `STATICCALL`-compiled,
-  can't reenter this contract's state regardless of what's deployed at
-  `launchpad`), `launchpad` is an owner-set trusted address, and a real
-  creator's launch count is realistically single digits, not
-  attacker-inflatable. `IOnlyAssLaunchpadV4Views` is imported directly from
-  `OnlyAssPayments.sol` rather than redeclared, so the two contracts can
-  never drift apart on what that interface looks like.
+- **`payToken` validation is a plain allowlist of two values** (`address(0)`
+  for ETH, or the configured `onlyOneToken`), not a launchpad lookup -- see
+  "What it does" above for why the launchpad-verification version was
+  removed.
 - **`MAX_EDITION_SIZE = 100_000`** is a sanity ceiling, not a real limit
   anyone would hit -- same "hard number that can never be raised past a
-  point" philosophy as `MAX_FEE_BPS`/`MAX_PLATFORM_SUPPLY_BPS` elsewhere in
-  this repo.
+  point" philosophy as `MAX_FEE_BPS` elsewhere in this repo.
 - **Explicit `InvalidDropId` bounds checks** on every function that indexes
   `drops[]` by an external caller-supplied id (`mintEdition`, `closeDrop`,
-  `uri`), rather than relying on Solidity's implicit out-of-bounds panic --
-  matches `OnlyAssLaunchpadV4`'s existing `InvalidLaunchId` pattern.
+  `uri`), rather than relying on Solidity's implicit out-of-bounds panic.
 - **Requires Cancun.** OpenZeppelin 5.6's `ERC1155` pulls in `Arrays.sol`,
   which uses the Cancun-only `MCOPY` opcode in a few of its helper
   functions -- solc can't compile the file at all under an older EVM
   target, even though `ERC1155` itself never calls those specific helpers.
   `hardhat.config.js` has a per-file override forcing this contract to
-  compile at `evmVersion: "cancun"`. **Same unverified assumption as the V4
-  launchpad work**: nothing in this repo has confirmed Robinhood Chain's
-  EVM actually supports Cancun. Verify that before deploying this contract
-  there, same as `LAUNCHPAD_V4.md` already says for the launchpad/hook.
+  compile at `evmVersion: "cancun"`. **Unverified assumption**: nothing in
+  this repo has confirmed Robinhood Chain's EVM actually supports Cancun.
+  Verify that before deploying this contract there.
 
-## Slither findings (all accepted, none changed beyond the reentrancy fix above)
+## Slither findings (all accepted)
 
-Ran `slither .` -- 3 remaining findings after the reentrancy-eth fix, all
-reviewed:
-
-- **`unused-return` / `calls-loop` on `_isLaunchedByCreator`**: identical
-  findings, identical accepted reasoning, as `OnlyAssPayments.sol`'s own
-  copy of this exact helper (see `contracts/README.md`).
-- **`low-level-calls` on the ETH payout in `mintEdition`**: same `.call`
-  pattern, same reasoning (`.transfer`'s 2300 gas stipend breaks payouts to
-  smart-contract wallets; `nonReentrant`-guarded) as every other ETH payout
-  in this codebase.
+Ran `slither .` against the current contract -- 2 findings, both the same
+already-accepted pattern: `low-level-calls` on the ETH payout `.call{value:
+...}()` in `mintEdition`, matching every other ETH payout in this codebase
+(`.transfer`'s 2300 gas stipend breaks payouts to smart-contract wallets;
+`nonReentrant`-guarded).
 
 ## What still needs a human before mainnet
 
@@ -128,9 +120,6 @@ reviewed:
   there is currently nothing that actually serves a blurred-vs-real image
   based on `balanceOf`. Don't market "mint to unlock" until that exists.
 - **Confirm Robinhood Chain supports Cancun** -- see above.
-- **`LAUNCHPAD_V4_ADDRESS` can be left unset at deploy time** and wired up
-  later via `setLaunchpad(...)` -- creators just can't price a drop in
-  their own token until then (ETH and $ONLYASS still work immediately).
 - **No deploy to mainnet from this session** -- same boundary as every
   other contract here: a real deployer private key never gets generated,
   accepted, or transmitted in this chat. Use `npm run
