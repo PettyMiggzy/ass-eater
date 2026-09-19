@@ -29,7 +29,20 @@ import { Lockup } from '../components/Brand';
  *
  * Everything else still gets it.
  */
-const NO_NOTICE_PATHS = new Set(['/', '/founding-creator', '/report-content', '/blocked-region', '/verify-age']);
+//  - The legal pages (/terms, /privacy, /2257) are text and nothing else.
+//    They carry the same "no content on them" property as "/" and they have
+//    to be readable by people and tools that are NOT visitors: a payment
+//    processor doing onboarding review, a regulator checking the §2257
+//    statement, an archiver. proxy.js already exempts all three from the
+//    state geoblock for exactly that reason, and leaving them behind this
+//    notice undid it -- because of the return-null-on-first-render above,
+//    /2257 and /terms were serving a 2.4KB EMPTY DOCUMENT to anything that
+//    doesn't run JavaScript. The two exemptions have to agree, the same way
+//    /report-content's already do.
+const NO_NOTICE_PATHS = new Set([
+  '/', '/founding-creator', '/report-content', '/blocked-region', '/verify-age',
+  '/terms', '/privacy', '/2257',
+]);
 
 function MyApp({ Component, pageProps }) {
   const router = useRouter();
