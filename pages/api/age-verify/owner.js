@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { checkRateLimit, clearFailures, clientIp, recordFailure } from '../../../lib/rate-limit';
 import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, createAgeVerificationToken } from '../../../lib/age-verification';
 
 /**
@@ -21,9 +22,14 @@ import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, createAgeVerificationT
  * header, a synced bookmark. It is deliberate and it is the owner's call,
  * but it is not free:
  *
- *  - OWNER_ACCESS_KEY must be a long random value, set as a Secret in
- *    Vercel. Generate with:
+ *  - OWNER_ACCESS_KEY must be set as a Secret in Vercel, and must have real
+ *    entropy. A long random value is safest:
  *      node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+ *    A memorable passphrase is acceptable ONLY if it is long and not
+ *    guessable from anything about the owner -- a first name plus two digits
+ *    is in every cracking dictionary's shape list, and this endpoint is a
+ *    hole in a control that 27 states require by law. The per-IP budget below
+ *    helps; it does not substitute for entropy.
  *  - It is NOT set anywhere by default. With the env var unset this endpoint
  *    404s, so a fork or preview deployment that doesn't inherit it has no
  *    bypass at all rather than a guessable one.
@@ -34,7 +40,28 @@ import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, createAgeVerificationT
  *  - Don't hand it to creators or testers. Anyone who needs real access
  *    should verify properly; that is the point of the control.
  */
+// Guessing budget. This endpoint answers 404-or-302 to a bare request, which
+// makes it a free oracle for anyone trying keys -- and unlike the admin panel
+// it had no limit at all, so the only thing standing between a guesser and
+// the age gate was the key's own length.
+//
+// That matters more now the key is a memorable one the owner can type rather
+// than 43 random characters. Same honest caveat as lib/rate-limit.js's own
+// header: these counters live in one serverless instance's memory, so this is
+// a speed bump against cheap guessing from one host, NOT a hard lockout. It
+// does not make a weak key safe; it makes a moderate key defensible.
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_FAILURES_PER_IP = 8;
+
 export default async function handler(req, res) {
+  const bucket = `owner-access:ip:${clientIp(req)}`;
+  const { limited } = checkRateLimit(bucket, { limit: MAX_FAILURES_PER_IP, windowMs: WINDOW_MS });
+  if (limited) {
+    // Still a 404, for the same reason every other failure here is: the
+    // endpoint must not confirm it exists. A 429 would.
+    return res.status(404).json({ error: 'Not found' });
+  }
+
   const expected = process.env.OWNER_ACCESS_KEY;
 
   // No key configured means no bypass exists. 404 rather than 401 so the
@@ -46,6 +73,7 @@ export default async function handler(req, res) {
 
   const provided = typeof req.query.key === 'string' ? req.query.key : '';
   if (!provided) {
+    recordFailure(bucket, { limit: MAX_FAILURES_PER_IP, windowMs: WINDOW_MS });
     return res.status(404).json({ error: 'Not found' });
   }
 
@@ -56,8 +84,13 @@ export default async function handler(req, res) {
     // Deliberately not logging the attempted value -- a near-miss guess in a
     // runtime log is most of a credential.
     console.warn(`[owner-access] rejected bypass attempt from ${req.headers['x-forwarded-for'] || 'unknown'}`);
+    recordFailure(bucket, { limit: MAX_FAILURES_PER_IP, windowMs: WINDOW_MS });
     return res.status(404).json({ error: 'Not found' });
   }
+
+  // A correct key clears the budget, so the owner mistyping it a few times on
+  // a phone never locks himself out of his own site.
+  clearFailures(bucket);
 
   // `via` records how this cookie was obtained, so a future reader of a
   // decoded token can tell an owner bypass from a real AgeChecker pass.
