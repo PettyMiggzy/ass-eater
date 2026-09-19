@@ -259,7 +259,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
               <p className="text-gray-400 text-sm mb-6">
                 You're set up as a fan. Head to the platform to browse creators — unlocks are paid for with credits, which you top up with dollars.
               </p>
-              <a href="/onlyass" className="premium-button inline-block">Browse Creators</a>
+              <a href="/creators" className="premium-button inline-block">Browse Creators</a>
             </div>
           )}
 

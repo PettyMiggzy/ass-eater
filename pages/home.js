@@ -84,7 +84,7 @@ export default function Home({ creators }) {
                   Join OnlyOne <span aria-hidden="true">→</span>
                 </a>
                 <a
-                  href="/onlyass"
+                  href="/creators"
                   className="px-7 py-3.5 rounded-full border border-white/20 hover:border-white/50 font-bold transition"
                 >
                   Explore Creators
@@ -130,7 +130,7 @@ export default function Home({ creators }) {
             <div className="grid md:grid-cols-2 gap-5">
               {[
                 { title: 'For Creators', copy: 'Take control of your content, your income and your freedom.', points: CREATOR_POINTS, cta: 'Start Creating', href: '/become-creator', img: '/images/content_lingerie_2.jpg', primary: true },
-                { title: 'For Fans', copy: 'Discover real creators, exclusive content and genuine connections.', points: FAN_POINTS, cta: 'Start Exploring', href: '/onlyass', img: '/images/content_night_2.jpg', primary: false },
+                { title: 'For Fans', copy: 'Discover real creators, exclusive content and genuine connections.', points: FAN_POINTS, cta: 'Start Exploring', href: '/creators', img: '/images/content_night_2.jpg', primary: false },
               ].map((card) => (
                 <div key={card.title} className="relative rounded-2xl overflow-hidden border border-white/10 bg-brand-card">
                   <img src={card.img} alt="" className="absolute left-0 top-0 h-full w-40 object-cover opacity-70" />
@@ -187,7 +187,7 @@ export default function Home({ creators }) {
             <div className="max-w-6xl mx-auto">
               <div className="flex items-end justify-between mb-6">
                 <h2 className="text-2xl font-black">Creators on OnlyOne</h2>
-                <a href="/onlyass" className="text-sm text-brand-pink hover:underline">See all</a>
+                <a href="/creators" className="text-sm text-brand-pink hover:underline">See all</a>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {creators.map((c) => (

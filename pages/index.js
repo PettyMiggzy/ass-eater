@@ -137,7 +137,7 @@ export default function Landing() {
             {CATEGORIES.map((c, i) => (
               <span key={c.label} className="flex items-center gap-5">
                 <a
-                  href={c.tag ? `/search?tag=${encodeURIComponent(c.tag)}` : '/onlyass'}
+                  href={c.tag ? `/search?tag=${encodeURIComponent(c.tag)}` : '/creators'}
                   className="hover:text-brand-pink transition"
                 >
                   {c.label}

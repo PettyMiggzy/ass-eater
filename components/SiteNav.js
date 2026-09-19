@@ -38,7 +38,7 @@ export default function SiteNav({ signedIn = false, viewerAvatar = null, viewerH
         <nav className="hidden md:flex items-center gap-6 text-sm text-gray-300">
           <a href="/home" className="hover:text-white transition">Home</a>
           <a href="/search" className="hover:text-white transition">Explore</a>
-          <a href="/onlyass" className="hover:text-white transition">Creators</a>
+          <a href="/creators" className="hover:text-white transition">Creators</a>
           <a href="/marketplace" className="hover:text-white transition">Marketplace</a>
         </nav>
 

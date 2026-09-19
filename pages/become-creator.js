@@ -72,7 +72,7 @@ export default function BecomeCreator() {
             Your profile is pending review. Real creators require identity and age verification before going live —
             we'll follow up at the email you provided with next steps.
           </p>
-          <a href="/onlyass" className="premium-button inline-block">Back to OnlyOne</a>
+          <a href="/creators" className="premium-button inline-block">Back to OnlyOne</a>
         </div>
       </div>
     );

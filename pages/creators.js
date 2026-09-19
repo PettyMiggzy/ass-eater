@@ -21,7 +21,7 @@ export async function getServerSideProps({ req }) {
   };
 }
 
-export default function OnlyAss({ creators, sessionUser }) {
+export default function Creators({ creators, sessionUser }) {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');

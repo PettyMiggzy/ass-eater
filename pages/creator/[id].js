@@ -116,7 +116,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
       <div className="min-h-screen bg-brand-ink text-white flex items-center justify-center">
         <div className="text-center">
           <p className="text-2xl font-bold text-brand-pink mb-4">Creator not found</p>
-          <a href="/onlyass" className="inline-block px-6 py-3 rounded-full bg-brand-pink text-white font-bold">Back to creators</a>
+          <a href="/creators" className="inline-block px-6 py-3 rounded-full bg-brand-pink text-white font-bold">Back to creators</a>
         </div>
       </div>
     );
@@ -207,7 +207,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-brand-ink/30 to-transparent" />
             <button
-              onClick={() => router.push('/onlyass')}
+              onClick={() => router.push('/creators')}
               aria-label="Back to creators"
               className="absolute top-4 left-4 w-9 h-9 rounded-full bg-black/50 backdrop-blur flex items-center justify-center hover:bg-black/70 transition"
             >
