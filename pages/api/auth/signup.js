@@ -1,8 +1,9 @@
 import { createUser, findUserByEmail } from '../../../lib/users-store';
-import { createCreator, deleteCreator, getCreators, isPubliclyVisible } from '../../../lib/creators-store';
+import { createCreator, getCreators, isPubliclyVisible } from '../../../lib/creators-store';
 import { normalizeReferralCode } from '../../../lib/referral';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
 import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
+import { withTransaction } from '../../../lib/db';
 
 // Signup unavoidably tells the caller whether an identifier is already
 // taken: there is no email-confirmation channel on this site (nothing here
@@ -65,72 +66,71 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'An account with that email already exists' });
   }
 
-  let newCreatorId = null;
+  // Resolve the referral code to a real creator before writing anything, so
+  // a forged or stale cookie credits nobody rather than writing a dangling
+  // handle onto the account. Read-only, so it doesn't need to be inside the
+  // transaction below.
+  let referredByCreatorId = null;
+  const refCode = normalizeReferralCode(req.body?.ref);
+  if (refCode) {
+    const existingCreators = await getCreators();
+    const referrer = existingCreators.find(
+      (c) => String(c.handle || '').replace(/^@/, '').toLowerCase() === refCode && isPubliclyVisible(c),
+    );
+    if (referrer) referredByCreatorId = String(referrer.id);
+  }
 
   try {
-    if (role === 'creator') {
-      const creator = await createCreator({
-        name: displayName,
-        handle: handle.startsWith('@') ? handle : `@${handle}`,
-        bio: bio || '',
-        status: 'pending',
-        // NOT locked. `locked` means token-gated (lib/token-gate.js), and
-        // defaulting it on meant every real creator's photos were blurred on
-        // Explore behind an 'Unlock Now' button that went nowhere.
-        locked: false,
-      });
-      newCreatorId = creator.id;
-    }
-
-    // Resolve the referral code to a real creator before storing anything,
-    // so a forged or stale cookie credits nobody rather than writing a
-    // dangling handle onto the account. Self-referral is dropped for the
-    // obvious reason.
-    let referredByCreatorId = null;
-    const refCode = normalizeReferralCode(req.body?.ref);
-    if (refCode) {
-      const creators = await getCreators();
-      const referrer = creators.find(
-        (c) => String(c.handle || '').replace(/^@/, '').toLowerCase() === refCode && isPubliclyVisible(c),
-      );
-      if (referrer && String(referrer.id) !== String(newCreatorId)) {
-        referredByCreatorId = String(referrer.id);
+    // The creator profile and the account that owns it are created in one
+    // Postgres transaction: either both commit or neither does. Before this,
+    // a failure between the two writes (createUser throwing, or the process
+    // being killed outright before it got the chance to) could strand a
+    // pending creator profile with no login that could ever claim it --
+    // sitting in the admin applicant queue forever, and piling up another
+    // ghost on every retry. A catch-and-manually-delete fallback closed the
+    // common case (createUser throwing) but not a hard process kill between
+    // the two awaits; a real transaction closes both, because Postgres
+    // rolls back an uncommitted transaction on its own if the connection
+    // ever drops mid-way.
+    const { user, creatorId } = await withTransaction(async (client) => {
+      let newCreatorId = null;
+      if (role === 'creator') {
+        const creator = await createCreator(
+          {
+            name: displayName,
+            handle: handle.startsWith('@') ? handle : `@${handle}`,
+            bio: bio || '',
+            status: 'pending',
+            // NOT locked. `locked` means token-gated (lib/token-gate.js),
+            // and defaulting it on meant every real creator's photos were
+            // blurred on Explore behind an 'Unlock Now' button that went
+            // nowhere.
+            locked: false,
+          },
+          client,
+        );
+        newCreatorId = creator.id;
       }
-    }
 
-    const user = await createUser({
-      email,
-      password,
-      role,
-      creatorId: newCreatorId,
-      referredByCreatorId,
+      // Self-referral is only knowable once the creator (if any) has an id.
+      const finalReferredBy =
+        referredByCreatorId && String(referredByCreatorId) === String(newCreatorId) ? null : referredByCreatorId;
+
+      const createdUser = await createUser(
+        { email, password, role, creatorId: newCreatorId, referredByCreatorId: finalReferredBy },
+        client,
+      );
+      return { user: createdUser, creatorId: newCreatorId };
     });
+
     const token = createSessionToken(user.id, user.sessionVersion);
     setSessionCookie(res, token);
 
     return res.status(200).json({
       ok: true,
-      user: { id: user.id, email: user.email, role: user.role, creatorId: user.creatorId },
+      user: { id: user.id, email: user.email, role: user.role, creatorId },
     });
   } catch (err) {
-    // The creator profile is written before the account that owns it, so a
-    // failure in createUser used to strand a pending creator profile nobody
-    // can ever log into -- sitting in the admin applicant queue forever, and
-    // piling up another ghost every time someone retried. Roll it back.
-    //
-    // The hazard this used to carry is gone: deleteCreator no longer
-    // rewrites a whole manifest whose failed read fell back to the demo
-    // roster, so a rollback during a storage wobble can no longer replace
-    // every real creator with the seed rows. It is now a single-row DELETE.
-    if (newCreatorId !== null) {
-      try {
-        await deleteCreator(newCreatorId);
-      } catch {
-        // Nothing better to do here: the original failure below is what the
-        // person needs to see, and the leftover profile is still visible to
-        // an admin. Don't mask the real error with this one.
-      }
-    }
     return res.status(400).json({ error: err.message });
   }
 }
