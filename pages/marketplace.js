@@ -166,7 +166,7 @@ export default function Marketplace({ listings }) {
               <a href={`${MAIN_SITE}/terms#marketplace`} target="_blank" rel="noreferrer" className="text-brand-pink underline">
                 Marketplace Terms
               </a>{' '}
-              — this purchase is an agreement directly between me and the creator; Only Ass is not a party to
+              — this purchase is an agreement directly between me and the creator; OnlyOne is not a party to
               the sale, does not hold funds in escrow, and is not responsible for shipping, delivery, item
               condition, or resolving disputes between us.
             </label>

@@ -5,7 +5,7 @@ const LAST_UPDATED = 'September 17, 2026';
 export default function Terms() {
   return (
     <>
-      <Head><title>Terms of Service - Only Ass</title></Head>
+      <Head><title>Terms of Service - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-16">
         <div className="max-w-3xl mx-auto">
           <h1 className="text-4xl font-black premium-title mb-2">Terms of Service & User Agreement</h1>
@@ -14,7 +14,7 @@ export default function Terms() {
           <div className="premium-card p-8 space-y-8 text-sm text-gray-300 leading-relaxed">
             <Section title="1. Age & Eligibility">
               <p>
-                Only Ass ("the Platform") is strictly for adults. By creating an account you represent and
+                OnlyOne ("the Platform") is strictly for adults. By creating an account you represent and
                 warrant that you are at least 18 years old (or the age of majority in your jurisdiction,
                 whichever is higher), and that you have the legal capacity to enter into this agreement.
                 We do not knowingly permit anyone under 18 to register, and any account found to belong to

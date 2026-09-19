@@ -51,7 +51,7 @@ export default function Search({ q, tag, creators, listings, allTags }) {
 
   return (
     <>
-      <Head><title>Search - Only Ass</title></Head>
+      <Head><title>Search - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
         <div className="max-w-4xl mx-auto">
           <form onSubmit={submit} className="mb-6">

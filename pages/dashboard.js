@@ -233,7 +233,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
 
   return (
     <>
-      <Head><title>Dashboard - Only Ass</title></Head>
+      <Head><title>Dashboard - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
         <div className="max-w-3xl mx-auto">
           <div className="flex items-center justify-between mb-8">

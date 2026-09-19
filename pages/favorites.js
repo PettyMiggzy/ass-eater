@@ -19,7 +19,7 @@ export async function getServerSideProps({ req }) {
 export default function Favorites({ creators }) {
   return (
     <>
-      <Head><title>Your Favorites - Only Ass</title></Head>
+      <Head><title>Your Favorites - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-2xl font-black premium-title mb-2">Your Favorites</h1>

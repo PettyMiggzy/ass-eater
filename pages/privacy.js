@@ -5,7 +5,7 @@ const LAST_UPDATED = 'September 17, 2026';
 export default function Privacy() {
   return (
     <>
-      <Head><title>Privacy Policy - Only Ass</title></Head>
+      <Head><title>Privacy Policy - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-16">
         <div className="max-w-3xl mx-auto">
           <h1 className="text-4xl font-black premium-title mb-2">Privacy Policy</h1>

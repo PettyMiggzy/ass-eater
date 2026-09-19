@@ -31,7 +31,7 @@ export default function Login() {
 
   return (
     <>
-      <Head><title>Log In - Only Ass</title></Head>
+      <Head><title>Log In - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6 py-16">
         <div className="max-w-md w-full premium-card p-8">
           <h1 className="text-3xl font-black premium-title mb-6">Log In</h1>

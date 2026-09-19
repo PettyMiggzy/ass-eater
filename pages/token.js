@@ -47,7 +47,7 @@ const ROADMAP = [
     title: 'Phase 4',
     subtitle: 'What\'s next',
     items: [
-      { label: 'onlyass.store: a real merch store, separate from the peer-to-peer marketplace', status: 'planned' },
+      { label: 'A dedicated merch store, separate from the peer-to-peer marketplace', status: 'planned' },
       { label: 'Forensic/invisible watermarking for video (images already get a traceable per-viewer mark)', status: 'planned' },
       { label: 'Public read-only API for $ONLYONE price/stats', status: 'planned' },
     ],
@@ -172,7 +172,7 @@ export default function TokenLanding() {
           <p className="text-gray-500 text-xs max-w-xl mx-auto mb-2">
             Cryptocurrency carries risk — this is a meme token for entertainment, not financial advice.
           </p>
-          <p className="text-gray-600 text-xs">© 2026 Only Ass</p>
+          <p className="text-gray-600 text-xs">© 2026 OnlyOne</p>
         </footer>
       </div>
     </>

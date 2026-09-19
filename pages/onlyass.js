@@ -74,7 +74,7 @@ export default function OnlyAss({ creators, sessionUser }) {
   return (
     <>
       <Head>
-        <title>Only Ass - Exclusive Creator Content</title>
+        <title>OnlyOne - Exclusive Creator Content</title>
         <meta name="description" content="Token-gated exclusive content platform" />
       </Head>
 
@@ -99,7 +99,7 @@ export default function OnlyAss({ creators, sessionUser }) {
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/60"></div>
           <div className="relative z-10 text-center px-6">
-            <h1 className="text-6xl md:text-8xl font-black mb-4 premium-title">ONLY ASS</h1>
+            <h1 className="text-6xl md:text-8xl font-black mb-4 premium-title">ONLY<span className="text-brand-pink">ONE</span></h1>
             <p className="text-brand-secondary font-bold tracking-widest eyebrow">18+ Exclusive Platform</p>
           </div>
           <button
@@ -116,7 +116,7 @@ export default function OnlyAss({ creators, sessionUser }) {
         <nav className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
             <a href="/" className="flex items-center bg-white/95 rounded-lg px-3 py-1.5">
-              <img src="/images/logo-final.png" alt="Only Ass" className="h-8 md:h-9 w-auto" />
+              <img src="/images/logo-final.png" alt="OnlyOne" className="h-8 md:h-9 w-auto" />
             </a>
             <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
               <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
@@ -152,7 +152,7 @@ export default function OnlyAss({ creators, sessionUser }) {
             <div className="inline-block px-4 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold tracking-widest mb-6">
               18+ EXCLUSIVE PLATFORM
             </div>
-            <h1 className="text-7xl md:text-8xl font-black mb-3 premium-title">ONLY ASS</h1>
+            <h1 className="text-7xl md:text-8xl font-black mb-3 premium-title">ONLY<span className="text-brand-pink">ONE</span></h1>
             <p className="text-brand-secondary font-bold text-xl mb-3">Support the creators you actually love.</p>
             <p className="text-gray-400 max-w-xl mx-auto mb-10">
               Subscribe, tip and unlock with credits — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for.
@@ -443,7 +443,7 @@ export default function OnlyAss({ creators, sessionUser }) {
             <a href="/privacy" className="hover:text-brand-gold transition">Privacy Policy</a>
             <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">Report Non-Consensual Content</a>
           </div>
-          <p>Only Ass — an independent platform. Not affiliated with any other service. 18+ only, all creators verify identity & age.</p>
+          <p>OnlyOne — an independent platform. Not affiliated with any other service. 18+ only, all creators verify identity & age.</p>
         </footer>
       </div>
     </>

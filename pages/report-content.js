@@ -40,7 +40,7 @@ export default function ReportContent() {
   if (done) {
     return (
       <>
-        <Head><title>Report Submitted - Only Ass</title></Head>
+        <Head><title>Report Submitted - OnlyOne</title></Head>
         <div className="min-h-screen bg-gradient-luxury text-white px-6 py-16 flex items-center justify-center">
           <div className="premium-card p-8 max-w-lg text-center">
             <p className="text-2xl font-black text-brand-gold mb-4">Report received.</p>
@@ -59,7 +59,7 @@ export default function ReportContent() {
 
   return (
     <>
-      <Head><title>Report Non-Consensual Content - Only Ass</title></Head>
+      <Head><title>Report Non-Consensual Content - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-16">
         <div className="max-w-2xl mx-auto">
           <h1 className="text-3xl font-black premium-title mb-2">Report Non-Consensual Content</h1>

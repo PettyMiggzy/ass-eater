@@ -2538,3 +2538,63 @@ non-VIP whale entirely, excludes a lapsed VIP, never miscounts a non-charge
 ledger type, sums multiple payments rather than only the latest, and never
 leaks one creator's supporters into another's query. 83 server tests pass
 (was 77), tsc clean.
+
+## Finish the OnlyOne rename: every visible "Only Ass" string swept from the site (2026-09-19)
+
+Founder, flatly: *"u got only ass still all over that site."* Right --
+yesterday's redesign changed the palette, the token, the primary domain and
+the contact email, but never went back through and swept the actual brand
+NAME out of page titles, meta tags, alt text and body copy. **This supersedes
+the "no rename" note recorded 2026-09-16** -- that decision predates the
+token becoming $ONLYONE, joinonlyone.com becoming primary, and the whole
+site being repainted to the OnlyOne palette; the founder revisiting it here
+is exactly the "unless the user brings it back up" case that note itself
+carved out.
+
+Swept every user-visible occurrence of "Only Ass" to "OnlyOne": every page
+`<title>`, `/gateway`'s meta description and body copy, every `alt="Only
+Ass"` on the shared logo image (blocked-region, verify-age, gateway,
+onlyass.js), the marketplace purchase-agreement disclaimer, Terms section 1's
+opening sentence, `/token`'s footer copyright line, and -- the two biggest
+misses from yesterday's pass -- **two giant `<h1>ONLY ASS</h1>` hero
+headlines on `pages/onlyass.js`** that a case-SENSITIVE grep during the
+redesign never caught (the file's own hero text, in all-caps, doesn't match a
+"Only Ass" pattern). Both now use the same `ONLY<span
+className="text-brand-pink">ONE</span>` wordmark treatment already
+established on `index.js`, `home.js` and `founding-creator.js`.
+
+Also corrected two comments that were actively describing a state that no
+longer exists: `SiteNav.js`'s comment said the live site "is still Only Ass"
+with the rename "declined" (both false as of yesterday); the payment-
+circumvention filter's header comment said tipping/payments "are denominated
+in $ONLYASS" (also stale -- payments are USDC-backed credits, and the token
+that legitimately shows up in wallet-address exemptions is $ONLYONE now,
+held for gating, not spent).
+
+**Deliberately NOT touched, and worth being explicit about the boundary:**
+- Domain literals (`onlyass.fun`, `.xyz`, `.online`, `.shop`) -- these are
+  real, registered, currently-live mirror domains. The brand NAME changed;
+  the DOMAINS did not, and don't need to -- a mirror domain doesn't have to
+  match the brand it mirrors.
+- `EXEMPT_TICKERS = new Set(['onlyass', 'onlyone'])` and its test coverage --
+  correct and intentional, so old listings/DMs that mention the old ticker
+  aren't retroactively flagged as payment circumvention.
+- The Solidity contract names (`OnlyAssPayments.sol`, `OnlyAssCreatorNFT.sol`,
+  their tests, and any `OnlyAssToken`/`OnlyAssLaunchpad` references in
+  `contracts/`/`test/`/`scripts/`) -- not deployed, but renaming them is a
+  real, separate chunk of work (file renames, import updates, redeploying
+  the mental model of "which contract is which"), not a copy-paste swap.
+  Flagged to the founder, not silently done or silently left inconsistent.
+- The internal function name `export default function OnlyAss(...)` in
+  `pages/onlyass.js`, and the route/file itself (`/onlyass` as a URL slug).
+  Renaming the route would break every internal `href="/onlyass"` across the
+  site (home, index, dashboard, creator profile, search) and needs a
+  redirect for anyone who already has the link bookmarked -- a real decision,
+  not a find-and-replace, so it's flagged rather than done in the same pass
+  as the text sweep.
+- `package.json`'s `"name": "ass-eater"` -- the npm/repo package name,
+  matches the GitHub repo (`pettymiggzy/ass-eater`), never rendered to a
+  site visitor.
+
+122 live-site tests pass (102 store + 10 session + 5 profile + 5 brand),
+filter suite passes, `next build` clean.

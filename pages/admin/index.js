@@ -269,7 +269,7 @@ export default function AdminPanel() {
 
   return (
     <>
-      <Head><title>Admin Panel - Only Ass</title></Head>
+      <Head><title>Admin Panel - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
         <div className="max-w-6xl mx-auto">
           <div className="flex items-center justify-between mb-4">

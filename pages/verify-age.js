@@ -63,7 +63,7 @@ export default function VerifyAge() {
   return (
     <>
       <Head>
-        <title>Verify Your Age — Only Ass</title>
+        <title>Verify Your Age — OnlyOne</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="robots" content="noindex" />
         <noscript>
@@ -73,7 +73,7 @@ export default function VerifyAge() {
 
       <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6">
         <div className="max-w-md w-full premium-card p-8 text-center">
-          <img src="/images/logo-final.png" alt="Only Ass" className="h-16 w-auto mx-auto mb-6" />
+          <img src="/images/logo-final.png" alt="OnlyOne" className="h-16 w-auto mx-auto mb-6" />
           <h1 className="text-2xl font-black premium-title mb-3">Verify Your Age</h1>
 
           {!API_KEY ? (

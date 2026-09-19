@@ -6,11 +6,12 @@ import { useRouter } from 'next/router';
  * search, saved-creators shortcut, and either the signed-in person's
  * avatar or log in / sign up.
  *
- * BRAND_NAME is a single constant on purpose. The designs use "ONLYONE"
- * while the live site is still Only Ass (MEMORY.md records that a rename
- * was declined, and the OnlyOne domain is a second front door rather than
- * a replacement), so switching the wordmark is a one-line change here
- * rather than a find-and-replace across the site.
+ * The whole site is branded OnlyOne now (decided 2026-09-19, superseding the
+ * earlier "no rename" note in MEMORY.md -- joinonlyone.com is the primary
+ * domain, the token is $ONLYONE, and every visible "Only Ass" string was
+ * swapped the same day). BRAND_NAME stays a single constant anyway: it is
+ * still the one place the wordmark is set, so a future change is a one-line
+ * edit here rather than a find-and-replace across the site.
  */
 const BRAND_NAME = 'ONLYONE';
 

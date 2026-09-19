@@ -51,7 +51,7 @@ export default function Signup() {
 
   return (
     <>
-      <Head><title>Sign Up - Only Ass</title></Head>
+      <Head><title>Sign Up - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6 py-16">
         <div className="max-w-md w-full premium-card p-8">
           <h1 className="text-3xl font-black premium-title mb-2">Create Account</h1>

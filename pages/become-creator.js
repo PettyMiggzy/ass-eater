@@ -72,7 +72,7 @@ export default function BecomeCreator() {
             Your profile is pending review. Real creators require identity and age verification before going live —
             we'll follow up at the email you provided with next steps.
           </p>
-          <a href="/onlyass" className="premium-button inline-block">Back to Only Ass</a>
+          <a href="/onlyass" className="premium-button inline-block">Back to OnlyOne</a>
         </div>
       </div>
     );
@@ -80,7 +80,7 @@ export default function BecomeCreator() {
 
   return (
     <>
-      <Head><title>Become a Creator - Only Ass</title></Head>
+      <Head><title>Become a Creator - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-16">
         <div className="max-w-xl mx-auto">
           <h1 className="text-4xl font-black premium-title mb-2">Become a Creator</h1>
