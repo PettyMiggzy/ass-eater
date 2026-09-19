@@ -334,6 +334,12 @@ export default function AdminPanel() {
             >
               §2257 RECORDS
             </button>
+            <button
+              onClick={() => setPage('waitlist')}
+              className={`pb-3 font-bold text-sm ${page === 'waitlist' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+            >
+              WAITLIST
+            </button>
           </div>
 
           {status && (
@@ -350,6 +356,8 @@ export default function AdminPanel() {
             <NciiReportsPanel adminKey={adminKey} creators={creators} />
           ) : page === 'records' ? (
             <PerformerRecordsPanel adminKey={adminKey} creators={creators} />
+          ) : page === 'waitlist' ? (
+            <WaitlistPanel adminKey={adminKey} />
           ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
@@ -1056,6 +1064,155 @@ const BLANK_RECORD = {
  * authenticated fetch that becomes a blob URL in this tab and is revoked
  * when it closes.
  */
+/**
+ * Pre-launch notify-me list. Read-only apart from removing someone, which
+ * is the point -- this is a marketing list of people who have no account
+ * here, and "take me off it" has to be something a person can actually do.
+ *
+ * The export is the working tool: nothing on this stack sends email, so the
+ * real workflow is exporting the CSV into whatever mail tool is used to
+ * announce the launch.
+ */
+function WaitlistPanel({ adminKey }) {
+  const [entries, setEntries] = useState([]);
+  const [counts, setCounts] = useState({ total: 0, fans: 0, creators: 0 });
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/admin/waitlist', { headers: { 'x-admin-key': adminKey } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load the waitlist');
+      setEntries(data.entries || []);
+      setCounts(data.counts || { total: 0, fans: 0, creators: 0 });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  // Fetched rather than linked, so the admin key travels in a header
+  // instead of a URL that lands in browser history and any proxy log
+  // between here and Vercel.
+  const exportCsv = async () => {
+    setError('');
+    try {
+      const res = await fetch('/api/admin/waitlist?format=csv', { headers: { 'x-admin-key': adminKey } });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'onlyone-waitlist.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const remove = async (id, email) => {
+    if (!confirm(`Remove ${email} from the waitlist? They will not be notified at launch.`)) return;
+    setBusyId(id);
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/waitlist?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-key': adminKey },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to remove');
+      setEntries((prev) => prev.filter((e) => String(e.id) !== String(id)));
+      setCounts((prev) => ({
+        total: Math.max(0, prev.total - 1),
+        fans: Math.max(0, prev.fans - 1),
+        creators: Math.max(0, prev.creators - 1),
+      }));
+      // The optimistic count above cannot know which roles that row held,
+      // so re-read the real figures rather than leave them wrong.
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const shown = roleFilter === 'all' ? entries : entries.filter((e) => (e.roles || []).includes(roleFilter));
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        {[
+          { key: 'all', label: `ALL (${counts.total})` },
+          { key: 'fan', label: `FANS (${counts.fans})` },
+          { key: 'creator', label: `CREATORS (${counts.creators})` },
+        ].map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setRoleFilter(f.key)}
+            className={`px-4 py-2 rounded-md text-xs font-bold ${
+              roleFilter === f.key ? 'bg-brand-gold text-black' : 'bg-black/40 text-gray-400 border border-brand-purple/30'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+        <div className="flex-1" />
+        <button onClick={exportCsv} disabled={!entries.length} className="premium-button disabled:opacity-50">
+          Export CSV
+        </button>
+      </div>
+
+      {error && <div className="mb-4 px-4 py-3 rounded-md bg-red-900/30 border border-red-500/40 text-red-300 text-sm">{error}</div>}
+
+      {loading ? (
+        <p className="text-gray-500 text-sm">Loading…</p>
+      ) : !shown.length ? (
+        <p className="text-gray-500 text-sm">Nobody on the list yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {shown.map((e) => (
+            <div key={e.id} className="premium-card p-4 flex flex-wrap items-center gap-3">
+              <span className="font-mono text-sm text-white break-all">{e.email}</span>
+              <span className="flex gap-1">
+                {(e.roles || []).map((r) => (
+                  <span key={r} className="px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold text-[10px] font-bold uppercase">
+                    {r}
+                  </span>
+                ))}
+              </span>
+              {e.state && <span className="text-[11px] text-gray-500">{e.state}{e.country ? `, ${e.country}` : ''}</span>}
+              <span className="text-[11px] text-gray-600">via {e.source}</span>
+              <div className="flex-1" />
+              <span className="text-[11px] text-gray-600">
+                {e.createdAt ? new Date(e.createdAt).toLocaleDateString() : ''}
+              </span>
+              <button
+                onClick={() => remove(e.id, e.email)}
+                disabled={busyId === e.id}
+                className="text-[11px] text-red-400 hover:text-red-300 disabled:opacity-50"
+              >
+                {busyId === e.id ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PerformerRecordsPanel({ adminKey, creators }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);

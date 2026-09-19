@@ -84,12 +84,18 @@ const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/
 // Only brand art ever belongs here; creator content never does.
 const SFW_PREFIXES = [];
 
-// The verify-age flow has to be able to complete from a blocked state, and
-// the takedown form is required by the TAKE IT DOWN Act to be freely
-// reachable. Every other API route is gated like a page -- several of them
-// return creator data, and an ungated /api/* is the same bypass shape as
-// the /images/ one already fixed here.
-const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content'];
+// The verify-age flow has to be able to complete from a blocked state, the
+// takedown form is required by the TAKE IT DOWN Act to be freely reachable,
+// and the pre-launch waitlist exists precisely to capture visitors this
+// site cannot serve yet -- a blocked-state visitor has to be able to POST
+// to it from /blocked-region, or the form on that page 451s and the page is
+// a dead end again. Every other API route is gated like a page -- several
+// of them return creator data, and an ungated /api/* is the same bypass
+// shape as the /images/ one already fixed here.
+//
+// Anything added here must return NO creator data and require no account.
+// These three qualify; almost nothing else will.
+const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content', '/api/waitlist'];
 
 // Pages Router serves every getServerSideProps payload at
 // /_next/data/<buildId>/<page>.json. The matcher used to exclude _next/

@@ -1,5 +1,6 @@
 import Head from 'next/head';
 import { Mark, Icons, FoundingBadge } from '../components/Brand';
+import WaitlistForm from '../components/WaitlistForm';
 import { getCreators } from '../lib/creators-store';
 import {
   FOUNDING_LIMIT,
@@ -213,6 +214,16 @@ export default function FoundingCreator({ taken, left, paymentsLive }) {
                 ? 'THE FIRST 100 APPROVED WITH A FINISHED PROFILE'
                 : 'THE FOUNDING PROGRAMME IS CLOSED — CREATOR SIGNUPS ARE STILL OPEN'}
             </p>
+          </div>
+
+          <div className="mt-12 pt-10 border-t border-white/5">
+            <WaitlistForm
+              source="founding-creator"
+              defaultRole="creator"
+              title="NOT READY TO SIGN UP YET?"
+              blurb="Leave your email and we’ll tell you when payouts go live and when founding spots are running out."
+              className="max-w-md"
+            />
           </div>
 
           <p className="mt-8 text-xs text-gray-600 leading-relaxed max-w-2xl">

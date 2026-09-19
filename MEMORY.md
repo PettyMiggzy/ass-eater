@@ -3314,3 +3314,61 @@ Worth knowing for any future check of this endpoint: **a wrong key and an
 unset key both return 404, by design** — so a 404 never distinguishes "not
 deployed yet" from "wrong key". Poll with the REAL key when waiting on a
 deploy, which is what finally confirmed this one.
+
+## Pre-launch waitlist: fan or creator (shipped 2026-09-19)
+
+Founder: *"also need way ppl can sign up to be notified so i can make the
+socials"*, then *"so ppl sign up to be notified as fan or creator."*
+
+`lib/waitlist-store.js` + a `waitlist` table, `pages/api/waitlist.js`
+(public, unauthenticated, 10/hour per IP, honeypot field), a shared
+`components/WaitlistForm.js`, and a **WAITLIST** admin tab with CSV export
+and per-row removal.
+
+**It is on the three pages that work without age verification** — `/`,
+`/blocked-region` and `/founding-creator` — and nowhere else. Those are the
+only pages a link can be pasted anywhere and still open, which is the whole
+point of a list built to seed the socials.
+
+Three decisions worth not undoing:
+
+- **`/api/waitlist` had to be added to `SFW_API_PREFIXES` in `proxy.js`.**
+  Without it the form on `/blocked-region` renders and then 451s on submit,
+  and that page is a dead end again — the exact failure this feature exists
+  to fix. The page and its API have to be exempted together, same lesson as
+  `proxy.js`/`_app.js` exemptions moving together. Anything else added to
+  that list must return no creator data and need no account.
+- **Roles are a UNION, not an overwrite.** Signing up as a fan and later as
+  a creator keeps both; taking the newer value would discard whichever
+  arrived first, and the creator signal is the harder one to get. Source is
+  first-touch (matching referral attribution). The unique index on
+  `lower(btrim(data->>'email'))` is what makes a repeat signup idempotent
+  rather than a read-then-check race — it has to stay in step with
+  `normalizeWaitlistEmail()`, which trims and lowercases. A test fires 20
+  simultaneous signups for one address and asserts exactly one row with both
+  roles.
+- **The state is read server-side off `x-vercel-ip-country-region`, never
+  from the form.** Vercel's edge sets it from the real client IP, so it is
+  worth recording; the point is that when a state comes off
+  `BLOCKED_STATE_CODES`, the people that block turned away are exactly who
+  can be told first.
+
+**`pages/index.js` gained og:/twitter: tags and deliberately NO og:image.**
+The only photography in this repo is creator content, and an auto-expanded
+thumbnail of that in someone's timeline, Slack or group chat is precisely
+what must not happen. A text-only `summary` card is the correct card for an
+18+ platform. If a share image is ever wanted it has to be drawn brand art,
+never a creator photo.
+
+Privacy policy Section 1 discloses the collection (address, side, source
+page, state) and the removal path before the list can take a single signup.
+
+Nothing on this stack sends email, so the CSV export is the real workflow —
+export into whatever tool announces the launch. No "notified" flag was
+added, because nothing sets one.
+
+Verified against a real `next start` with spoofed geo headers: a TX visitor
+gets the form on `/blocked-region` and a 200 from `/api/waitlist`, while
+`/api/marketplace/list` still 451s for the same visitor. 179 live-site tests
+pass (107 stores + 37 §2257 + 15 waitlist + 10 session + 5 profile + 5
+brand), filter suite passes, `next build` clean.

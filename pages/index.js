@@ -1,5 +1,6 @@
 import Head from 'next/head';
 import { Mark, Icons } from '../components/Brand';
+import WaitlistForm from '../components/WaitlistForm';
 
 /**
  * The public front door -- the ONLY page on this site that sits outside the
@@ -54,6 +55,28 @@ export default function Landing() {
           content="OnlyOne is a creator platform for women, men, couples and everyone. Create, share, connect, earn. 18+ only."
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+        {/* Social share card. This page is the only one safe to paste into a
+            post -- it is ungated and carries no creator content -- so these
+            tags describe it and nothing deeper. Deliberately NO og:image:
+            the only photography in this repo is creator content, and a
+            thumbnail of that is exactly what must not be auto-expanded into
+            someone's timeline, Slack or group chat. A text-only card is the
+            correct card for an 18+ platform. */}
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="OnlyOne" />
+        <meta property="og:title" content="OnlyOne — Real People. Real Connections." />
+        <meta
+          property="og:description"
+          content="A creator platform for women, men, couples and everyone. Launching soon — get notified. 18+ only."
+        />
+        <meta property="og:url" content="https://www.joinonlyone.com/" />
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content="OnlyOne — Real People. Real Connections." />
+        <meta
+          name="twitter:description"
+          content="A creator platform for women, men, couples and everyone. Launching soon — get notified. 18+ only."
+        />
       </Head>
 
       <div className="relative min-h-screen bg-brand-ink text-white overflow-hidden flex flex-col">
@@ -132,6 +155,14 @@ export default function Landing() {
           >
             CREATOR? BE ONE OF THE FIRST 100 <span aria-hidden="true">→</span>
           </a>
+
+          <div className="mt-12 w-full flex justify-center border-t border-white/5 pt-10">
+            <WaitlistForm
+              source="landing"
+              title="NOT OPEN YET? GET NOTIFIED."
+              blurb="We’ll email you the moment OnlyOne goes live. Tell us which side you’re on."
+            />
+          </div>
 
           <nav className="mt-12 flex flex-wrap justify-center items-center gap-x-5 gap-y-2 text-[10px] tracking-[0.2em] text-gray-500">
             {CATEGORIES.map((c, i) => (
