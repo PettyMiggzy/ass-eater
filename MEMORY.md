@@ -3057,3 +3057,97 @@ nothing.**
   burned-in watermark. All three want one signed, expiring, per-request media
   endpoint.
 - AgeChecker per-state rule configuration is still not done on the account.
+
+## §2257 performer records built into the admin panel (2026-09-19)
+
+Founder was setting up business docs, brought back research on federal §2257
+record-keeping, Indiana SB 17, high-risk processors, banking and the EIN, and
+asked: *"so maybe on admin page or some place store stuff so im legal"*.
+
+Built the record store. **The encrypted/plaintext split is the whole design**
+and must not be "simplified" later:
+
+- **Encrypted, with `RECORDS_ENCRYPTION_KEY` — its own key, NOT the orders
+  one:** legal name, date of birth, ID number, and the ID document. A leak
+  here hands over a list of real people who perform in adult content matched
+  to their ID numbers. That is worse than a password leak, because passwords
+  can be changed. There is a test that reads the raw jsonb back as text and
+  asserts none of those three strings appear.
+- **Plaintext:** stage names/aliases and content URLs. Already public, and
+  they are exactly what the statute requires records be *findable by*.
+  Encrypting them would force decrypting every record on every lookup, which
+  is how a compliance index quietly stops working.
+
+Separate key from `ORDERS_ENCRYPTION_KEY` on purpose -- this file already
+records the coupled-secret mistake (SESSION_SECRET silently reusing
+ADMIN_UPLOAD_KEY), so the records key is its own from the start.
+
+**ID documents go in Postgres, never Vercel Blob.** Blob objects are served
+from world-readable URLs -- correct for photos and video, categorically wrong
+for a passport scan. `id_document` is its own column, not a field in `data`,
+so listing records never pulls megabytes of ID scans into memory; the
+document is fetched one row at a time by an admin-key endpoint that streams
+it with `Cache-Control: no-store`.
+
+**Two rules enforced in code rather than trusted to memory:**
+1. A record for someone under 18 at the production date **cannot be created**
+   -- refused, nothing inserted, not clamped and not flagged for review. A
+   §2257 record exists to evidence performers were adults; one saying
+   otherwise is a confession, not a record with a problem. Tested to the
+   day-before-18th-birthday case.
+2. Records **archive, never delete.** §2257 is a RETENTION law, so a delete
+   button is a way to commit the offence by accident.
+
+**Found while testing against a real server, and it is the same bug class
+fixed once already today in `orders-store.js`:** one record written under a
+rotated key made the ENTIRE list throw. On this table that is the worst
+failure available -- the list IS the compliance index, and an inspection
+asking for one performer must not be met with a page showing nothing. A row
+that will not decrypt is now flagged `unreadable` with the reason while every
+readable record around it still lists, and its plaintext aliases still match
+so it can still be found. Regression test included. **The lesson recorded
+earlier holds: decrypt-in-a-map over a result set is a whole-list outage
+waiting for one bad row.**
+
+Also caught: a malformed (wrong-length) `RECORDS_ENCRYPTION_KEY` reported
+itself as "not set", which sends you hunting for a missing env var instead of
+a wrong one. `recordsEncryptionProblem()` returns the real reason now.
+
+`/2257` was rewritten to describe what the system actually does. It used to
+say the platform is not a producer and creators keep the records -- true as
+far as it goes, but the platform now keeps its own too, which is the
+conservative posture. Custodian name/address come from
+`NEXT_PUBLIC_RECORDS_CUSTODIAN_NAME` / `_ADDRESS`; until both are set the
+page says the designation is being completed rather than printing a
+half-statement that reads compliant and is not (same pattern as AgeChecker
+before its credentials existed).
+
+### Needs the founder
+
+- **`RECORDS_ENCRYPTION_KEY` in Vercel as a Secret** (`openssl rand -base64
+  32`). Nothing can be saved until it exists -- by design. **It must also be
+  backed up outside Vercel: a §2257 record that cannot be decrypted is the
+  same as one never kept.**
+- **The custodian name and a real street address.** Not a PO box, not an
+  email. Deliberately never invented. Worth an attorney's view on whether to
+  use a home, registered-agent or rented commercial address, since it is
+  genuinely public.
+
+### Non-code answers given, recorded so they are not re-researched
+
+- **EIN**: free, direct from irs.gov, ~15 minutes, issued immediately. Any
+  site charging is a middleman. "Internet content and media platform" is an
+  accurate business-activity entry; that field is statistical classification,
+  the IRS is not a content regulator.
+- **Indiana SB 17 is currently enjoined** per the founder's own sources, but
+  `proxy.js` still blocks IN along with 26 other states. That is
+  *over*-compliance while the injunction holds -- it costs Indiana traffic
+  and buys nothing legally. **Left in place deliberately: unblocking is a
+  business call, not a bug fix.** Offered, not done.
+- Processors/banking: unchanged from what this file already records (Epoch
+  easiest, CCBill most trusted and most expensive, all four need a live site
+  first -- which now exists). Tell the bank upfront; one that finds out later
+  freezes the account.
+- **Still the biggest open legal item, above §2257:** credits make the
+  platform custodial, which is the money-transmission question. Code cannot
+  settle it. Before the first dollar.
