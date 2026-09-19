@@ -3372,3 +3372,58 @@ gets the form on `/blocked-region` and a 200 from `/api/waitlist`, while
 `/api/marketplace/list` still 451s for the same visitor. 179 live-site tests
 pass (107 stores + 37 §2257 + 15 waitlist + 10 session + 5 profile + 5
 brand), filter suite passes, `next build` clean.
+
+## Only One LLC filed; trademark collision flagged (2026-09-19)
+
+Founder set up the business side in a separate conversation and pasted the
+handoff back. **The operational detail lives in `MONDAY.md` at the repo root**
+— that file is the pickup point, this is the index entry.
+
+- **Articles of Organization filed 2026-09-19, status PENDING** with the
+  Indiana SOS. Single-member, member-managed. Won't move over a weekend.
+- **Indiana DOR tax registration (BT-1) and the business bank account are
+  both blocked on that approval** — BT-1 needs the approved SOS Business ID.
+- **Operating Agreement drafted and delivered** as a .docx. Not filed
+  anywhere; signed and kept on file, and the bank will ask for it.
+- EIN was already issued (recorded above). IRS name line is `ONLY ONE`.
+
+**The EIN, the registered-agent street address and the legal name stayed out
+of `MONDAY.md` as well as this file**, even though the founder's own paste
+contained all three — the repo is on GitHub and the address rule is closed
+(see above). Both numbers are on documents he already holds.
+
+### The trademark question, which is new and is the real item
+
+Raised in that conversation, not by me, and it lands after the entire rename
+is complete: **"OnlyOne" is close to "OnlyFans" in the same product category**
+— creator subscriptions and content sales. Similar mark plus identical
+services is the shape a trademark claim is built on, and OnlyFans' parent
+(Fenix International) has pursued similarly-named platforms.
+
+It is load-bearing because the name is now in the domains, the token ticker,
+the LLC name, the contract identifiers and every page of copy — all changed
+this week. The cost of moving off it scales with audience and time: today it
+is a find-and-replace and new domains; after launch it is a brand rebuild; a
+cease-and-desist makes it a rebuild on someone else's schedule. **A clearance
+search from a trademark attorney is the answer here, not a judgement from me
+or from a chat.** Nothing changed over it; recorded so the call is made
+deliberately.
+
+### Socials: claim now, launch later — and one live conflict
+
+Told him claiming handles now is right and needs no approved LLC, but that
+until SOS approval there is no liability shield, so no money and no
+"we're live" as a business.
+
+**Safe to link publicly: only `/` and `/founding-creator`.** Both are ungated,
+carry no creator content, work from the 27 blocked states, and `/` is the one
+page with a social card. Every other page is a dead end for a chunk of the
+audience. The waitlist shipped the same day is what makes those links do
+something.
+
+**Flagged, not resolved: creator signup and the Founding Creator programme
+are already live**, which sits against the "don't onboard creators yet"
+advice. No money can move (there is no payment processing at all), so nothing
+financial is happening inside an unformed entity — but creators can submit
+profiles today. Founder's call whether to pause recruitment until Monday; not
+changed unilaterally.
