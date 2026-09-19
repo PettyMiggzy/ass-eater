@@ -2744,3 +2744,59 @@ None of this is launch-blocking (server/ still isn't deployed), but the
 KYC-approval and error-leak items in particular are worth a real look
 before it ever is, rather than trusting a day-old commit message that
 they were fixed.
+
+## Cartoon demo roster replaced with two photorealistic personas (2026-09-19)
+
+Founder: *"i dont like the animated cartoon images u made... just be one or
+two of those."* Turns out the ENTIRE 6-creator seed roster
+(`data/creators.js`) was illustrated/anime-style, not just the "Mascot
+Official" avatar -- all generated earlier this session with Venice but with
+an illustration-leaning model/prompt, "Venice" watermark visible in the
+source images. Cut down to exactly 2 real-looking demo personas per his
+direct instruction on count: one female, one male, both `price: 'Free'`,
+both explicitly bio'd as a "how it works" example rather than real accounts.
+
+**The Venice key in `.env.local` was dead** -- 401 on every real endpoint
+(`/image/generate`, `/chat/completions`, even `/api_keys`), only `/models`
+worked. Said so plainly rather than guessing around it; founder pushed
+back ("thats a lie i use it") and supplied a fresh key
+(`VENICE_ADMIN_KEY_...`), which worked immediately. **Root cause was mine,
+not the key**: `cut -d= -f2-` on the `.env.local` line left the surrounding
+double-quotes IN the extracted value, so every request sent a Bearer token
+with literal `"` characters in it. Worth remembering next time a
+`KEY="value"`-style .env line gets shell-parsed by hand -- strip quotes
+before trusting the parse, don't blame the credential first.
+
+New images generated with `seedream-v5-pro` (photorealistic, uncensored,
+`hide_watermark: true` -- confirmed clean, no watermark this time): each
+persona is an avatar + 2 gallery shots (female: lingerie bedroom, poolside
+bikini; male: gym, poolside), matching the site's existing content
+explicitness level (the founder's own call when asked, not assumed).
+Prompts kept the same physical descriptors across all 3 shots per persona
+so they read as consistently the same person.
+
+**Swept while in there, same complaint in a more visible spot:**
+`pages/home.js` -- the actual homepage most visitors see first -- had 4 of
+its own hero/marketing image references pointing at the same cartoon
+content shots (including a "REAL PEOPLE. REAL CONNECTIONS." tagline sitting
+directly on top of an illustrated background). All 4 swapped to the new
+realistic photos. Also deleted every now-orphaned illustration asset: the
+old 6-image gallery set, every `content_*` shot, their matching orphaned
+videos (`gym/jiggle/night/pool/street/sunset.mp4` -- `splash.mp4` untouched,
+still in use), and three completely unreferenced leftovers from before the
+OnlyOne rebrand (`logo-explicit.png`, `logo-transparent.png`,
+`marketplace-header.png`) that still had "Only Ass" baked into the pixels
+and weren't rendered anywhere live.
+
+**Deliberately left alone: `mascot.png`.** Still the illustrated mascot,
+still cartoon-style, but it's a generic "no avatar yet" system fallback used
+in 4 places (pending creator applications with no photo yet, a marketplace
+listing whose creator got deleted, `lib/founding.js`'s placeholder-avatar
+check) -- not a demo creator profile. Swapping a generic empty-state
+placeholder for a specific realistic-looking face would be a stranger kind
+of placeholder than an illustrated mascot is, so this is flagged for a
+decision rather than changed silently.
+
+Verified against a real production server on the local test database (not
+just a clean build): `/`, `/home`, `/creators` all 200, all six new image
+files serve correctly. 107 store tests pass, `next build` clean.
