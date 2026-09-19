@@ -160,6 +160,23 @@ export default async function handler(req, res) {
     }
   }
 
+  // Same gap as the creator's own editor: sanitizeSocials only bounds
+  // shape/length, so a "handle" field could still read "text me at
+  // 555-123-4567" and show up publicly on the profile untouched.
+  if (safeFields.socials) {
+    const existingSocials = (existing && existing.socials) || {};
+    for (const [field, value] of Object.entries(safeFields.socials)) {
+      if (String(value ?? '') === String(existingSocials[field] ?? '')) continue;
+      const check = detectPaymentCircumvention(value);
+      if (check.flagged) {
+        await addViolation({ userId: `admin-edit:creator:${creatorId}`, context: `social_${field}`, reasons: check.reasons, snippet: value });
+        return res.status(400).json({
+          error: `Nothing was saved -- the ${field} link looks like it's trying to move a payment off-platform, which isn't allowed here (flagged: ${check.reasons.join(', ')}). Clear it and save again.`,
+        });
+      }
+    }
+  }
+
   try {
     const creator = await updateCreatorProfile(creatorId, safeFields);
     return res.status(200).json({ ok: true, creator });

@@ -42,6 +42,19 @@ export default async function handler(req, res) {
     }
   }
 
+  // sanitizeSocials only bounds shape/length -- it does not stop a "handle"
+  // field from actually being "cashapp $handle, text me at 555-123-4567".
+  // Public-facing the same way name/handle/bio are, so it gets the same gate.
+  if (safeFields.socials) {
+    for (const [field, value] of Object.entries(safeFields.socials)) {
+      const check = detectPaymentCircumvention(value);
+      if (check.flagged) {
+        await addViolation({ userId: ctx.user.id, context: `social_${field}`, reasons: check.reasons, snippet: value });
+        return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+      }
+    }
+  }
+
   try {
     const creator = await updateCreatorProfile(ctx.creator.id, safeFields);
     return res.status(200).json({ ok: true, creator });
