@@ -1,6 +1,7 @@
 import Head from 'next/head';
 import { Mark, Icons, FoundingBadge } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
+import { PREVIEW_COOKIE_NAME, previewModeEnabled, previewSecret, verifyPreviewToken } from '../lib/preview-access';
 import { getCreators } from '../lib/creators-store';
 import {
   FOUNDING_LIMIT,
@@ -28,7 +29,7 @@ import {
  * already running. See lib/founding.js for why the clock is deferred.
  */
 
-export async function getServerSideProps() {
+export async function getServerSideProps({ req }) {
   // Counts only -- this page never renders a creator, so it never receives
   // one. Nothing to filter, nothing to leak.
   //
@@ -47,7 +48,18 @@ export async function getServerSideProps() {
     console.error('[founding-creator] could not read the creator roster:', err);
   }
 
-  return { props: { taken, left, paymentsLive: !!PAYMENTS_LIVE_AT } };
+  // This page stays public during the pre-launch preview, but /signup does
+  // not -- so without an invite the "claim your spot" button would land on
+  // /coming-soon, which is a dead end for the one visitor this page exists
+  // to convert. When that is the case the button points at the waitlist on
+  // this same page instead.
+  let previewLocked = false;
+  if (previewModeEnabled()) {
+    const token = req.cookies?.[PREVIEW_COOKIE_NAME];
+    previewLocked = !(await verifyPreviewToken(previewSecret(), token));
+  }
+
+  return { props: { taken, left, paymentsLive: !!PAYMENTS_LIVE_AT, previewLocked } };
 }
 
 const PERKS = [
@@ -89,7 +101,7 @@ const PERKS = [
   },
 ];
 
-export default function FoundingCreator({ taken, left, paymentsLive }) {
+export default function FoundingCreator({ taken, left, paymentsLive, previewLocked }) {
   // Unknown counts read as open: the cap is enforced server-side on the
   // actual grant, so the worst case here is one extra applicant, not an
   // over-granted programme.
@@ -194,7 +206,19 @@ export default function FoundingCreator({ taken, left, paymentsLive }) {
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            {open ? (
+            {previewLocked ? (
+              <>
+                <a
+                  href="#waitlist"
+                  className="px-10 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-black tracking-wide transition inline-flex items-center gap-3 shadow-[0_0_40px_rgba(255,45,120,0.35)]"
+                >
+                  GET EARLY ACCESS <span aria-hidden="true">→</span>
+                </a>
+                <p className="text-[11px] tracking-[0.2em] text-gray-500">
+                  CREATOR SIGNUPS OPEN AT LAUNCH — LEAVE YOUR EMAIL AND WE’LL LET YOU IN FIRST
+                </p>
+              </>
+            ) : open ? (
               <a
                 href="/signup?role=creator"
                 className="px-10 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-black tracking-wide transition inline-flex items-center gap-3 shadow-[0_0_40px_rgba(255,45,120,0.35)]"
@@ -216,7 +240,7 @@ export default function FoundingCreator({ taken, left, paymentsLive }) {
             </p>
           </div>
 
-          <div className="mt-12 pt-10 border-t border-white/5">
+          <div id="waitlist" className="mt-12 pt-10 border-t border-white/5 scroll-mt-8">
             <WaitlistForm
               source="founding-creator"
               defaultRole="creator"

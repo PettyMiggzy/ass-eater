@@ -3427,3 +3427,83 @@ advice. No money can move (there is no payment processing at all), so nothing
 financial is happening inside an unformed entity — but creators can submit
 profiles today. Founder's call whether to pause recruitment until Monday; not
 changed unilaterally.
+
+## Pre-launch preview gate: invite link or coming-soon page (shipped 2026-09-19)
+
+Founder: *"make site so only ppl with a special link can see real version
+please so i can add ppl to a wait list or make it a preview website for ppl
+without that link."* Built.
+
+Everyone without the link gets `/coming-soon` — wordmark, three honest lines
+about what the product will do, and the waitlist. Anyone with the link gets
+the real site. **`PREVIEW_ACCESS_KEY` in Vercel production is both the key
+and the switch: delete that one variable and redeploy to launch.** One
+variable, so the key and the gate can never disagree about whether preview
+mode is on.
+
+The link is `?preview=<key>` on ANY path, handled in `proxy.js`: it verifies,
+sets a signed 90-day `oa_preview` cookie, and **redirects to strip the key
+from the URL** — otherwise it sits in the address bar, in screenshots, and in
+the Referer of every outbound link. A wrong key redirects the same way and
+lands on `/coming-soon`; saying "wrong key" would confirm to a guesser that
+the parameter is real.
+
+### The thing that must not be broken by this
+
+**An invite gets you to the real site. It does NOT get you past the 27-state
+age verification.** Two separate checks, two separate cookies, both must
+pass; the preview check runs first and the age gate is untouched below it.
+Verified against a real `next start`, not read over:
+
+- invite + Texas → still the blocked-region page, `/api/*` still 451, and
+  `/images/demo_female_1.jpg` still serves the gate HTML rather than the file
+- invite + New York → real site, real `image/jpeg`
+- no invite → `/coming-soon` everywhere, `/api/*` 403 `not_launched_yet`
+- **cross-token replay in both directions is rejected**: a valid `oa_preview`
+  pasted into the `oa_age_verified` slot does not pass age verification, and
+  a valid age token pasted into `oa_preview` does not pass the preview gate,
+  while each still works in its own slot. `lib/preview-access.js` derives its
+  key from the shared root secret with its own context string
+  (`oa:preview:v1`) and stamps `typ: 'preview_access'` — the same two-layer
+  guard that fixed the session/age-token confusion bug recorded above. There
+  are now THREE token types on one root secret; any fourth must do the same.
+- with `PREVIEW_ACCESS_KEY` unset the site behaves exactly as before, and
+  `?preview=` sets no cookie at all
+
+### Public without an invite, and why each one has to be
+
+`/coming-soon`, `/founding-creator` (recruiting is the point of being public
+pre-launch), `/terms`, `/privacy`, `/2257` (a processor doing onboarding
+review and a regulator both have to read these), `/report-content` (the TAKE
+IT DOWN Act requires it freely accessible — an invite-only takedown form is
+not freely accessible), `/blocked-region` and `/verify-age` (so the age flow
+can still complete for someone who does hold an invite). APIs:
+`/api/waitlist`, `/api/report-content`, `/api/age-verify/`.
+
+**`/` is deliberately not on that list** — without an invite it serves
+`/coming-soon`, which is the whole feature. The mirror hosts land there too
+(`shoponeonly.com` → `/marketplace` → coming-soon), which is correct.
+
+`/coming-soon` was added to `_app.js`'s `NO_NOTICE_PATHS` in the same commit,
+and that file now carries a comment saying the two lists move together — the
+blank-page failure has already happened once, to `/terms` and `/2257`.
+
+### Two knock-on details
+
+- **`/founding-creator` stays public but `/signup` does not**, so its "claim
+  your spot" button would have dead-ended on `/coming-soon` — the one visitor
+  that page exists to convert. Without an invite the CTA becomes "GET EARLY
+  ACCESS" pointing at the waitlist on the same page. `previewLocked` is
+  resolved in `getServerSideProps`.
+- **The `?preview=` check is not rate-limited.** Edge middleware has no
+  shared counter (`lib/rate-limit.js` is in-memory Node), so the key carries
+  the entropy instead: 20 random hex characters. Not a security boundary
+  anyway — it hides an unfinished product; the age gate is what has to hold
+  and it is a different check with a different cookie.
+
+**This also settles the open conflict from `MONDAY.md`**: creator signup is
+no longer reachable without an invite, so nobody can onboard into an
+unformed entity by accident. Recruitment copy stays public; the signup
+itself does not.
+
+179 live-site tests pass, `next build` clean.

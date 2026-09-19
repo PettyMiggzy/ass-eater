@@ -1,5 +1,16 @@
 import { NextResponse } from 'next/server';
 import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, verifyAgeVerificationToken } from './lib/age-verification';
+import {
+  PREVIEW_COOKIE_NAME,
+  PREVIEW_COOKIE_MAX_AGE,
+  PREVIEW_QUERY_PARAM,
+  createPreviewToken,
+  previewAccessKey,
+  previewKeyMatches,
+  previewModeEnabled,
+  previewSecret,
+  verifyPreviewToken,
+} from './lib/preview-access';
 
 // One Vercel project behind several domains, each serving different content
 // based on hostname.
@@ -97,6 +108,52 @@ const SFW_PREFIXES = [];
 // These three qualify; almost nothing else will.
 const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content', '/api/waitlist'];
 
+// ---------------------------------------------------------------------------
+// PRE-LAUNCH PREVIEW GATE
+// ---------------------------------------------------------------------------
+// While PREVIEW_ACCESS_KEY is set, the real site is only served to visitors
+// holding the invite link; everyone else gets /coming-soon and the waitlist.
+// Delete that env var to launch.
+//
+// THIS IS A SEPARATE CHECK FROM THE AGE GATE AND DOES NOT REPLACE IT. An
+// invite gets you to the real site; it does not get you past the 27-state
+// verification, which still runs below on exactly the same paths as before.
+// Both have to pass. Do not "simplify" these into one check.
+//
+// What stays public without an invite, and why each one has to be:
+//   /coming-soon      the preview site itself
+//   /founding-creator the creator recruitment pitch -- the point of being
+//                     public pre-launch is recruiting, and it carries no
+//                     creator content (same hard rule as "/")
+//   /terms /privacy   a payment processor doing onboarding review and a
+//   /2257             regulator reading the record-keeping statement both
+//                     have to be able to read these without an invite
+//   /report-content   required by the TAKE IT DOWN Act to be freely
+//                     accessible -- an invite-only takedown form is not
+//                     freely accessible
+//   /blocked-region   the age-gate pages themselves, so that flow can still
+//   /verify-age       complete for someone who DOES hold an invite
+//
+// "/" is deliberately NOT here: without an invite it serves /coming-soon,
+// which is the whole feature. Anything added to these lists must carry no
+// creator content and need no account.
+const PREVIEW_PUBLIC_PATHS = new Set([
+  '/coming-soon', '/founding-creator', '/terms', '/privacy', '/2257',
+  '/report-content', '/blocked-region', '/verify-age',
+]);
+
+// The waitlist is the entire job of the preview site, so its endpoint has to
+// work without an invite -- exactly the same lesson as the age gate, where
+// exempting the page and forgetting the API left a form that rendered and
+// then refused on submit. A page and the endpoint it posts to are exempted
+// together or not at all.
+const PREVIEW_PUBLIC_API_PREFIXES = ['/api/waitlist', '/api/report-content', '/api/age-verify/'];
+
+function isPreviewPublic(path) {
+  if (PREVIEW_PUBLIC_PATHS.has(path)) return true;
+  return PREVIEW_PUBLIC_API_PREFIXES.some((p) => path === p || path.startsWith(p));
+}
+
 // Pages Router serves every getServerSideProps payload at
 // /_next/data/<buildId>/<page>.json. The matcher used to exclude _next/
 // wholesale, so those never reached this proxy at all: a blocked-state
@@ -135,6 +192,57 @@ export async function proxy(request) {
   const hostTarget = HOST_ROUTES[host];
   const requested = servedPageFor(pathname);
   const servedPath = hostTarget && requested === '/' ? hostTarget : requested;
+
+  if (previewModeEnabled()) {
+    const secret = previewSecret();
+
+    // The invite link is ?preview=<key> on ANY path, so one link works
+    // whether it is pasted bare or pointed at a specific page. Redirect
+    // rather than continue, so the key is stripped from the URL before the
+    // page renders -- otherwise it ends up in the address bar, in a
+    // screenshot, and in the Referer header of every outbound link.
+    const offered = request.nextUrl.searchParams.get(PREVIEW_QUERY_PARAM);
+    if (offered !== null) {
+      const url = request.nextUrl.clone();
+      url.searchParams.delete(PREVIEW_QUERY_PARAM);
+      const response = NextResponse.redirect(url);
+      if (await previewKeyMatches(offered, previewAccessKey())) {
+        response.cookies.set(PREVIEW_COOKIE_NAME, await createPreviewToken(secret), {
+          httpOnly: true,
+          // Lax, not Strict: the whole point is that the link is followed
+          // from somewhere else (a DM, a post, an email), and Strict would
+          // withhold the cookie on exactly that first cross-site navigation.
+          sameSite: 'lax',
+          secure: request.nextUrl.protocol === 'https:',
+          path: '/',
+          maxAge: PREVIEW_COOKIE_MAX_AGE,
+        });
+      }
+      // A wrong key redirects too, and lands on /coming-soon like anyone
+      // else. Saying "wrong key" would confirm to a guesser that the
+      // parameter is real and that they are close.
+      return response;
+    }
+
+    if (!isPreviewPublic(servedPath)) {
+      const hasInvite = await verifyPreviewToken(secret, request.cookies.get(PREVIEW_COOKIE_NAME)?.value);
+      if (!hasInvite) {
+        // Same reasoning as the age gate below: a fetch() or a props
+        // request gets JSON, not a page of HTML that reads as a parse bug.
+        const isDataRequest = request.headers.get('x-nextjs-data') === '1';
+        if (isDataRequest || pathname.startsWith('/api/')) {
+          return new NextResponse(JSON.stringify({ error: 'not_launched_yet' }), {
+            status: 403,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        // Rewrite, not redirect: the URL someone was sent stays in their
+        // address bar, so it still works the moment they get an invite or
+        // the site launches.
+        return NextResponse.rewrite(new URL('/coming-soon', request.url));
+      }
+    }
+  }
 
   if (!isExempt(servedPath)) {
     const country = request.headers.get('x-vercel-ip-country');

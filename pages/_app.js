@@ -39,8 +39,14 @@ import { Lockup } from '../components/Brand';
 //    /2257 and /terms were serving a 2.4KB EMPTY DOCUMENT to anything that
 //    doesn't run JavaScript. The two exemptions have to agree, the same way
 //    /report-content's already do.
+// A page exempted from the state age gate in proxy.js MUST also be listed
+// here, and vice versa. The notice below return-nulls on its first render,
+// so a page exempted from one and not the other serves an EMPTY document --
+// which looks like nothing is wrong. That has already happened once, to
+// /terms and /2257, silently undoing an exemption they had been given hours
+// earlier. Change the two lists together.
 const NO_NOTICE_PATHS = new Set([
-  '/', '/founding-creator', '/report-content', '/blocked-region', '/verify-age',
+  '/', '/coming-soon', '/founding-creator', '/report-content', '/blocked-region', '/verify-age',
   '/terms', '/privacy', '/2257',
 ]);
 
