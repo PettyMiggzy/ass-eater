@@ -608,8 +608,8 @@ function ShareKit({ creator, foundingLeft }) {
   const [origin, setOrigin] = useState('');
 
   // window is not available during SSR, and hardcoding a domain would break
-  // the link on every other host this project serves (onlyone1.fun,
-  // onlyass.fun, preview deployments).
+  // the link on every other host this project serves (joinonlyone.com,
+  // onlyass.fun, onlyone1.fun, preview deployments).
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
@@ -863,7 +863,7 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
 
   return (
     <div>
-      <h3 className="font-bold text-brand-gold mb-3">Sell on the Marketplace (onlyass.shop)</h3>
+      <h3 className="font-bold text-brand-gold mb-3">Sell on the Marketplace (shoponeonly.com)</h3>
       <p className="text-xs text-gray-500 mb-4">
         List images, videos, or anything else at whatever price you want. Platform takes 10% commission + a 5%
         listing fee on top when it sells. Buying isn't live yet — listings show up on the Marketplace now, ready

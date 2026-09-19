@@ -9,7 +9,7 @@ import { isFoundingCreator } from '../lib/founding';
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
 // instead of leaving the domain (same reasoning as gateway.js's MAIN_SITE).
-const MAIN_SITE = 'https://onlyass.fun';
+const MAIN_SITE = 'https://joinonlyone.com'; // primary domain as of 2026-09-19 -- onlyass.fun still works as a mirror
 
 const KINDS = [
   { value: 'all', label: 'All' },

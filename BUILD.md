@@ -16,14 +16,20 @@ pay-per-view content and messages, and buy from a marketplace. Creators keep
 
 There is also a token, `$ONLYONE`. **It is not money** — see [Token](#token).
 
-**Domains**
-| Host | Serves |
-|---|---|
-| `onlyass.fun` | the platform (default) |
-| `onlyone1.fun` | same platform, second front door |
-| `onlyass.xyz` | `/token` — token landing, no adult content |
-| `onlyass.online` | `/gateway` — SFW entry page |
-| `onlyass.shop` | `/marketplace` |
+**Domains** (decided 2026-09-19: `joinonlyone.com` / `shoponeonly.com` are
+primary going forward; every earlier domain stays live as a mirror, DNS is
+being pointed at Vercel now)
+| Host | Serves | Role |
+|---|---|---|
+| `joinonlyone.com` | the platform (default) | **primary** |
+| `shoponeonly.com` | `/marketplace` | **primary** |
+| `onlyass.fun` | the platform (default) | mirror |
+| `onlyone1.fun` | the platform (default) | mirror |
+| `onlyass.xyz` | `/token` — token landing, no adult content | mirror |
+| `onlyass.online` | `/gateway` — SFW entry page | mirror |
+| `onlyass.shop` | `/marketplace` | mirror |
+
+Contact: `team@onlyone1.fun`.
 
 ---
 
@@ -194,12 +200,13 @@ programme.
 
 ## Blocked on the founder
 
-1. **`onlyone1.fun` returns 403** from Vercel Firewall.
-2. **`ORDERS_ENCRYPTION_KEY`** is not set in production. Marketplace orders
-   throw without it — correct behaviour rather than storing a shipping
-   address in the clear — and order creation is 501 anyway until payments
-   exist, so this is needed before the marketplace can sell, not before it
-   can browse.
+1. **`onlyone1.fun` returns 403** from Vercel Firewall — separate from the
+   domain move above, still needs a look in the dashboard.
+2. ~~`ORDERS_ENCRYPTION_KEY`~~ — **done 2026-09-19**, set in Vercel production.
+3. **`joinonlyone.com` / `shoponeonly.com` DNS** — being pointed at Vercel now.
+   Once resolving, add both as domains on the `onlyass` Vercel project
+   (Settings → Domains) so Vercel issues certificates and routes them; the
+   app-side routing in `proxy.js` is already live and waiting for them.
 3. Rotate the Venice key when this build is finished (it has been pasted into
    a transcript).
 4. Decide: the `$ONLYONE` deposit balance has no consumer since VIP became

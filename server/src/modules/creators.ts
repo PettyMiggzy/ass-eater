@@ -2,10 +2,20 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { isAddress } from 'viem';
-import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds , postPlatformRevenue} from '../core/ledger';
+import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, postPlatformRevenue, getTopSupporters } from '../core/ledger';
 import { isSubscribed } from '../core/access';
 
 export const creators: FastifyPluginAsync = async (app) => {
+  // Creator-only analytics -- see the privacy note on getTopSupporters() for
+  // why this is not a public badge on the creator's page.
+  app.get('/me/top-supporters', { preHandler: app.creatorOk }, async (req: any) => {
+    const limit = Math.min(Number(req.query.limit ?? 10), 50);
+    const rows = await money(prisma, (tx) => getTopSupporters(tx, req.user.id, limit));
+    const users = await prisma.user.findMany({ where: { id: { in: rows.map(r => r.fanId) } }, select: { id: true, username: true } });
+    const byId = new Map(users.map(u => [u.id, u.username]));
+    return rows.map(r => ({ fanId: r.fanId, username: byId.get(r.fanId) ?? null, totalCents: r.totalCents }));
+  });
+
   // Public only once KYC-approved -- the same bar discovery (GET / and /tags)
   // applies and the same one app.creatorOk gates publishing/selling on. Without
   // it a brand-new, never-verified signup was fully reachable by direct link

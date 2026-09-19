@@ -170,7 +170,7 @@ export default function Landing() {
             <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">
               Report Non-Consensual Content
             </a>
-            <a href="mailto:support@onlyass.fun" className="hover:text-brand-pink transition">Contact</a>
+            <a href="mailto:team@onlyone1.fun" className="hover:text-brand-pink transition">Contact</a>
           </div>
           <p className="text-[11px] text-gray-600 text-center">
             18+ only. OnlyOne contains adult content available to verified adults.

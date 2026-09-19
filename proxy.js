@@ -1,14 +1,29 @@
 import { NextResponse } from 'next/server';
 import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, verifyAgeVerificationToken } from './lib/age-verification';
 
-// Only Ass runs on one Vercel project behind several domains, each serving
-// different content based on hostname:
-//   onlyass.fun    -> the full platform (default, no rewrite)
-//   onlyass.xyz    -> token-only landing page (crypto-native TLD, kept
-//                     separate from adult content for exchange/listing sites)
-//   onlyass.online -> SFW age-gate gateway that redirects into onlyass.fun
-//   onlyass.shop   -> creator marketplace landing page
+// One Vercel project behind several domains, each serving different content
+// based on hostname.
+//
+// GOING FORWARD (decided 2026-09-19): joinonlyone.com is the primary domain
+// and shoponeonly.com is the marketplace domain. Every earlier domain
+// (onlyass.fun, onlyone1.fun, onlyass.xyz, onlyass.online, onlyass.shop) stays
+// live and stays a MIRROR -- same routing as before, nothing removed. Nobody
+// who already has one of the old links loses it; new marketing/signage points
+// at the new ones.
+//
+//   joinonlyone.com  -> the full platform (default, no rewrite) [PRIMARY]
+//   shoponeonly.com  -> creator marketplace landing page        [PRIMARY]
+//   onlyass.fun      -> the full platform (default, no rewrite) [mirror]
+//   onlyone1.fun     -> the full platform (default, no rewrite) [mirror]
+//   onlyass.xyz      -> token-only landing page (crypto-native TLD, kept
+//                       separate from adult content for exchange/listing
+//                       sites)                                  [mirror]
+//   onlyass.online   -> SFW age-gate gateway that redirects into the
+//                       platform                                [mirror]
+//   onlyass.shop     -> creator marketplace landing page        [mirror]
 const HOST_ROUTES = {
+  'shoponeonly.com': '/marketplace',
+  'www.shoponeonly.com': '/marketplace',
   'onlyass.xyz': '/token',
   'www.onlyass.xyz': '/token',
   'onlyass.online': '/gateway',
@@ -64,10 +79,11 @@ export async function proxy(request) {
   // visitor typed. Some hosts rewrite their root to a different page, and
   // one of them (onlyass.shop -> /marketplace) rewrites to adult content:
   // exempting "/" by the requested path alone would hand that host an
-  // ungated marketplace. Resolving the rewrite first means onlyass.fun/
-  // gets the public landing and is exempt, onlyass.xyz/ gets /token and is
-  // exempt, and onlyass.shop/ gets /marketplace and is checked like any
-  // other page.
+  // ungated marketplace. Resolving the rewrite first means joinonlyone.com/
+  // (and onlyass.fun/, onlyone1.fun/) get the public landing and are
+  // exempt, onlyass.xyz/ gets /token and is exempt, and shoponeonly.com/
+  // (and onlyass.shop/) get /marketplace and are checked like any other
+  // page.
   const hostTarget = HOST_ROUTES[host];
   const servedPath = hostTarget && pathname === '/' ? hostTarget : pathname;
 

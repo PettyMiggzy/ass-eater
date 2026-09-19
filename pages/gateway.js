@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import Head from 'next/head';
 
-const MAIN_SITE = 'https://onlyass.fun';
+const MAIN_SITE = 'https://joinonlyone.com'; // primary domain as of 2026-09-19 -- onlyass.fun still works as a mirror
 
 export default function Gateway() {
   useEffect(() => {

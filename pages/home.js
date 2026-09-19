@@ -263,7 +263,7 @@ export default function Home({ creators }) {
               <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">
                 Report Non-Consensual Content
               </a>
-              <a href="mailto:support@onlyass.fun" className="hover:text-brand-pink transition">Contact</a>
+              <a href="mailto:team@onlyone1.fun" className="hover:text-brand-pink transition">Contact</a>
             </div>
             <p className="text-gray-500 text-xs max-w-2xl mx-auto mb-2 text-center">
               18+ only. This site contains adult content. $ONLYONE is a meme token for entertainment purposes —

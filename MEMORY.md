@@ -2429,3 +2429,112 @@ endpoint were both deleted -- there is nothing left to migrate, and a working
 "bulk-write the whole database" admin route has no reason to outlive its job.
 
 102 store tests, 10 session, 5 profile, filter suite, `next build` clean.
+
+## Primary domains change: joinonlyone.com / shoponeonly.com (2026-09-19)
+
+Founder: *"our website going forward is joinonlyone.com is main and shop is
+shoponeonly.com... all other sites are still in vercel and can be mirrors for
+now setting dns now."* Email going forward: `team@onlyone1.fun`.
+
+**Nothing was removed.** `onlyass.fun`, `onlyone1.fun`, `onlyass.xyz`,
+`onlyass.online` and `onlyass.shop` all keep exactly the routing they had --
+they are mirrors now, not replaced. `proxy.js`'s `HOST_ROUTES` gained
+`shoponeonly.com`/`www` -> `/marketplace`; `joinonlyone.com` needs no entry,
+since it's the default (unrewritten) host, same as `onlyass.fun` always was.
+
+Canonical outbound links (`MAIN_SITE` in `gateway.js`/`marketplace.js`,
+the token roadmap line) now point at `joinonlyone.com`. The referral link on
+the dashboard needed no change -- it was already built from
+`window.location.origin`, never hardcoded, so it already follows whichever
+mirror a creator happens to be on. Contact email swapped from
+`support@onlyass.fun` to `team@onlyone1.fun` on both the gated and public
+landing footers.
+
+**Still needed, DNS-side and Vercel-side, not code**: once DNS resolves,
+`joinonlyone.com` and `shoponeonly.com` need to be added as domains on the
+`onlyass` Vercel project (Settings -> Domains) for Vercel to issue TLS certs
+and route them. The app has been waiting for them since this commit.
+
+## Sitewide pink retheme -- "redesign it all" (2026-09-19)
+
+Founder: *"redesign it all."* Done as a single-lever palette change rather
+than a page-by-page rewrite, and that was a deliberate choice worth recording.
+
+Every legacy page (dashboard, admin, search, login, signup, favorites,
+become-creator, token, get-crypto, blocked-region, verify-age) was built
+against shared primitives -- `.premium-button`/`.premium-card`/`.premium-title`
+in `styles/globals.css`, and Tailwind's `brand-gold`/`brand-purple`/
+`brand-primary`/`brand-secondary`/`gradient-luxury` tokens in
+`tailwind.config.js` -- rather than one-off colors per page. Repainting those
+two files cascades the OnlyOne pink/ink look across every page that uses them,
+with zero page-level edits and therefore zero risk to any of the logic those
+pages carry (VIP, uploads, orders, the share kit, listings).
+
+What changed: `gold`/`primary` now resolve to the bright pink (`#ff2d78`),
+`gold-light`/`secondary` to a soft pink (`#ff8fb8`), and -- the one
+non-obvious call -- `purple`/`accent` now resolve to a near-black ink tone
+(`#1a0f16`) rather than being retired or replaced with a second pink. That
+was deliberate: a `border-brand-purple/30` used everywhere as a card/input
+border now reads as the same subtle dark border the redesigned pages already
+get from `border-white/10`, instead of a royal-purple tint that no longer
+matches anything. The body background, scrollbar and text-selection color
+all followed the same swap.
+
+**The names were kept even though the colors changed.** `brand-gold`,
+`brand-purple`, `.premium-card` etc. still exist under those names --
+renaming them would have meant touching every call site for a purely
+cosmetic reason, with real risk of missing one. Confirmed by grepping the
+compiled production CSS: 56 occurrences of the new pink hex, zero of the old
+gold/purple ones.
+
+**Not done, and worth being clear about the boundary:** this is a full color
+retheme, not a structural rebuild. Legacy pages did not gain `SiteNav`, and
+bespoke layouts (the dashboard's own header, the admin panel's own auth
+gate) were not restructured to match the newer pages' component patterns.
+That is a real, larger job if wanted next.
+
+## Credits display convention: built for when it's needed (2026-09-19)
+
+The founder's earlier open question (show fans "USDG" or "credits") is
+formalized in code now, even though no live balance UI exists yet to consume
+it -- so it's decided once rather than re-litigated per screen whenever the
+payment stack deploys. `lib/brand.js`'s `formatCredits(cents)` renders both
+forms together: `"50 credits ($50.00)"`. 5 tests
+(`lib/brand.test.mjs`) cover singular/plural, fractional credits, zero, and
+thousands separators on both the credit count and the dollar figure.
+
+## Top Supporter placement: built, and NOT wired to anything public (2026-09-19)
+
+The last unbuilt VIP perk from the earlier list. `getTopSupporters()`
+*(server, `core/ledger.ts`)* ranks a creator's paying fans by lifetime
+revenue and returns only fans who are **currently VIP** -- a fan who spends a
+fortune but never subscribes to VIP does not appear, however much they've
+paid, which is the entire point of the perk (it is a reason to become VIP,
+not a leaderboard).
+
+Required one small, safe addition to `charge()`: the creator-side ledger
+posting now carries `fanId` in its meta, which is what makes "how much has
+this specific fan paid this specific creator" answerable from the ledger at
+all -- it wasn't previously. Restricted with `"type"::text = ANY([...])`
+to the actual fan-payment charge types, so a creator's own PAYOUT,
+PLATFORM_FEE, REFERRAL or TOKEN_BURN entries can never be miscounted as fan
+spend (tested directly: a REFERRAL entry with a coincidental `fanId` in its
+meta is correctly excluded). Capped at 200 candidate fans before the VIP
+check runs, to bound the query.
+
+**Deliberately not wired to any public page, and this is a judgment call
+worth the founder seeing rather than a decision quietly made for him.**
+Badging a fan's username as a "top supporter" next to their public comments
+or in a shared thread outs them as a paying customer of adult content to
+anyone who can see it -- a real cost on a platform that otherwise lets fans
+sign up under a bare username specifically so a partner or employer can
+never make that link. Built instead as a creator-facing analytics endpoint
+(`GET /creators/me/top-supporters`, creator-auth only) -- "see who your best
+VIP supporters are," private to the creator. If a public badge is wanted
+later, it should be opt-in per fan, not automatic -- flagged, not decided.
+
+6 new tests (`ledger.top-supporters.test.ts`): ranks correctly, excludes a
+non-VIP whale entirely, excludes a lapsed VIP, never miscounts a non-charge
+ledger type, sums multiple payments rather than only the latest, and never
+leaks one creator's supporters into another's query. 83 server tests pass
+(was 77), tsc clean.

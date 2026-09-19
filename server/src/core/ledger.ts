@@ -122,6 +122,51 @@ export async function creditDeposit(
 }
 
 /**
+ * Fans a creator earns the most from, restricted to CURRENT VIP members.
+ *
+ * This is the "Top Supporter placement" VIP perk: a fan who spends a fortune
+ * but isn't VIP does not appear here, however much they've paid -- that is
+ * what makes the badge worth having to someone who already spends a lot.
+ * Ranked by lifetime revenue from that fan, not spend in any window.
+ *
+ * Reads LedgerEntry.meta.fanId, which charge() writes on the creator-side
+ * posting of every fan payment. Restricted to the charge types that are
+ * actually a fan paying a creator -- a creator's own PAYOUT, PLATFORM_FEE,
+ * REFERRAL and TOKEN_BURN entries live on the same ledger and must never be
+ * grouped in with fan spend.
+ *
+ * Capped at 200 candidate fans before the VIP check runs, so a creator with
+ * an unusually large paying audience can't turn this into an unbounded scan.
+ * Worth revisiting if a real creator ever approaches that number.
+ *
+ * DELIBERATELY NOT wired to any public page yet. Badging a fan's name in a
+ * public comment or DM thread as a "top supporter" outs them as a paying
+ * customer of adult content, to anyone who can see that thread -- a real
+ * privacy cost against a platform that otherwise lets fans sign up under a
+ * bare username specifically so a partner/employer never makes that link.
+ * This is a creator-facing analytics number (modules/creators.ts) until
+ * someone decides, explicitly, that a public badge is worth that trade --
+ * and if it ever is, it should be opt-in per fan, not automatic.
+ */
+const FAN_CHARGE_TYPES = ['TIP', 'SUBSCRIPTION', 'PPV', 'MESSAGE_UNLOCK', 'LIVE_TICKET', 'MARKETPLACE_SALE', 'TOKEN_LOCK'];
+
+export async function getTopSupporters(tx: Tx, creatorId: string, limit = 10) {
+  const rows = await tx.$queryRaw<{ fanId: string; totalCents: bigint }[]>`
+    SELECT (meta->>'fanId') AS "fanId", SUM("amountCents") AS "totalCents"
+    FROM "LedgerEntry"
+    WHERE "userId" = ${creatorId}
+      AND "amountCents" > 0
+      AND "type"::text = ANY(${FAN_CHARGE_TYPES})
+      AND meta->>'fanId' IS NOT NULL
+    GROUP BY meta->>'fanId'
+    ORDER BY SUM("amountCents") DESC
+    LIMIT 200
+  `;
+  const withVip = await Promise.all(rows.map(async (r) => ({ fanId: r.fanId, totalCents: Number(r.totalCents), isVip: await isVip(tx, r.fanId) })));
+  return withVip.filter((r) => r.isVip).slice(0, limit);
+}
+
+/**
  * VIP membership is live while vipUntil is in the future.
  *
  * Lives here rather than in core/vip.ts because charge() needs it and
@@ -241,7 +286,10 @@ export async function charge(
   const referral = creatorReferral + fanReferral;
 
   await post(tx, p.fanId, -chargeCents, p.type, p.refId);
-  await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, originalPriceCents: p.grossCents });
+  // fanId rides along so a creator's ledger can be grouped by who paid --
+  // see getTopSupporters() below. Nothing before this needed it; adding it
+  // here is the one safe place, since every fan->creator charge posts here.
+  await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, originalPriceCents: p.grossCents, fanId: p.fanId });
   await postPlatformRevenue(tx, fee - referral, p.refId, { source: p.type });
   if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', p.refId, { for: 'creator' });
   if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', p.refId, { for: 'fan' });
