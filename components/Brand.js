@@ -122,3 +122,58 @@ export const Icons = {
     </Svg>
   ),
 };
+
+/**
+ * Founding Creator badge -- a laurel wreath around a numeral one.
+ *
+ * Drawn, not generated. The raster versions this replaces were made by
+ * keying a black background out of a generated image, and that left a dark
+ * fringe around every leaf which was plainly visible against the site's dark
+ * cards. Vector has no halo to leave, stays sharp from the 16px chip on a
+ * creator profile up to the hero on the recruitment page, takes its colour
+ * from the surrounding text, and weighs a fraction of six PNGs.
+ *
+ * The leaves are placed by transform rather than drawn one at a time:
+ * rotate(theta) turns the coordinate system, translate(0 -34) walks out to
+ * the wreath's radius along it, and the second rotate tilts the leaf about
+ * its own centre. Both sides come from the same numbers, so they match
+ * exactly. The wreath is deliberately open at the top.
+ */
+export function FoundingBadge({ className = 'h-6 w-auto' }) {
+  return (
+    <svg viewBox="-50 -50 100 100" className={className} role="img" aria-label="Founding Creator">
+      <g>
+        <ellipse key="0--1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(-30.0) translate(0 -34) rotate(28)" />
+        <ellipse key="0-1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(30.0) translate(0 -34) rotate(-28)" />
+        <ellipse key="1--1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(-48.57) translate(0 -34) rotate(28)" />
+        <ellipse key="1-1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(48.57) translate(0 -34) rotate(-28)" />
+        <ellipse key="2--1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(-67.14) translate(0 -34) rotate(28)" />
+        <ellipse key="2-1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(67.14) translate(0 -34) rotate(-28)" />
+        <ellipse key="3--1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(-85.71) translate(0 -34) rotate(28)" />
+        <ellipse key="3-1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(85.71) translate(0 -34) rotate(-28)" />
+        <ellipse key="4--1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(-104.29) translate(0 -34) rotate(28)" />
+        <ellipse key="4-1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(104.29) translate(0 -34) rotate(-28)" />
+        <ellipse key="5--1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(-122.86) translate(0 -34) rotate(28)" />
+        <ellipse key="5-1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(122.86) translate(0 -34) rotate(-28)" />
+        <ellipse key="6--1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(-141.43) translate(0 -34) rotate(28)" />
+        <ellipse key="6-1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(141.43) translate(0 -34) rotate(-28)" />
+        <ellipse key="7--1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(-160.0) translate(0 -34) rotate(28)" />
+        <ellipse key="7-1" cx="0" cy="0" rx="4.4" ry="9.6" fill="currentColor" transform="rotate(160.0) translate(0 -34) rotate(-28)" />
+      </g>
+      {/* The numeral is a path, not text, so it renders identically
+          everywhere instead of depending on the viewer's fonts. */}
+      <path d="M-5 -24 L9 -24 L9 26 L-1 26 L-1 -15 L-10 -11 L-12.5 -19 Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** VIP badge -- a solid crown in a ring. Same reasoning as above. */
+export function VipBadge({ className = 'h-6 w-auto' }) {
+  return (
+    <svg viewBox="-50 -50 100 100" className={className} role="img" aria-label="VIP">
+      <circle cx="0" cy="0" r="42" fill="none" stroke="currentColor" strokeWidth="8" />
+      <path d="M-26 10 L-30 -20 L-15 -8 L0 -26 L15 -8 L30 -20 L26 10 Z" fill="currentColor" strokeLinejoin="round" />
+      <rect x="-26" y="14" width="52" height="8" rx="2.5" fill="currentColor" />
+    </svg>
+  );
+}

@@ -263,6 +263,24 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
             </div>
           )}
 
+          {/* A creator account whose profile record is gone (deleted by an
+              admin, or a signup that half-failed) used to render nothing at
+              all below the Log Out button -- a blank page with no
+              explanation. */}
+          {user.role === 'creator' && !creator && (
+            <div className="premium-card p-8">
+              <p className="text-gray-300 mb-2">
+                We can&apos;t find a creator profile attached to this account.
+              </p>
+              <p className="text-gray-400 text-sm mb-6">
+                This usually means the profile was removed. Email{' '}
+                <a href="mailto:team@onlyone1.fun" className="text-brand-pink hover:underline">team@onlyone1.fun</a>{' '}
+                and we&apos;ll sort it out.
+              </p>
+              <a href="/creators" className="premium-button inline-block">Browse Creators</a>
+            </div>
+          )}
+
           {user.role === 'creator' && creator && (
             <div className="premium-card p-6 space-y-6">
               {creator.status === 'pending' && (
@@ -844,11 +862,23 @@ const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: t
 function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia, onToggleStatus }) {
   const [form, setForm] = useState(BLANK_LISTING_FORM);
   const [creating, setCreating] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const submit = async (e) => {
     e.preventDefault();
     const priceCents = Math.round(Number(form.price) * 100);
-    if (!form.title.trim() || !priceCents || priceCents < 100) return;
+    // Says why instead of returning silently. A blank title or a price under
+    // $1 made the Create button look broken -- nothing happened and nothing
+    // explained it.
+    if (!form.title.trim()) {
+      setFormError('Give the listing a title.');
+      return;
+    }
+    if (!Number.isFinite(priceCents) || priceCents < 100) {
+      setFormError('Set a price of at least $1.00.');
+      return;
+    }
+    setFormError('');
     const shippingCents = form.physical ? Math.round(Number(form.shipping) * 100) || 0 : undefined;
     setCreating(true);
     const listing = await onCreate({
@@ -939,6 +969,7 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
             </label>
           </>
         )}
+        {formError && <p className="text-sm text-red-400">{formError}</p>}
         <button type="submit" disabled={creating || busy || disabled} className="premium-button text-sm disabled:opacity-50">
           Create Listing
         </button>

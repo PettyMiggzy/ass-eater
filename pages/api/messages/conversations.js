@@ -1,6 +1,6 @@
 import { getVerifiedSessionUserId } from '../../../lib/session';
 import { getConversationsForUser } from '../../../lib/messages-store';
-import { getUsers } from '../../../lib/users-store';
+import { findUserById } from '../../../lib/users-store';
 import { getCreators } from '../../../lib/creators-store';
 
 export default async function handler(req, res) {
@@ -13,15 +13,30 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Not logged in' });
   }
 
-  const [conversations, users, creators] = await Promise.all([
+  const [conversations, creators] = await Promise.all([
     getConversationsForUser(uid),
-    getUsers(),
     getCreators(),
   ]);
 
+  // One row per counterpart, not the whole users table. This endpoint is
+  // polled for an inbox, and getUsers() pulled every account -- including
+  // every bcrypt hash -- into memory on each call. Nothing was returned to
+  // the client that shouldn't be; it was the read itself that was wrong.
+  const otherIds = [...new Set(
+    conversations
+      .map((c) => c.participantIds.find((id) => String(id) !== String(uid)))
+      .filter((id) => id !== undefined && id !== null)
+      .map(String),
+  )];
+  const others = new Map(
+    (await Promise.all(otherIds.map((id) => findUserById(id))))
+      .filter(Boolean)
+      .map((u) => [String(u.id), u]),
+  );
+
   const enriched = conversations.map((c) => {
     const otherId = c.participantIds.find((id) => String(id) !== String(uid));
-    const otherUser = users.find((u) => String(u.id) === String(otherId));
+    const otherUser = others.get(String(otherId));
     const otherCreator = otherUser?.creatorId
       ? creators.find((cr) => String(cr.id) === String(otherUser.creatorId))
       : null;

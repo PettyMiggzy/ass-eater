@@ -67,6 +67,12 @@ export default async function handler(req, res) {
     const creator = await updateCreatorProfile(ctx.creator.id, safeFields);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
+    // 23505 is the handle-uniqueness index in lib/db.js. Reported as a
+    // conflict with a usable message rather than a 500 with a raw Postgres
+    // error in it.
+    if (err && err.code === '23505') {
+      return res.status(409).json({ error: 'That handle is already taken. Pick another.' });
+    }
     return res.status(500).json({ error: err.message });
   }
 }

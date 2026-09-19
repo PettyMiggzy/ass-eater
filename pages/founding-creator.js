@@ -1,5 +1,5 @@
 import Head from 'next/head';
-import { Mark, Icons } from '../components/Brand';
+import { Mark, Icons, FoundingBadge } from '../components/Brand';
 import { getCreators } from '../lib/creators-store';
 import {
   FOUNDING_LIMIT,
@@ -78,7 +78,7 @@ const PERKS = [
     Icon: Icons.message,
     title: 'REFERRAL REWARDS',
     sub: 'BRING YOUR AUDIENCE',
-    body: 'Your own link. Everyone who joins through it is credited to you, permanently.',
+    body: 'Your own link. Anyone who arrives through it in the next 30 days is credited to you.',
   },
   {
     Icon: Icons.heart,
@@ -122,11 +122,7 @@ export default function FoundingCreator({ taken, left, paymentsLive }) {
         </header>
 
         <main className="relative max-w-4xl mx-auto px-6 pb-20 pt-10 sm:pt-16">
-          <img
-            src="/images/badges/founding-512.png"
-            alt=""
-            className="h-24 w-24 mb-6 drop-shadow-[0_0_30px_rgba(255,45,120,0.35)]"
-          />
+          <FoundingBadge className="h-24 w-24 mb-6 text-brand-pink drop-shadow-[0_0_30px_rgba(255,45,120,0.35)]" />
           <p className="text-[11px] tracking-[0.3em] text-brand-pink mb-5">FOUNDING CREATOR PROGRAMME</p>
 
           <h1 className="text-4xl sm:text-6xl font-black tracking-tight leading-[1.05]">

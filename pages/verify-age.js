@@ -27,6 +27,15 @@ export default function VerifyAge() {
       },
       onclosed: function (done) {
         (async () => {
+          // This fires on ANY close, including the visitor simply backing
+          // out. With no verification started there is nothing to confirm,
+          // and posting anyway showed them a red error for cancelling.
+          if (!verificationUuid) {
+            setStatus('idle');
+            setError('');
+            if (typeof done === 'function') done();
+            return;
+          }
           setStatus('verifying');
           setError('');
           try {
@@ -41,6 +50,9 @@ export default function VerifyAge() {
           } catch (err) {
             setStatus('error');
             setError(err.message);
+            // Cleared so backing out of a retry isn't confirmed against the
+            // same spent uuid.
+            verificationUuid = null;
           } finally {
             if (typeof done === 'function') done();
           }

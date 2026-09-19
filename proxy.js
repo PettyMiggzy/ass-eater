@@ -76,12 +76,13 @@ const BLOCKED_STATE_CODES = new Set([
 // know what we do with their data before verifying.
 const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257']);
 
-// Prefix exemptions, for assets an exempt page actually renders. Without
-// this, /founding-creator serves to a blocked-state visitor with its hero
-// badge broken -- the image request is a separate trip through this proxy
-// and would be rewritten to /blocked-region HTML. Only brand/badge art
-// lives here; creator content never does.
-const SFW_PREFIXES = ['/images/badges/'];
+// Prefix exemptions, for assets an exempt page actually renders. Empty
+// today because every mark the exempt pages draw is inline SVG, so there is
+// no separate request through this proxy to exempt. Kept as the hook: an
+// exempt page that starts loading a real file needs it listed here, or that
+// request gets rewritten to /blocked-region and the page renders broken.
+// Only brand art ever belongs here; creator content never does.
+const SFW_PREFIXES = [];
 
 // The verify-age flow has to be able to complete from a blocked state, and
 // the takedown form is required by the TAKE IT DOWN Act to be freely

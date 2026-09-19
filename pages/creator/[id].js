@@ -11,6 +11,7 @@ import { getWallPostsForCreator } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
 import { viewerMarkFor } from '../../lib/viewer-mark';
 import { isTokenGated, tokenGateLive, formatGate } from '../../lib/token-gate';
+import { FoundingBadge } from '../../components/Brand';
 import SiteNav from '../../components/SiteNav';
 
 export async function getServerSideProps({ req, params }) {
@@ -241,7 +242,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                       title="One of the first 100 creators on OnlyOne"
                       className="inline-flex items-center gap-1.5 text-[10px] tracking-[0.15em] pl-1 pr-2.5 py-1 rounded-full bg-brand-pink text-white font-black align-middle"
                     >
-                      <img src="/images/badges/founding-64.png" alt="" className="h-4 w-4" />
+                      <FoundingBadge className="h-4 w-4" />
                       FOUNDING CREATOR
                     </span>
                   )}
