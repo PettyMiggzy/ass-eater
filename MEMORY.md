@@ -3151,3 +3151,68 @@ before its credentials existed).
 - **Still the biggest open legal item, above §2257:** credits make the
   platform custodial, which is the money-transmission question. Code cannot
   settle it. Before the first dollar.
+
+## EIN issued; entity is "ONLY ONE", single-member, Indiana (2026-09-19)
+
+Founder sent the IRS CP 575 G notice (dated 2026-09-18) as FYI. The entity
+exists and the federal tax ID is issued.
+
+**The EIN itself, the founder's legal name and the address on that notice are
+deliberately NOT written here. This file is committed to a GitHub repo.** He
+has the notice; the IRS only sends it once. Non-sensitive facts worth keeping:
+
+- Legal entity name is **`ONLY ONE`** — two words, no "LLC" in the IRS name
+  line, IRS name control `ONLY`. The bank and any payment processor will
+  match against that string exactly; "OnlyOne" or "OnlyOne LLC" is a
+  different name and causes verification mismatches.
+- **Single-member LLC** ("SOLE MBR" on the notice), so a disregarded entity
+  for federal tax by default. An S-corp election is a CPA question once there
+  is real revenue, not now.
+- **Registered in Indiana.**
+
+### Two consequences that are actually about the code
+
+1. **The address on the EIN notice is residential, and §2257 wants a physical
+   custodian address posted publicly.** This is the concrete version of the
+   warning already recorded above. Using it would put his home address on a
+   public adult site, permanently and scraped. He needs a commercial address
+   (registered agent commercial-address service, or rented commercial space)
+   — and worth an attorney's view, because a pure mail-forwarding virtual
+   office may not satisfy "records are kept at this location and available
+   for inspection." **Do not fill NEXT_PUBLIC_RECORDS_CUSTODIAN_ADDRESS with
+   the EIN address.**
+
+2. **He lives in a state his own site geoblocks.** Indiana is in
+   `BLOCKED_STATE_CODES`, and `OWNER_ACCESS_KEY` is NOT set in Vercel
+   (checked, see below) — so there is no owner bypass and he has to pass a
+   real AgeChecker verification to look at his own live site from home, on
+   every fresh browser and every domain. Sharpens the Indiana question: his
+   own sources say SB 17 is currently enjoined, so blocking IN is
+   over-compliance costing him traffic and personal access. Still his call;
+   still not done unilaterally.
+
+### Vercel production env vars, read directly rather than assumed (2026-09-19)
+
+Set: `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_UPLOAD_KEY`,
+`ORDERS_ENCRYPTION_KEY`, `BLOB_READ_WRITE_TOKEN`, `BLOB_STORE_ID`,
+`BLOB_WEBHOOK_PUBLIC_KEY`, `NEXT_PUBLIC_AGECHECKER_KEY`,
+`AGECHECKER_SECRET_KEY`, `VENICE_API_KEY`, `TRIPO_API_KEY`.
+
+**Not set, and each one gates something:**
+- `RECORDS_ENCRYPTION_KEY` — §2257 records cannot be saved at all until it
+  exists. Must also be backed up outside Vercel.
+- `OWNER_ACCESS_KEY` — no owner bypass exists (see above).
+- `NEXT_PUBLIC_RECORDS_CUSTODIAN_NAME` / `_ADDRESS` — the §2257 statement
+  shows its "being completed" fallback until both are set.
+- `NEXT_PUBLIC_ONLYONE_TOKEN_ADDRESS` — expected; the token is not launched.
+
+**Good news found in the same read: `NEXT_PUBLIC_CONTRACT_ADDRESS` was never
+set in Vercel at all.** The dead $ONLYASS address from the cancelled Kekfun
+auction only ever existed in local `.env.local`, so `/token` in production was
+rendering an empty contract field rather than a live address to send money to.
+The fix shipped earlier today still matters, but the exposure was local-only.
+
+Vercel's own scanner flags `AGECHECKER_SECRET_KEY` as `readable-secret` (it is
+stored as a Config variable rather than a Secret). The founder already made
+that call explicitly — recorded above, not re-raised as a blocker — but it is
+a one-click change if he is in the env settings anyway.
