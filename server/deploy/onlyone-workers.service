@@ -1,5 +1,5 @@
 [Unit]
-Description=Only Ass background workers (deposit-indexer, payout, renewals, transcode)
+Description=OnlyOne background workers (deposit-indexer, payout, renewals, transcode)
 After=network.target postgresql.service redis-server.service onlyone-api.service
 Wants=postgresql.service redis-server.service
 

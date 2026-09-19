@@ -85,7 +85,7 @@ async function sweep() {
   if (doneIds.length) await prisma.deposit.updateMany({ where: { id: { in: doneIds } }, data: { hedgedAt: new Date() } });
 
   await prisma.treasuryHedgeBatch.create({ data: {
-    depositCount: doneIds.length, onlyAssRawIn: sized.amountIn.toString(), usdcRawOut: sized.amountOut.toString(), priceImpactBps: Math.round(sized.impactBps), txHash: hash,
+    depositCount: doneIds.length, onlyOneRawIn: sized.amountIn.toString(), usdcRawOut: sized.amountOut.toString(), priceImpactBps: Math.round(sized.impactBps), txHash: hash,
   } });
 }
 

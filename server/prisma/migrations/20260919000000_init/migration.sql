@@ -260,7 +260,7 @@ CREATE TABLE "MessageUnlock" (
 CREATE TABLE "Account" (
     "userId" TEXT NOT NULL,
     "balanceCents" BIGINT NOT NULL DEFAULT 0,
-    "onlyAssCents" BIGINT NOT NULL DEFAULT 0,
+    "onlyOneCents" BIGINT NOT NULL DEFAULT 0,
     "vipUntil" TIMESTAMP(3),
 
     CONSTRAINT "Account_pkey" PRIMARY KEY ("userId")
@@ -336,7 +336,7 @@ CREATE TABLE "Deposit" (
 CREATE TABLE "TreasuryHedgeBatch" (
     "id" TEXT NOT NULL,
     "depositCount" INTEGER NOT NULL,
-    "onlyAssRawIn" TEXT NOT NULL,
+    "onlyOneRawIn" TEXT NOT NULL,
     "usdcRawOut" TEXT NOT NULL,
     "priceImpactBps" INTEGER NOT NULL,
     "txHash" TEXT NOT NULL,

@@ -400,7 +400,7 @@ model Account {
   balanceCents BigInt @default(0)
   // Funded only by depositing in $ONLYONE directly (see deposit-indexer.ts).
   // No longer discounted just for spending from here -- see charge()/MEMORY.md.
-  onlyAssCents BigInt @default(0)
+  onlyOneCents BigInt @default(0)
   // VIP runs while this is in the future. A paid monthly membership, NOT a
   // one-time burn: decided 2026-09-18, replacing the earlier "burn tokens for
   // permanent VIP" design outright.
@@ -509,7 +509,7 @@ model Deposit {
 model TreasuryHedgeBatch {
   id             String   @id @default(uuid())
   depositCount   Int
-  onlyAssRawIn   String
+  onlyOneRawIn   String
   usdcRawOut     String
   priceImpactBps Int
   txHash         String

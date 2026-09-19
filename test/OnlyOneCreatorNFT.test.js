@@ -17,7 +17,7 @@ describe('OnlyOneCreatorNFT', function () {
       platformWallet.address,
       FEE_BPS,
       await onlyOne.getAddress(),
-      'https://onlyass.fun/api/nft-contract-metadata',
+      'https://joinonlyone.com/api/nft-contract-metadata',
     );
     await nft.waitForDeployment();
 
@@ -32,7 +32,7 @@ describe('OnlyOneCreatorNFT', function () {
       overrides.payToken ?? ethers.ZeroAddress,
       overrides.price ?? ethers.parseEther('0.1'),
       overrides.editionSize ?? 10,
-      overrides.metadataURI ?? 'https://onlyass.fun/api/nft/1',
+      overrides.metadataURI ?? 'https://joinonlyone.com/api/nft/1',
     );
     const receipt = await tx.wait();
     const event = receipt.logs.map((l) => { try { return nft.interface.parseLog(l); } catch { return null; } }).find((e) => e?.name === 'DropCreated');
@@ -42,9 +42,9 @@ describe('OnlyOneCreatorNFT', function () {
   describe('createDrop', function () {
     it('creates an ETH-priced drop and emits DropCreated', async function () {
       const { nft, creator } = await deploy();
-      await expect(nft.connect(creator).createDrop(ethers.ZeroAddress, ethers.parseEther('0.05'), 25, 'https://onlyass.fun/api/nft/1'))
+      await expect(nft.connect(creator).createDrop(ethers.ZeroAddress, ethers.parseEther('0.05'), 25, 'https://joinonlyone.com/api/nft/1'))
         .to.emit(nft, 'DropCreated')
-        .withArgs(0, creator.address, ethers.ZeroAddress, ethers.parseEther('0.05'), 25, 'https://onlyass.fun/api/nft/1');
+        .withArgs(0, creator.address, ethers.ZeroAddress, ethers.parseEther('0.05'), 25, 'https://joinonlyone.com/api/nft/1');
     });
 
     it('allows $ONLYONE as the pay token', async function () {
@@ -183,8 +183,8 @@ describe('OnlyOneCreatorNFT', function () {
   describe('uri', function () {
     it('returns the drop-specific metadata URI', async function () {
       const { nft, creator } = await deploy();
-      const dropId = await createEthDrop(nft, creator, { metadataURI: 'https://onlyass.fun/api/nft/42' });
-      expect(await nft.uri(dropId)).to.equal('https://onlyass.fun/api/nft/42');
+      const dropId = await createEthDrop(nft, creator, { metadataURI: 'https://joinonlyone.com/api/nft/42' });
+      expect(await nft.uri(dropId)).to.equal('https://joinonlyone.com/api/nft/42');
     });
 
     it('reverts for an invalid drop id', async function () {

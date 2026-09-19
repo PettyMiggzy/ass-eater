@@ -183,9 +183,9 @@ export async function isVip(tx: Tx, userId: string): Promise<boolean> {
 export async function lockBalance(tx: Tx, userId: string, balance: Balance = 'CREDITS'): Promise<bigint> {
   await tx.account.upsert({ where: { userId }, create: { userId }, update: {} });
   if (balance === 'ONLYONE') {
-    const [row] = await tx.$queryRaw<{ onlyAssCents: bigint }[]>`
-      SELECT "onlyAssCents" FROM "Account" WHERE "userId" = ${userId} FOR UPDATE`;
-    return row.onlyAssCents;
+    const [row] = await tx.$queryRaw<{ onlyOneCents: bigint }[]>`
+      SELECT "onlyOneCents" FROM "Account" WHERE "userId" = ${userId} FOR UPDATE`;
+    return row.onlyOneCents;
   }
   const [row] = await tx.$queryRaw<{ balanceCents: bigint }[]>`
     SELECT "balanceCents" FROM "Account" WHERE "userId" = ${userId} FOR UPDATE`;
@@ -202,7 +202,7 @@ export async function post(
   balance: Balance = 'CREDITS',
 ) {
   const amt = BigInt(amountCents);
-  const field = balance === 'ONLYONE' ? 'onlyAssCents' : 'balanceCents';
+  const field = balance === 'ONLYONE' ? 'onlyOneCents' : 'balanceCents';
   await tx.account.upsert({
     where: { userId },
     create: { userId, [field]: amt },

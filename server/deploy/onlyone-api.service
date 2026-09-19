@@ -1,5 +1,5 @@
 [Unit]
-Description=Only Ass API (Fastify)
+Description=OnlyOne API (Fastify)
 After=network.target postgresql.service redis-server.service
 Wants=postgresql.service redis-server.service
 

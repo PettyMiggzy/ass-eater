@@ -41,11 +41,11 @@ function requireEnv(name) {
 }
 
 async function main() {
-  const onlyAssAddress = requireEnv('ONLYONE_TOKEN_ADDRESS');
+  const onlyOneAddress = requireEnv('ONLYONE_TOKEN_ADDRESS');
   const quoteAddress = requireEnv('ONLYONE_POOL_QUOTE_ADDRESS');
   const positionManagerAddress = requireEnv('UNISWAP_V3_POSITION_MANAGER_ADDRESS');
   const initialPrice = requireEnv('ONLYONE_INITIAL_PRICE'); // quote per 1 $ONLYONE
-  const onlyAssAmountHuman = requireEnv('ONLYONE_LIQUIDITY_AMOUNT');
+  const onlyOneAmountHuman = requireEnv('ONLYONE_LIQUIDITY_AMOUNT');
   const quoteAmountHuman = requireEnv('ONLYONE_LIQUIDITY_QUOTE_AMOUNT');
   const fee = Number(process.env.ONLYONE_POOL_FEE ?? 3000);
   const tickSpacing = TICK_SPACING_BY_FEE[fee];
@@ -53,7 +53,7 @@ async function main() {
 
   // Sanity-check the two amounts against the stated price before sending anything --
   // this is the one place a typo turns into "the opening price is off by 100x forever".
-  const impliedPrice = Number(quoteAmountHuman) / Number(onlyAssAmountHuman);
+  const impliedPrice = Number(quoteAmountHuman) / Number(onlyOneAmountHuman);
   const statedPrice = Number(initialPrice);
   const driftPct = Math.abs(impliedPrice - statedPrice) / statedPrice;
   if (driftPct > 0.01) {
@@ -64,24 +64,24 @@ async function main() {
   }
 
   const [deployer] = await ethers.getSigners();
-  const onlyAss = new ethers.Contract(onlyAssAddress, erc20Abi, deployer);
+  const onlyOne = new ethers.Contract(onlyOneAddress, erc20Abi, deployer);
   const quote = new ethers.Contract(quoteAddress, erc20Abi, deployer);
   const positionManager = new ethers.Contract(positionManagerAddress, positionManagerAbi, deployer);
 
-  const onlyAssDecimals = 18; // OnlyOneToken.sol is a plain OZ ERC20, always 18
+  const onlyOneDecimals = 18; // OnlyOneToken.sol is a plain OZ ERC20, always 18
   const quoteDecimals = await quote.decimals();
 
-  const { token0, token1, swapped } = sortTokens(onlyAssAddress, quoteAddress);
-  const decimals0 = swapped ? Number(quoteDecimals) : onlyAssDecimals;
-  const decimals1 = swapped ? onlyAssDecimals : Number(quoteDecimals);
+  const { token0, token1, swapped } = sortTokens(onlyOneAddress, quoteAddress);
+  const decimals0 = swapped ? Number(quoteDecimals) : onlyOneDecimals;
+  const decimals1 = swapped ? onlyOneDecimals : Number(quoteDecimals);
   // V3 price is always "token1 per token0". If ONLYONE ended up as token1, invert the human price we were given.
   const priceForV3 = swapped ? String(1 / statedPrice) : initialPrice;
   const sqrtPriceX96 = sqrtPriceX96FromPrice(priceForV3, decimals0, decimals1);
 
-  const onlyAssAmount = ethers.parseEther(onlyAssAmountHuman);
+  const onlyOneAmount = ethers.parseEther(onlyOneAmountHuman);
   const quoteAmount = ethers.parseUnits(quoteAmountHuman, quoteDecimals);
-  const amount0Desired = swapped ? quoteAmount : onlyAssAmount;
-  const amount1Desired = swapped ? onlyAssAmount : quoteAmount;
+  const amount0Desired = swapped ? quoteAmount : onlyOneAmount;
+  const amount1Desired = swapped ? onlyOneAmount : quoteAmount;
 
   console.log('Pool:', token0, '/', token1, `(fee ${fee})`);
   console.log('sqrtPriceX96:', sqrtPriceX96.toString());
@@ -92,7 +92,7 @@ async function main() {
   await tx.wait();
 
   console.log('Approving position manager to pull liquidity...');
-  tx = await onlyAss.approve(positionManagerAddress, onlyAssAmount);
+  tx = await onlyOne.approve(positionManagerAddress, onlyOneAmount);
   await tx.wait();
   tx = await quote.approve(positionManagerAddress, quoteAmount);
   await tx.wait();

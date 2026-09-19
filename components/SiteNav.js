@@ -9,7 +9,7 @@ import { Mark } from './Brand';
  *
  * The whole site is branded OnlyOne now (decided 2026-09-19, superseding the
  * earlier "no rename" note in MEMORY.md -- joinonlyone.com is the primary
- * domain, the token is $ONLYONE, and every visible "Only Ass" string was
+ * domain, the token is $ONLYONE, and every visible old-brand string was
  * swapped the same day). BRAND_NAME stays a single constant anyway: it is
  * still the one place the wordmark is set, so a future change is a one-line
  * edit here rather than a find-and-replace across the site.

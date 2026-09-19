@@ -38,9 +38,9 @@ async function balanceOf(userId: string) {
   return acct?.balanceCents ?? 0n;
 }
 
-async function onlyAssBalanceOf(userId: string) {
+async function onlyOneBalanceOf(userId: string) {
   const acct = await prisma.account.findUnique({ where: { userId } });
-  return acct?.onlyAssCents ?? 0n;
+  return acct?.onlyOneCents ?? 0n;
 }
 
 async function fundOnlyOne(userId: string, cents: number) {
@@ -261,7 +261,7 @@ describe('ledger.charge', () => {
       ),
     ).rejects.toThrow(InsufficientFunds);
 
-    expect(await onlyAssBalanceOf(fan)).toBe(1_000_000n); // untouched
+    expect(await onlyOneBalanceOf(fan)).toBe(1_000_000n); // untouched
     expect(await balanceOf(creator)).toBe(0n);
   });
 
@@ -278,7 +278,7 @@ describe('ledger.charge', () => {
     ).rejects.toThrow(InsufficientFunds);
 
     expect(await balanceOf(fan)).toBe(400n);
-    expect(await onlyAssBalanceOf(fan)).toBe(10_000n);
+    expect(await onlyOneBalanceOf(fan)).toBe(10_000n);
   });
 
   it('never lets two concurrent charges double-spend a balance that can only cover one', async () => {

@@ -1,4 +1,4 @@
-# Deploying the Only Ass backend to the droplet
+# Deploying the OnlyOne backend to the droplet
 
 **Why this is a manual runbook and not something run automatically:** the
 Claude session that wrote this can only reach the internet over HTTPS

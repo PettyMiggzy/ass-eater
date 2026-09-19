@@ -6,7 +6,7 @@
  * one page outside the age gate and should stay fast and dependency-free,
  * and because a wordmark that scales and recolours with CSS beats a PNG that
  * has to be re-exported every time the pink changes. It also avoids reusing
- * the old Only Ass logo asset here, which reads as a different product next
+ * the old-brand logo asset here, which reads as a different product next
  * to the ONLYONE wordmark -- the site is fully OnlyOne-branded as of
  * 2026-09-19.
  */

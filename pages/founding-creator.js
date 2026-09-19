@@ -16,7 +16,7 @@ import {
  * which puts it under the same hard rule as the public landing page: no
  * creator photos, no content grid, nothing explicit -- ever. It has to be
  * publicly shareable to do its job at all (a recruitment page that only
- * verified adults in 23 states can open recruits nobody), and it is only
+ * verified adults outside the 27 blocked states can open recruits nobody), and it is only
  * allowed to be public because there is nothing on it to verify anyone for.
  *
  * The other rule here is honesty about the offer. Three of the six perks are

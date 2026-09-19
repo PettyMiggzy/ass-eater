@@ -64,10 +64,10 @@ describe('seed-onlyone-pool math against real Uniswap V3 bytecode', () => {
 
   it('round-trips a sub-1 price with a decimals gap (18-decimal ONLYONE-like token vs 6-decimal USDG-like token)', async () => {
     const factory = await deployFactory();
-    const onlyAssLike = await deployToken(18);
+    const onlyOneLike = await deployToken(18);
     const quoteLike = await deployToken(6);
     const targetPrice = 0.0025; // 0.0025 quote-tokens per 1 ONLYONE-like token
-    const { pool, decimals0, decimals1, swapped } = await createAndInitialize(factory, onlyAssLike, quoteLike, String(targetPrice), 18, 6);
+    const { pool, decimals0, decimals1, swapped } = await createAndInitialize(factory, onlyOneLike, quoteLike, String(targetPrice), 18, 6);
     const slot0 = await pool.slot0();
     // decodePriceFromSlot0 always returns "token1 per token0" in human units; convert back to "quote per ONLYONE-like" for the assertion.
     const decodedToken1PerToken0 = decodePriceFromSlot0(slot0.sqrtPriceX96, decimals0, decimals1);
