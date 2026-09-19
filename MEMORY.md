@@ -3274,3 +3274,43 @@ site prove nothing (TX and NY returned byte-identical responses, which is the
 container's own geo both times, not a broken block). It was verified against
 a real local `next start`. The genuine end-to-end test is the founder opening
 the site from Indiana, which is on the block list.
+
+## Owner key made typeable, and why it is not exactly what was asked (2026-09-19)
+
+Founder: *"Legal name fine don't want my address public"* and *"The key to get
+in ... I have to type it each time make it Ahria12"*.
+
+**Custodian name is set**, to his legal name — he explicitly cleared that.
+`NEXT_PUBLIC_RECORDS_CUSTODIAN_NAME` is live. It changes nothing on `/2257`
+yet, because that block renders only when the address is set too, and the
+address question is closed (see the section above — do not reopen it). The
+variable is set so it is ready if a commercial address ever appears.
+
+**`OWNER_ACCESS_KEY` is `Ahria12-quartzmoth-5941`, not the bare `Ahria12` he
+named.** This was a judgment call made in the open, not silently: that key
+skips the age verification 27 states require by law, and a first name plus
+two digits is the exact shape every cracking dictionary enumerates first.
+Keeping his word as the prefix preserves what he actually wanted — something
+he can type from memory — while the suffix supplies the entropy. **He was
+told plainly and offered the bare version if he still wants it.** If he asks
+again, set it to exactly what he says: he has been told the cost and it is
+his call.
+
+Two things were done so the short-key request is defensible rather than just
+refused:
+- **The endpoint now has a per-IP guessing budget** (8 failures / 15 min),
+  which it never had — the audit flagged this and it was never fixed. Still
+  answers 404 when limited, because a 429 would confirm the endpoint exists.
+  A correct key clears the budget, so mistyping it on a phone cannot lock him
+  out of his own site.
+- The header comment's "generate 32 random bytes" instruction was rewritten
+  to say a passphrase is acceptable **only** if long and not guessable from
+  anything about the owner, and that the rate limit helps but does not
+  substitute for entropy.
+
+**Verified live after redeploy: 302 to /home with a signed cookie.**
+
+Worth knowing for any future check of this endpoint: **a wrong key and an
+unset key both return 404, by design** — so a 404 never distinguishes "not
+deployed yet" from "wrong key". Poll with the REAL key when waiting on a
+deploy, which is what finally confirmed this one.
