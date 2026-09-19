@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import SiteNav from '../components/SiteNav';
 import { getVerifiedSessionUserId } from '../lib/session';
 import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
@@ -20,8 +21,9 @@ export default function Favorites({ creators }) {
   return (
     <>
       <Head><title>Your Favorites - OnlyOne</title></Head>
-      <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
-        <div className="max-w-4xl mx-auto">
+      <div className="min-h-screen bg-gradient-luxury text-white">
+        <SiteNav signedIn />
+        <div className="max-w-4xl mx-auto px-6 py-10">
           <h1 className="text-2xl font-black premium-title mb-2">Your Favorites</h1>
           <p className="text-gray-400 mb-8">Creators you've saved -- tap the heart on their profile to add or remove one.</p>
 

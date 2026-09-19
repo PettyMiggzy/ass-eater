@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Head from 'next/head';
+import SiteNav from '../components/SiteNav';
 
 // Mirrors the caps pages/api/creator/submit.js enforces server-side (the
 // server is the actual gate -- these just keep the form from letting someone
@@ -65,14 +66,17 @@ export default function BecomeCreator() {
 
   if (done) {
     return (
-      <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6">
-        <div className="premium-card p-10 max-w-md text-center">
-          <h1 className="text-3xl font-black text-brand-gold mb-4">Submission Received</h1>
-          <p className="text-gray-300 mb-6">
-            Your profile is pending review. Real creators require identity and age verification before going live —
-            we'll follow up at the email you provided with next steps.
-          </p>
-          <a href="/creators" className="premium-button inline-block">Back to OnlyOne</a>
+      <div className="min-h-screen bg-gradient-luxury text-white">
+        <SiteNav />
+        <div className="flex items-center justify-center px-6 py-16">
+          <div className="premium-card p-10 max-w-md text-center">
+            <h1 className="text-3xl font-black text-brand-gold mb-4">Submission Received</h1>
+            <p className="text-gray-300 mb-6">
+              Your profile is pending review. Real creators require identity and age verification before going live —
+              we'll follow up at the email you provided with next steps.
+            </p>
+            <a href="/creators" className="premium-button inline-block">Back to OnlyOne</a>
+          </div>
         </div>
       </div>
     );
@@ -81,8 +85,9 @@ export default function BecomeCreator() {
   return (
     <>
       <Head><title>Become a Creator - OnlyOne</title></Head>
-      <div className="min-h-screen bg-gradient-luxury text-white px-6 py-16">
-        <div className="max-w-xl mx-auto">
+      <div className="min-h-screen bg-gradient-luxury text-white">
+        <SiteNav />
+        <div className="max-w-xl mx-auto px-6 py-16">
           <h1 className="text-4xl font-black premium-title mb-2">Become a Creator</h1>
           <p className="text-gray-400 mb-8">Submit your profile below. All submissions are reviewed before going live.</p>
 

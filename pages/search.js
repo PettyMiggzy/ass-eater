@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import SiteNav from '../components/SiteNav';
 import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { getListings } from '../lib/listings-store';
@@ -52,8 +53,9 @@ export default function Search({ q, tag, creators, listings, allTags }) {
   return (
     <>
       <Head><title>Search - OnlyOne</title></Head>
-      <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
-        <div className="max-w-4xl mx-auto">
+      <div className="min-h-screen bg-gradient-luxury text-white">
+        <SiteNav />
+        <div className="max-w-4xl mx-auto px-6 py-10">
           <form onSubmit={submit} className="mb-6">
             <input
               autoFocus
