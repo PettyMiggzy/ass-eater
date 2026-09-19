@@ -69,7 +69,12 @@ const BLOCKED_STATE_CODES = new Set([
 // on it, and a recruitment page that only verified adults in non-blocked
 // states can open cannot recruit. Same hard rule applies -- if it ever
 // gains real content, this exemption goes with it.
-const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/founding-creator']);
+// /terms, /privacy and /2257 are exempt on the same basis as "/": they are
+// pure text with no creator content on them at all. They also have to be
+// readable by people who cannot enter the site -- a payment processor doing
+// onboarding review, a regulator, or someone in a blocked state who wants to
+// know what we do with their data before verifying.
+const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257']);
 
 // Prefix exemptions, for assets an exempt page actually renders. Without
 // this, /founding-creator serves to a blocked-state visitor with its hero
@@ -86,11 +91,14 @@ const SFW_PREFIXES = ['/images/badges/'];
 const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content'];
 
 // Pages Router serves every getServerSideProps payload at
-// /_next/data/<buildId>/<page>.json. Middleware sees that URL, not the
-// page's, so without mapping it back a blocked-state visitor can read
-// buildId out of any exempt page's __NEXT_DATA__ and then fetch
-// /_next/data/<id>/creators.json for the full props of a gated page.
-// Normalise first, then apply the same rules to the page it belongs to.
+// /_next/data/<buildId>/<page>.json. The matcher used to exclude _next/
+// wholesale, so those never reached this proxy at all: a blocked-state
+// visitor could read buildId out of any exempt page's __NEXT_DATA__ and then
+// fetch /_next/data/<id>/creators.json for the full props of a gated page.
+//
+// Next normalises nextUrl.pathname back to the page for a data request, so
+// this mapping is usually a no-op -- it is kept as the belt to that braces,
+// because the whole gate rests on the pathname being the page's.
 function servedPageFor(pathname) {
   const m = /^\/_next\/data\/[^/]+\/(.*)\.json$/.exec(pathname);
   if (!m) return pathname;
@@ -131,7 +139,14 @@ export async function proxy(request) {
         // An API caller gets JSON. Rewriting it to the blocked-region page
         // would hand a fetch() a 200 full of HTML, which reads as a parse
         // bug rather than a refusal.
-        if (pathname.startsWith('/api/')) {
+        // Same for a /_next/data/ props request: handing a .json fetch a
+        // page of HTML makes the client router look broken. A non-2xx makes
+        // it fall back to a full navigation, which lands on the gate.
+        // Detected by header, not path: Next normalises nextUrl.pathname for
+        // a data request back to the page it belongs to, so by here it reads
+        // "/creators", not "/_next/data/<id>/creators.json".
+        const isDataRequest = request.headers.get('x-nextjs-data') === '1';
+        if (isDataRequest || pathname.startsWith('/api/')) {
           return new NextResponse(JSON.stringify({ error: 'age_verification_required' }), {
             status: 451,
             headers: { 'content-type': 'application/json' },

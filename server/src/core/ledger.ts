@@ -29,7 +29,7 @@ export const FEES = {
  * and creators are paid out of it in USDC. Everything charge() touches is
  * this one.
  *
- * ONLYASS is a HOLDING, not a payment source. Tokens a fan has deposited sit
+ * ONLYONE is a HOLDING, not a payment source. Tokens a fan has deposited sit
  * here and the only thing that can be done with them is burn them for VIP
  * (core/vip.ts). Decided 2026-09-18: the token is deliberately never a way to
  * pay for anything -- it is far too volatile to denominate what someone is
@@ -37,7 +37,7 @@ export const FEES = {
  * it back to dollars is a redemption desk for its own token. If you are about
  * to let this reach charge(), that is the line.
  */
-export type Balance = 'CREDITS' | 'ONLYASS';
+export type Balance = 'CREDITS' | 'ONLYONE';
 
 export class InsufficientFunds extends Error {
   constructor() {
@@ -182,7 +182,7 @@ export async function isVip(tx: Tx, userId: string): Promise<boolean> {
 /** Row-locks the account so concurrent charges against the same balance serialize. */
 export async function lockBalance(tx: Tx, userId: string, balance: Balance = 'CREDITS'): Promise<bigint> {
   await tx.account.upsert({ where: { userId }, create: { userId }, update: {} });
-  if (balance === 'ONLYASS') {
+  if (balance === 'ONLYONE') {
     const [row] = await tx.$queryRaw<{ onlyAssCents: bigint }[]>`
       SELECT "onlyAssCents" FROM "Account" WHERE "userId" = ${userId} FOR UPDATE`;
     return row.onlyAssCents;
@@ -202,7 +202,7 @@ export async function post(
   balance: Balance = 'CREDITS',
 ) {
   const amt = BigInt(amountCents);
-  const field = balance === 'ONLYASS' ? 'onlyAssCents' : 'balanceCents';
+  const field = balance === 'ONLYONE' ? 'onlyAssCents' : 'balanceCents';
   await tx.account.upsert({
     where: { userId },
     create: { userId, [field]: amt },
@@ -274,7 +274,7 @@ export async function charge(
   // against the fee actually retained; flooring each share means any rounding
   // remainder stays with the platform rather than being conjured. The one
   // case that made this reachable (an 8% payout fee for creators taking
-  // $ONLYASS) is gone, but the cap stays: it is the invariant, not a patch
+  // $ONLYONE) is gone, but the cap stays: it is the invariant, not a patch
   // for one rate.
   let creatorReferral = referralCut(creator.user.referredById, creator.user.createdAt);
   let fanReferral = referralCut(fan.referredById, fan.createdAt);

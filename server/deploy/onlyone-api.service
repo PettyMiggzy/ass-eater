@@ -5,9 +5,9 @@ Wants=postgresql.service redis-server.service
 
 [Service]
 Type=simple
-User=onlyass
-WorkingDirectory=/opt/onlyass/server
-EnvironmentFile=/opt/onlyass/server/.env
+User=onlyone
+WorkingDirectory=/opt/onlyone/server
+EnvironmentFile=/opt/onlyone/server/.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure
 RestartSec=3

@@ -164,8 +164,8 @@ export default function Landing() {
           <div className="max-w-4xl mx-auto flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-600 mb-3">
             <a href="/terms" className="hover:text-brand-pink transition">Terms</a>
             <a href="/privacy" className="hover:text-brand-pink transition">Privacy</a>
-            <a href="/terms" className="hover:text-brand-pink transition">18 U.S.C. §2257</a>
-            <a href="/terms" className="hover:text-brand-pink transition">DMCA</a>
+            <a href="/2257" className="hover:text-brand-pink transition">18 U.S.C. §2257</a>
+            <a href="/terms#content-removal" className="hover:text-brand-pink transition">DMCA</a>
             <a href="/token" className="hover:text-brand-pink transition">$ONLYONE</a>
             <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">
               Report Non-Consensual Content

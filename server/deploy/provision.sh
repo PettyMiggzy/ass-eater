@@ -9,8 +9,8 @@
 
 set -euo pipefail
 
-APP_USER="onlyass"
-APP_DIR="/opt/onlyass"
+APP_USER="onlyone"
+APP_DIR="/opt/onlyone"
 
 echo "==> apt update + base packages"
 apt-get update -y
@@ -35,10 +35,10 @@ mkdir -p "$APP_DIR"
 chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
 
 echo "==> Postgres: create role + database"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='onlyass'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE ROLE onlyass WITH LOGIN PASSWORD 'CHANGE_ME_SEE_ENV';"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='onlyass'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE DATABASE onlyass OWNER onlyass;"
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='onlyone'" | grep -q 1 || \
+  sudo -u postgres psql -c "CREATE ROLE onlyone WITH LOGIN PASSWORD 'CHANGE_ME_SEE_ENV';"
+sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='onlyone'" | grep -q 1 || \
+  sudo -u postgres psql -c "CREATE DATABASE onlyone OWNER onlyone;"
 
 echo "==> Redis: bind to localhost only, enable persistence, start on boot"
 sed -i 's/^# *bind .*/bind 127.0.0.1 -::1/' /etc/redis/redis.conf || true
@@ -56,13 +56,13 @@ ufw --force enable
 cat <<'EOF'
 
 ==> Done. Next steps (see DEPLOY.md):
-  1. Get the server/ code onto this box at /opt/onlyass/server
+  1. Get the server/ code onto this box at /opt/onlyone/server
      (git clone, or scp/rsync a tarball from your machine).
-  2. Create /opt/onlyass/server/.env with real values -- do this by
+  2. Create /opt/onlyone/server/.env with real values -- do this by
      editing the file directly on this box (nano/vim), never by
      pasting secrets through a chat session. Use .env.example as the
      template. Set the Postgres password you actually used above
      (replace CHANGE_ME_SEE_ENV) in both the DB and DATABASE_URL.
-  3. Run deploy/app-setup.sh as the onlyass user (or root) to install
+  3. Run deploy/app-setup.sh as the onlyone user (or root) to install
      deps, build, migrate, and install the systemd services.
 EOF

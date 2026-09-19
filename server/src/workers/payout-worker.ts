@@ -18,7 +18,7 @@ new Worker('payout', async (job) => {
     // a creator happened to deposit in has nothing to do with what they are
     // paid -- the ledger owes them cents, and this is the token those cents
     // are settled in.
-    const token = p.asset === 'ONLYASS' ? TOKENS.ONLYASS : HEDGE_STABLE;
+    const token = p.asset === 'ONLYONE' ? TOKENS.ONLYONE : HEDGE_STABLE;
     const decimals = p.asset === 'ETH' ? DECIMALS.ETH : token.decimals;
     const units = Number(p.amountCents) / 100 / px;
     const raw = parseUnits(units.toFixed(decimals), decimals);

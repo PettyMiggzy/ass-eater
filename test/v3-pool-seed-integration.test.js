@@ -7,13 +7,13 @@ const PoolArtifact = require('@uniswap/v3-core/artifacts/contracts/UniswapV3Pool
 
 const FEE = 3000; // enabled by default in UniswapV3Factory's constructor, unlike the 100 tier
 
-// This exercises seed-onlyass-pool.js's actual price math (sqrtPriceX96FromPrice
+// This exercises seed-onlyone-pool.js's actual price math (sqrtPriceX96FromPrice
 // + sortTokens) against REAL Uniswap V3 factory/pool bytecode -- not a mock --
 // the same pattern used elsewhere for pool math tests. It proves the
 // full pipeline (a human price string -> our math -> a real pool's slot0())
 // round-trips correctly, which is exactly the step where a sign/decimals bug
 // would otherwise only surface after real money is already in the pool.
-describe('seed-onlyass-pool math against real Uniswap V3 bytecode', () => {
+describe('seed-onlyone-pool math against real Uniswap V3 bytecode', () => {
   async function deployFactory() {
     const [deployer] = await ethers.getSigners();
     const Factory = new ethers.ContractFactory(FactoryArtifact.abi, FactoryArtifact.bytecode, deployer);
@@ -35,7 +35,7 @@ describe('seed-onlyass-pool math against real Uniswap V3 bytecode', () => {
     const { token0, token1, swapped } = sortTokens(addrA, addrB);
     const decimals0 = swapped ? decimalsB : decimalsA;
     const decimals1 = swapped ? decimalsA : decimalsB;
-    // priceHuman is defined as "B per 1 A" (matching ONLYASS_INITIAL_PRICE's "quote per 1 $ONLYASS"); flip if A ended up as token1.
+    // priceHuman is defined as "B per 1 A" (matching ONLYONE_INITIAL_PRICE's "quote per 1 $ONLYONE"); flip if A ended up as token1.
     const priceForV3 = swapped ? String(1 / Number(priceHuman)) : priceHuman;
     const sqrtPriceX96 = sqrtPriceX96FromPrice(priceForV3, decimals0, decimals1);
 
@@ -62,14 +62,14 @@ describe('seed-onlyass-pool math against real Uniswap V3 bytecode', () => {
     expect(decodePriceFromSlot0(slot0.sqrtPriceX96, decimals0, decimals1)).to.be.closeTo(1, 1e-9);
   });
 
-  it('round-trips a sub-1 price with a decimals gap (18-decimal ONLYASS-like token vs 6-decimal USDG-like token)', async () => {
+  it('round-trips a sub-1 price with a decimals gap (18-decimal ONLYONE-like token vs 6-decimal USDG-like token)', async () => {
     const factory = await deployFactory();
     const onlyAssLike = await deployToken(18);
     const quoteLike = await deployToken(6);
-    const targetPrice = 0.0025; // 0.0025 quote-tokens per 1 ONLYASS-like token
+    const targetPrice = 0.0025; // 0.0025 quote-tokens per 1 ONLYONE-like token
     const { pool, decimals0, decimals1, swapped } = await createAndInitialize(factory, onlyAssLike, quoteLike, String(targetPrice), 18, 6);
     const slot0 = await pool.slot0();
-    // decodePriceFromSlot0 always returns "token1 per token0" in human units; convert back to "quote per ONLYASS-like" for the assertion.
+    // decodePriceFromSlot0 always returns "token1 per token0" in human units; convert back to "quote per ONLYONE-like" for the assertion.
     const decodedToken1PerToken0 = decodePriceFromSlot0(slot0.sqrtPriceX96, decimals0, decimals1);
     const decodedQuotePerOnlyOne = swapped ? 1 / decodedToken1PerToken0 : decodedToken1PerToken0;
     expect(decodedQuotePerOnlyOne).to.be.closeTo(targetPrice, targetPrice * 1e-6);
@@ -85,6 +85,6 @@ describe('seed-onlyass-pool math against real Uniswap V3 bytecode', () => {
     const { pool } = await createAndInitialize(factory, a, b, '2', 18, 18);
     const slot0 = await pool.slot0();
     expect(slot0.sqrtPriceX96).to.be.greaterThan(0n);
-    expect(await pool.liquidity()).to.equal(0n); // matches reality before the mint step seed-onlyass-pool.js performs next
+    expect(await pool.liquidity()).to.equal(0n); // matches reality before the mint step seed-onlyone-pool.js performs next
   });
 });

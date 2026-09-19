@@ -4,7 +4,7 @@ import { impactBpsOf, selectHedgedDeposits } from './treasury-hedge-math';
 
 describe('treasury-hedge impactBpsOf', () => {
   it('reads zero impact when the quote matches spot exactly', () => {
-    const amountIn = parseUnits('100', 18);   // 100 $ONLYASS
+    const amountIn = parseUnits('100', 18);   // 100 $ONLYONE
     const amountOut = parseUnits('50', 6);    // at spot 0.50 USDC
     expect(impactBpsOf(amountIn, amountOut, 0.5, 18, 6)).toBe(0);
   });

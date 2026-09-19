@@ -26,7 +26,7 @@ enum KycStatus {
   REJECTED
 }
 
-// STABLE/ETH are settlement assets fans deposit in; ONLYASS is the platform
+// STABLE/ETH are settlement assets fans deposit in; ONLYONE is the platform
 // token, which is never a payment (see core/ledger.ts's Balance type).
 //
 // STABLE is deliberately not a specific ticker. Robinhood Chain's dollar
@@ -38,7 +38,7 @@ enum KycStatus {
 enum Asset {
   STABLE
   ETH
-  ONLYASS
+  ONLYONE
 }
 
 enum TxType {
@@ -170,7 +170,7 @@ model CreatorProfile {
   promotedUntil DateTime? // paid discovery placement
 
   // Token-lock perk: opt-in, creator sets the terms. A fan who locks
-  // stakeUsdCents (worth of $ONLYASS at lock time) gets stakePerkDescription.
+  // stakeUsdCents (worth of $ONLYONE at lock time) gets stakePerkDescription.
   // Opting in also waives the 2% instant-payout fee for this creator.
   stakePerkEnabled     Boolean @default(false)
   stakePerkDescription String?
@@ -211,7 +211,7 @@ model Subscription {
   @@index([status, currentPeriodEnd])
 }
 
-// Fan locks $ONLYASS-equivalent value against a creator's opted-in perk.
+// Fan locks $ONLYONE-equivalent value against a creator's opted-in perk.
 // Mirrors Subscription: monthly recurring charge, cancel = stop renewing.
 model TokenLock {
   id                String    @id @default(uuid())
@@ -220,7 +220,7 @@ model TokenLock {
   creatorId         String
   creator           User      @relation("CreatorLocks", fields: [creatorId], references: [id])
   usdCents          Int // locked at purchase, mirrors Subscription.priceCents
-  tokenAmountAtLock String // $ONLYASS raw units this was worth at lock time (display only)
+  tokenAmountAtLock String // $ONLYONE raw units this was worth at lock time (display only)
   status            SubStatus @default(ACTIVE)
   autoRenew         Boolean   @default(true)
   currentPeriodEnd  DateTime
@@ -230,7 +230,7 @@ model TokenLock {
   @@index([status, currentPeriodEnd])
 }
 
-// onlyass.online marketplace: creators list something for sale (merch, digital
+// onlyone.online marketplace: creators list something for sale (merch, digital
 // goods, whatever), platform takes a 10% sale commission + 5% listing fee on
 // top, both cut from the sale price when it sells (see modules/marketplace.ts).
 // A listing a creator has put behind VIP first-look shows only to VIP members
@@ -255,7 +255,7 @@ model Listing {
   orders      ListingOrder[]
 
   // Auctions settle in the USD-backed balanceCents pool only, never the
-  // $ONLYASS discount pool -- a bid needs a stable denomination for its
+  // $ONLYONE discount pool -- a bid needs a stable denomination for its
   // whole (possibly multi-day) run, and a token discount would make "highest
   // bid wins" ambiguous. See core/auctions.ts.
   saleType             SaleType  @default(FIXED)
@@ -398,7 +398,7 @@ model Account {
   userId       String @id
   user         User   @relation(fields: [userId], references: [id])
   balanceCents BigInt @default(0)
-  // Funded only by depositing in $ONLYASS directly (see deposit-indexer.ts).
+  // Funded only by depositing in $ONLYONE directly (see deposit-indexer.ts).
   // No longer discounted just for spending from here -- see charge()/MEMORY.md.
   onlyAssCents BigInt @default(0)
   // VIP runs while this is in the future. A paid monthly membership, NOT a
@@ -487,7 +487,7 @@ model Deposit {
   logIndex  Int
   asset     Asset
   // Which dollar stablecoin it actually was ("USDG"), for STABLE deposits.
-  // Null for ETH and ONLYASS.
+  // Null for ETH and ONLYONE.
   stableSymbol String?
   rawAmount String // wei / 6-dec units as string
   // What actually landed on-chain, BEFORE the buy-credits fee. Never
@@ -498,14 +498,14 @@ model Deposit {
   feeCents  BigInt @default(0)
   priceUsed Float
   createdAt DateTime  @default(now())
-  hedgedAt  DateTime? // set once the treasury-hedge worker has converted this $ONLYASS deposit's share; null = pending. Unused for non-ONLYASS assets.
+  hedgedAt  DateTime? // set once the treasury-hedge worker has converted this $ONLYONE deposit's share; null = pending. Unused for non-ONLYONE assets.
 
   @@unique([chainId, txHash, logIndex])
 }
 
 // One row per auto-hedge swap the treasury worker executes: converts a slice of
-// incoming $ONLYASS deposits into the stablecoin so the platform isn't fully
-// exposed to $ONLYASS price swings on liabilities it owes in fixed USD cents.
+// incoming $ONLYONE deposits into the stablecoin so the platform isn't fully
+// exposed to $ONLYONE price swings on liabilities it owes in fixed USD cents.
 model TreasuryHedgeBatch {
   id             String   @id @default(uuid())
   depositCount   Int

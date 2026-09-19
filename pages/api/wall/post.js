@@ -3,6 +3,12 @@ import { displayNameFor } from '../../../lib/users-store';
 import { addWallPost } from '../../../lib/wall-store';
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
+import { consumeAttempt } from '../../../lib/rate-limit';
+
+// Per author. A wall is public, so this is the surface where flooding is
+// most visible to everyone else.
+const MAX_POSTS = 20;
+const POST_WINDOW_MS = 60 * 1000;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -14,7 +20,21 @@ export default async function handler(req, res) {
   const uid = user.id;
 
   const { creatorId, text } = req.body || {};
-  if (!creatorId || !text) return res.status(400).json({ error: 'Missing creatorId or text' });
+  if (!creatorId || typeof text !== 'string' || !text.trim()) {
+    return res.status(400).json({ error: 'Missing creatorId or text' });
+  }
+  if (text.length > 2000) {
+    return res.status(400).json({ error: 'That post is too long (2000 characters maximum).' });
+  }
+
+  const { limited, retryAfterSeconds } = consumeAttempt(`wall:user:${uid}`, {
+    limit: MAX_POSTS,
+    windowMs: POST_WINDOW_MS,
+  });
+  if (limited) {
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({ error: 'You are posting too quickly. Give it a moment.' });
+  }
 
   const check = detectPaymentCircumvention(text);
   if (check.flagged) {

@@ -8,30 +8,30 @@ import { publish, sweepQueue, connection } from '../lib/redis';
 
 const BATCH = 1000n;
 const TRACK_NATIVE_ETH = process.env.TRACK_NATIVE_ETH === 'true';
-const ONLYASS_BONUS_BPS = Number(process.env.ONLYASS_DEPOSIT_BONUS_BPS ?? 0);
+const ONLYONE_BONUS_BPS = Number(process.env.ONLYONE_DEPOSIT_BONUS_BPS ?? 0);
 
 async function addressMap() {
   const rows = await prisma.depositAddress.findMany({ where: { chainId: CHAIN_ID } });
   return new Map(rows.map(r => [r.address.toLowerCase(), r]));
 }
 
-async function credit(d: { userId: string; txHash: string; logIndex: number; asset: 'STABLE' | 'ETH' | 'ONLYASS'; raw: bigint; derivationIndex: number; token?: { symbol: string; decimals: number }; tokenAddress?: `0x${string}` }) {
+async function credit(d: { userId: string; txHash: string; logIndex: number; asset: 'STABLE' | 'ETH' | 'ONLYONE'; raw: bigint; derivationIndex: number; token?: { symbol: string; decimals: number }; tokenAddress?: `0x${string}` }) {
   const px = await getUsdPrice(d.asset);
   // A stablecoin's decimals come from its own allowlist entry (checked against
   // the contract at startup), not from a fixed table -- two dollar tokens on
   // the same chain do not have to agree on scale.
-  const decimals = d.asset === 'STABLE' ? d.token!.decimals : DECIMALS[d.asset as 'ETH' | 'ONLYASS'];
+  const decimals = d.asset === 'STABLE' ? d.token!.decimals : DECIMALS[d.asset as 'ETH' | 'ONLYONE'];
   let cents = rawToUsdCents(d.raw, decimals, px);
-  if (d.asset === 'ONLYASS' && ONLYASS_BONUS_BPS) cents += (cents * BigInt(ONLYASS_BONUS_BPS)) / 10_000n;   // token deposit bonus
+  if (d.asset === 'ONLYONE' && ONLYONE_BONUS_BPS) cents += (cents * BigInt(ONLYONE_BONUS_BPS)) / 10_000n;   // token deposit bonus
   if (cents <= 0n) return;
   try {
     await money(prisma, async (tx) => {
       const dep = await tx.deposit.create({ data: { userId: d.userId, chainId: CHAIN_ID, txHash: d.txHash, logIndex: d.logIndex, asset: d.asset, stableSymbol: d.token?.symbol ?? null, rawAmount: d.raw.toString(), usdCents: cents, priceUsed: px } });
-      if (d.asset === 'ONLYASS') {
+      if (d.asset === 'ONLYONE') {
         // Its own pool, and deliberately not credits -- see the Balance type
         // in core/ledger.ts. No buy-credits fee, because no credits are
         // bought. NOTE: nothing currently spends this balance; see MEMORY.md.
-        await post(tx, d.userId, cents, 'DEPOSIT', dep.id, { asset: d.asset, raw: d.raw.toString(), px }, 'ONLYASS');
+        await post(tx, d.userId, cents, 'DEPOSIT', dep.id, { asset: d.asset, raw: d.raw.toString(), px }, 'ONLYONE');
         return;
       }
       // Buying credits: the fan gets the deposit less FEES.DEPOSIT_BPS, the
@@ -99,7 +99,7 @@ async function scan() {
 
 /** Move funds from deposit address → treasury. ERC20 sweeps need gas first. */
 new Worker('sweep', async (job) => {
-  const { derivationIndex, asset, tokenAddress } = job.data as { derivationIndex: number; asset: 'STABLE' | 'ETH' | 'ONLYASS'; tokenAddress?: `0x${string}` };
+  const { derivationIndex, asset, tokenAddress } = job.data as { derivationIndex: number; asset: 'STABLE' | 'ETH' | 'ONLYONE'; tokenAddress?: `0x${string}` };
   const wc = depositWalletClient(derivationIndex); const me = wc.account.address;
   if (asset === 'ETH') {
     const bal = await publicClient.getBalance({ address: me });
@@ -107,7 +107,7 @@ new Worker('sweep', async (job) => {
     if (bal > cost) await wc.sendTransaction({ to: treasury.address, value: bal - cost });
     return;
   }
-  const tok = asset === 'ONLYASS' ? TOKENS.ONLYASS : ACCEPTED_STABLES.get((tokenAddress ?? '').toLowerCase());
+  const tok = asset === 'ONLYONE' ? TOKENS.ONLYONE : ACCEPTED_STABLES.get((tokenAddress ?? '').toLowerCase());
   if (!tok) return; // unknown token in a sweep job -- never guess which contract to move
 
   const bal = await publicClient.readContract({ address: tok.address, abi: erc20Abi, functionName: 'balanceOf', args: [me] });

@@ -9,7 +9,7 @@ export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));
 
   // The one platform-wide numeric knob that needs to move without a
-  // redeploy: as $ONLYASS's price rises, lower how many tokens it takes to
+  // redeploy: as $ONLYONE's price rises, lower how many tokens it takes to
   // reach VIP (see core/vip.ts) rather than letting the USD cost of VIP
   // status float upward indefinitely.
   app.get('/vip-config', async () =>
@@ -132,18 +132,18 @@ export const admin: FastifyPluginAsync = async (app) => {
     return { treasuryCents: Number(treasury?.balanceCents ?? 0), series: rows.map(r => ({ ...r, cents: Number(r.cents) })) };
   });
 
-  /** Treasury's $ONLYASS hedge exposure: how much of what's come in is still unconverted risk vs already de-risked into stablecoin. */
+  /** Treasury's $ONLYONE hedge exposure: how much of what's come in is still unconverted risk vs already de-risked into stablecoin. */
   app.get('/treasury-hedge', async () => {
     const [pending, batches] = await Promise.all([
-      prisma.deposit.findMany({ where: { asset: 'ONLYASS', hedgedAt: null }, select: { rawAmount: true } }),
+      prisma.deposit.findMany({ where: { asset: 'ONLYONE', hedgedAt: null }, select: { rawAmount: true } }),
       prisma.treasuryHedgeBatch.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
     ]);
     const pendingRaw = pending.reduce((s, d) => s + BigInt(d.rawAmount), 0n);
     const swappedRaw = batches.reduce((s, b) => s + BigInt(b.onlyAssRawIn), 0n);
     const usdcRaw = batches.reduce((s, b) => s + BigInt(b.usdcRawOut), 0n);
     return {
-      pendingOnlyAssRaw: pendingRaw.toString(), // not yet swept by the hedge worker (thin liquidity, or below its cycle)
-      lifetimeOnlyAssSwappedRaw: swappedRaw.toString(),
+      pendingOnlyOneRaw: pendingRaw.toString(), // not yet swept by the hedge worker (thin liquidity, or below its cycle)
+      lifetimeOnlyOneSwappedRaw: swappedRaw.toString(),
       lifetimeUsdcReceivedRaw: usdcRaw.toString(),
       batches,
     };

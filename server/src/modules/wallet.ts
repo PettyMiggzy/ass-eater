@@ -53,7 +53,7 @@ export const wallet: FastifyPluginAsync = async (app) => {
 
   app.get('/rates', async () => ({
     chainId: CHAIN_ID, tokens: TOKENS,
-    STABLE: 1, ETH: await getUsdPrice('ETH'), ONLYASS: await getUsdPrice('ONLYASS'),
-    assDepositBonusBps: Number(process.env.ONLYASS_DEPOSIT_BONUS_BPS ?? 0),
+    STABLE: 1, ETH: await getUsdPrice('ETH'), ONLYONE: await getUsdPrice('ONLYONE'),
+    assDepositBonusBps: Number(process.env.ONLYONE_DEPOSIT_BONUS_BPS ?? 0),
   }));
 };

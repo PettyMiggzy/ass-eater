@@ -1,8 +1,8 @@
 const { ethers } = require('hardhat');
 const { sqrtPriceX96FromPrice, sortTokens, fullRangeTicks, TICK_SPACING_BY_FEE } = require('./lib/v3-pool-math');
 
-// Creates $ONLYASS's first Uniswap V3 market and seeds it with the initial
-// liquidity you choose. This is the transaction that sets $ONLYASS's opening
+// Creates $ONLYONE's first Uniswap V3 market and seeds it with the initial
+// liquidity you choose. This is the transaction that sets $ONLYONE's opening
 // price -- there's no way to "fix a typo" after real trading starts, so every
 // input below is required with no silent defaults, and the script sanity-checks
 // your two liquidity amounts against your stated price before sending anything.
@@ -12,17 +12,17 @@ const { sqrtPriceX96FromPrice, sortTokens, fullRangeTicks, TICK_SPACING_BY_FEE }
 // preview when using the real app.uniswap.org on this chain), not copied from
 // a doc page or a third-party "contract addresses" site. Web research for this
 // project could not independently confirm Robinhood Chain's Uniswap contract
-// addresses from more than one source -- see contracts/ONLYASS_LAUNCH.md.
+// addresses from more than one source -- see contracts/ONLYONE_LAUNCH.md.
 //
 // Required env vars:
-//   ONLYASS_TOKEN_ADDRESS              - your deployed $ONLYASS contract (run deploy-onlyass-token.js first)
-//   ONLYASS_POOL_QUOTE_ADDRESS         - the token to pair against (WETH or USDG address on the target chain)
+//   ONLYONE_TOKEN_ADDRESS              - your deployed $ONLYONE contract (run deploy-onlyone-token.js first)
+//   ONLYONE_POOL_QUOTE_ADDRESS         - the token to pair against (WETH or USDG address on the target chain)
 //   UNISWAP_V3_POSITION_MANAGER_ADDRESS - NonfungiblePositionManager on the target chain (verify yourself, see above)
-//   ONLYASS_INITIAL_PRICE              - quote-token amount per 1 $ONLYASS, e.g. "0.002"
-//   ONLYASS_LIQUIDITY_AMOUNT           - $ONLYASS tokens to seed (whole units, e.g. "5000000")
-//   ONLYASS_LIQUIDITY_QUOTE_AMOUNT     - quote tokens to seed (whole units) -- must match ONLYASS_INITIAL_PRICE within 1%
+//   ONLYONE_INITIAL_PRICE              - quote-token amount per 1 $ONLYONE, e.g. "0.002"
+//   ONLYONE_LIQUIDITY_AMOUNT           - $ONLYONE tokens to seed (whole units, e.g. "5000000")
+//   ONLYONE_LIQUIDITY_QUOTE_AMOUNT     - quote tokens to seed (whole units) -- must match ONLYONE_INITIAL_PRICE within 1%
 // Optional:
-//   ONLYASS_POOL_FEE                   - V3 fee tier in hundredths of a bip, defaults to 3000 (0.3%), same var the
+//   ONLYONE_POOL_FEE                   - V3 fee tier in hundredths of a bip, defaults to 3000 (0.3%), same var the
 //                                         price oracle (server/src/lib/price.ts) and treasury-hedge worker read
 
 const erc20Abi = [
@@ -41,13 +41,13 @@ function requireEnv(name) {
 }
 
 async function main() {
-  const onlyAssAddress = requireEnv('ONLYASS_TOKEN_ADDRESS');
-  const quoteAddress = requireEnv('ONLYASS_POOL_QUOTE_ADDRESS');
+  const onlyAssAddress = requireEnv('ONLYONE_TOKEN_ADDRESS');
+  const quoteAddress = requireEnv('ONLYONE_POOL_QUOTE_ADDRESS');
   const positionManagerAddress = requireEnv('UNISWAP_V3_POSITION_MANAGER_ADDRESS');
-  const initialPrice = requireEnv('ONLYASS_INITIAL_PRICE'); // quote per 1 $ONLYASS
-  const onlyAssAmountHuman = requireEnv('ONLYASS_LIQUIDITY_AMOUNT');
-  const quoteAmountHuman = requireEnv('ONLYASS_LIQUIDITY_QUOTE_AMOUNT');
-  const fee = Number(process.env.ONLYASS_POOL_FEE ?? 3000);
+  const initialPrice = requireEnv('ONLYONE_INITIAL_PRICE'); // quote per 1 $ONLYONE
+  const onlyAssAmountHuman = requireEnv('ONLYONE_LIQUIDITY_AMOUNT');
+  const quoteAmountHuman = requireEnv('ONLYONE_LIQUIDITY_QUOTE_AMOUNT');
+  const fee = Number(process.env.ONLYONE_POOL_FEE ?? 3000);
   const tickSpacing = TICK_SPACING_BY_FEE[fee];
   if (!tickSpacing) throw new Error(`Unsupported fee tier ${fee}. Use one of: ${Object.keys(TICK_SPACING_BY_FEE).join(', ')}`);
 
@@ -58,7 +58,7 @@ async function main() {
   const driftPct = Math.abs(impliedPrice - statedPrice) / statedPrice;
   if (driftPct > 0.01) {
     throw new Error(
-      `ONLYASS_LIQUIDITY_QUOTE_AMOUNT / ONLYASS_LIQUIDITY_AMOUNT = ${impliedPrice} but ONLYASS_INITIAL_PRICE = ${statedPrice} ` +
+      `ONLYONE_LIQUIDITY_QUOTE_AMOUNT / ONLYONE_LIQUIDITY_AMOUNT = ${impliedPrice} but ONLYONE_INITIAL_PRICE = ${statedPrice} ` +
       `(${(driftPct * 100).toFixed(2)}% apart, over the 1% tolerance). Fix one of the three before running this for real.`
     );
   }
@@ -68,13 +68,13 @@ async function main() {
   const quote = new ethers.Contract(quoteAddress, erc20Abi, deployer);
   const positionManager = new ethers.Contract(positionManagerAddress, positionManagerAbi, deployer);
 
-  const onlyAssDecimals = 18; // OnlyAssToken.sol is a plain OZ ERC20, always 18
+  const onlyAssDecimals = 18; // OnlyOneToken.sol is a plain OZ ERC20, always 18
   const quoteDecimals = await quote.decimals();
 
   const { token0, token1, swapped } = sortTokens(onlyAssAddress, quoteAddress);
   const decimals0 = swapped ? Number(quoteDecimals) : onlyAssDecimals;
   const decimals1 = swapped ? onlyAssDecimals : Number(quoteDecimals);
-  // V3 price is always "token1 per token0". If ONLYASS ended up as token1, invert the human price we were given.
+  // V3 price is always "token1 per token0". If ONLYONE ended up as token1, invert the human price we were given.
   const priceForV3 = swapped ? String(1 / statedPrice) : initialPrice;
   const sqrtPriceX96 = sqrtPriceX96FromPrice(priceForV3, decimals0, decimals1);
 
@@ -111,15 +111,15 @@ async function main() {
   });
   const receipt = await tx.wait();
 
-  console.log('\n$ONLYASS pool is live.');
+  console.log('\n$ONLYONE pool is live.');
   console.log('tx:', receipt.hash);
   console.log('\nSet these in server/.env (they feed price.ts and the treasury-hedge worker):');
-  console.log('  ONLYASS_POOL =', poolAddress);
-  console.log('  ONLYASS_IS_TOKEN0 =', swapped ? 'false' : 'true');
-  console.log('  ONLYASS_POOL_TOKEN0_DECIMALS =', decimals0);
-  console.log('  ONLYASS_POOL_TOKEN1_DECIMALS =', decimals1);
-  console.log('  ONLYASS_POOL_FEE =', fee);
-  console.log('  ONLYASS_POOL_QUOTE = "WETH" if', quoteAddress, 'is WETH, otherwise "USDC" (price.ts only checks for the literal string "WETH")');
+  console.log('  ONLYONE_POOL =', poolAddress);
+  console.log('  ONLYONE_IS_TOKEN0 =', swapped ? 'false' : 'true');
+  console.log('  ONLYONE_POOL_TOKEN0_DECIMALS =', decimals0);
+  console.log('  ONLYONE_POOL_TOKEN1_DECIMALS =', decimals1);
+  console.log('  ONLYONE_POOL_FEE =', fee);
+  console.log('  ONLYONE_POOL_QUOTE = "WETH" if', quoteAddress, 'is WETH, otherwise "USDC" (price.ts only checks for the literal string "WETH")');
 }
 
 main().catch((err) => {

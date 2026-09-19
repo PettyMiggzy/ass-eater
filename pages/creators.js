@@ -26,13 +26,12 @@ export default function Creators({ creators, sessionUser }) {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const [dashTab, setDashTab] = useState('Overview');
   const [showSplash, setShowSplash] = useState(true);
   const [splashFading, setShowSplashFading] = useState(false);
   const [toast, setToast] = useState(null);
 
   const showComingSoon = (msg) => {
-    setToast(msg || 'Launching in 4 days — connect your wallet then to unlock.');
+    setToast(msg || 'Not live yet — wallet features open when $ONLYONE launches.');
     setTimeout(() => setToast(null), 3000);
   };
 
@@ -65,12 +64,11 @@ export default function Creators({ creators, sessionUser }) {
     });
   }, [activeFilter, search]);
 
-  const subscribers = [
-    { name: 'degen_mike', plan: 'All Access', amount: '3M', status: 'Active' },
-    { name: 'sara.eth', plan: 'VIP', amount: '8M', status: 'Active' },
-    { name: 'apeking99', plan: 'Starter', amount: '1M', status: 'Expiring' },
-    { name: 'crypto_chad', plan: 'All Access', amount: '3M', status: 'Active' },
-  ];
+  // Real content count across the roster, for the stats bar.
+  const totalPosts = creators.reduce(
+    (n, c) => n + (Array.isArray(c.gallery) ? c.gallery.length : 0),
+    0,
+  );
 
   return (
     <>
@@ -160,22 +158,21 @@ export default function Creators({ creators, sessionUser }) {
             </p>
 
             {/* Stats Bar */}
+            {/* Counted from the real roster. These used to be invented
+                numbers -- "12.4K Members", "340+ Exclusive Drops", and a
+                creator count of 6 against a roster of 2. */}
             <div className="flex flex-wrap justify-center gap-6 md:gap-12 mb-12">
               <div className="text-center">
-                <p className="text-3xl font-black text-brand-gold">12.4K</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide">Members</p>
-              </div>
-              <div className="text-center">
-                <p className="text-3xl font-black text-brand-gold">340+</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide">Exclusive Drops</p>
-              </div>
-              <div className="text-center">
-                <p className="text-3xl font-black text-brand-gold">6</p>
+                <p className="text-3xl font-black text-brand-gold">{creators.length}</p>
                 <p className="text-xs text-gray-400 uppercase tracking-wide">Creators</p>
               </div>
               <div className="text-center">
-                <p className="text-3xl font-black text-brand-gold">24/7</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide">New Content</p>
+                <p className="text-3xl font-black text-brand-gold">{totalPosts}</p>
+                <p className="text-xs text-gray-400 uppercase tracking-wide">Pieces of Content</p>
+              </div>
+              <div className="text-center">
+                <p className="text-3xl font-black text-brand-gold">10%</p>
+                <p className="text-xs text-gray-400 uppercase tracking-wide">Platform Fee</p>
               </div>
             </div>
 
@@ -337,7 +334,7 @@ export default function Creators({ creators, sessionUser }) {
                 <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> All creators unlocked</li>
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Daily content drops</li>
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> AI character chat access</li>
+                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Direct messaging with creators</li>
                 </ul>
                 <button onClick={() => showComingSoon()} className="w-full premium-button text-sm">Select</button>
               </div>
@@ -348,7 +345,7 @@ export default function Creators({ creators, sessionUser }) {
                 <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Everything in All Access</li>
                   <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Priority requests</li>
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Early mascot NFT access</li>
+                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Early access to new drops</li>
                 </ul>
                 <button onClick={() => showComingSoon()} className="w-full premium-button text-sm">Select</button>
               </div>
@@ -356,75 +353,49 @@ export default function Creators({ creators, sessionUser }) {
           </div>
         </section>
 
-        {/* Creator Dashboard Preview */}
+        {/* What a creator actually gets. This used to be a fabricated
+            "Creator Dashboard" showing 4.2M earnings, 312 subscribers and an
+            invented subscriber table, under the words "track your earnings in
+            real time" -- numbers no account on this platform has ever had. */}
         <section id="dashboard" className="py-16 px-6 border-t border-brand-gold/20">
-          <div className="max-w-5xl mx-auto">
-            <h2 className="text-4xl font-black text-center mb-2 premium-title">CREATOR DASHBOARD</h2>
-            <p className="text-center text-gray-400 mb-4">Become a creator and track your earnings in real time</p>
-            <div className="text-center mb-12">
-              <a href="/become-creator" className="inline-block premium-button text-sm">Apply to Become a Creator</a>
+          <div className="max-w-4xl mx-auto">
+            <h2 className="text-4xl font-black text-center mb-2 premium-title">CREATE ON ONLYONE</h2>
+            <p className="text-center text-gray-400 mb-10">
+              Your page, your prices, your content. We take 10% — nothing else.
+            </p>
+
+            <div className="grid sm:grid-cols-3 gap-4 mb-10">
+              <div className="premium-card p-6">
+                <p className="font-bold mb-2">Your own page</p>
+                <p className="text-gray-400 text-sm">
+                  Photos, video, a bio, tags and links. Fans find you through search and browse by tag.
+                </p>
+              </div>
+              <div className="premium-card p-6">
+                <p className="font-bold mb-2">Sell in the marketplace</p>
+                <p className="text-gray-400 text-sm">
+                  List digital or physical items at any price. Your listings also show on your own page.
+                </p>
+              </div>
+              <div className="premium-card p-6">
+                <p className="font-bold mb-2">Talk to your fans</p>
+                <p className="text-gray-400 text-sm">
+                  Direct messages and a public wall on your page, both live today.
+                </p>
+              </div>
             </div>
 
-            <div className="premium-card border-2 border-brand-gold/30 p-6 grid md:grid-cols-[200px_1fr] gap-6">
-              {/* Sidebar */}
-              <div className="bg-black/30 rounded-lg p-3 flex md:flex-col gap-2 overflow-x-auto">
-                {['Overview', 'Content', 'Subscribers', 'Payouts'].map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setDashTab(tab)}
-                    className={`px-4 py-2 rounded-md text-sm text-left whitespace-nowrap transition ${
-                      dashTab === tab
-                        ? 'bg-gradient-to-r from-brand-gold to-brand-secondary text-black font-bold'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
+            <div className="premium-card p-6 mb-8">
+              <p className="font-bold mb-2">Not live yet, and worth saying plainly</p>
+              <p className="text-gray-400 text-sm">
+                Payments are not switched on. Subscriptions, tips and marketplace checkout are built
+                but not taking money yet, so there are no earnings to show you. Set your page up now
+                and it is ready the day they open.
+              </p>
+            </div>
 
-              {/* Panel */}
-              <div className="bg-black/20 rounded-lg p-6">
-                <div className="flex flex-wrap gap-4 mb-6">
-                  <div className="bg-black/30 rounded-lg px-6 py-4 flex-1 min-w-[140px]">
-                    <p className="text-2xl font-black text-brand-gold">4.2M</p>
-                    <p className="text-xs text-gray-400">Earnings (30d)</p>
-                  </div>
-                  <div className="bg-black/30 rounded-lg px-6 py-4 flex-1 min-w-[140px]">
-                    <p className="text-2xl font-black text-brand-gold">312</p>
-                    <p className="text-xs text-gray-400">Subscribers</p>
-                  </div>
-                  <div className="bg-black/30 rounded-lg px-6 py-4 flex-1 min-w-[140px]">
-                    <p className="text-2xl font-black text-brand-gold">18</p>
-                    <p className="text-xs text-gray-400">New This Week</p>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-gray-400 border-b border-brand-gold/20">
-                        <th className="text-left py-2">Subscriber</th>
-                        <th className="text-left py-2">Plan</th>
-                        <th className="text-left py-2">Amount</th>
-                        <th className="text-left py-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {subscribers.map((s, i) => (
-                        <tr key={i} className="border-b border-brand-gold/10">
-                          <td className="py-3 text-white">{s.name}</td>
-                          <td className="py-3 text-gray-300">{s.plan}</td>
-                          <td className="py-3 text-brand-gold font-bold">{s.amount}</td>
-                          <td className={`py-3 font-bold ${s.status === 'Active' ? 'text-green-400' : 'text-yellow-400'}`}>
-                            {s.status}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+            <div className="text-center">
+              <a href="/become-creator" className="inline-block premium-button text-sm">Apply to Become a Creator</a>
             </div>
           </div>
         </section>

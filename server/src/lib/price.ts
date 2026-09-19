@@ -20,10 +20,10 @@ function priceFromSqrtX96(sqrtP: bigint | number, dec0: number, dec1: number, as
 
 /** V3: the pool is its own contract, spot price is just slot0(). */
 async function assUsdV3(): Promise<number> {
-  const [sqrtP] = await publicClient.readContract({ address: process.env.ONLYASS_POOL as Address, abi: univ3Abi, functionName: 'slot0' });
-  const dec0 = Number(process.env.ONLYASS_POOL_TOKEN0_DECIMALS), dec1 = Number(process.env.ONLYASS_POOL_TOKEN1_DECIMALS);
-  const priceInQuote = priceFromSqrtX96(sqrtP, dec0, dec1, process.env.ONLYASS_IS_TOKEN0 === 'true');
-  const quoteUsd = process.env.ONLYASS_POOL_QUOTE === 'WETH' ? await ethUsd() : 1;
+  const [sqrtP] = await publicClient.readContract({ address: process.env.ONLYONE_POOL as Address, abi: univ3Abi, functionName: 'slot0' });
+  const dec0 = Number(process.env.ONLYONE_POOL_TOKEN0_DECIMALS), dec1 = Number(process.env.ONLYONE_POOL_TOKEN1_DECIMALS);
+  const priceInQuote = priceFromSqrtX96(sqrtP, dec0, dec1, process.env.ONLYONE_IS_TOKEN0 === 'true');
+  const quoteUsd = process.env.ONLYONE_POOL_QUOTE === 'WETH' ? await ethUsd() : 1;
   return priceInQuote * quoteUsd;
 }
 
@@ -31,37 +31,37 @@ async function assUsdV3(): Promise<number> {
  * V4: there's no per-pool contract -- state lives packed in the singleton
  * PoolManager, read via extsload(). Robinhood Chain's launch platforms
  * (pools.trade, Bags.fm's graduation, and reportedly Kekfun.xyz) land tokens
- * here, not in V3 pools, so this is very likely the real path once $ONLYASS
+ * here, not in V3 pools, so this is very likely the real path once $ONLYONE
  * is live. See lib/v4-pool-state.ts for the storage-layout math, ported
  * directly from v4-core's StateLibrary.sol.
  */
 async function assUsdV4(): Promise<number> {
-  const currency0 = process.env.ONLYASS_V4_CURRENCY0 as Address;
-  const currency1 = process.env.ONLYASS_V4_CURRENCY1 as Address;
-  const fee = Number(process.env.ONLYASS_POOL_FEE ?? 3000);
-  const tickSpacing = Number(process.env.ONLYASS_V4_TICK_SPACING ?? 60);
-  const hooks = (process.env.ONLYASS_V4_HOOKS as Address) ?? '0x0000000000000000000000000000000000000000';
+  const currency0 = process.env.ONLYONE_V4_CURRENCY0 as Address;
+  const currency1 = process.env.ONLYONE_V4_CURRENCY1 as Address;
+  const fee = Number(process.env.ONLYONE_POOL_FEE ?? 3000);
+  const tickSpacing = Number(process.env.ONLYONE_V4_TICK_SPACING ?? 60);
+  const hooks = (process.env.ONLYONE_V4_HOOKS as Address) ?? '0x0000000000000000000000000000000000000000';
 
   const poolId = computePoolId(currency0, currency1, fee, tickSpacing, hooks);
   const slot = poolStateSlot(poolId) as `0x${string}`;
-  const data = await publicClient.readContract({ address: process.env.ONLYASS_V4_POOL_MANAGER as Address, abi: poolManagerAbi, functionName: 'extsload', args: [slot] });
+  const data = await publicClient.readContract({ address: process.env.ONLYONE_V4_POOL_MANAGER as Address, abi: poolManagerAbi, functionName: 'extsload', args: [slot] });
   const { sqrtPriceX96 } = decodeSlot0(data);
 
-  const dec0 = Number(process.env.ONLYASS_POOL_TOKEN0_DECIMALS), dec1 = Number(process.env.ONLYASS_POOL_TOKEN1_DECIMALS);
-  const priceInQuote = priceFromSqrtX96(sqrtPriceX96, dec0, dec1, process.env.ONLYASS_IS_TOKEN0 === 'true');
+  const dec0 = Number(process.env.ONLYONE_POOL_TOKEN0_DECIMALS), dec1 = Number(process.env.ONLYONE_POOL_TOKEN1_DECIMALS);
+  const priceInQuote = priceFromSqrtX96(sqrtPriceX96, dec0, dec1, process.env.ONLYONE_IS_TOKEN0 === 'true');
   // Native ETH is currency address 0x0 in V4 (Bitquery's docs confirm this for pools.trade) -- treat that the same as a WETH quote.
-  const quoteIsEth = process.env.ONLYASS_POOL_QUOTE === 'WETH' || (process.env.ONLYASS_IS_TOKEN0 === 'true' ? currency1 : currency0) === '0x0000000000000000000000000000000000000000';
+  const quoteIsEth = process.env.ONLYONE_POOL_QUOTE === 'WETH' || (process.env.ONLYONE_IS_TOKEN0 === 'true' ? currency1 : currency0) === '0x0000000000000000000000000000000000000000';
   const quoteUsd = quoteIsEth ? await ethUsd() : 1;
   return priceInQuote * quoteUsd;
 }
 
-/** Your token's spot price. Pre-launch: set ONLYASS_PRICE_OVERRIDE. Defaults to V4 -- confirmed as Kekfun.xyz's (and every other Robinhood Chain launch platform's) actual pool type. Set ONLYASS_POOL_VERSION=v3 only if you know for certain the real pool isn't V4. */
+/** Your token's spot price. Pre-launch: set ONLYONE_PRICE_OVERRIDE. Defaults to V4 -- confirmed as Kekfun.xyz's (and every other Robinhood Chain launch platform's) actual pool type. Set ONLYONE_POOL_VERSION=v3 only if you know for certain the real pool isn't V4. */
 async function assUsd(): Promise<number> {
-  if (process.env.ONLYASS_PRICE_OVERRIDE) return Number(process.env.ONLYASS_PRICE_OVERRIDE);
-  return process.env.ONLYASS_POOL_VERSION === 'v3' ? assUsdV3() : assUsdV4();
+  if (process.env.ONLYONE_PRICE_OVERRIDE) return Number(process.env.ONLYONE_PRICE_OVERRIDE);
+  return process.env.ONLYONE_POOL_VERSION === 'v3' ? assUsdV3() : assUsdV4();
 }
 
-export async function getUsdPrice(asset: 'STABLE' | 'ETH' | 'ONLYASS'): Promise<number> {
+export async function getUsdPrice(asset: 'STABLE' | 'ETH' | 'ONLYONE'): Promise<number> {
   // Every accepted stablecoin is a dollar by definition -- that is the whole
   // reason they are on the allowlist. No oracle, no staleness window.
   if (asset === 'STABLE') return 1;

@@ -4,13 +4,13 @@ eBay-style bidding on top of the existing fixed-price marketplace. See
 `core/auctions.ts` for the implementation, `core/auctions.test.ts` for the
 test suite (19 tests).
 
-## Why bids settle in USD (`balanceCents`), never $ONLYASS
+## Why bids settle in USD (`balanceCents`), never $ONLYONE
 
 An auction can run for hours or days. A bid has to hold its value for that
 whole window, and it needs to be directly comparable to every other bid —
 neither of those works if bids are denominated in a token whose price can
 move, or if paying in one asset carries the platform's usual 10% discount
-(a $100 bid paid in $ONLYASS would really be a $90 bid — "highest bid wins"
+(a $100 bid paid in $ONLYONE would really be a $90 bid — "highest bid wins"
 stops meaning anything once that's in play). Restricting auctions to the
 USDC-backed `balanceCents` pool sidesteps both problems: it's stable for the
 auction's whole duration and every bid is worth exactly its face value.

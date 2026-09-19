@@ -2,7 +2,7 @@ import { post, lockBalance, PLATFORM_ID, InsufficientFunds, type Tx , postPlatfo
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION } from './marketplace-fees';
 
 // eBay-style auctions on the marketplace. Bids settle in the USD-backed
-// balanceCents pool ONLY -- never the $ONLYASS discount pool. A bid has to
+// balanceCents pool ONLY -- never the $ONLYONE discount pool. A bid has to
 // hold its value for however long the auction runs (hours to days), and a
 // volatile token doing that plus a 10% payment discount would make "highest
 // bid wins" ambiguous. USDC-funded balance has neither problem.

@@ -32,8 +32,8 @@ describe('v3-pool-math sqrtPriceX96FromPrice', () => {
     expect(priceBack).to.be.closeTo(0.25, 1e-9);
   });
 
-  it('accounts for a decimals gap between token0 and token1 (e.g. 18-decimal ONLYASS priced in 6-decimal USDG)', () => {
-    // 1 ONLYASS (18 dec, token0) = 0.5 USDG (6 dec, token1) => human price (token1 per token0) = 0.5
+  it('accounts for a decimals gap between token0 and token1 (e.g. 18-decimal ONLYONE priced in 6-decimal USDG)', () => {
+    // 1 ONLYONE (18 dec, token0) = 0.5 USDG (6 dec, token1) => human price (token1 per token0) = 0.5
     const sqrtP = sqrtPriceX96FromPrice('0.5', 18, 6);
     const priceRaw = Number(sqrtP) ** 2 / Number(Q96) ** 2; // raw (wei-unit) price
     const priceHuman = priceRaw / 10 ** (6 - 18); // undo the decimals adjustment

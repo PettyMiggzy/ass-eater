@@ -8,7 +8,7 @@ import { DECIMALS } from '../lib/chain';
 
 const PERIOD_MS = 30 * 864e5;
 
-// Fan locks $ONLYASS-equivalent value against an opted-in creator's perk.
+// Fan locks $ONLYONE-equivalent value against an opted-in creator's perk.
 // Renews monthly exactly like a subscription -- see subscriptions.ts.
 export const stake: FastifyPluginAsync = async (app) => {
   // Creator opts in / updates their perk terms. Leaving this alone (or
@@ -43,8 +43,8 @@ export const stake: FastifyPluginAsync = async (app) => {
     if (!c?.stakePerkEnabled || !c.stakeUsdCents) return reply.code(400).send({ error: 'no_perk' });
     const creatorId = c.userId, usdCents = c.stakeUsdCents;
 
-    const px = await getUsdPrice('ONLYASS');
-    const tokenAmountAtLock = parseUnits((usdCents / 100 / px).toFixed(DECIMALS.ONLYASS), DECIMALS.ONLYASS).toString();
+    const px = await getUsdPrice('ONLYONE');
+    const tokenAmountAtLock = parseUnits((usdCents / 100 / px).toFixed(DECIMALS.ONLYONE), DECIMALS.ONLYONE).toString();
 
     return money(prisma, async (tx) => {
       const existing = await tx.tokenLock.findUnique({ where: { fanId_creatorId: { fanId: req.user.id, creatorId } } });

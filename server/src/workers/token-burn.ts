@@ -37,7 +37,7 @@ import { publicClient, treasuryClient, treasury, TOKENS, HEDGE_STABLE, erc20Abi 
 // if that trade is deliberately being made.
 const AUTOMATIC = process.env.TOKEN_BURN_AUTOMATIC === 'true';
 const ROUTER = process.env.UNISWAP_V3_ROUTER_ADDRESS as Address | undefined;
-const POOL_FEE = Number(process.env.ONLYASS_POOL_FEE ?? 3000);
+const POOL_FEE = Number(process.env.ONLYONE_POOL_FEE ?? 3000);
 const INTERVAL_MS = Number(process.env.TOKEN_BURN_INTERVAL_MS ?? 15 * 60_000);
 // Don't trade dust: below this the gas and the spread cost more than the burn
 // is worth. Obligations simply accumulate until they clear it.
@@ -55,7 +55,7 @@ const routerAbi = parseAbi([
 ]);
 
 export async function runBurnBatch() {
-  if (!ROUTER || !TOKENS.ONLYASS.address) return; // nothing to swap through yet
+  if (!ROUTER || !TOKENS.ONLYONE.address) return; // nothing to swap through yet
 
   const pending = await prisma.tokenBurn.findMany({ where: { executedAt: null }, orderBy: { createdAt: 'asc' }, take: 500 });
   if (!pending.length) return;
@@ -88,7 +88,7 @@ export async function runBurnBatch() {
     functionName: 'exactInputSingle',
     args: [{
       tokenIn: HEDGE_STABLE.address,
-      tokenOut: TOKENS.ONLYASS.address,
+      tokenOut: TOKENS.ONLYONE.address,
       fee: POOL_FEE,
       recipient: DEAD,
       amountIn,
@@ -122,10 +122,10 @@ export async function runBurnBatch() {
  * are checked above.
  */
 function minimumOut(amountIn: bigint): bigint {
-  const spot = Number(process.env.ONLYASS_PRICE_OVERRIDE ?? 0);
+  const spot = Number(process.env.ONLYONE_PRICE_OVERRIDE ?? 0);
   if (!(spot > 0)) return 0n;
   const dollars = Number(amountIn) / 10 ** HEDGE_STABLE.decimals;
-  const expected = parseUnits((dollars / spot).toFixed(TOKENS.ONLYASS.decimals), TOKENS.ONLYASS.decimals);
+  const expected = parseUnits((dollars / spot).toFixed(TOKENS.ONLYONE.decimals), TOKENS.ONLYONE.decimals);
   return (expected * (10_000n - MAX_SLIPPAGE_BPS)) / 10_000n;
 }
 

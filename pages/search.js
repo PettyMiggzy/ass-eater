@@ -2,11 +2,14 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
+import { getSessionUser } from '../lib/session';
+import { publicUser } from '../lib/users-store';
 import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { getListings } from '../lib/listings-store';
 
-export async function getServerSideProps({ query }) {
+export async function getServerSideProps({ query, req }) {
+  const sessionUser = publicUser(await getSessionUser(req));
   const q = String(query.q || '').trim().toLowerCase();
   const tag = String(query.tag || '').trim().toLowerCase();
   const [allCreators, allListings] = await Promise.all([getCreators(), getListings()]);
@@ -37,10 +40,10 @@ export async function getServerSideProps({ query }) {
   // when nobody's searching for anything specific yet.
   const allTags = [...new Set(visibleCreators.flatMap((c) => (Array.isArray(c.tags) ? c.tags : [])))].sort();
 
-  return { props: { q, tag, creators: creators.map(toPublicCreator), listings, allTags } };
+  return { props: { q, tag, creators: creators.map(toPublicCreator), listings, allTags, sessionUser } };
 }
 
-export default function Search({ q, tag, creators, listings, allTags }) {
+export default function Search({ q, tag, creators, listings, allTags, sessionUser }) {
   const router = useRouter();
   const [value, setValue] = useState(q);
 
@@ -55,7 +58,7 @@ export default function Search({ q, tag, creators, listings, allTags }) {
     <>
       <Head><title>Search - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white">
-        <SiteNav />
+        <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
         <div className="max-w-4xl mx-auto px-6 py-10">
           <form onSubmit={submit} className="mb-6">
             <input

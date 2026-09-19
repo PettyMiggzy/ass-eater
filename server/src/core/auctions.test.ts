@@ -28,8 +28,8 @@ async function balanceOf(userId: string) {
   return acct?.balanceCents ?? 0n;
 }
 
-async function fundOnlyAss(userId: string, cents: number) {
-  await money(prisma, (tx) => post(tx, userId, cents, 'DEPOSIT', undefined, undefined, 'ONLYASS'));
+async function fundOnlyOne(userId: string, cents: number) {
+  await money(prisma, (tx) => post(tx, userId, cents, 'DEPOSIT', undefined, undefined, 'ONLYONE'));
 }
 
 /** endsInMs negative = already-ended, for testing closeAuction directly. */
@@ -186,10 +186,10 @@ describe('auctions placeBid', () => {
     expect(updated.auctionEndsAt!.getTime()).toBe(listing.auctionEndsAt!.getTime());
   });
 
-  it('only ever locks the USD balanceCents pool, never the $ONLYASS pool, regardless of how much ONLYASS balance the bidder holds', async () => {
+  it('only ever locks the USD balanceCents pool, never the $ONLYONE pool, regardless of how much ONLYONE balance the bidder holds', async () => {
     const creatorId = await makeCreator();
     const bidderId = await makeUser();
-    await fundOnlyAss(bidderId, 100_000); // plenty of ONLYASS balance
+    await fundOnlyOne(bidderId, 100_000); // plenty of ONLYONE balance
     const listing = await makeAuctionListing(creatorId, { startingBidCents: 1000 });
     await expect(money(prisma, (tx) => placeBid(tx, listing.id, bidderId, 1000))).rejects.toThrow('insufficient_funds');
   });

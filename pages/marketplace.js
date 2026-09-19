@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
+import { getSessionUser } from '../lib/session';
+import { publicUser } from '../lib/users-store';
 import { getListings } from '../lib/listings-store';
 import { getCreators } from '../lib/creators-store';
 import { isPubliclyVisible } from '../lib/creator-status';
@@ -18,7 +20,8 @@ const KINDS = [
   { value: 'physical', label: 'Merch' },
 ];
 
-export async function getServerSideProps() {
+export async function getServerSideProps({ req }) {
+  const sessionUser = publicUser(await getSessionUser(req));
   const [listings, creators] = await Promise.all([getListings(), getCreators()]);
   // A suspended or banned creator's listings come OFF the marketplace, not
   // just their name. Masking the seller to "Unknown" left a banned creator's
@@ -45,10 +48,10 @@ export async function getServerSideProps() {
       if (founding !== 0) return founding;
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
-  return { props: { listings: active } };
+  return { props: { listings: active, sessionUser } };
 }
 
-export default function Marketplace({ listings }) {
+export default function Marketplace({ listings, sessionUser }) {
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
   const [reason, setReason] = useState('');
@@ -192,7 +195,7 @@ export default function Marketplace({ listings }) {
       )}
 
       <div className="min-h-screen bg-brand-ink text-white pb-20">
-        <SiteNav />
+        <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
 
         {/* Header. Ambient glow only -- the listings themselves carry the
             imagery, and every preview is blurred until someone owns it. */}

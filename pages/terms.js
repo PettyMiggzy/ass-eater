@@ -143,7 +143,7 @@ export default function Terms() {
               </ul>
             </Section>
 
-            <Section title="7. Prohibited Conduct">
+            <Section title="7. Prohibited Conduct" id="prohibited">
               <ul className="list-disc pl-5 space-y-2">
                 <li>Uploading illegal content, or content involving minors or non-consenting individuals.</li>
                 <li>Harassment, threats, or impersonation of another person or creator.</li>
@@ -212,7 +212,28 @@ export default function Terms() {
             </Section>
 
             <Section title="12. Contact">
-              <p>Questions about these Terms can be directed to the Platform's support contact.</p>
+              <p>
+                Questions about these Terms can be directed to{' '}
+                <a href="mailto:team@onlyone1.fun" className="text-brand-pink hover:underline">team@onlyone1.fun</a>.
+              </p>
+            </Section>
+
+            <Section title="13. Complaints" id="complaints">
+              <p>
+                If you have a complaint about content on the Platform, about a creator, or about how
+                we have handled something, email{' '}
+                <a href="mailto:team@onlyone1.fun" className="text-brand-pink hover:underline">team@onlyone1.fun</a>{' '}
+                with enough detail to identify what you are referring to — a link, a username, or a
+                description. We aim to acknowledge every complaint within 7 days and to tell you the
+                outcome once it has been reviewed.
+              </p>
+              <p className="mt-3">
+                Two kinds of complaint have their own faster route and should use it instead:
+                content you appear in that you did not consent to goes through{' '}
+                <a href="/report-content" className="text-brand-pink hover:underline">our takedown form</a>,
+                which carries a 48-hour deadline under the federal TAKE IT DOWN Act; copyright
+                complaints are covered in Section 8.
+              </p>
             </Section>
           </div>
 

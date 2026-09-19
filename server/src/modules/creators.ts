@@ -47,7 +47,7 @@ export const creators: FastifyPluginAsync = async (app) => {
       displayName: z.string().min(1).max(50).optional(), bio: z.string().max(2000).optional(),
       avatarKey: z.string().optional(), bannerKey: z.string().optional(),
       tags: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
-      // Never ONLYASS: paying a creator in the token is still paying
+      // Never ONLYONE: paying a creator in the token is still paying
       // someone in a token whose price moves between earning and cashing out.
       payoutAsset: z.enum(['STABLE', 'ETH']).optional(),
       payoutAddress: z.string().refine(isAddress, 'bad_address').optional(),

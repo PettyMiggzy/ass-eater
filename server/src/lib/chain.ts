@@ -57,15 +57,15 @@ export const HEDGE_STABLE: StableToken = STABLECOINS[0];
 export const ACCEPTED_STABLES = new Map<string, StableToken>(
   STABLECOINS.map((s) => [s.address.toLowerCase(), s]));
 
-export const TOKENS: Record<'ONLYASS', { address: Address; decimals: number }> = {
-  ONLYASS:  { address: process.env.ONLYASS_TOKEN_ADDRESS as Address, decimals: Number(process.env.ONLYASS_DECIMALS ?? 18) },
+export const TOKENS: Record<'ONLYONE', { address: Address; decimals: number }> = {
+  ONLYONE:  { address: process.env.ONLYONE_TOKEN_ADDRESS as Address, decimals: Number(process.env.ONLYONE_DECIMALS ?? 18) },
 };
-export const DECIMALS = { ETH: 18, ONLYASS: TOKENS.ONLYASS.decimals } as const;
+export const DECIMALS = { ETH: 18, ONLYONE: TOKENS.ONLYONE.decimals } as const;
 
 /** Every ERC-20 this platform watches: the accepted stablecoins plus the token. */
 export const WATCHED_TOKENS: { symbol: string; address: Address; decimals: number }[] = [
   ...STABLECOINS,
-  { symbol: 'ONLYASS', address: TOKENS.ONLYASS.address, decimals: TOKENS.ONLYASS.decimals },
+  { symbol: 'ONLYONE', address: TOKENS.ONLYONE.address, decimals: TOKENS.ONLYONE.decimals },
 ];
 
 /**
@@ -88,10 +88,10 @@ export async function assertTokenDecimals() {
     }
   }
 }
-/** address -> ledger asset. Every accepted stablecoin maps to STABLE; the token to ONLYASS. */
-export const ADDR_TO_ASSET = new Map<string, 'STABLE' | 'ONLYASS'>([
+/** address -> ledger asset. Every accepted stablecoin maps to STABLE; the token to ONLYONE. */
+export const ADDR_TO_ASSET = new Map<string, 'STABLE' | 'ONLYONE'>([
   ...STABLECOINS.map((s) => [s.address.toLowerCase(), 'STABLE' as const] as [string, 'STABLE']),
-  [TOKENS.ONLYASS.address?.toLowerCase(), 'ONLYASS' as const] as [string, 'ONLYASS'],
+  [TOKENS.ONLYONE.address?.toLowerCase(), 'ONLYONE' as const] as [string, 'ONLYONE'],
 ].filter(([addr]) => !!addr));
 
 export const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');

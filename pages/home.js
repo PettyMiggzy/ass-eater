@@ -1,19 +1,22 @@
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
+import { getSessionUser } from '../lib/session';
+import { publicUser } from '../lib/users-store';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 import { byPlacement } from '../lib/founding';
 // `locked` on its own is not a gate -- see lib/token-gate.js. Blurring on the
 // bare flag put a blur and a padlock on creators with no threshold set.
 import { isTokenGated, formatGate } from '../lib/token-gate';
 
-export async function getServerSideProps() {
+export async function getServerSideProps({ req }) {
+  const sessionUser = publicUser(await getSessionUser(req));
   const all = await getCreators();
   const creators = all
     .filter(isPubliclyVisible)
     .sort(byPlacement) // Founding Creators first -- see lib/founding.js
     .slice(0, 8)
     .map(toPublicCreator);
-  return { props: { creators } };
+  return { props: { creators, sessionUser } };
 }
 
 const PROMISES = [
@@ -51,7 +54,7 @@ const FEATURES = [
   { icon: '🔒', title: 'PPV Content', sub: 'Unlock exclusives', live: false },
 ];
 
-export default function Home({ creators }) {
+export default function Home({ creators, sessionUser }) {
   return (
     <>
       <Head>
@@ -64,7 +67,7 @@ export default function Home({ creators }) {
       </Head>
 
       <div className="min-h-screen bg-brand-ink text-white overflow-x-hidden">
-        <SiteNav />
+        <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
 
         {/* Hero */}
         <section className="relative">
@@ -257,11 +260,15 @@ export default function Home({ creators }) {
             <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-gray-500 mb-6">
               <a href="/terms" className="hover:text-brand-pink transition">Terms of Service</a>
               <a href="/privacy" className="hover:text-brand-pink transition">Privacy Policy</a>
-              <a href="/terms" className="hover:text-brand-pink transition">Cookie Policy</a>
-              <a href="/terms" className="hover:text-brand-pink transition">18 U.S.C. §2257 Statement</a>
-              <a href="/terms" className="hover:text-brand-pink transition">DMCA / Takedown</a>
-              <a href="/terms" className="hover:text-brand-pink transition">Complaints Policy</a>
-              <a href="/terms" className="hover:text-brand-pink transition">Acceptable Use</a>
+              {/* Each of these points at the section that actually covers it.
+                  They all pointed at bare /terms, and two of them -- the
+                  §2257 statement and a cookie policy -- had no such section
+                  to point at in the first place. */}
+              <a href="/privacy#cookies" className="hover:text-brand-pink transition">Cookie Policy</a>
+              <a href="/2257" className="hover:text-brand-pink transition">18 U.S.C. §2257 Statement</a>
+              <a href="/terms#content-removal" className="hover:text-brand-pink transition">DMCA / Takedown</a>
+              <a href="/terms#complaints" className="hover:text-brand-pink transition">Complaints Policy</a>
+              <a href="/terms#prohibited" className="hover:text-brand-pink transition">Acceptable Use</a>
               <a href="/token" className="hover:text-brand-pink transition">$ONLYONE</a>
               <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">
                 Report Non-Consensual Content

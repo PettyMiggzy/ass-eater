@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Run after provision.sh, after the code is at /opt/onlyass/server and
-# /opt/onlyass/server/.env has been filled in by hand on the box.
+# Run after provision.sh, after the code is at /opt/onlyone/server and
+# /opt/onlyone/server/.env has been filled in by hand on the box.
 #
 # Usage: sudo bash app-setup.sh
 
 set -euo pipefail
 
-APP_USER="onlyass"
-APP_DIR="/opt/onlyass/server"
+APP_USER="onlyone"
+APP_DIR="/opt/onlyone/server"
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
   echo "Missing $APP_DIR/.env -- create it from .env.example first, with real values, directly on this box." >&2
@@ -34,24 +34,24 @@ echo "==> seeding system accounts (platform + escrow pseudo-users)"
 sudo -u "$APP_USER" node dist/scripts/seed-system-accounts.js
 
 echo "==> install systemd units"
-cp "$APP_DIR/deploy/onlyass-api.service" /etc/systemd/system/onlyass-api.service
-cp "$APP_DIR/deploy/onlyass-workers.service" /etc/systemd/system/onlyass-workers.service
+cp "$APP_DIR/deploy/onlyone-api.service" /etc/systemd/system/onlyone-api.service
+cp "$APP_DIR/deploy/onlyone-workers.service" /etc/systemd/system/onlyone-workers.service
 systemctl daemon-reload
-systemctl enable --now onlyass-api onlyass-workers
+systemctl enable --now onlyone-api onlyone-workers
 
 echo "==> nginx site"
-cp "$APP_DIR/deploy/nginx-onlyass.conf" /etc/nginx/sites-available/onlyass
-ln -sf /etc/nginx/sites-available/onlyass /etc/nginx/sites-enabled/onlyass
+cp "$APP_DIR/deploy/nginx-onlyone.conf" /etc/nginx/sites-available/onlyone
+ln -sf /etc/nginx/sites-available/onlyone /etc/nginx/sites-enabled/onlyone
 nginx -t && systemctl reload nginx
 
 cat <<'EOF'
 
 ==> Done. Check status with:
-  systemctl status onlyass-api onlyass-workers
-  journalctl -u onlyass-api -f
-  journalctl -u onlyass-workers -f
+  systemctl status onlyone-api onlyone-workers
+  journalctl -u onlyone-api -f
+  journalctl -u onlyone-workers -f
 
-Then point api.onlyass.fun's DNS A record at this droplet's IP and run:
-  certbot --nginx -d api.onlyass.fun
+Then point api.onlyone.fun's DNS A record at this droplet's IP and run:
+  certbot --nginx -d api.onlyone.fun
 to get TLS (install certbot first: apt-get install -y certbot python3-certbot-nginx).
 EOF

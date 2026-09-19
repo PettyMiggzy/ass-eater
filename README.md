@@ -1,6 +1,6 @@
-# Only Ass Token Website
+# OnlyOne
 
-A bold, modern website for the Only Ass token project. Built with Next.js, React, and TailwindCSS.
+An 18+ creator platform and the $ONLYONE token site. Built with Next.js, React, and TailwindCSS.
 
 ## Features
 

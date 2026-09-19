@@ -20,7 +20,7 @@ async function makeUser(opts: { referredById?: string } = {}) {
   return id;
 }
 
-async function makeCreator(opts: { referredById?: string; payoutAsset?: 'STABLE' | 'ONLYASS' } = {}) {
+async function makeCreator(opts: { referredById?: string; payoutAsset?: 'STABLE' | 'ONLYONE' } = {}) {
   const userId = await makeUser({ referredById: opts.referredById });
   await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR' } });
   await prisma.creatorProfile.create({
@@ -43,8 +43,8 @@ async function onlyAssBalanceOf(userId: string) {
   return acct?.onlyAssCents ?? 0n;
 }
 
-async function fundOnlyAss(userId: string, cents: number) {
-  await money(prisma, (tx) => post(tx, userId, cents, 'DEPOSIT', undefined, undefined, 'ONLYASS'));
+async function fundOnlyOne(userId: string, cents: number) {
+  await money(prisma, (tx) => post(tx, userId, cents, 'DEPOSIT', undefined, undefined, 'ONLYONE'));
 }
 
 beforeEach(async () => {
@@ -92,9 +92,9 @@ describe('ledger.charge', () => {
   // more (2026-09-18). A record that still carries the old value -- the Asset
   // enum can still express it, and a row written before the change would --
   // must not buy a cheaper fee through the back door.
-  it('charges the standard 10% even for a creator record still set to an ONLYASS payout', async () => {
+  it('charges the standard 10% even for a creator record still set to an ONLYONE payout', async () => {
     const fan = await makeUser();
-    const creator = await makeCreator({ payoutAsset: 'ONLYASS' });
+    const creator = await makeCreator({ payoutAsset: 'ONLYONE' });
     await fund(fan, 10_000);
 
     const result = await money(prisma, (tx) =>
@@ -253,11 +253,11 @@ describe('ledger.charge', () => {
   it('will not spend a fan\'s $ONLYONE balance on a charge, however large it is', async () => {
     const fan = await makeUser();
     const creator = await makeCreator();
-    await fundOnlyAss(fan, 1_000_000); // a fortune in tokens, no credits at all
+    await fundOnlyOne(fan, 1_000_000); // a fortune in tokens, no credits at all
 
     await expect(
       money(prisma, (tx) =>
-        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-1' }),
+        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyone-1' }),
       ),
     ).rejects.toThrow(InsufficientFunds);
 
@@ -269,11 +269,11 @@ describe('ledger.charge', () => {
     const fan = await makeUser();
     const creator = await makeCreator();
     await fund(fan, 400); // 400 of credits against a 1000 charge
-    await fundOnlyAss(fan, 10_000); // plenty of tokens beside it
+    await fundOnlyOne(fan, 10_000); // plenty of tokens beside it
 
     await expect(
       money(prisma, (tx) =>
-        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyass-2' }),
+        charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'TIP', refId: 'tip-onlyone-2' }),
       ),
     ).rejects.toThrow(InsufficientFunds);
 

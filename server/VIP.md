@@ -1,14 +1,14 @@
-# VIP: burn $ONLYASS for a platform-wide discount
+# VIP: burn $ONLYONE for a platform-wide discount
 
 The one fan-facing discount on the platform. See `core/vip.ts` for the
 implementation, `core/vip.test.ts` + `core/ledger.test.ts` for the tests.
-Replaces an earlier "stake $ONLYASS for a month" idea that was never
+Replaces an earlier "stake $ONLYONE for a month" idea that was never
 built -- this is what got built instead.
 
 ## Mechanics
 
-- A fan burns any amount of $ONLYASS (`POST /vip/burn`, body `{ tokens }`)
-  out of their $ONLYASS-funded balance (`Account.onlyAssCents`), converted to
+- A fan burns any amount of $ONLYONE (`POST /vip/burn`, body `{ tokens }`)
+  out of their $ONLYONE-funded balance (`Account.onlyAssCents`), converted to
   USD-cents at the live price purely to know how much to debit. Burns
   accumulate (`Account.vipBurnedTokens`) -- there's no requirement to burn
   the whole threshold in one shot.
@@ -23,7 +23,7 @@ built -- this is what got built instead.
   who already burned enough for the new bar is VIP immediately, no
   backfill/migration needed.
 - **The threshold is admin-adjustable** (`GET`/`PATCH /admin/vip-config`),
-  specifically so it can move as $ONLYASS's price does. The explicit ask
+  specifically so it can move as $ONLYONE's price does. The explicit ask
   this was built for: as price rises, lower how many tokens it takes to
   reach VIP, rather than letting the real-dollar cost of VIP status float
   upward forever on a fixed token count.
@@ -35,7 +35,7 @@ built -- this is what got built instead.
 except nothing is ever paid out of it. From the ledger's perspective that
 value is gone, same as if it had been sent to a dead address on-chain. It
 does **not** itself execute a real on-chain burn transaction, so the actual
-$ONLYASS circulating supply doesn't shrink to match -- yet.
+$ONLYONE circulating supply doesn't shrink to match -- yet.
 
 That's a deliberate scope cut, not an oversight: making it a genuine
 on-chain burn would mean either (a) trusting a fan to burn from their own
@@ -52,7 +52,7 @@ of work (real fund movement to a chain address) than the ledger bookkeeping.
 ## Why this replaced the loyalty/token-payment discounts instead of stacking
 
 Two discounts used to exist and both got removed when this shipped: paying
-out of an $ONLYASS balance no longer auto-discounts a charge
+out of an $ONLYONE balance no longer auto-discounts a charge
 (`TOKEN_PAYMENT_DISCOUNT_BPS`, was in `ledger.ts`), and having an active
 subscription or per-creator token-lock no longer discounts a marketplace
 purchase (`LOYALTY_DISCOUNT_BPS`, was in `marketplace.ts`). The explicit
@@ -69,12 +69,12 @@ could hit almost by accident.
   of the same `isVip(tx, userId)` check, not architecturally blocked, just
   not asked for yet).
 - **No live-site (Blob-based) VIP.** Same reasoning as auctions/marketplace:
-  this needs a real $ONLYASS-denominated balance to burn from, which only
+  this needs a real $ONLYONE-denominated balance to burn from, which only
   exists in `server/`'s ledger.
 - **Creators pricing things in their own launched token** (not just
-  USD/$ONLYASS) was raised as a likely future direction ("creators that
+  USD/$ONLYONE) was raised as a likely future direction ("creators that
   launch tokens are probably going to charge their own token") but
-  explicitly deferred -- `payAsset`/`payoutAsset` stay `USD | ONLYASS` only
+  explicitly deferred -- `payAsset`/`payoutAsset` stay `USD | ONLYONE` only
   for now. Supporting a third, per-creator, per-launch token as a payment
   asset would need real per-token price oracles and balance pools, not a
   small addition.

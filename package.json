@@ -1,5 +1,5 @@
 {
-  "name": "ass-eater",
+  "name": "onlyone",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -15,10 +15,10 @@
     "contracts:deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
     "creator-nft:deploy:robinhood-testnet": "hardhat run scripts/deploy-creator-nft.js --network robinhood-testnet",
     "creator-nft:deploy:robinhood": "hardhat run scripts/deploy-creator-nft.js --network robinhood",
-    "onlyass:deploy-token:robinhood-testnet": "hardhat run scripts/deploy-onlyass-token.js --network robinhood-testnet",
-    "onlyass:deploy-token:robinhood": "hardhat run scripts/deploy-onlyass-token.js --network robinhood",
-    "onlyass:seed-pool:robinhood-testnet": "hardhat run scripts/seed-onlyass-pool.js --network robinhood-testnet",
-    "onlyass:seed-pool:robinhood": "hardhat run scripts/seed-onlyass-pool.js --network robinhood"
+    "onlyone:deploy-token:robinhood-testnet": "hardhat run scripts/deploy-onlyone-token.js --network robinhood-testnet",
+    "onlyone:deploy-token:robinhood": "hardhat run scripts/deploy-onlyone-token.js --network robinhood",
+    "onlyone:seed-pool:robinhood-testnet": "hardhat run scripts/seed-onlyone-pool.js --network robinhood-testnet",
+    "onlyone:seed-pool:robinhood": "hardhat run scripts/seed-onlyone-pool.js --network robinhood"
   },
   "repository": {
     "type": "git",
@@ -32,6 +32,7 @@
   },
   "homepage": "https://github.com/PettyMiggzy/ass-eater#readme",
   "dependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
     "@uniswap/v4-core": "^1.0.2",
     "@uniswap/v4-periphery": "^1.0.2",
     "@vercel/blob": "^2.8.0",
@@ -49,7 +50,6 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@openzeppelin/contracts": "^5.6.1",
-    "@tailwindcss/postcss": "^4.3.3",
     "@uniswap/v2-core": "^1.0.1",
     "@uniswap/v2-periphery": "^1.1.0-beta.0",
     "@uniswap/v3-core": "^1.0.1",

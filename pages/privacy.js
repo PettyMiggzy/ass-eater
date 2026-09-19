@@ -96,7 +96,7 @@ export default function Privacy() {
               </p>
             </Section>
 
-            <Section title="5. Cookies & Sessions">
+            <Section title="5. Cookies & Sessions" id="cookies">
               <p>
                 We use a single session cookie to keep you logged in. We don't currently run third-party
                 advertising trackers or analytics cookies on the Platform.
