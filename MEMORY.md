@@ -3607,3 +3607,42 @@ sees) rather than the inbox itself.
 
 **Not built. Flagged for a decision**, since it is his call and he was asking
 rather than instructing.
+
+## Owner key set to exactly `Ahria12`, as asked (2026-09-20)
+
+Founder: *"Ahria12-quartzmoth-5941 bro im not gonna rember that."* He asked
+a second time for the bare passphrase, having been told the tradeoff the
+first time, so it is now exactly `Ahria12` — per the standing note above,
+that is his call. Verified live: 302 to /home with a signed cookie; the old
+key now 404s.
+
+**What makes this defensible rather than just conceded:** the endpoint 404s
+on a wrong key (it never confirms a bypass exists) and carries the per-IP
+budget added yesterday, 8 failures / 15 min. Dictionary-attacking it needs
+someone to already know the route and the parameter name.
+
+### Do not re-raise the key length. Fix the reason he needs it instead.
+
+Two better answers than arguing about entropy, in order:
+
+1. **Take Indiana off `BLOCKED_STATE_CODES`.** He only needs an owner bypass
+   at all because he lives in a state his own site blocks, and his own
+   sources say SB 17 is currently enjoined. That is over-compliance costing
+   him traffic AND his personal access. Offered three times now, never done,
+   because unblocking is a business call — but it is the actual root cause
+   and it is one line.
+2. **Wallet-based owner auth — his own idea, and a good one:** *"what if i
+   connect my wallet that replaces this bs?"* Yes: a `personal_sign` over a
+   server nonce, verified against one hardcoded owner address, proves
+   ownership with nothing to remember and no shared secret to leak or type.
+   **Worth building because it is also the first half of token-gating**,
+   which already needs exactly this (see the token-gate section: "wallet
+   connect + a signed message proving ownership"). It is a real build, not a
+   toggle — the live site has no wallet code at all today, the existing
+   "Connect Wallet" button is a coming-soon toast. Needs his wallet address
+   before it can be built. NOT built; offered.
+
+Also worth telling him if it comes up again: the cookie lasts **180 days**,
+so "type it every time" means something is resetting it — most likely that
+these cookies are **host-scoped** and he is moving between joinonlyone.com,
+shoponeonly.com and the vercel.app URL, each of which needs its own visit.
