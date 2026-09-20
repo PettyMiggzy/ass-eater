@@ -70,6 +70,10 @@ export default function CartPage({ sessionUser, paymentConfig, paymentsLive }) {
         tokenAddress: paymentConfig.usdcAddress,
         payoutAddress: paymentConfig.payoutAddress,
         amountCents: cart.totalCents,
+        chainId: paymentConfig.chainId,
+        chainName: paymentConfig.chainName,
+        rpcUrl: paymentConfig.publicRpcUrl,
+        nativeSymbol: paymentConfig.nativeSymbol,
       });
 
       const res = await fetch('/api/marketplace/orders/create', {
@@ -169,7 +173,7 @@ export default function CartPage({ sessionUser, paymentConfig, paymentsLive }) {
                 )}
                 <div className="flex justify-between font-bold text-white pt-2 mt-2 border-t border-white/10">
                   <span>Total</span>
-                  <span>${(cart.totalCents / 100).toFixed(2)} USDC</span>
+                  <span>${(cart.totalCents / 100).toFixed(2)} {paymentConfig.stableSymbol}</span>
                 </div>
               </div>
 
@@ -263,7 +267,7 @@ export default function CartPage({ sessionUser, paymentConfig, paymentsLive }) {
                     disabled={!canCheckout || paying || !paymentsLive || (simResult?.available && simResult.safe === false)}
                     className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50"
                   >
-                    {paying ? 'Confirm in your wallet…' : `Pay $${(cart.totalCents / 100).toFixed(2)} in USDC`}
+                    {paying ? 'Confirm in your wallet…' : `Pay $${(cart.totalCents / 100).toFixed(2)} in ${paymentConfig.stableSymbol}`}
                   </button>
                 </>
               )}

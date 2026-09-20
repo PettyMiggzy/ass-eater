@@ -1,9 +1,14 @@
+import { getGoplusAccessToken } from '../../../lib/goplus-auth';
+
 /**
  * Proxies a pre-signature transaction simulation to GoPlus Security's real
  * Transaction Simulation API for EVM (POST
- * https://api.gopluslabs.io/api/v1/transaction_simulation, bearer-token
- * authed) -- endpoint and shape confirmed against GoPlus's own docs, not
- * guessed at.
+ * https://api.gopluslabs.io/api/v1/transaction_simulation) -- endpoint and
+ * shape confirmed against GoPlus's own docs, not guessed at. Free to use:
+ * GOPLUS_APP_KEY/GOPLUS_APP_SECRET come from a free self-serve signup on
+ * GoPlus's developer console, exchanged for a short-lived access token by
+ * lib/goplus-auth.js (a real two-step handshake, not a single static key --
+ * an earlier version of this file wrongly assumed a plain bearer token).
  *
  * This is a trust-layer UX signal, not the platform's actual security
  * boundary: the transaction it simulates is always a plain, known-shape
@@ -15,18 +20,13 @@
  * a third party being reachable.
  *
  * Same honest pattern as everywhere else a real vendor integration exists in
- * this codebase: without GOPLUS_API_KEY set, this returns `{ available:
- * false }` and the checkout UI just skips showing the badge -- it never
- * claims a check ran that didn't.
+ * this codebase: without GOPLUS_APP_KEY/_SECRET set, this returns
+ * `{ available: false }` and the checkout UI just skips showing the badge --
+ * it never claims a check ran that didn't.
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const apiKey = process.env.GOPLUS_API_KEY;
-  if (!apiKey) {
-    return res.status(200).json({ available: false });
   }
 
   const { chainId, from, to, data, value } = req.body || {};
@@ -34,12 +34,22 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing transaction fields' });
   }
 
+  let token;
+  try {
+    token = await getGoplusAccessToken();
+  } catch {
+    return res.status(200).json({ available: false });
+  }
+  if (!token) {
+    return res.status(200).json({ available: false });
+  }
+
   try {
     const upstream = await fetch('https://api.gopluslabs.io/api/v1/transaction_simulation', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
         chain_id: String(chainId),

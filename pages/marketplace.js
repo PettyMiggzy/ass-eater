@@ -9,7 +9,7 @@ import { isPubliclyVisible } from '../lib/creator-status';
 import { isFoundingCreator } from '../lib/founding';
 import { Icons, SolidIcons, Tagline } from '../components/Brand';
 import { useCart } from '../lib/cart';
-import { marketplacePaymentsLive } from '../lib/marketplace-payment-config';
+import { marketplacePaymentsLive, getMarketplacePaymentConfig } from '../lib/marketplace-payment-config';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
@@ -66,7 +66,7 @@ export async function getServerSideProps({ req }) {
   // guessed or hardcoded number.
   const kindCounts = { all: active.length, photo: 0, video: 0, physical: 0 };
   for (const l of active) kindCounts[kindOf(l)] += 1;
-  return { props: { listings: active, allTags, tagCounts, kindCounts, sessionUser, paymentsLive: marketplacePaymentsLive() } };
+  return { props: { listings: active, allTags, tagCounts, kindCounts, sessionUser, paymentsLive: marketplacePaymentsLive(), stableSymbol: getMarketplacePaymentConfig().stableSymbol } };
 }
 
 // Shared by the server-side counts above and the client-side filter below --
@@ -91,7 +91,7 @@ const SORTS = [
   { value: 'price-high', label: 'Price: High to Low' },
 ];
 
-export default function Marketplace({ listings, allTags, tagCounts, kindCounts, sessionUser, paymentsLive }) {
+export default function Marketplace({ listings, allTags, tagCounts, kindCounts, sessionUser, paymentsLive, stableSymbol }) {
   const cart = useCart();
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
@@ -234,7 +234,7 @@ export default function Marketplace({ listings, allTags, tagCounts, kindCounts, 
               <span className="text-brand-pink font-bold">Heads up:</span>
               <span>
                 {paymentsLive
-                  ? 'Checkout is live — pay with a crypto wallet (USDC). Add items to your cart to get started.'
+                  ? `Checkout is live — pay with a crypto wallet (${stableSymbol}). Add items to your cart to get started.`
                   : 'Browsing is live. Checkout opens when payments do — nothing here can charge you yet.'}
               </span>
             </div>
