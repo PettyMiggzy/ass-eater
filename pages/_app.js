@@ -47,7 +47,7 @@ import { Lockup } from '../components/Brand';
 // earlier. Change the two lists together.
 const NO_NOTICE_PATHS = new Set([
   '/', '/coming-soon', '/founding-creator', '/report-content', '/blocked-region', '/verify-age',
-  '/terms', '/privacy', '/2257',
+  '/terms', '/privacy', '/2257', '/owner',
 ]);
 
 function MyApp({ Component, pageProps }) {

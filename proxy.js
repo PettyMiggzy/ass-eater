@@ -85,7 +85,12 @@ const BLOCKED_STATE_CODES = new Set([
 // readable by people who cannot enter the site -- a payment processor doing
 // onboarding review, a regulator, or someone in a blocked state who wants to
 // know what we do with their data before verifying.
-const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257']);
+// /owner is the wallet sign-in for the site owner, who lives in one of the
+// blocked states. Gating the page whose entire job is to get past the gate
+// is the circular dead end /blocked-region and /report-content were each
+// fixed for. It shows no content and does nothing without a signature from
+// one specific private key, so exempting it gives away nothing.
+const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/owner', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257']);
 
 // Brand art, and the ONLY files under /images/ that skip either gate.
 //
@@ -164,7 +169,7 @@ const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content', '/api/waitl
 // assets its card points at are exempted together or not at all.
 const PREVIEW_PUBLIC_PATHS = new Set([
   '/coming-soon', '/founding-creator', '/terms', '/privacy', '/2257',
-  '/report-content', '/blocked-region', '/verify-age',
+  '/report-content', '/blocked-region', '/verify-age', '/owner',
   ...BRAND_ART_PATHS,
 ]);
 
