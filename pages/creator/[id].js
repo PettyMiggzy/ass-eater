@@ -11,7 +11,7 @@ import { getWallPostsForCreator } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
 import { viewerMarkFor } from '../../lib/viewer-mark';
 import { isTokenGated, tokenGateLive, formatGate } from '../../lib/token-gate';
-import { FoundingBadge } from '../../components/Brand';
+import { FoundingBadge, Icons, SolidIcons } from '../../components/Brand';
 import SiteNav from '../../components/SiteNav';
 
 export async function getServerSideProps({ req, params }) {
@@ -179,7 +179,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
       />
       {locked && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/25">
-          <span className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center text-lg">🔒</span>
+          <span className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center text-white"><SolidIcons.lock className="h-4 w-4" /></span>
         </div>
       )}
       {item?.aiGenerated && (
@@ -220,7 +220,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
               aria-label="Back to creators"
               className="absolute top-4 left-4 w-9 h-9 rounded-full bg-black/50 backdrop-blur flex items-center justify-center hover:bg-black/70 transition"
             >
-              ←
+              <Icons.arrowLeft className="h-5 w-5" />
             </button>
           </div>
 
@@ -235,7 +235,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                 <h1 className="text-3xl font-black flex items-center gap-2 flex-wrap">
                   {creator.name}
                   {creator.premium && (
-                    <img src="/icons/check.png" alt="Verified" title="Verified creator" className="h-6 w-6" />
+                    <SolidIcons.verified className="h-6 w-6 text-brand-pink" title="Verified creator" />
                   )}
                   {creator.founding && (
                     <span
@@ -252,7 +252,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                   <p className="text-gray-500 text-xs mt-1 flex items-center gap-2">
                     {creator.age && <span>{creator.age}</span>}
                     {creator.age && creator.location && <span aria-hidden="true">·</span>}
-                    {creator.location && <span>📍 {creator.location}</span>}
+                    {creator.location && <span className="inline-flex items-center gap-1.5"><Icons.pin className="h-4 w-4 shrink-0" />{creator.location}</span>}
                   </p>
                 )}
                 {creator.bio && <p className="text-gray-300 text-sm mt-1 line-clamp-1">{creator.bio}</p>}
@@ -267,7 +267,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                     favorited ? 'border-brand-pink bg-brand-pink/20 text-brand-pink' : 'border-white/15 text-white/70 hover:border-brand-pink/60'
                   }`}
                 >
-                  {favorited ? '♥' : '♡'}
+                  {favorited ? <SolidIcons.heart className="h-5 w-5" /> : <Icons.heart className="h-5 w-5" />}
                 </button>
                 <button
                   onClick={openInbox}
@@ -304,12 +304,12 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
               {creator.bio && <p className="text-sm text-gray-300 whitespace-pre-wrap">{creator.bio}</p>}
 
               {creator.location && (
-                <p className="text-sm text-gray-400 flex items-center gap-2">📍 {creator.location}</p>
+                <p className="text-sm text-gray-400 flex items-center gap-2"><Icons.pin className="h-4 w-4 shrink-0" />{creator.location}</p>
               )}
               {websiteUrl && (
                 <a href={websiteUrl} target="_blank" rel="noopener noreferrer"
                    className="text-sm text-brand-pink hover:underline break-all flex items-center gap-2">
-                  🔗 {websiteUrl.replace(/^https?:\/\//, '')}
+                  <Icons.link className="h-4 w-4 shrink-0" />{websiteUrl.replace(/^https?:\/\//, '')}
                 </a>
               )}
 
@@ -354,7 +354,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                 </p>
                 <ul className="mt-4 space-y-2 text-sm text-gray-300">
                   {['Exclusive photos & videos', 'Direct messaging', 'Early access to new content'].map((f) => (
-                    <li key={f} className="flex items-center gap-2"><span className="text-brand-pink">✓</span>{f}</li>
+                    <li key={f} className="flex items-start gap-2"><Icons.check className="h-4 w-4 mt-0.5 shrink-0 text-brand-pink" />{f}</li>
                   ))}
                 </ul>
               </div>
@@ -387,7 +387,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                       )}
                       {locked && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/40">
-                          <span className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center text-xl">🔒</span>
+                          <span className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center text-white"><SolidIcons.lock className="h-5 w-5" /></span>
                           <p className="font-semibold">Hold {gateLabel} to unlock</p>
                           {/* No button. The balance check needs a deployed
                               token and a wallet the fan has proved they own,
@@ -411,7 +411,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                       {listings[0]?.media?.[0] && (
                         <div className="relative rounded-lg overflow-hidden aspect-[4/3] mb-3">
                           <img src={listings[0].media[0].src} alt="" className="w-full h-full object-cover blur-lg scale-110" />
-                          <span className="absolute inset-0 flex items-center justify-center text-lg">🔒</span>
+                          <span className="absolute inset-0 flex items-center justify-center text-white"><SolidIcons.lock className="h-5 w-5" /></span>
                         </div>
                       )}
                       <button
@@ -419,7 +419,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                         disabled={listings.length === 0}
                         className="mt-auto w-full py-2.5 rounded-full border border-white/15 text-sm font-semibold hover:border-brand-pink/60 transition disabled:opacity-40 disabled:hover:border-white/15"
                       >
-                        Browse Marketplace →
+                        Browse Marketplace <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
                       </button>
                     </div>
                   </div>
@@ -461,12 +461,12 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                     <div className="rounded-xl border border-white/10 bg-brand-card p-4">
                       <h2 className="font-bold mb-3">About {creator.name}</h2>
                       <ul className="space-y-2 text-sm text-gray-300">
-                        {creator.age && <li>🎂 {creator.age}</li>}
-                        {creator.location && <li>📍 {creator.location}</li>}
-                        <li>🎬 {creator.media} media items</li>
-                        <li>❤️ {creator.likes} likes</li>
-                        <li>👥 {creator.subs} followers</li>
-                        {Array.isArray(creator.tags) && creator.tags.length > 0 && <li>🏷️ {creator.tags.join(', ')}</li>}
+                        {creator.age && <li className="flex items-center gap-2"><Icons.cake className="h-4 w-4 shrink-0" />{creator.age}</li>}
+                        {creator.location && <li className="flex items-center gap-2"><Icons.pin className="h-4 w-4 shrink-0" />{creator.location}</li>}
+                        <li className="flex items-center gap-2"><Icons.film className="h-4 w-4 shrink-0" />{creator.media} media items</li>
+                        <li className="flex items-center gap-2"><SolidIcons.heart className="h-4 w-4 shrink-0" />{creator.likes} likes</li>
+                        <li className="flex items-center gap-2"><Icons.people className="h-4 w-4 shrink-0" />{creator.subs} followers</li>
+                        {Array.isArray(creator.tags) && creator.tags.length > 0 && <li className="flex items-center gap-2"><Icons.tag className="h-4 w-4 shrink-0" />{creator.tags.join(', ')}</li>}
                       </ul>
                     </div>
 
@@ -535,7 +535,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                           <div className="w-full h-full bg-gradient-pink opacity-30" />
                         )}
                         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-                        <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-lg">🔒</span>
+                        <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white"><SolidIcons.lock className="h-5 w-5" /></span>
                         {l.aiGenerated && (
                           <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold">AI</span>
                         )}
@@ -555,11 +555,11 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                 <div className="space-y-4 max-w-xl">
                   {creator.bio && <p className="text-sm text-gray-300 whitespace-pre-wrap">{creator.bio}</p>}
                   <ul className="space-y-2 text-sm text-gray-300">
-                    {creator.location && <li>📍 {creator.location}</li>}
-                    <li>📝 {creator.posts} posts</li>
-                    <li>🎬 {creator.media} media items</li>
-                    <li>👥 {creator.subs} followers</li>
-                    <li>❤️ {creator.likes} likes</li>
+                    {creator.location && <li className="flex items-center gap-2"><Icons.pin className="h-4 w-4 shrink-0" />{creator.location}</li>}
+                    <li className="flex items-center gap-2"><Icons.memo className="h-4 w-4 shrink-0" />{creator.posts} posts</li>
+                    <li className="flex items-center gap-2"><Icons.film className="h-4 w-4 shrink-0" />{creator.media} media items</li>
+                    <li className="flex items-center gap-2"><Icons.people className="h-4 w-4 shrink-0" />{creator.subs} followers</li>
+                    <li className="flex items-center gap-2"><SolidIcons.heart className="h-4 w-4 shrink-0" />{creator.likes} likes</li>
                   </ul>
                   {Object.values(socials).some(Boolean) && (
                     <div className="flex flex-wrap gap-2 pt-2">
@@ -638,14 +638,14 @@ function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
         <div className="flex items-center gap-3 p-4 border-b border-white/10">
           <img src={otherImg} alt={otherName} className="w-9 h-9 rounded-full object-cover object-top" />
           <p className="font-bold text-white flex-1 truncate">{otherName}</p>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-white"><Icons.close className="h-5 w-5" /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {loading ? (
             <p className="text-gray-500 text-sm text-center">Loading...</p>
           ) : messages.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center">Say hi to {otherName} 👋</p>
+            <p className="text-gray-500 text-sm text-center">Say hi to {otherName}</p>
           ) : (
             messages.map((m) => (
               <div
@@ -811,12 +811,12 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
                 <div className="flex items-center gap-2 shrink-0">
                   {viewerId && String(viewerId) !== String(p.authorId) && (
                     <button onClick={() => setReporting(p)} className="text-xs text-gray-600 hover:text-brand-pink transition" title="Report">
-                      ⚑
+                      <Icons.flag className="h-4 w-4" />
                     </button>
                   )}
                   {(isWallOwner || String(viewerId) === String(p.authorId)) && (
                     <button onClick={() => remove(p.id)} className="text-xs text-gray-500 hover:text-red-400 transition" title="Delete">
-                      ✕
+                      <Icons.close className="h-4 w-4" />
                     </button>
                   )}
                 </div>

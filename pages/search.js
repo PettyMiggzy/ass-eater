@@ -7,6 +7,7 @@ import { publicUser } from '../lib/users-store';
 import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { getListings } from '../lib/listings-store';
+import { Icons, SolidIcons } from '../components/Brand';
 
 export async function getServerSideProps({ query, req }) {
   const sessionUser = publicUser(await getSessionUser(req));
@@ -116,7 +117,7 @@ export default function Search({ q, tag, creators, listings, allTags, sessionUse
                         <div className="p-2">
                           <p className="text-sm font-bold truncate flex items-center gap-1">
                             {c.name}
-                            {c.premium && <img src="/icons/check.png" alt="" className="h-3.5 w-3.5" />}
+                            {c.premium && <SolidIcons.verified className="h-3.5 w-3.5 text-brand-pink" />}
                           </p>
                         </div>
                       </a>

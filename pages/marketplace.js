@@ -7,6 +7,7 @@ import { getListings } from '../lib/listings-store';
 import { getCreators } from '../lib/creators-store';
 import { isPubliclyVisible } from '../lib/creator-status';
 import { isFoundingCreator } from '../lib/founding';
+import { Icons, SolidIcons } from '../components/Brand';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
@@ -280,7 +281,7 @@ export default function Marketplace({ listings, sessionUser }) {
                         <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">No preview</div>
                       )}
                       <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                        <span className="w-10 h-10 rounded-full bg-black/60 border border-white/15 flex items-center justify-center text-base">🔒</span>
+                        <span className="w-10 h-10 rounded-full bg-black/60 border border-white/15 flex items-center justify-center text-white"><SolidIcons.lock className="h-4 w-4" /></span>
                       </div>
 
                       <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
@@ -300,7 +301,7 @@ export default function Marketplace({ listings, sessionUser }) {
                         className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-black/90 transition"
                         title="Report this listing"
                       >
-                        ⚑
+                        <Icons.flag className="h-3.5 w-3.5 mx-auto" />
                       </button>
                     </div>
 

@@ -4,6 +4,7 @@ import { getVerifiedSessionUserId } from '../lib/session';
 import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { getFavoriteCreatorIds } from '../lib/favorites-store';
+import { Icons, SolidIcons } from '../components/Brand';
 
 export async function getServerSideProps({ req }) {
   const uid = await getVerifiedSessionUserId(req);
@@ -41,7 +42,7 @@ export default function Favorites({ creators }) {
                   <div className="p-2">
                     <p className="text-sm font-bold truncate flex items-center gap-1">
                       {c.name}
-                      {c.premium && <img src="/icons/check.png" alt="" className="h-3.5 w-3.5" />}
+                      {c.premium && <SolidIcons.verified className="h-3.5 w-3.5 text-brand-pink" />}
                     </p>
                   </div>
                 </a>

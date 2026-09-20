@@ -248,7 +248,7 @@ export default function FoundingCreator({ taken, left, paymentsLive, signupLocke
                   href="#waitlist"
                   className="px-10 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-black tracking-wide transition inline-flex items-center gap-3 shadow-[0_0_40px_rgba(255,45,120,0.35)]"
                 >
-                  GET EARLY ACCESS <span aria-hidden="true">→</span>
+                  GET EARLY ACCESS <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
                 </a>
                 <p className="text-[11px] tracking-[0.2em] text-gray-500">
                   CREATOR SIGNUPS OPEN AT LAUNCH — LEAVE YOUR EMAIL AND WE’LL LET YOU IN FIRST
@@ -259,14 +259,14 @@ export default function FoundingCreator({ taken, left, paymentsLive, signupLocke
                 href="/signup?role=creator"
                 className="px-10 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-black tracking-wide transition inline-flex items-center gap-3 shadow-[0_0_40px_rgba(255,45,120,0.35)]"
               >
-                CLAIM YOUR SPOT <span aria-hidden="true">→</span>
+                CLAIM YOUR SPOT <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
               </a>
             ) : (
               <a
                 href="/signup?role=creator"
                 className="px-10 py-4 rounded-full border border-white/20 hover:border-brand-pink font-black tracking-wide transition inline-flex items-center gap-3"
               >
-                JOIN AS A CREATOR <span aria-hidden="true">→</span>
+                JOIN AS A CREATOR <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
               </a>
             )}
             <p className="text-[11px] tracking-[0.2em] text-gray-500">

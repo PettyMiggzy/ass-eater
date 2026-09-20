@@ -3,6 +3,7 @@ import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
 import SignupsClosed from '../components/SignupsClosed';
 import { signupsOpen } from '../lib/signups';
+import { Icons } from '../components/Brand';
 
 // Mirrors the caps pages/api/creator/submit.js enforces server-side (the
 // server is the actual gate -- these just keep the form from letting someone
@@ -111,7 +112,7 @@ export default function BecomeCreator({ open }) {
           <p className="text-gray-400 mb-8">Submit your profile below. All submissions are reviewed before going live.</p>
 
           <div className="premium-card p-6 mb-8 border-2 border-brand-purple/30">
-            <p className="text-sm text-brand-secondary font-bold mb-2">⚠️ Verification Required</p>
+            <p className="text-sm text-brand-secondary font-bold mb-2 inline-flex items-center gap-2"><Icons.warning className="h-4 w-4" />Verification Required</p>
             <p className="text-sm text-gray-400">
               Creators must be 18+, and every profile is reviewed by our team before content goes live. This form collects
               your submission — our team will follow up with the verification process before anything is published.

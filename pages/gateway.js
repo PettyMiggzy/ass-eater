@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import Head from 'next/head';
-import { Lockup } from '../components/Brand';
+import { Icons, Lockup } from '../components/Brand';
 
 const MAIN_SITE = 'https://joinonlyone.com'; // primary domain as of 2026-09-19 -- onlyass.fun still works as a mirror
 
@@ -29,7 +29,7 @@ export default function Gateway() {
             redirected to the platform in a few seconds.
           </p>
           <a href={MAIN_SITE} className="premium-button inline-block w-full">
-            Enter OnlyOne →
+            Enter OnlyOne <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
           </a>
         </div>
       </div>

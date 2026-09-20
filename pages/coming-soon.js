@@ -6,7 +6,7 @@ import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_ALT,
 } from '../lib/social';
-import { Mark } from '../components/Brand';
+import { Icons, Mark } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 
 /**
@@ -104,7 +104,7 @@ export default function ComingSoon() {
             href="/founding-creator"
             className="mt-10 text-[11px] tracking-[0.2em] text-gray-400 hover:text-brand-pink transition"
           >
-            CREATOR? BE ONE OF THE FIRST 100 <span aria-hidden="true">→</span>
+            CREATOR? BE ONE OF THE FIRST 100 <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
           </a>
         </main>
 

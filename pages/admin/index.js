@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { effectiveCreatorStatus } from '../../lib/creator-status';
 import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
 import { gateTokensOf, sanitizeGateTokens } from '../../lib/token-gate';
+import { Icons, SolidIcons } from '../../components/Brand';
 
 export default function AdminPanel() {
   const [adminKey, setAdminKey] = useState('');
@@ -379,7 +380,7 @@ export default function AdminPanel() {
                     <div className="min-w-0">
                       <p className="font-bold text-white truncate flex items-center gap-1">
                         {c.name}
-                        {c.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4 shrink-0" title="Premium" />}
+                        {c.premium && <SolidIcons.verified className="h-4 w-4 shrink-0 text-brand-pink" title="Premium" />}
                       </p>
                       <p className="text-xs text-gray-400 truncate">{c.handle}</p>
                     </div>
@@ -393,7 +394,7 @@ export default function AdminPanel() {
                       <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">BANNED</span>
                     )}
                     {!flagged && isFoundingCreator(c) && (
-                      <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">★ FOUNDING</span>
+                      <span className="ml-auto inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold"><SolidIcons.star className="h-3 w-3" />FOUNDING</span>
                     )}
                     {!flagged && !isFoundingCreator(c) && c.trending && (
                       <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-gold/20 text-brand-gold font-bold">HOT</span>
@@ -637,7 +638,7 @@ export default function AdminPanel() {
                             disabled={busy}
                             className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition disabled:opacity-30"
                           >
-                            ✕
+                            <Icons.close className="h-3.5 w-3.5 mx-auto" />
                           </button>
                         </div>
                       ))}

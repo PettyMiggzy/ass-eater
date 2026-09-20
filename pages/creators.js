@@ -6,7 +6,7 @@ import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { byPlacement } from '../lib/founding';
 import { isTokenGated, formatGate, tokenGateLive } from '../lib/token-gate';
 import { getSessionUser } from '../lib/session';
-import { Lockup } from '../components/Brand';
+import { Icons, Lockup, SolidIcons } from '../components/Brand';
 import { publicUser } from '../lib/users-store';
 import { VIP_PRICE_USD, VIP_PERKS } from '../lib/brand';
 
@@ -21,6 +21,111 @@ export async function getServerSideProps({ req }) {
       sessionUser,
     },
   };
+}
+
+/**
+ * The three ways money does or does not change hands here, as data rather
+ * than three near-identical blocks of JSX -- the old version was copy-pasted
+ * three times and had already drifted (different border treatments, one card
+ * scaled and the others not).
+ *
+ * `featured` is VIP because it is the only one that is a product we sell.
+ * Joining is free and credits are just dollars in a different coat.
+ */
+const PRICING_TIERS = [
+  {
+    name: 'JOIN',
+    Icon: Icons.people,
+    price: 'Free',
+    unit: 'always',
+    lines: [
+      'Browse and search every creator',
+      'Save the ones you like',
+      'No card to sign up, no monthly fee to exist here',
+    ],
+  },
+  {
+    name: 'CREDITS',
+    Icon: Icons.coin,
+    price: '$1',
+    unit: '= 1 credit',
+    lines: [
+      'Top up once, spend it on whatever you want',
+      'Subscriptions, tips, unlocks, marketplace',
+      'Each creator sets their own price — some are free',
+    ],
+    footnote: 'Topping up costs 2%: $100 lands as 98 credits.',
+  },
+  {
+    name: 'VIP',
+    Icon: Icons.crown,
+    price: `$${VIP_PRICE_USD}`,
+    unit: 'per month, optional',
+    featured: true,
+    lines: VIP_PERKS,
+    // Said outright, on the card, not buried in terms. A tier called VIP
+    // that merely sounds like it includes content is how a chargeback starts.
+    footnote:
+      'VIP includes no creator’s content and discounts nothing. You still pay each creator their own price.',
+  },
+];
+
+function PricingCard({ tier }) {
+  const { Icon, featured } = tier;
+  return (
+    // Gradient hairline border: a 1px gradient-filled wrapper with the card
+    // painted back on top. A plain border-colour cannot fade along its own
+    // length, and a fading edge is most of what reads as "premium" here.
+    <div
+      className={`rounded-2xl p-px h-full ${
+        featured
+          ? 'bg-gradient-to-b from-brand-pink via-brand-pink/30 to-transparent shadow-[0_0_60px_-15px_rgba(255,45,120,0.45)]'
+          : 'bg-gradient-to-b from-white/15 to-transparent'
+      }`}
+    >
+      <div className="relative h-full rounded-2xl bg-brand-ink/90 backdrop-blur p-8 flex flex-col">
+        {featured ? (
+          <span className="absolute -top-px left-1/2 -translate-x-1/2 h-px w-2/3 bg-gradient-to-r from-transparent via-brand-pink to-transparent" />
+        ) : null}
+
+        <span
+          className={`inline-flex items-center justify-center h-11 w-11 rounded-xl mb-6 ${
+            featured ? 'bg-brand-pink/15 text-brand-pink' : 'bg-white/5 text-gray-300'
+          }`}
+        >
+          <Icon className="h-5 w-5" />
+        </span>
+
+        <p className="text-[11px] font-bold tracking-[0.25em] text-gray-400 mb-3">{tier.name}</p>
+
+        <p
+          className={`text-5xl font-black tracking-tight leading-none ${
+            featured
+              ? 'bg-gradient-to-br from-white to-brand-pink-light bg-clip-text text-transparent'
+              : 'text-white'
+          }`}
+        >
+          {tier.price}
+        </p>
+        <p className="text-sm text-gray-500 mt-2 mb-7">{tier.unit}</p>
+
+        <ul className="space-y-3.5 text-sm text-gray-300">
+          {tier.lines.map((line) => (
+            <li key={line} className="flex gap-3">
+              <Icons.check
+                className={`h-4 w-4 mt-0.5 shrink-0 ${featured ? 'text-brand-pink' : 'text-gray-500'}`}
+              />
+              <span className="leading-relaxed">{line}</span>
+            </li>
+          ))}
+        </ul>
+
+        {tier.footnote ? (
+          <p className="text-xs text-gray-500 leading-relaxed mt-auto pt-7">{tier.footnote}</p>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export default function Creators({ creators, sessionUser }) {
@@ -252,7 +357,7 @@ export default function Creators({ creators, sessionUser }) {
                         </div>
                       ) : c.trending ? (
                         <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-brand-gold/90 text-black text-xs font-black flex items-center gap-1">
-                          <img src="/icons/fire.png" className="h-3 w-3" alt="" /> TRENDING
+                          <SolidIcons.fire className="h-3 w-3" /> TRENDING
                         </div>
                       ) : null}
 
@@ -263,7 +368,7 @@ export default function Creators({ creators, sessionUser }) {
                       {isTokenGated(c) && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                           <div className="bg-black/60 backdrop-blur-sm rounded-full p-5 border border-brand-gold/40">
-                            <img src="/icons/lock.png" className="h-8 w-8" alt="" />
+                            <SolidIcons.lock className="h-8 w-8 text-white/80" />
                           </div>
                           <p className="text-[11px] text-brand-gold font-bold bg-black/70 px-2 py-0.5 rounded-full">
                             {formatGate(c)}
@@ -275,7 +380,7 @@ export default function Creators({ creators, sessionUser }) {
                     <div className="p-4 text-center">
                       <p className="font-black text-lg text-white flex items-center justify-center gap-1">
                         {c.name}
-                        {c.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4" title="Premium" />}
+                        {c.premium && <SolidIcons.verified className="h-4 w-4 text-brand-pink" title="Premium" />}
                       </p>
                       <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
                       <p className="text-gray-400 text-xs mb-4">{c.subs} subscribers</p>
@@ -318,66 +423,45 @@ export default function Creators({ creators, sessionUser }) {
             unlocked", VIP $49.99 -- which were not just unbuilt but
             unbuildable. Creators set their own subscription prices, so a
             flat platform-priced "all creators unlocked" is the platform
-            promising content it does not own at a price it does not
-            control: fifty creators averaging $15 would owe $750 out of one
-            $19.99 charge. It is the same shape as every other
-            fixed-price-against-a-price-you-do-not-set idea this project has
-            rejected, and it gets worse the more creators sign up.
+            selling content it does not own at a price it does not control:
+            fifty creators averaging $15 would owe $750 out of one $19.99
+            charge, and it gets worse with every signup. Same shape as every
+            other fixed-price-against-a-price-you-do-not-set idea this
+            project has already rejected.
 
             What is below is what is actually decided and built in server/:
             free to join, creators price their own work, credits are dollars,
             and VIP is perks only at a flat $20 with no content and no
-            discount attached to it. */}
-        <section id="pricing" className="py-16 px-6 border-t border-white/10">
-          <div className="max-w-5xl mx-auto">
-            <h2 className="text-4xl font-black text-center mb-2 premium-title">WHAT IT COSTS</h2>
-            <p className="text-center text-gray-400 mb-12">
-              Joining is free. Creators set their own prices — we never set them for them.
+            discount attached. */}
+        <section id="pricing" className="relative scroll-mt-36 py-24 px-6 border-t border-white/10 overflow-hidden">
+          {/* Light falling from above the cards rather than a flat panel --
+              the cheapest way to give a dark section depth without art. */}
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+            <div className="absolute left-1/2 -top-24 -translate-x-1/2 w-[900px] h-[520px] max-w-[150vw] rounded-full bg-brand-pink/10 blur-[130px]" />
+          </div>
+
+          <div className="relative max-w-6xl mx-auto">
+            <p className="text-center text-[11px] font-bold tracking-[0.3em] text-brand-pink/80 mb-4">
+              WHAT IT COSTS
+            </p>
+            <h2 className="text-4xl md:text-5xl font-black text-center tracking-tight mb-4">
+              Free to join.<br className="sm:hidden" />{' '}
+              <span className="bg-gradient-to-r from-brand-pink to-brand-pink-light bg-clip-text text-transparent">
+                Pay only for what you want.
+              </span>
+            </h2>
+            <p className="text-center text-gray-400 max-w-xl mx-auto mb-16">
+              Creators set their own prices — we never set them for them, and we never
+              resell their work in a bundle.
             </p>
 
-            <div className="grid md:grid-cols-3 gap-6 items-start">
-              <div className="premium-card p-8">
-                <p className="text-brand-pink font-bold text-sm tracking-widest mb-3">JOIN</p>
-                <p className="text-4xl font-black mb-1">Free</p>
-                <p className="text-gray-400 text-sm mb-6">always</p>
-                <ul className="text-sm text-gray-300 space-y-3">
-                  <li>Browse and search every creator</li>
-                  <li>Save the ones you like</li>
-                  <li>No card to sign up, no monthly fee to exist here</li>
-                </ul>
-              </div>
-
-              <div className="premium-card p-8">
-                <p className="text-brand-pink font-bold text-sm tracking-widest mb-3">CREDITS</p>
-                <p className="text-4xl font-black mb-1">$1</p>
-                <p className="text-gray-400 text-sm mb-6">= 1 credit</p>
-                <ul className="text-sm text-gray-300 space-y-3">
-                  <li>Top up once, spend it on whatever you want</li>
-                  <li>Subscriptions, tips, unlocks, marketplace</li>
-                  <li>Each creator sets their own price — some are free</li>
-                  <li className="text-gray-400">Topping up costs 2%: $100 lands as 98 credits</li>
-                </ul>
-              </div>
-
-              <div className="premium-card p-8 border border-brand-pink/40">
-                <p className="text-brand-pink font-bold text-sm tracking-widest mb-3">VIP</p>
-                <p className="text-4xl font-black mb-1">${VIP_PRICE_USD}</p>
-                <p className="text-gray-400 text-sm mb-6">per month, optional</p>
-                <ul className="text-sm text-gray-300 space-y-3">
-                  {VIP_PERKS.map((perk) => (
-                    <li key={perk}>{perk}</li>
-                  ))}
-                </ul>
-                {/* Said plainly and on purpose. A "VIP" tier that sounds like
-                    it includes content is how a chargeback starts. */}
-                <p className="text-xs text-gray-500 mt-6 leading-relaxed">
-                  VIP does not include any creator&apos;s content and does not discount
-                  anything. You still pay each creator their own price.
-                </p>
-              </div>
+            <div className="grid md:grid-cols-3 gap-6 items-stretch">
+              {PRICING_TIERS.map((tier) => (
+                <PricingCard key={tier.name} tier={tier} />
+              ))}
             </div>
 
-            <p className="text-center text-sm text-gray-500 mt-10">
+            <p className="text-center text-sm text-gray-500 mt-14">
               Payments are not switched on yet — nothing here can charge you today.
             </p>
           </div>
@@ -387,7 +471,7 @@ export default function Creators({ creators, sessionUser }) {
             "Creator Dashboard" showing 4.2M earnings, 312 subscribers and an
             invented subscriber table, under the words "track your earnings in
             real time" -- numbers no account on this platform has ever had. */}
-        <section id="dashboard" className="py-16 px-6 border-t border-brand-gold/20">
+        <section id="dashboard" className="scroll-mt-36 py-16 px-6 border-t border-brand-gold/20">
           <div className="max-w-4xl mx-auto">
             <h2 className="text-4xl font-black text-center mb-2 premium-title">CREATE ON ONLYONE</h2>
             <p className="text-center text-gray-400 mb-10">

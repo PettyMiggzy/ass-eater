@@ -7,6 +7,7 @@ import { byPlacement } from '../lib/founding';
 // `locked` on its own is not a gate -- see lib/token-gate.js. Blurring on the
 // bare flag put a blur and a padlock on creators with no threshold set.
 import { isTokenGated, formatGate } from '../lib/token-gate';
+import { Icons, SolidIcons } from '../components/Brand';
 
 export async function getServerSideProps({ req }) {
   const sessionUser = publicUser(await getSessionUser(req));
@@ -20,9 +21,9 @@ export async function getServerSideProps({ req }) {
 }
 
 const PROMISES = [
-  { icon: '🛡️', title: 'Safe & Secure', sub: 'Your privacy matters' },
-  { icon: '⚡', title: 'Fast Payouts', sub: 'Creators first' },
-  { icon: '👥', title: 'Real Connections', sub: 'More than just content' },
+  { Icon: Icons.shield, title: 'Safe & Secure', sub: 'Your privacy matters' },
+  { Icon: Icons.bolt, title: 'Fast Payouts', sub: 'Creators first' },
+  { Icon: Icons.people, title: 'Real Connections', sub: 'More than just content' },
 ];
 
 const CREATOR_POINTS = [
@@ -47,11 +48,11 @@ const FAN_POINTS = [
 // advertises a payment feature this site cannot yet take money for is the
 // same mistake.
 const FEATURES = [
-  { icon: '🎥', title: 'Photos & Videos', sub: 'Exclusive content', live: true },
-  { icon: '💬', title: 'Direct Messaging', sub: 'Real conversations', live: true },
-  { icon: '❤️', title: 'Subscriptions', sub: 'Support creators', live: false },
-  { icon: '⭐', title: 'Tips', sub: 'Show appreciation', live: false },
-  { icon: '🔒', title: 'PPV Content', sub: 'Unlock exclusives', live: false },
+  { Icon: Icons.camera, title: 'Photos & Videos', sub: 'Exclusive content', live: true },
+  { Icon: Icons.message, title: 'Direct Messaging', sub: 'Real conversations', live: true },
+  { Icon: Icons.heart, title: 'Subscriptions', sub: 'Support creators', live: false },
+  { Icon: Icons.star, title: 'Tips', sub: 'Show appreciation', live: false },
+  { Icon: Icons.lock, title: 'PPV Content', sub: 'Unlock exclusives', live: false },
 ];
 
 export default function Home({ creators, sessionUser }) {
@@ -87,7 +88,7 @@ export default function Home({ creators, sessionUser }) {
                   href="/signup"
                   className="px-7 py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold transition inline-flex items-center gap-2"
                 >
-                  Join OnlyOne <span aria-hidden="true">→</span>
+                  Join OnlyOne <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
                 </a>
                 <a
                   href="/creators"
@@ -100,7 +101,7 @@ export default function Home({ creators, sessionUser }) {
               <div className="grid grid-cols-3 gap-4 mt-12 max-w-lg">
                 {PROMISES.map((p) => (
                   <div key={p.title}>
-                    <div className="text-xl mb-2" aria-hidden="true">{p.icon}</div>
+                    <p.Icon className="h-6 w-6 mb-3 text-brand-pink" />
                     <p className="font-bold text-sm">{p.title}</p>
                     <p className="text-[11px] text-gray-500">{p.sub}</p>
                   </div>
@@ -117,7 +118,7 @@ export default function Home({ creators, sessionUser }) {
               <div className="absolute inset-0 bg-gradient-to-r from-brand-ink via-brand-ink/40 to-transparent lg:from-brand-ink lg:via-transparent" />
               <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-transparent to-transparent" />
               <p className="absolute bottom-10 right-8 text-right font-serif italic text-brand-pink text-2xl sm:text-3xl leading-tight [text-shadow:0_2px_12px_rgba(0,0,0,0.9)]">
-                You&apos;re<br />Not Alone<br />Here ♥
+                You&apos;re<br />Not Alone<br />Here <SolidIcons.heart className="inline-block h-[0.8em] w-[0.8em] align-baseline text-brand-pink" />
               </p>
             </div>
           </div>
@@ -147,7 +148,7 @@ export default function Home({ creators, sessionUser }) {
                     <ul className="space-y-2 mb-6">
                       {card.points.map((pt) => (
                         <li key={pt} className="flex items-center gap-2 text-sm text-gray-300">
-                          <span className="text-brand-pink" aria-hidden="true">✓</span>
+                          <Icons.check className="h-4 w-4 shrink-0 text-brand-pink" />
                           {pt}
                         </li>
                       ))}
@@ -160,7 +161,7 @@ export default function Home({ creators, sessionUser }) {
                           : 'border border-white/20 hover:border-white/50'
                       }`}
                     >
-                      {card.cta} <span aria-hidden="true">→</span>
+                      {card.cta} <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
                     </a>
                   </div>
                 </div>
@@ -174,7 +175,7 @@ export default function Home({ creators, sessionUser }) {
           <div className="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-6 text-center">
             {FEATURES.map((f) => (
               <div key={f.title}>
-                <div className="text-2xl mb-2 text-brand-pink" aria-hidden="true">{f.icon}</div>
+                <f.Icon className="h-7 w-7 mb-3 text-brand-pink" />
                 <p className="font-bold text-sm">{f.title}</p>
                 {f.live ? (
                   <p className="text-[11px] text-gray-500">{f.sub}</p>
@@ -218,8 +219,8 @@ export default function Home({ creators, sessionUser }) {
                       </span>
                     )}
                     {isTokenGated(c) && (
-                      <span title={`Hold ${formatGate(c)} to unlock`} className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-black/70 text-brand-pink font-bold">
-                        🔒
+                      <span title={`Hold ${formatGate(c)} to unlock`} className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 text-brand-pink">
+                        <SolidIcons.lock className="h-3.5 w-3.5" />
                       </span>
                     )}
                   </a>
@@ -246,7 +247,7 @@ export default function Home({ creators, sessionUser }) {
               href="/signup"
               className="self-start md:self-auto px-8 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold transition inline-flex items-center gap-2"
             >
-              Join Now <span aria-hidden="true">→</span>
+              Join Now <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
             </a>
           </div>
         </section>

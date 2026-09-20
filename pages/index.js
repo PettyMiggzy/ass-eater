@@ -8,7 +8,7 @@ import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_ALT,
 } from '../lib/social';
-import { Mark, Icons } from '../components/Brand';
+import { Icons, Mark, SolidIcons } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 
 /**
@@ -128,7 +128,7 @@ export default function Landing() {
 
         {/* Neon note */}
         <p className="relative hidden md:block absolute-right px-8 -mt-24 text-right font-serif italic text-brand-pink text-xl leading-snug [text-shadow:0_0_18px_rgba(255,45,120,0.55)]">
-          All Desires<br />Welcome<br />♥
+          All Desires<br />Welcome<br /><SolidIcons.heart className="inline-block h-[0.8em] w-[0.8em] text-brand-pink" />
         </p>
 
         <main className="relative flex-1 flex flex-col items-center justify-center text-center px-6 py-16">
@@ -165,11 +165,11 @@ export default function Landing() {
               href="/signup"
               className="px-10 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-black tracking-wide transition inline-flex items-center gap-3 shadow-[0_0_40px_rgba(255,45,120,0.35)]"
             >
-              JOIN ONLYONE <span aria-hidden="true">→</span>
+              JOIN ONLYONE <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
             </a>
             {/* Everything past here is behind the age gate. */}
             <a href="/home" className="text-sm tracking-[0.2em] text-gray-400 hover:text-white transition">
-              ENTER →
+              ENTER <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
             </a>
           </div>
 
@@ -183,7 +183,7 @@ export default function Landing() {
             href="/founding-creator"
             className="mt-6 text-[11px] tracking-[0.2em] text-gray-400 hover:text-brand-pink transition"
           >
-            CREATOR? BE ONE OF THE FIRST 100 <span aria-hidden="true">→</span>
+            CREATOR? BE ONE OF THE FIRST 100 <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
           </a>
 
           <div className="mt-12 w-full flex justify-center border-t border-white/5 pt-10">
