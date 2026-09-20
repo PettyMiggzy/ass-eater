@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { configureSes } from './lib/mail-ses';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
@@ -60,6 +61,11 @@ app.setErrorHandler((err: any, _req, reply) => {
   app.log.error(err);
   return reply.code(status).send({ error: 'internal' });
 });
+
+// Email is off unless a provider is explicitly configured. Nothing breaks
+// when it is off -- notifications are recorded either way (core/notify.ts),
+// so the in-app inbox is complete on its own and email is a second channel.
+configureSes(app.log);
 
 for (const [prefix, routes] of Object.entries({
   '/auth': m.auth, '/creators': m.creators, '/subscriptions': m.subscriptions,

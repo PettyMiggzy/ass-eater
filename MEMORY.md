@@ -3890,3 +3890,55 @@ clean, live-site build clean.
 - SEO beyond the canonical + JSON-LD shipped earlier: the pages worth
   ranking are creator profiles and they sit behind the age gate. Needs its
   own design pass.
+
+## SES wired (2026-09-20)
+
+Founder: *"ya use ses."* Done. `src/lib/mail-ses.ts` is the transport;
+`configureSes(app.log)` runs at startup in `src/index.ts` and registers it
+only when `EMAIL_PROVIDER=ses`. `@aws-sdk/client-sesv2` added to
+`server/package.json` — **note this does not touch the Vercel build**, which
+only builds the Next.js root app; `server/` is a separate stack.
+
+**It throws at STARTUP if `EMAIL_PROVIDER=ses` is set without `EMAIL_FROM`.**
+That is the point: a provider switched on but misconfigured otherwise looks
+identical to one switched off, and only surfaces as creators never hearing
+about messages — the failure nobody reports, because it looks like nothing
+happened. Same reasoning as `assertTokenDecimals()`.
+
+Text-only emails, deliberately. The body is one sentence and a link by
+design (no content ever travels — see the mailer notes above), so HTML buys
+nothing and plain text avoids tracking pixels and rendering quirks on a
+platform where the recipient's privacy is part of the product.
+
+Credentials come from the standard AWS chain and are never read or logged in
+that file.
+
+### What the founder still has to do in AWS, none of it code
+
+1. **Verify a sending identity** — ideally the `onlyone1.fun` domain (DKIM),
+   not just one address, or every From shows as unverified-adjacent.
+2. **Request production access.** SES starts in a sandbox that can only send
+   to addresses you have verified — so notifications to real creators will
+   silently go nowhere until this is granted. It is a human review and AWS
+   can decline.
+3. Set `EMAIL_PROVIDER=ses`, `EMAIL_FROM`, `AWS_REGION`, and credentials
+   wherever `server/` ends up running. **Not Vercel** — `server/` is not
+   deployed there.
+
+3 new tests (`lib/mail-ses.test.ts`): off unless named, throws without
+`EMAIL_FROM`, registers when configured. 99 server tests pass (was 96), tsc
+clean, live-site build clean.
+
+### Facebook username: the step he was missing
+
+Confirmed against Facebook's own help page rather than guessed. **You have
+to switch profiles INTO the Page first** — from a personal profile the menu
+shows personal settings and there is no Page username option, which is
+exactly why he could not find it. Profile photo (top right) → See all
+profiles → pick the Page → then Settings & privacy → Settings → Page setup
+→ Name → Edit next to the username.
+
+Also from that page, and likely relevant since this Page is days old:
+**"Newly-created Pages may not immediately be able to create a username."**
+If the option is missing after switching in, that is why — it is not a
+misconfiguration to hunt for.
