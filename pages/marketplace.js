@@ -7,7 +7,7 @@ import { getListings } from '../lib/listings-store';
 import { getCreators } from '../lib/creators-store';
 import { isPubliclyVisible } from '../lib/creator-status';
 import { isFoundingCreator } from '../lib/founding';
-import { Icons, SolidIcons } from '../components/Brand';
+import { Icons, SolidIcons, Tagline } from '../components/Brand';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
@@ -52,14 +52,24 @@ export async function getServerSideProps({ req }) {
   return { props: { listings: active, sessionUser } };
 }
 
+// The real ceiling for the price slider, derived from what's actually
+// listed. A fixed guess (e.g. $200) would silently clip out a genuinely
+// priced $250 listing from the filter's own top end; $200 is only the
+// FALLBACK, used while nothing is listed at all, so the slider has some
+// range to show rather than a single point at $0.
+const FALLBACK_MAX_CENTS = 20000;
+
 export default function Marketplace({ listings, sessionUser }) {
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
   const [reason, setReason] = useState('');
   const [sending, setSending] = useState(false);
   const [q, setQ] = useState('');
+  const [creatorQ, setCreatorQ] = useState('');
   const [buying, setBuying] = useState(null);
   const [kind, setKind] = useState('all');
+  const maxCents = Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => l.priceCents || 0));
+  const [maxPriceCents, setMaxPriceCents] = useState(maxCents);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [tosAccepted, setTosAccepted] = useState(false);
 
@@ -113,9 +123,13 @@ export default function Marketplace({ listings, sessionUser }) {
     if (kind === 'video') return l.media?.[0]?.type === 'video';
     return l.kind !== 'physical' && l.media?.[0]?.type !== 'video';
   });
-  const filtered = q.trim()
+  const byText = q.trim()
     ? byKind.filter((l) => l.title.toLowerCase().includes(q.toLowerCase()) || (l.description || '').toLowerCase().includes(q.toLowerCase()))
     : byKind;
+  const byCreator = creatorQ.trim()
+    ? byText.filter((l) => l.creatorName.toLowerCase().includes(creatorQ.trim().toLowerCase()))
+    : byText;
+  const filtered = byCreator.filter((l) => (l.priceCents || 0) <= maxPriceCents);
 
   return (
     <>
@@ -205,10 +219,15 @@ export default function Marketplace({ listings, sessionUser }) {
             <div className="absolute left-1/2 -top-40 -translate-x-1/2 w-[800px] h-[500px] max-w-[160vw] rounded-full bg-brand-pink/10 blur-[130px]" />
           </div>
           <div className="relative max-w-6xl mx-auto px-6 py-12">
-            <p className="text-[11px] tracking-[0.3em] text-brand-pink mb-3">MARKETPLACE</p>
-            <h1 className="text-4xl sm:text-5xl font-black tracking-tight leading-none">
-              BUY DIRECT FROM <span className="text-brand-pink">CREATORS</span>
-            </h1>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] tracking-[0.3em] text-brand-pink mb-3">MARKETPLACE</p>
+                <h1 className="text-4xl sm:text-5xl font-black tracking-tight leading-none">
+                  BUY DIRECT FROM <span className="text-brand-pink">CREATORS</span>
+                </h1>
+              </div>
+              <Tagline className="mt-2">More Than Content</Tagline>
+            </div>
             <p className="mt-4 text-sm text-gray-400 max-w-xl leading-relaxed">
               Photo sets, video, and physical merch — listed by creators at whatever price they set.
               Every purchase is between you and them.
@@ -220,37 +239,76 @@ export default function Marketplace({ listings, sessionUser }) {
               <span className="text-brand-pink font-bold">Heads up:</span>
               <span>Browsing is live. Checkout opens when payments do — nothing here can charge you yet.</span>
             </div>
+          </div>
+        </div>
 
-            <div className="mt-8 flex flex-col sm:flex-row gap-3 sm:items-center">
-              <label className="relative flex-1 max-w-md">
-                <span className="sr-only">Search listings</span>
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search listings..."
-                  className="w-full px-4 py-3 rounded-full bg-white/5 border border-white/10 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-brand-pink/60"
-                />
-              </label>
-              <div className="flex flex-wrap gap-2">
+        <div className="max-w-6xl mx-auto px-6 pt-10 grid lg:grid-cols-[220px_1fr] gap-8">
+          {/* Filters. Every one of these is real and wired to `filtered`
+              below -- no fabricated category list with invented counts like
+              "Fetish (231)". This platform has no per-listing tagging yet,
+              so a category filter isn't here; Content Type, price and
+              creator are the fields a listing actually has today. */}
+          <aside className="space-y-6 lg:sticky lg:top-20 self-start">
+            <div>
+              <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">SEARCH</p>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search listings..."
+                className="w-full px-4 py-2.5 rounded-full bg-white/5 border border-white/10 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-brand-pink/60"
+              />
+            </div>
+
+            <div>
+              <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">CONTENT TYPE</p>
+              <div className="space-y-1">
                 {KINDS.map((k) => (
                   <button
                     key={k.value}
                     onClick={() => setKind(k.value)}
-                    className={`px-4 py-2 rounded-full text-xs tracking-wide transition border ${
-                      kind === k.value
-                        ? 'bg-brand-pink border-brand-pink text-white font-bold'
-                        : 'border-white/10 text-gray-400 hover:text-white hover:border-white/25'
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left transition ${
+                      kind === k.value ? 'bg-brand-pink/15 text-brand-pink font-bold' : 'text-gray-300 hover:bg-white/5'
                     }`}
                   >
+                    <span
+                      className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center ${
+                        kind === k.value ? 'bg-brand-pink border-brand-pink' : 'border-white/25'
+                      }`}
+                    >
+                      {kind === k.value && <Icons.check className="h-3 w-3 text-white" />}
+                    </span>
                     {k.label}
                   </button>
                 ))}
               </div>
             </div>
-          </div>
-        </div>
 
-        <div className="max-w-6xl mx-auto px-6 pt-10">
+            <div>
+              <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">MAX PRICE</p>
+              <input
+                type="range"
+                min={0}
+                max={maxCents}
+                step={100}
+                value={maxPriceCents}
+                onChange={(e) => setMaxPriceCents(Number(e.target.value))}
+                className="w-full accent-brand-pink"
+              />
+              <p className="text-xs text-gray-500 mt-1">Up to ${(maxPriceCents / 100).toFixed(0)}</p>
+            </div>
+
+            <div>
+              <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">CREATOR</p>
+              <input
+                value={creatorQ}
+                onChange={(e) => setCreatorQ(e.target.value)}
+                placeholder="Filter by creator..."
+                className="w-full px-4 py-2.5 rounded-full bg-white/5 border border-white/10 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-brand-pink/60"
+              />
+            </div>
+          </aside>
+
+          <div>
           {filtered.length === 0 ? (
             <div className="text-center py-24">
               <p className="text-gray-400">
@@ -267,7 +325,7 @@ export default function Marketplace({ listings, sessionUser }) {
               <p className="text-xs text-gray-500 mb-4">
                 {filtered.length} {filtered.length === 1 ? 'listing' : 'listings'}
               </p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {filtered.map((l) => (
                   <div key={l.id} className="group rounded-2xl overflow-hidden bg-white/5 border border-white/5 hover:border-brand-pink/40 transition flex flex-col">
                     <div className="aspect-square relative bg-black/40">
@@ -325,6 +383,7 @@ export default function Marketplace({ listings, sessionUser }) {
               </div>
             </>
           )}
+          </div>
         </div>
 
         <footer className="border-t border-white/5 mt-20 py-8 px-6">

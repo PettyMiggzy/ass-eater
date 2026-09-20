@@ -10,6 +10,40 @@
  */
 
 /**
+ * The one script-font accent on the site, for a cover photo or a hero
+ * banner -- a creator's profile cover, the marketplace hero. Renders one of
+ * the platform's own established taglines (see TAGLINES below), never
+ * invented copy and never anything creator-specific, so it can sit on any
+ * cover photo without implying a claim about that particular creator.
+ *
+ * Deliberately a small, fixed set rather than one fixed string: the same
+ * exact line on every cover photo across the site reads as a template
+ * stamp. `pick(seed)` is a stable, non-random choice (Math.random() would
+ * make a server-rendered page mismatch the client on hydration) so the same
+ * creator always gets the same line rather than one that changes on every
+ * request.
+ */
+const TAGLINES = ["You're Not Alone Here", 'Real People. Real Connections.'];
+
+export function pickTagline(seed) {
+  const key = String(seed ?? '');
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  return TAGLINES[Math.abs(hash) % TAGLINES.length];
+}
+
+export function Tagline({ children, className = '' }) {
+  return (
+    <p
+      className={`font-["Dancing_Script"] text-3xl sm:text-4xl leading-none text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] ${className}`}
+    >
+      {children}
+      <SolidIcons.heart className="inline-block h-[0.6em] w-[0.6em] ml-2 -translate-y-0.5 text-brand-pink" />
+    </p>
+  );
+}
+
+/**
  * The "01" mark: a thick pink ring with a padlock sitting in its centre, and a
  * ribbon-folded 1 beside it. Matches the reference artwork the founder set the
  * brand from.

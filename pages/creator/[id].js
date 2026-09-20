@@ -11,7 +11,7 @@ import { getWallPostsForCreator } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
 import { viewerMarkFor } from '../../lib/viewer-mark';
 import { isTokenGated, tokenGateLive, formatGate } from '../../lib/token-gate';
-import { FoundingBadge, Icons, SolidIcons } from '../../components/Brand';
+import { FoundingBadge, Icons, SolidIcons, Tagline, pickTagline } from '../../components/Brand';
 import SiteNav from '../../components/SiteNav';
 
 export async function getServerSideProps({ req, params }) {
@@ -208,13 +208,18 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
 
         <main className="max-w-6xl mx-auto px-4 md:px-6">
           {/* Cover */}
-          <div className="relative mt-4 h-44 sm:h-56 md:h-64 rounded-2xl overflow-hidden bg-white/5">
+          <div className="relative mt-4 h-52 sm:h-64 md:h-72 rounded-2xl overflow-hidden bg-white/5">
             {creator.video ? (
               <video src={creator.video} autoPlay loop muted playsInline className="w-full h-full object-cover blur-sm scale-105" />
             ) : (
               <img src={creator.img} alt="" className="w-full h-full object-cover blur-sm scale-105" />
             )}
-            <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-brand-ink/30 to-transparent" />
+            {/* Darkest at the bottom, where the identity row overlaps the
+                cover, and again at top-right so the tagline stays readable
+                regardless of what's underneath it -- a plain top-to-bottom
+                fade left that corner exactly as bright as the photo. */}
+            <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-brand-ink/20 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-bl from-black/50 via-transparent to-transparent" />
             <button
               onClick={() => router.push('/creators')}
               aria-label="Back to creators"
@@ -222,12 +227,15 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
             >
               <Icons.arrowLeft className="h-5 w-5" />
             </button>
+            <div className="absolute top-4 right-5 text-right">
+              <Tagline>{pickTagline(creator.handle)}</Tagline>
+            </div>
           </div>
 
           {/* Identity row */}
           <div className="relative px-1 sm:px-4">
             <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-14 sm:-mt-16">
-              <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full border-4 border-brand-ink overflow-hidden bg-white/10 shrink-0">
+              <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full border-4 border-brand-ink ring-2 ring-brand-pink/70 overflow-hidden bg-white/10 shrink-0">
                 <img src={creator.img} alt={creator.name} className="w-full h-full object-cover object-top" />
               </div>
 
