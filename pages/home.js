@@ -24,6 +24,19 @@ const PROMISES = [
   { Icon: Icons.shield, title: 'Safe & Secure', sub: 'Your privacy matters' },
   { Icon: Icons.bolt, title: 'Fast Payouts', sub: 'Creators first' },
   { Icon: Icons.people, title: 'Real Connections', sub: 'More than just content' },
+  { Icon: Icons.coin, title: '$ONLYONE', sub: 'Our own token', href: '/token' },
+];
+
+// Things that are actually built and actually different, not marketing filler.
+// Real category browsing and the Founding Creator programme are both live
+// today; the token is a real, deployed differentiator but its actual perks
+// (gating, the VIP burn) aren't switched on yet -- same live/false pattern as
+// FEATURES below, so this section can't drift into overclaiming either.
+const DIFFERENTIATORS = [
+  { Icon: Icons.tag, title: 'Real Category Browsing', sub: 'Search and browse by tag', live: true },
+  { Icon: Icons.crown, title: 'Founding Creators', sub: 'First 100 get permanent priority placement', live: true },
+  { Icon: Icons.heart, title: 'Favorites', sub: 'Save the creators you follow', live: true },
+  { Icon: Icons.coin, title: 'Crypto-Native', sub: '$ONLYONE unlocks gated creators', live: false },
 ];
 
 const CREATOR_POINTS = [
@@ -98,14 +111,17 @@ export default function Home({ creators, sessionUser }) {
                 </a>
               </div>
 
-              <div className="grid grid-cols-3 gap-4 mt-12 max-w-lg">
-                {PROMISES.map((p) => (
-                  <div key={p.title}>
-                    <p.Icon className="h-6 w-6 mb-3 text-brand-pink" />
-                    <p className="font-bold text-sm">{p.title}</p>
-                    <p className="text-[11px] text-gray-500">{p.sub}</p>
-                  </div>
-                ))}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-12 max-w-lg">
+                {PROMISES.map((p) => {
+                  const Tag = p.href ? 'a' : 'div';
+                  return (
+                    <Tag key={p.title} {...(p.href ? { href: p.href, className: 'group' } : {})}>
+                      <p.Icon className="h-6 w-6 mb-3 text-brand-pink" />
+                      <p className={`font-bold text-sm ${p.href ? 'group-hover:text-brand-pink transition' : ''}`}>{p.title}</p>
+                      <p className="text-[11px] text-gray-500">{p.sub}</p>
+                    </Tag>
+                  );
+                })}
               </div>
             </div>
 
@@ -182,6 +198,37 @@ export default function Home({ creators, sessionUser }) {
                 )}
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* What we do differently. Kept separate from FEATURES above rather
+            than merged into it -- these aren't "the product," they're the
+            reasons to pick this one over another platform, and burying that
+            pitch in a generic feature grid would waste it. */}
+        <section className="py-14 px-6 border-t border-white/5">
+          <div className="max-w-5xl mx-auto">
+            <h2 className="text-2xl font-black text-center mb-2">
+              What We Do <span className="text-brand-pink">Differently</span>
+            </h2>
+            <p className="text-center text-gray-400 text-sm max-w-xl mx-auto mb-10">
+              The stuff other platforms in this space don&apos;t have.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 text-center">
+              {DIFFERENTIATORS.map((f) => (
+                <div key={f.title}>
+                  <f.Icon className="h-7 w-7 mb-3 text-brand-pink mx-auto" />
+                  <p className="font-bold text-sm">{f.title}</p>
+                  {f.live ? (
+                    <p className="text-[11px] text-gray-500">{f.sub}</p>
+                  ) : (
+                    <>
+                      <p className="text-[11px] text-gray-500">{f.sub}</p>
+                      <p className="text-[10px] text-gray-600 mt-0.5">Coming soon</p>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 
