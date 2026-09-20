@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import { SOCIAL_LINKS } from '../lib/social';
 import { Mark, Icons, FoundingBadge } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 import { PREVIEW_COOKIE_NAME, previewModeEnabled, previewSecret, verifyPreviewToken } from '../lib/preview-access';
@@ -272,6 +273,17 @@ export default function FoundingCreator({ taken, left, paymentsLive, signupLocke
             <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">
               Report Non-Consensual Content
             </a>
+            {SOCIAL_LINKS.map((s) => (
+              <a
+                key={s.name}
+                href={s.url}
+                target="_blank"
+                rel="me noopener noreferrer"
+                className="hover:text-brand-pink transition"
+              >
+                {s.name}
+              </a>
+            ))}
           </div>
         </footer>
       </div>

@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import { SOCIAL_LINKS, organizationJsonLd, CANONICAL_ORIGIN } from '../lib/social';
 import { Mark, Icons } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 
@@ -76,6 +77,21 @@ export default function Landing() {
         <meta
           name="twitter:description"
           content="A creator platform for women, men, couples and everyone. Launching soon — get notified. 18+ only."
+        />
+      
+        {/* Canonical: every apex domain 308s to its www form and several
+            mirror domains serve this same page, so without this a search
+            engine sees one page at five addresses and splits whatever
+            authority it has between them. */}
+        <link rel="canonical" href={`${CANONICAL_ORIGIN}/`} />
+
+        {/* Organization data. sameAs is the working part: it is what ties
+            the social profiles to this domain as ONE entity instead of
+            three unrelated things -- the cheapest real SEO available to a
+            site with no inbound links yet. */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd()) }}
         />
       </Head>
 
@@ -202,6 +218,17 @@ export default function Landing() {
               Report Non-Consensual Content
             </a>
             <a href="mailto:team@onlyone1.fun" className="hover:text-brand-pink transition">Contact</a>
+            {SOCIAL_LINKS.map((s) => (
+              <a
+                key={s.name}
+                href={s.url}
+                target="_blank"
+                rel="me noopener noreferrer"
+                className="hover:text-brand-pink transition"
+              >
+                {s.name}
+              </a>
+            ))}
           </div>
           <p className="text-[11px] text-gray-600 text-center">
             18+ only. OnlyOne contains adult content available to verified adults.

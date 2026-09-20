@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import { SOCIAL_LINKS } from '../lib/social';
 import { Mark } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 
@@ -107,6 +108,17 @@ export default function ComingSoon() {
               Report Non-Consensual Content
             </a>
             <a href="mailto:team@onlyone1.fun" className="hover:text-brand-pink transition">Contact</a>
+            {SOCIAL_LINKS.map((s) => (
+              <a
+                key={s.name}
+                href={s.url}
+                target="_blank"
+                rel="me noopener noreferrer"
+                className="hover:text-brand-pink transition"
+              >
+                {s.name}
+              </a>
+            ))}
           </div>
           <p className="text-[11px] text-gray-600 text-center">
             18+ only. OnlyOne contains adult content available to verified adults.

@@ -3735,3 +3735,60 @@ and every other charge path runs Serializable with a retry.
   earlier note said an og:image would have to be, so this is a yes once he
   sends it.
 - Instagram bio — he asked for copy; given in chat.
+
+## Socials are live and wired into the site (2026-09-20)
+
+Founder supplied the real accounts:
+- **Instagram: `https://www.instagram.com/joinonlyone/`**
+- **Facebook: `https://www.facebook.com/profile.php?id=61594626598071`**
+
+`lib/social.js` holds both in one place, because they land in three
+unrelated spots (page footers, the Organization JSON-LD, and eventually a
+share kit) and a handle that gets changed in two of three is worse than one
+never listed. They are on the footers of `/`, `/coming-soon` and
+`/founding-creator` — the three ungated pages, so the links work from the
+27 blocked states like everything else there.
+
+**The Facebook URL is the numeric `profile.php?id=` fallback, which means no
+username is set on the Page.** Told him to set one and swap this for
+`https://www.facebook.com/joinonlyone` — the numeric form keeps redirecting
+so nothing breaks in the swap, but the vanity URL is what belongs in a bio
+and in the JSON-LD. There is a comment at the constant saying exactly this.
+
+**Also flagged, because the URL shape does not distinguish them:** Facebook
+serves `profile.php?id=` for BOTH Pages and personal profiles. If he
+accidentally made a personal profile it cannot run ads or see insights and
+it violates Facebook's terms for business use. He needs to confirm it is a
+Page.
+
+### First real SEO, since he asked for a "seo power house"
+
+Two things on the landing page, both enabled by having the social links:
+
+- **`<link rel="canonical">`.** Every apex domain 308s to its www form and
+  several mirror domains serve this same page, so without it a search engine
+  sees one page at five addresses and splits whatever authority it has.
+- **Organization JSON-LD with `sameAs`** pointing at both socials. That is
+  what ties the profiles and the domain together as ONE entity rather than
+  three unrelated things — the cheapest real SEO available to a site with no
+  inbound links yet.
+
+**Deliberately no `logo` field in the schema** until real brand art exists at
+a stable URL: a schema field pointing at nothing is worse than an absent
+one, and the only images in this repo are creator content, which must never
+be what a search engine or a link preview expands. Same reasoning as the
+still-absent og:image.
+
+**This is a start, not the SEO work.** The real problem is structural and
+still unaddressed: the pages worth ranking are creator profiles, and they
+sit behind an age gate that crawlers cannot pass. Making them crawlable
+without weakening the 27-state block needs its own design pass, not a meta
+tag.
+
+**Caught before pushing:** the regex that inserted the canonical/JSON-LD
+block re-emitted the `</Head>` it had captured, producing `</Head></Head>`.
+Turbopack caught it, but it is the same class as the JSX comma-expression
+bug recorded earlier — a regex insert that captures a closing tag has to
+either exclude it or not re-add it.
+
+179 live-site tests pass, `next build` clean.
