@@ -8,6 +8,7 @@ import { isTokenGated, formatGate, tokenGateLive } from '../lib/token-gate';
 import { getSessionUser } from '../lib/session';
 import { Lockup } from '../components/Brand';
 import { publicUser } from '../lib/users-store';
+import { VIP_PRICE_USD, VIP_PERKS } from '../lib/brand';
 
 export async function getServerSideProps({ req }) {
   const creators = await getCreators();
@@ -114,7 +115,7 @@ export default function Creators({ creators, sessionUser }) {
         {/* Header */}
         <nav className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/" className="flex items-center bg-white/95 rounded-lg px-3 py-1.5">
+            <a href="/" className="flex items-center">
               <Lockup className="h-7 md:h-8" />
             </a>
             <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
@@ -310,46 +311,75 @@ export default function Creators({ creators, sessionUser }) {
           </div>
         </section>
 
-        {/* Subscription Tiers */}
-        <section id="pricing" className="py-16 px-6 border-t border-brand-gold/20">
+        {/* What it costs a fan.
+
+            This replaced three invented subscription tiers -- STARTER $9.99
+            "Access to 3 creators", ALL ACCESS $19.99 "All creators
+            unlocked", VIP $49.99 -- which were not just unbuilt but
+            unbuildable. Creators set their own subscription prices, so a
+            flat platform-priced "all creators unlocked" is the platform
+            promising content it does not own at a price it does not
+            control: fifty creators averaging $15 would owe $750 out of one
+            $19.99 charge. It is the same shape as every other
+            fixed-price-against-a-price-you-do-not-set idea this project has
+            rejected, and it gets worse the more creators sign up.
+
+            What is below is what is actually decided and built in server/:
+            free to join, creators price their own work, credits are dollars,
+            and VIP is perks only at a flat $20 with no content and no
+            discount attached to it. */}
+        <section id="pricing" className="py-16 px-6 border-t border-white/10">
           <div className="max-w-5xl mx-auto">
-            <h2 className="text-4xl font-black text-center mb-2 premium-title">CHOOSE YOUR TIER</h2>
-            <p className="text-center text-gray-400 mb-12">Simple, transparent pricing</p>
-            <div className="grid md:grid-cols-3 gap-6">
-              <div className="premium-card p-8 border-2 border-brand-gold/30 text-center">
-                <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">STARTER</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">$9.99</p>
-                <p className="text-gray-400 text-sm mb-6">in credits / month</p>
-                <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Access to 3 creators</li>
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Weekly content drops</li>
+            <h2 className="text-4xl font-black text-center mb-2 premium-title">WHAT IT COSTS</h2>
+            <p className="text-center text-gray-400 mb-12">
+              Joining is free. Creators set their own prices — we never set them for them.
+            </p>
+
+            <div className="grid md:grid-cols-3 gap-6 items-start">
+              <div className="premium-card p-8">
+                <p className="text-brand-pink font-bold text-sm tracking-widest mb-3">JOIN</p>
+                <p className="text-4xl font-black mb-1">Free</p>
+                <p className="text-gray-400 text-sm mb-6">always</p>
+                <ul className="text-sm text-gray-300 space-y-3">
+                  <li>Browse and search every creator</li>
+                  <li>Save the ones you like</li>
+                  <li>No card to sign up, no monthly fee to exist here</li>
                 </ul>
-                <button onClick={() => showComingSoon()} className="w-full premium-button text-sm">Select</button>
               </div>
-              <div className="premium-card p-8 border-2 border-brand-gold text-center relative scale-105 shadow-luxury-lg">
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-brand-gold text-black text-xs font-black rounded-full">MOST POPULAR</div>
-                <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">ALL ACCESS</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">$19.99</p>
-                <p className="text-gray-400 text-sm mb-6">in credits / month</p>
-                <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> All creators unlocked</li>
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Daily content drops</li>
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Direct messaging with creators</li>
+
+              <div className="premium-card p-8">
+                <p className="text-brand-pink font-bold text-sm tracking-widest mb-3">CREDITS</p>
+                <p className="text-4xl font-black mb-1">$1</p>
+                <p className="text-gray-400 text-sm mb-6">= 1 credit</p>
+                <ul className="text-sm text-gray-300 space-y-3">
+                  <li>Top up once, spend it on whatever you want</li>
+                  <li>Subscriptions, tips, unlocks, marketplace</li>
+                  <li>Each creator sets their own price — some are free</li>
+                  <li className="text-gray-400">Topping up costs 2%: $100 lands as 98 credits</li>
                 </ul>
-                <button onClick={() => showComingSoon()} className="w-full premium-button text-sm">Select</button>
               </div>
-              <div className="premium-card p-8 border-2 border-brand-gold/30 text-center">
-                <p className="text-brand-secondary font-bold text-sm tracking-widest mb-3">VIP</p>
-                <p className="text-4xl font-black text-brand-gold mb-1">$49.99</p>
-                <p className="text-gray-400 text-sm mb-6">in credits / month</p>
-                <ul className="text-sm text-gray-300 space-y-2 mb-8 text-left">
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Everything in All Access</li>
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Priority requests</li>
-                  <li className="flex items-center gap-2"><img src="/icons/check.png" className="h-4 w-4" alt="" /> Early access to new drops</li>
+
+              <div className="premium-card p-8 border border-brand-pink/40">
+                <p className="text-brand-pink font-bold text-sm tracking-widest mb-3">VIP</p>
+                <p className="text-4xl font-black mb-1">${VIP_PRICE_USD}</p>
+                <p className="text-gray-400 text-sm mb-6">per month, optional</p>
+                <ul className="text-sm text-gray-300 space-y-3">
+                  {VIP_PERKS.map((perk) => (
+                    <li key={perk}>{perk}</li>
+                  ))}
                 </ul>
-                <button onClick={() => showComingSoon()} className="w-full premium-button text-sm">Select</button>
+                {/* Said plainly and on purpose. A "VIP" tier that sounds like
+                    it includes content is how a chargeback starts. */}
+                <p className="text-xs text-gray-500 mt-6 leading-relaxed">
+                  VIP does not include any creator&apos;s content and does not discount
+                  anything. You still pay each creator their own price.
+                </p>
               </div>
             </div>
+
+            <p className="text-center text-sm text-gray-500 mt-10">
+              Payments are not switched on yet — nothing here can charge you today.
+            </p>
           </div>
         </section>
 

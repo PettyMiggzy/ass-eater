@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
-import { Mark } from './Brand';
 
 /**
  * The top bar from the OnlyOne designs: brand, section links, creator
@@ -10,11 +9,22 @@ import { Mark } from './Brand';
  * The whole site is branded OnlyOne now (decided 2026-09-19, superseding the
  * earlier "no rename" note in MEMORY.md -- joinonlyone.com is the primary
  * domain, the token is $ONLYONE, and every visible old-brand string was
- * swapped the same day). BRAND_NAME stays a single constant anyway: it is
- * still the one place the wordmark is set, so a future change is a one-line
- * edit here rather than a find-and-replace across the site.
+ * swapped the same day).
+ *
+ * The mark is the founder's real lockup (supplied 2026-09-20), not the
+ * hand-drawn SVG approximation that stood in for it before. It is a
+ * transparent PNG extracted from art on a black background by treating the
+ * composite as additive -- alpha is the brightest channel, colour is the
+ * pixel un-premultiplied by it -- which is exact at every edge pixel and so
+ * leaves no dark halo. Keying black to transparent, which is how the old
+ * badge art was cut, keeps the darkened edge pixels and fringes the mark
+ * against any background that is not the one it was cut on. Use this method
+ * for any future art supplied on black.
+ *
+ * It is listed in proxy.js's BRAND_ART_PATHS: this nav renders on /2257,
+ * which is exempt from the age gate, so without that the logo would be the
+ * one broken image on a page a regulator reads.
  */
-const BRAND_NAME = 'ONLYONE';
 
 export default function SiteNav({ signedIn = false, viewerAvatar = null, viewerHref = '/dashboard' }) {
   const router = useRouter();
@@ -29,11 +39,14 @@ export default function SiteNav({ signedIn = false, viewerAvatar = null, viewerH
   return (
     <header className="sticky top-0 z-50 bg-brand-ink/95 backdrop-blur border-b border-white/5">
       <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center gap-4">
-        <a href="/home" className="flex items-center gap-2 shrink-0">
-          <Mark className="h-7 w-auto text-brand-pink" lockFill="#0d0709" />
-          <span className="font-black tracking-tight text-lg hidden sm:inline">
-            {BRAND_NAME.slice(0, 4)}<span className="text-brand-pink">{BRAND_NAME.slice(4)}</span>
-          </span>
+        <a href="/home" className="flex items-center shrink-0" aria-label="OnlyOne home">
+          <img
+            src="/images/onlyone-lockup-nav.png"
+            alt="OnlyOne"
+            width={438}
+            height={72}
+            className="h-7 w-auto"
+          />
         </a>
 
         <nav className="hidden md:flex items-center gap-6 text-sm text-gray-300">

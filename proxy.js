@@ -100,7 +100,15 @@ const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/
 // are the wordmark on black. That is the whole and only basis for this
 // list, and it is the same rule as the pages above -- if either file ever
 // becomes anything but brand art, it comes straight back out.
-const BRAND_ART_PATHS = ['/images/og-onlyone.png', '/images/logo-onlyone.png'];
+const BRAND_ART_PATHS = [
+  '/images/og-onlyone.png',
+  '/images/logo-onlyone.png',
+  // The nav lockup. SiteNav renders on /2257, which is exempt from the age
+  // gate so a regulator or a payment processor can read it -- without this
+  // the logo would be the single broken image on that page.
+  '/images/onlyone-lockup-nav.png',
+  '/images/onlyone-lockup.png',
+];
 
 // Prefix exemptions, for assets an exempt page actually renders, plus the
 // brand art above. Everything else under /images/ stays gated: those hold

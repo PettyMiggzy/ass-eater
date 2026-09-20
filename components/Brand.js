@@ -1,14 +1,12 @@
 /**
- * The 01 lockup and the line icons from the OnlyOne designs, drawn as inline
- * SVG rather than shipped as image files.
+ * The brand marks and the line icons from the OnlyOne designs.
  *
- * Inline because they have to sit on the public landing page, which is the
- * one page outside the age gate and should stay fast and dependency-free,
- * and because a wordmark that scales and recolours with CSS beats a PNG that
- * has to be re-exported every time the pink changes. It also avoids reusing
- * the old-brand logo asset here, which reads as a different product next
- * to the ONLYONE wordmark -- the site is fully OnlyOne-branded as of
- * 2026-09-19.
+ * `Lockup` is the founder's real brand art, shipped as a transparent PNG
+ * (see its own note below). Everything else here -- `Mark`, `Icons`, the
+ * badges -- stays inline SVG, because at UI-chrome sizes drawn vector is
+ * sharper than any raster, recolours from `currentColor` instead of needing
+ * a re-export every time the pink changes, weighs almost nothing, and cannot
+ * fail to load on the age-gate pages that must never render broken.
  */
 
 /**
@@ -53,19 +51,31 @@ export function Mark({ className = 'h-16 w-auto', lockFill = '#120a10' }) {
 }
 
 /**
- * Mark + ONLYONE wordmark, the full horizontal lockup. Used anywhere the old
- * `/images/logo-final.png` used to sit -- that file still had the previous
- * brand name baked into its pixels, so it survived the text rename sweep and
- * kept saying the old name on the age-gate pages for days.
+ * The full horizontal lockup -- the founder's real brand art (supplied
+ * 2026-09-20), not the drawn approximation of it that `Mark` still is.
+ *
+ * Transparent PNG, extracted from art on a black background by treating the
+ * composite as additive: alpha is the brightest channel and the colour is
+ * the pixel un-premultiplied by it. That is exact at every edge pixel, so it
+ * leaves no dark halo on any background. Keying black to transparent -- how
+ * the old badge art was cut -- keeps the darkened edge pixels and fringes
+ * the mark everywhere except the colour it was cut on. Use this method for
+ * any future art supplied on black.
+ *
+ * It is listed in proxy.js's BRAND_ART_PATHS, because this renders on the
+ * age-gate pages and /2257, all of which are exempt from the age check --
+ * without that it would be the one broken image on the pages a blocked
+ * visitor, a regulator or a payment processor actually reads.
  */
 export function Lockup({ className = 'h-12 w-auto' }) {
   return (
-    <span className={`inline-flex items-center gap-2.5 ${className}`}>
-      <Mark className="h-full w-auto text-brand-pink" />
-      <span className="font-black tracking-tight leading-none text-[1.55em]">
-        ONLY<span className="text-brand-pink">ONE</span>
-      </span>
-    </span>
+    <img
+      src="/images/onlyone-lockup-nav.png"
+      alt="OnlyOne"
+      width={438}
+      height={72}
+      className={`w-auto ${className}`}
+    />
   );
 }
 
