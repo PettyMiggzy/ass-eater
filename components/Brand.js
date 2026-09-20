@@ -302,6 +302,13 @@ export const Icons = {
       <circle cx="16.4" cy="13.6" r="1.4" {...STROKE} />
     </Svg>
   ),
+  cart: (p) => (
+    <Svg {...p}>
+      <path d="M3.5 4.5h2.1l1 2M6.6 6.5l1.7 8.4a1.5 1.5 0 0 0 1.5 1.2h7.1a1.5 1.5 0 0 0 1.5-1.2l1.2-6.4H6.6z" {...STROKE} />
+      <circle cx="10" cy="19.2" r="1.2" {...STROKE} />
+      <circle cx="16.4" cy="19.2" r="1.2" {...STROKE} />
+    </Svg>
+  ),
   coin: (p) => (
     <Svg {...p}>
       <circle cx="12" cy="12" r="8.8" {...STROKE} />

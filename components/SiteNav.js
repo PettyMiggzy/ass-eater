@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/router';
-import { SolidIcons } from './Brand';
+import { SolidIcons, Icons } from './Brand';
+import { useCart } from '../lib/cart';
 
 /**
  * The top bar from the OnlyOne designs: brand, section links, creator
@@ -30,6 +31,7 @@ import { SolidIcons } from './Brand';
 export default function SiteNav({ signedIn = false, viewerAvatar = null, viewerHref = '/dashboard' }) {
   const router = useRouter();
   const [q, setQ] = useState('');
+  const cart = useCart();
 
   const submit = (e) => {
     e.preventDefault();
@@ -77,6 +79,15 @@ export default function SiteNav({ signedIn = false, viewerAvatar = null, viewerH
         <a href="/favorites" title="Saved creators"
            className="shrink-0 w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-gray-300 hover:text-brand-pink hover:border-brand-pink/50 transition">
           <SolidIcons.heart className="h-4 w-4" />
+        </a>
+
+        <a href="/cart" title="Cart" className="relative shrink-0 w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-gray-300 hover:text-brand-pink hover:border-brand-pink/50 transition">
+          <Icons.cart className="h-4 w-4" />
+          {cart.items.length > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-brand-pink text-white text-[10px] font-bold flex items-center justify-center">
+              {cart.items.length}
+            </span>
+          )}
         </a>
 
         {viewerAvatar ? (

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { captureReferralFromQuery } from '../lib/referral';
 import { Lockup } from '../components/Brand';
+import { CartProvider } from '../lib/cart';
 
 /**
  * Pages this 18+ notice must NOT cover.
@@ -70,7 +71,11 @@ function MyApp({ Component, pageProps }) {
   }, []);
 
   if (NO_NOTICE_PATHS.has(router.pathname)) {
-    return <Component {...pageProps} />;
+    return (
+      <CartProvider>
+        <Component {...pageProps} />
+      </CartProvider>
+    );
   }
 
   if (isLoading) return null;
@@ -82,7 +87,11 @@ function MyApp({ Component, pageProps }) {
     }} />;
   }
 
-  return <Component {...pageProps} />;
+  return (
+    <CartProvider>
+      <Component {...pageProps} />
+    </CartProvider>
+  );
 }
 
 function AgeGate({ onVerify }) {

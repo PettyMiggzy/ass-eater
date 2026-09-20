@@ -8,6 +8,8 @@ import { getCreators } from '../lib/creators-store';
 import { isPubliclyVisible } from '../lib/creator-status';
 import { isFoundingCreator } from '../lib/founding';
 import { Icons, SolidIcons, Tagline } from '../components/Brand';
+import { useCart } from '../lib/cart';
+import { marketplacePaymentsLive } from '../lib/marketplace-payment-config';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
@@ -64,7 +66,7 @@ export async function getServerSideProps({ req }) {
   // guessed or hardcoded number.
   const kindCounts = { all: active.length, photo: 0, video: 0, physical: 0 };
   for (const l of active) kindCounts[kindOf(l)] += 1;
-  return { props: { listings: active, allTags, tagCounts, kindCounts, sessionUser } };
+  return { props: { listings: active, allTags, tagCounts, kindCounts, sessionUser, paymentsLive: marketplacePaymentsLive() } };
 }
 
 // Shared by the server-side counts above and the client-side filter below --
@@ -89,40 +91,28 @@ const SORTS = [
   { value: 'price-high', label: 'Price: High to Low' },
 ];
 
-export default function Marketplace({ listings, allTags, tagCounts, kindCounts, sessionUser }) {
+export default function Marketplace({ listings, allTags, tagCounts, kindCounts, sessionUser, paymentsLive }) {
+  const cart = useCart();
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
   const [reason, setReason] = useState('');
   const [sending, setSending] = useState(false);
   const [q, setQ] = useState('');
   const [creatorQ, setCreatorQ] = useState('');
-  const [buying, setBuying] = useState(null);
   const [kind, setKind] = useState('all');
   const [tag, setTag] = useState('');
   const [sort, setSort] = useState('newest');
   const maxCents = Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => l.priceCents || 0));
   const [maxPriceCents, setMaxPriceCents] = useState(maxCents);
-  const [ageConfirmed, setAgeConfirmed] = useState(false);
-  const [tosAccepted, setTosAccepted] = useState(false);
 
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
 
-  const openBuy = (listing) => {
-    setAgeConfirmed(false);
-    setTosAccepted(false);
-    setBuying(listing);
-  };
-
-  const confirmBuy = () => {
-    // Once real marketplace checkout exists, this is where it fires with
-    // { ageConfirmed: true, tosAccepted: true } -- the platform's own buy
-    // endpoint requires both, recorded against the specific order (see
-    // Section 6 of /terms). Not wiring a real charge yet since none exists.
-    setBuying(null);
-    showToast('Payments launch with the platform — check back soon.');
+  const addToCart = (listing) => {
+    cart.add(listing);
+    showToast(`Added "${listing.title}" to your cart.`);
   };
 
   const submitReport = async (e) => {
@@ -211,46 +201,6 @@ export default function Marketplace({ listings, allTags, tagCounts, kindCounts, 
         </div>
       )}
 
-      {buying && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-          <div className="w-full max-w-sm p-6 rounded-2xl bg-brand-card border border-white/10">
-            <p className="font-bold text-white mb-1">Confirm purchase</p>
-            <p className="text-xs text-gray-500 mb-4">
-              "{buying.title}" — ${(buying.priceCents / 100).toFixed(2)}
-              {buying.kind === 'physical' && buying.shippingCents ? ` + $${(buying.shippingCents / 100).toFixed(2)} shipping` : ''}
-              , sold by {buying.creatorName}.
-            </p>
-            <label className="flex items-start gap-2 text-xs text-gray-400 mb-3">
-              <input type="checkbox" checked={ageConfirmed} onChange={(e) => setAgeConfirmed(e.target.checked)} className="mt-0.5" />
-              I am 18 years of age or older (or the age of majority in my jurisdiction, whichever is higher).
-            </label>
-            <label className="flex items-start gap-2 text-xs text-gray-400 mb-4">
-              <input type="checkbox" checked={tosAccepted} onChange={(e) => setTosAccepted(e.target.checked)} className="mt-0.5" />
-              I've read and agree to the{' '}
-              <a href={`${MAIN_SITE}/terms#marketplace`} target="_blank" rel="noreferrer" className="text-brand-pink underline">
-                Marketplace Terms
-              </a>{' '}
-              — this purchase is an agreement directly between me and the creator; OnlyOne is not a party to
-              the sale, does not hold funds in escrow, and is not responsible for shipping, delivery, item
-              condition, or resolving disputes between us.
-            </label>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setBuying(null)} className="flex-1 text-sm px-4 py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 transition">
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmBuy}
-                disabled={!ageConfirmed || !tosAccepted}
-                className="flex-1 text-sm px-4 py-2.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold transition disabled:opacity-50"
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="min-h-screen bg-brand-ink text-white pb-20">
         <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
 
@@ -276,10 +226,17 @@ export default function Marketplace({ listings, allTags, tagCounts, kindCounts, 
             </p>
 
             {/* Said plainly and up front rather than discovered at checkout.
-                Browsing is genuinely live; paying is not built yet. */}
+                paymentsLive reflects whether real crypto checkout is actually
+                configured (lib/marketplace-payment-config.js) -- never
+                claimed true until the payout address, USDC contract and RPC
+                are all really set. */}
             <div className="mt-6 inline-flex items-start gap-2 px-4 py-2.5 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300">
               <span className="text-brand-pink font-bold">Heads up:</span>
-              <span>Browsing is live. Checkout opens when payments do — nothing here can charge you yet.</span>
+              <span>
+                {paymentsLive
+                  ? 'Checkout is live — pay with a crypto wallet (USDC). Add items to your cart to get started.'
+                  : 'Browsing is live. Checkout opens when payments do — nothing here can charge you yet.'}
+              </span>
             </div>
           </div>
         </div>
@@ -474,10 +431,17 @@ export default function Marketplace({ listings, allTags, tagCounts, kindCounts, 
                         <p className="text-[10px] text-brand-pink/80 mb-2 line-clamp-1">{l.tags.map((t) => `#${t}`).join(' ')}</p>
                       )}
                       <button
-                        onClick={() => openBuy(l)}
-                        className="mt-auto w-full py-2.5 rounded-full bg-white/10 hover:bg-brand-pink text-sm font-bold transition"
+                        onClick={() => addToCart(l)}
+                        disabled={cart.has(l.id)}
+                        className="mt-auto w-full py-2.5 rounded-full bg-white/10 hover:bg-brand-pink text-sm font-bold transition disabled:opacity-60 disabled:hover:bg-white/10 flex items-center justify-center gap-1.5"
                       >
-                        ${(l.priceCents / 100).toFixed(2)}
+                        {cart.has(l.id) ? (
+                          <>
+                            <Icons.check className="h-3.5 w-3.5" /> In cart
+                          </>
+                        ) : (
+                          <>${(l.priceCents / 100).toFixed(2)} · Add to cart</>
+                        )}
                       </button>
                     </div>
                   </div>

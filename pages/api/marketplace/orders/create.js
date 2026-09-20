@@ -1,12 +1,9 @@
 import { getVerifiedSessionUserId } from '../../../../lib/session';
 import { getListings, findListing } from '../../../../lib/listings-store';
-import { createOrder } from '../../../../lib/orders-store';
+import { createOrdersFromPayment } from '../../../../lib/orders-store';
+import { verifyUsdcPayment } from '../../../../lib/chain-verify';
+import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../../lib/marketplace-payment-config';
 
-// This is the integration point for whenever real marketplace checkout/payment
-// capture goes live -- it records the order + shipping address, it doesn't
-// move money. Nothing on the live site calls this yet (the Buy button is
-// still an honest "coming soon"); wire it in right after payment succeeds,
-// not before, so a "to ship" queue never shows an order nobody actually paid for.
 const REQUIRED_ADDRESS_FIELDS = ['fullName', 'line1', 'city', 'region', 'postalCode', 'country'];
 
 export default async function handler(req, res) {
@@ -14,28 +11,42 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // This endpoint was built ahead of real payment capture (see the file
-  // comment above) but was directly callable and fully functional in the
-  // meantime -- anyone logged in could hit it and create a real order,
-  // including a physical one with a real shipping address, having paid
-  // nothing. Close it until it's actually wired in right after a real
-  // charge succeeds; remove this guard at that point, not before.
-  return res.status(501).json({ error: 'Marketplace checkout is not live yet.' });
+  const config = getMarketplaceVerificationConfig();
+  if (!marketplaceVerificationLive(config)) {
+    // Same honest-not-live pattern as AgeChecker/SES before their
+    // credentials existed: the endpoint is real, it just refuses to accept
+    // a payment it has no way to actually verify yet.
+    return res.status(501).json({ error: 'Marketplace crypto checkout is not configured yet.' });
+  }
 
   const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to place an order' });
 
-  const { listingId, shippingAddress, ageConfirmed, tosAccepted } = req.body || {};
-  if (!listingId) return res.status(400).json({ error: 'Missing listing id' });
+  const { items: cartItems, txHash, shippingAddress, ageConfirmed, tosAccepted } = req.body || {};
+  if (!Array.isArray(cartItems) || cartItems.length === 0) {
+    return res.status(400).json({ error: 'Cart is empty' });
+  }
   if (ageConfirmed !== true || tosAccepted !== true) {
     return res.status(400).json({ error: 'Age confirmation and Marketplace Terms acceptance are both required' });
   }
 
+  // Re-price and re-validate every item against the CURRENT stored listing --
+  // never trust a price the client sends. A stale cart (a listing edited or
+  // pulled after it was added) is caught here, before anything is verified
+  // on-chain, not after.
   const listings = await getListings();
-  const listing = findListing(listings, listingId);
-  if (!listing || listing.status !== 'active') return res.status(404).json({ error: 'Listing not found or no longer active' });
+  const resolved = [];
+  let needsShipping = false;
+  for (const { listingId } of cartItems) {
+    const listing = findListing(listings, listingId);
+    if (!listing || listing.status !== 'active') {
+      return res.status(404).json({ error: `A listing in your cart is no longer available (#${listingId})` });
+    }
+    if (listing.kind === 'physical') needsShipping = true;
+    resolved.push(listing);
+  }
 
-  if (listing.kind === 'physical') {
+  if (needsShipping) {
     for (const field of REQUIRED_ADDRESS_FIELDS) {
       if (!shippingAddress || !String(shippingAddress[field] || '').trim()) {
         return res.status(400).json({ error: `Shipping address is missing ${field}` });
@@ -43,20 +54,43 @@ export default async function handler(req, res) {
     }
   }
 
+  const totalCents = resolved.reduce((sum, l) => sum + l.priceCents + (l.kind === 'physical' ? l.shippingCents || 0 : 0), 0);
+  // USDC is 6 decimals; a stablecoin needs no price oracle since it's 1:1
+  // with the dollar by definition -- same reasoning as server/'s STABLE
+  // asset handling elsewhere in this codebase.
+  const minAmount = (BigInt(totalCents) * 10n ** 6n) / 100n;
+
   try {
-    const order = await createOrder({
-      listingId: listing.id,
-      creatorId: listing.creatorId,
-      buyerId: uid,
-      priceCents: listing.priceCents,
-      shippingCents: listing.shippingCents,
-      kind: listing.kind,
-      signatureRequired: listing.signatureRequired,
-      shippingAddress: listing.kind === 'physical' ? shippingAddress : null,
-      ageConfirmed, tosAccepted,
+    await verifyUsdcPayment({
+      rpcUrl: config.rpcUrl,
+      txHash,
+      tokenAddress: config.usdcAddress,
+      payoutAddress: config.payoutAddress,
+      minAmount,
     });
-    return res.status(200).json({ ok: true, order });
   } catch (err) {
+    return res.status(402).json({ error: err.message, code: err.code });
+  }
+
+  try {
+    const orders = await createOrdersFromPayment({
+      txHash,
+      buyerId: uid,
+      items: resolved.map((l) => ({
+        listingId: l.id,
+        creatorId: l.creatorId,
+        priceCents: l.priceCents,
+        shippingCents: l.kind === 'physical' ? l.shippingCents : 0,
+        kind: l.kind,
+        signatureRequired: l.signatureRequired,
+        shippingAddress,
+      })),
+      ageConfirmed,
+      tosAccepted,
+    });
+    return res.status(200).json({ ok: true, orders });
+  } catch (err) {
+    if (err.code === 'TX_ALREADY_USED') return res.status(409).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
 }
