@@ -8,6 +8,8 @@ import { effectiveCreatorStatus } from '../lib/creator-status';
 import { getListings } from '../lib/listings-store';
 import { tokenGateLive, sanitizeGateTokens, gateTokensOf } from '../lib/token-gate';
 import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator, foundingProfileGaps, foundingSlotsLeft, FEE_WAIVER_DAYS } from '../lib/founding';
+import { Icons, SolidIcons } from '../components/Brand';
+import { TAG_GROUPS } from '../lib/tag-taxonomy';
 
 export async function getServerSideProps({ req }) {
   // getSessionUser rather than a stateless token check, so a session that
@@ -325,7 +327,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 <div>
                   <p className="font-bold text-white flex items-center gap-1 mb-2">
                     {creator.name}
-                    {creator.premium && <img src="/icons/check.png" alt="Premium" className="h-4 w-4" title="Premium" />}
+                    {creator.premium && <SolidIcons.verified className="h-4 w-4 text-brand-pink" title="Premium" />}
                   </p>
                   <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy || isRestricted ? 'opacity-50 pointer-events-none' : ''}`}>
                     Change PFP
@@ -355,13 +357,51 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
               </div>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Tags (up to 8, comma-separated — how fans find you when browsing)</label>
+                <label className="block text-sm text-gray-400 mb-2">Tags (up to 8 — how fans find you when browsing)</label>
                 <input
                   value={draft.tags}
                   onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
                   placeholder="e.g. cosplay, gym, redhead, asmr"
                   className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                 />
+                {/* Click-to-add suggestions, grouped. The free-text box above
+                    still takes anything -- this exists so two creators who
+                    both mean "feet" end up on the SAME tag instead of two
+                    spellings that never find each other in search, and so a
+                    niche a creator hasn't thought to type is right there. */}
+                <div className="mt-3 space-y-2.5">
+                  {TAG_GROUPS.map((group) => (
+                    <div key={group.label} className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-bold tracking-wide text-gray-500 mr-1 shrink-0">
+                        {group.label}:
+                      </span>
+                      {group.tags.map((t) => {
+                        const current = draft.tags.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+                        const active = current.includes(t);
+                        return (
+                          <button
+                            type="button"
+                            key={t}
+                            onClick={() => {
+                              if (active) {
+                                setDraft({ ...draft, tags: current.filter((x) => x !== t).join(', ') });
+                              } else if (current.length < 8) {
+                                setDraft({ ...draft, tags: [...current, t].join(', ') });
+                              }
+                            }}
+                            className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                              active
+                                ? 'bg-brand-pink border-brand-pink text-white font-bold'
+                                : 'border-white/15 text-gray-400 hover:border-brand-pink/50 hover:text-white'
+                            }`}
+                          >
+                            #{t}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div>
@@ -579,7 +619,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                         disabled={busy}
                         className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition disabled:opacity-30"
                       >
-                        ✕
+                        <Icons.close className="h-3.5 w-3.5 mx-auto" />
                       </button>
                     </div>
                   ))}
@@ -684,7 +724,7 @@ function ShareKit({ creator, foundingLeft }) {
 
       {founding && (
         <div className="mb-4 px-4 py-3 rounded-md bg-brand-gold/10 border border-brand-gold/30 text-sm">
-          <p className="font-black tracking-wide text-brand-gold">★ FOUNDING CREATOR</p>
+          <p className="font-black tracking-wide text-brand-gold inline-flex items-center gap-1.5"><SolidIcons.star className="h-4 w-4" />FOUNDING CREATOR</p>
           <p className="text-gray-300 mt-1">
             {feeWaiverPending(creator)
               ? `Your ${FEE_WAIVER_DAYS} days at 0% platform fee start the day payments go live — not today — so you get the full window when there's actually a fee to waive.`
