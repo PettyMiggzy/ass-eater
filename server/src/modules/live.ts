@@ -24,7 +24,14 @@ async function token(identity: string, room: string, publish: boolean) {
 
 export const live: FastifyPluginAsync = async (app) => {
   app.post('/start', { preHandler: app.creatorOk }, async (req, reply) => {
-    const b = z.object({ title: z.string().max(120), ticketPriceCents: z.number().int().min(0).max(50_000).default(0) }).parse(req.body);
+    const b = z.object({
+      title: z.string().max(120),
+      ticketPriceCents: z.number().int().min(0).max(50_000).default(0),
+      // Capped well below the ticket cap on purpose: this is charged every
+      // minute, so a fat-fingered extra zero here costs a viewer sixty times
+      // more per hour than the same mistake on a ticket.
+      perMinuteCents: z.number().int().min(0).max(2_000).default(0),
+    }).parse(req.body);
     if (await prisma.liveStream.findFirst({ where: { creatorId: req.user.id, status: 'LIVE' } })) return reply.code(409).send({ error: 'already_live' });
     const roomName = `live_${nanoid(10)}`;
     await rooms().createRoom({ name: roomName, emptyTimeout: 300, maxParticipants: 5000 });
@@ -67,6 +74,56 @@ export const live: FastifyPluginAsync = async (app) => {
     }
     if (!allowed) return reply.code(403).send({ error: 'subscription_required' });
     return { token: await token(req.user.id, s.roomName, false), wsUrl: process.env.LIVEKIT_WS_URL, streamId: s.id, creatorId: s.creatorId };
+  });
+
+  /**
+   * Buy the next minute of a per-minute stream.
+   *
+   * Billed a minute at a time IN ADVANCE, and the client calls this on a
+   * timer while watching. Advance billing is the safe direction: the worst
+   * case is a viewer paying for up to one minute they did not finish, rather
+   * than the platform owing a creator for minutes it never collected.
+   *
+   * The minute number is decided HERE, from what the fan has already paid
+   * for -- never sent by the client. A client-chosen index lets someone
+   * resend the same number forever: every call after the first hits the
+   * primary key, charges nothing, and they watch free.
+   */
+  app.post('/:id/minute', { preHandler: app.auth }, async (req: any, reply) => {
+    const s = await prisma.liveStream.findUnique({ where: { id: req.params.id } });
+    if (!s || s.status !== 'LIVE') return reply.code(404).send({ error: 'not_live' });
+    if (s.perMinuteCents <= 0) return reply.code(400).send({ error: 'not_per_minute' });
+    // A creator watching their own stream is not a customer of it.
+    if (s.creatorId === req.user.id) return { paidMinutes: null, perMinuteCents: 0 };
+
+    const paid = await prisma.liveMinute.count({ where: { fanId: req.user.id, streamId: s.id } });
+
+    try {
+      await money(prisma, async (tx) => {
+        await tx.liveMinute.create({
+          data: { fanId: req.user.id, streamId: s.id, minuteIndex: paid, paidCents: s.perMinuteCents },
+        });
+        await charge(tx, {
+          fanId: req.user.id, creatorId: s.creatorId, grossCents: s.perMinuteCents,
+          type: 'LIVE_MINUTE', refId: `${s.id}:${paid}`,
+        });
+      });
+    } catch (e) {
+      // Same shape as the ticket race above, and the same trap: P2002 alone
+      // is NOT proof this fan already paid. charge() upserts shared Account
+      // rows for the creator, the platform and any referrers, so two
+      // DIFFERENT viewers billing a minute at the same instant collide on
+      // those instead -- admitting on the code alone would hand out free
+      // minutes to whoever lost a race they had nothing to do with. Only the
+      // fan's own row at this index proves they paid for it.
+      if ((e as { code?: string }).code !== 'P2002') throw e;
+      const mine = await prisma.liveMinute.findUnique({
+        where: { fanId_streamId_minuteIndex: { fanId: req.user.id, streamId: s.id, minuteIndex: paid } },
+      });
+      if (!mine) throw e;
+    }
+
+    return { paidMinutes: paid + 1, perMinuteCents: s.perMinuteCents };
   });
 
   app.post('/:id/end', { preHandler: app.auth }, async (req: any) => {

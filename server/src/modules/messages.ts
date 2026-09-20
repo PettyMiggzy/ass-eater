@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { charge, money, isVip } from '../core/ledger';
+import { charge, money, isVip, FEES } from '../core/ledger';
 import { canViewMessage, isSubscribed } from '../core/access';
 import { publish, sub, broadcastQueue } from '../lib/redis';
 
@@ -72,7 +72,42 @@ export const messages: FastifyPluginAsync = async (app) => {
     const allowed = isCreator ? await isSubscribed(to, req.user.id) : await isSubscribed(req.user.id, to);
     if (!allowed) return reply.code(403).send({ error: 'subscription_required' });
 
-    const msg = await prisma.$transaction(async (tx) => {
+    // What a fan pays to land a message in a creator's inbox.
+    //
+    // Decided 2026-09-20: messaging a creator is never free. The important
+    // part is WHERE the money goes -- to the CREATOR, less the standard 10%,
+    // exactly like a tip. It is not a platform toll on talking, and it is
+    // not a subscription to own an inbox. That distinction is the whole
+    // reason this shape is worth having: the fan's money reaches the person
+    // they were trying to reach, the creator prices their own attention, and
+    // it prices out bulk junk far harder than a flat monthly fee would.
+    //
+    // The floor is read live from PlatformConfig rather than baked into each
+    // creator's row, so changing it re-prices everyone sitting on the
+    // minimum without a migration.
+    let sendFeeCents = 0;
+    if (!isCreator) {
+      const [cfg, target] = await Promise.all([
+        prisma.platformConfig.findUnique({ where: { id: 1 }, select: { minDmPriceCents: true } }),
+        prisma.creatorProfile.findUnique({ where: { userId: to }, select: { inboundDmPriceCents: true } }),
+      ]);
+      const floor = cfg?.minDmPriceCents ?? FEES.MIN_DM_PRICE_CENTS;
+      // max(), not ??: a creator who set a price BELOW a floor that has since
+      // risen must not keep the old one, and null means "just use the floor".
+      sendFeeCents = Math.max(floor, target?.inboundDmPriceCents ?? 0);
+    }
+
+    // money(), not a plain $transaction: this now moves money, and every
+    // other charge path on the platform runs Serializable with a retry on
+    // serialization failure. Leaving this one at the default isolation would
+    // make the balance check weaker here than anywhere else that spends it.
+    const msg = await money(prisma, async (tx) => {
+      // Charged inside the same transaction that writes the message, so a
+      // failure anywhere below cannot leave a fan paying for a message that
+      // was never delivered.
+      if (sendFeeCents > 0) {
+        await charge(tx, { fanId: req.user.id, creatorId: to, grossCents: sendFeeCents, type: 'DM_SEND', refId: `dm:${req.user.id}:${Date.now()}` });
+      }
       const conv = await tx.conversation.upsert({ where: { aId_bId: pair(req.user.id, to) }, create: pair(req.user.id, to), update: { updatedAt: new Date() } });
       const m = await tx.message.create({ data: { conversationId: conv.id, senderId: req.user.id, text: b.text, priceCents: b.priceCents } });
       if (b.mediaIds.length) {

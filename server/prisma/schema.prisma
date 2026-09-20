@@ -48,6 +48,14 @@ enum TxType {
   TIP
   MESSAGE_UNLOCK
   LIVE_TICKET
+  // Live revenue, kept as its own types so the 20% rate is a property of the
+  // ledger row rather than something you have to re-derive from a stream
+  // that has since ended. See PLATFORM_BPS_BY_TYPE in core/ledger.ts.
+  LIVE_MINUTE
+  LIVE_TIP
+  // A fan paying a creator to land a message in their inbox. Standard 10%:
+  // the money is the creator's earnings, not a platform toll.
+  DM_SEND
   PAYOUT
   PAYOUT_REVERSAL
   PLATFORM_FEE
@@ -72,7 +80,7 @@ enum ListingKind {
 }
 
 enum ShipStatus {
-  DIGITAL              // instant -- unlocking the media IS delivery
+  DIGITAL // instant -- unlocking the media IS delivery
   AWAITING_SHIPMENT
   SHIPPED
 }
@@ -157,17 +165,22 @@ model RefreshToken {
 }
 
 model CreatorProfile {
-  userId        String    @id
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  displayName   String
-  bio           String    @default("")
-  avatarKey     String?
-  bannerKey     String?
-  tags          String[]  @default([]) // creator-picked discovery categories
-  payoutAsset   Asset     @default(STABLE)
-  payoutAddress String?
-  payoutsFrozen Boolean   @default(false)
-  promotedUntil DateTime? // paid discovery placement
+  userId              String    @id
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName         String
+  bio                 String    @default("")
+  // What a fan pays this creator to send them a message, in cents. The
+  // creator sets it; PlatformConfig.minDmPriceCents is the floor and is
+  // applied at send time, so lowering the floor later re-prices every
+  // creator who sat on it without a migration. Null = use the floor.
+  inboundDmPriceCents Int?
+  avatarKey           String?
+  bannerKey           String?
+  tags                String[]  @default([]) // creator-picked discovery categories
+  payoutAsset         Asset     @default(STABLE)
+  payoutAddress       String?
+  payoutsFrozen       Boolean   @default(false)
+  promotedUntil       DateTime? // paid discovery placement
 
   // Token-lock perk: opt-in, creator sets the terms. A fan who locks
   // stakeUsdCents (worth of $ONLYONE at lock time) gets stakePerkDescription.
@@ -237,22 +250,22 @@ model TokenLock {
 // (and its creator) until vipEarlyUntil passes. Bites hardest on one-of-a-kind
 // items, where missing the window means missing it for good.
 model Listing {
-  id          String         @id @default(uuid())
-  creatorId   String
-  creator     CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
-  title       String
-  description String         @default("")
-  vipEarlyUntil DateTime?
-  priceCents  Int // FIXED: the price. AUCTION: the starting bid.
-  unlimited   Boolean        @default(false) // true = digital good, sellable to many buyers; false = one-of-a-kind, SOLD after first purchase. Always false for AUCTION.
-  kind        ListingKind    @default(DIGITAL)
-  shippingCents Int          @default(0) // flat fee the creator sets, physical only -- no address-based rate calculation
-  signatureRequired Boolean  @default(false) // advisory only -- we don't integrate with any carrier, this just reminds the creator and tells the buyer. See MARKETPLACE_FULFILLMENT.md.
-  images      String[]       @default([]) // free public preview photos (physical items)
-  media       Media[] // the actual digital product, gated until purchased -- see core/access.ts canViewListing
-  status      ListingStatus  @default(ACTIVE)
-  createdAt   DateTime       @default(now())
-  orders      ListingOrder[]
+  id                String         @id @default(uuid())
+  creatorId         String
+  creator           CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
+  title             String
+  description       String         @default("")
+  vipEarlyUntil     DateTime?
+  priceCents        Int // FIXED: the price. AUCTION: the starting bid.
+  unlimited         Boolean        @default(false) // true = digital good, sellable to many buyers; false = one-of-a-kind, SOLD after first purchase. Always false for AUCTION.
+  kind              ListingKind    @default(DIGITAL)
+  shippingCents     Int            @default(0) // flat fee the creator sets, physical only -- no address-based rate calculation
+  signatureRequired Boolean        @default(false) // advisory only -- we don't integrate with any carrier, this just reminds the creator and tells the buyer. See MARKETPLACE_FULFILLMENT.md.
+  images            String[]       @default([]) // free public preview photos (physical items)
+  media             Media[] // the actual digital product, gated until purchased -- see core/access.ts canViewListing
+  status            ListingStatus  @default(ACTIVE)
+  createdAt         DateTime       @default(now())
+  orders            ListingOrder[]
 
   // Auctions settle in the USD-backed balanceCents pool only, never the
   // $ONLYONE discount pool -- a bid needs a stable denomination for its
@@ -292,23 +305,23 @@ model Bid {
 // call; ship status here is for buyer/creator visibility only, it never
 // gates a payout. See MARKETPLACE_FULFILLMENT.md.
 model ListingOrder {
-  id               String     @id @default(uuid())
+  id               String   @id @default(uuid())
   listingId        String
-  listing          Listing    @relation(fields: [listingId], references: [id])
+  listing          Listing  @relation(fields: [listingId], references: [id])
   buyerId          String
-  buyer            User       @relation(fields: [buyerId], references: [id])
+  buyer            User     @relation(fields: [buyerId], references: [id])
   priceCents       Int // locked at purchase
-  shippingCents    Int        @default(0) // locked at purchase, physical only
+  shippingCents    Int      @default(0) // locked at purchase, physical only
   platformFeeCents Int // 10% commission (on priceCents only, not shipping)
   listingFeeCents  Int // 5% listing fee (on priceCents only, not shipping)
   ageConfirmedAt   DateTime // explicit 18+ marketplace confirmation, separate from account-level DOB check
   tosVersion       String
-  createdAt        DateTime   @default(now())
+  createdAt        DateTime @default(now())
 
-  shipStatus       ShipStatus @default(DIGITAL)
-  carrier          String?
-  trackingNumber   String?
-  shippedAt        DateTime?
+  shipStatus     ShipStatus @default(DIGITAL)
+  carrier        String?
+  trackingNumber String?
+  shippedAt      DateTime?
 
   @@index([shipStatus])
 }
@@ -318,17 +331,17 @@ model ListingOrder {
 // Opt-in per post rather than platform-wide: making every post late for paying
 // subscribers by default would be selling the same people their own patience.
 model Post {
-  id         String         @id @default(uuid())
-  creatorId  String
-  creator    CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
-  text       String         @default("")
-  visibility Visibility     @default(SUBSCRIBERS)
-  priceCents Int            @default(0)
-  removed    Boolean        @default(false)
+  id            String         @id @default(uuid())
+  creatorId     String
+  creator       CreatorProfile @relation(fields: [creatorId], references: [userId], onDelete: Cascade)
+  text          String         @default("")
+  visibility    Visibility     @default(SUBSCRIBERS)
+  priceCents    Int            @default(0)
+  removed       Boolean        @default(false)
   vipEarlyUntil DateTime?
-  createdAt  DateTime       @default(now())
-  media      Media[]
-  unlocks    PostUnlock[]
+  createdAt     DateTime       @default(now())
+  media         Media[]
+  unlocks       PostUnlock[]
 
   @@index([creatorId, createdAt])
   @@index([vipEarlyUntil])
@@ -395,12 +408,12 @@ model MessageUnlock {
 // ---------- MONEY ----------
 
 model Account {
-  userId       String @id
-  user         User   @relation(fields: [userId], references: [id])
-  balanceCents BigInt @default(0)
+  userId       String    @id
+  user         User      @relation(fields: [userId], references: [id])
+  balanceCents BigInt    @default(0)
   // Funded only by depositing in $ONLYONE directly (see deposit-indexer.ts).
   // No longer discounted just for spending from here -- see charge()/MEMORY.md.
-  onlyOneCents BigInt @default(0)
+  onlyOneCents BigInt    @default(0)
   // VIP runs while this is in the future. A paid monthly membership, NOT a
   // one-time burn: decided 2026-09-18, replacing the earlier "burn tokens for
   // permanent VIP" design outright.
@@ -409,15 +422,20 @@ model Account {
   // revenue is what buys $ONLYONE on the open market and burns it (see
   // TokenBurn below), which is a better demand engine than one-off fan burns
   // because it recurs every month whether or not anyone is paying attention.
-  vipUntil        DateTime?
+  vipUntil     DateTime?
 }
 
 // Singleton row (id is always 1) for platform-wide numeric knobs that need to
 // change without a redeploy.
 model PlatformConfig {
-  id             Int @id @default(1)
+  id              Int @id @default(1)
   // What VIP costs per month, in cents. $20 by default.
-  vipPriceCents  Int @default(2000)
+  vipPriceCents   Int @default(2000)
+  // The floor on what a creator can charge a fan to send them a message.
+  // Decided 2026-09-20: messaging a creator is never free. A creator can
+  // price ABOVE this and many will; none can price below it or at zero.
+  // The money is the creator's, less the standard 10%.
+  minDmPriceCents Int @default(99)
   // What share of the platform's OWN revenue is committed to buying $ONLYONE
   // on the open market and burning it, in basis points.
   //
@@ -430,7 +448,7 @@ model PlatformConfig {
   // revenue to burns leaves nothing to run the platform with, and a burn the
   // platform cannot afford stops happening, which is worse for holders than a
   // smaller one that always does.
-  burnBps        Int @default(2500)
+  burnBps         Int @default(2500)
 }
 
 // Money committed to buying $ONLYONE on the open market and destroying it.
@@ -441,14 +459,14 @@ model PlatformConfig {
 // supply -- which makes "how much have we actually burned" answerable from
 // the database rather than from memory.
 model TokenBurn {
-  id          String    @id @default(uuid())
-  usdCents    BigInt
-  reason      String    // "vip" -- what the money came from
-  refId       String?   // the charge it came from, for tracing
-  createdAt   DateTime  @default(now())
-  executedAt  DateTime?
-  txHash      String?   // the on-chain swap+burn, once done
-  tokensBurned String?  // raw units actually destroyed
+  id           String    @id @default(uuid())
+  usdCents     BigInt
+  reason       String // "vip" -- what the money came from
+  refId        String? // the charge it came from, for tracing
+  createdAt    DateTime  @default(now())
+  executedAt   DateTime?
+  txHash       String? // the on-chain swap+burn, once done
+  tokensBurned String? // raw units actually destroyed
 
   @@index([executedAt])
 }
@@ -480,25 +498,25 @@ model DepositAddress {
 }
 
 model Deposit {
-  id        String    @id @default(uuid())
-  userId    String
-  chainId   Int
-  txHash    String
-  logIndex  Int
-  asset     Asset
+  id           String    @id @default(uuid())
+  userId       String
+  chainId      Int
+  txHash       String
+  logIndex     Int
+  asset        Asset
   // Which dollar stablecoin it actually was ("USDG"), for STABLE deposits.
   // Null for ETH and ONLYONE.
   stableSymbol String?
-  rawAmount String // wei / 6-dec units as string
+  rawAmount    String // wei / 6-dec units as string
   // What actually landed on-chain, BEFORE the buy-credits fee. Never
   // overwritten with the net: the gross is the only figure that can be
   // reconciled against the transaction.
-  usdCents  BigInt
+  usdCents     BigInt
   // The buy-credits fee taken out of it (FEES.DEPOSIT_BPS).
-  feeCents  BigInt @default(0)
-  priceUsed Float
-  createdAt DateTime  @default(now())
-  hedgedAt  DateTime? // set once the treasury-hedge worker has converted this $ONLYONE deposit's share; null = pending. Unused for non-ONLYONE assets.
+  feeCents     BigInt    @default(0)
+  priceUsed    Float
+  createdAt    DateTime  @default(now())
+  hedgedAt     DateTime? // set once the treasury-hedge worker has converted this $ONLYONE deposit's share; null = pending. Unused for non-ONLYONE assets.
 
   @@unique([chainId, txHash, logIndex])
 }
@@ -547,10 +565,14 @@ model LiveStream {
   roomName         String         @unique
   title            String
   ticketPriceCents Int            @default(0) // 0 = subscribers only
+  // Charged per minute watched, on top of (or instead of) the ticket. 0 = off.
+  // Billed a minute at a time IN ADVANCE -- see LiveMinute.
+  perMinuteCents   Int            @default(0)
   status           StreamStatus   @default(LIVE)
   startedAt        DateTime       @default(now())
   endedAt          DateTime?
   tickets          LiveTicket[]
+  minutes          LiveMinute[]
 }
 
 model LiveTicket {
@@ -559,6 +581,29 @@ model LiveTicket {
   stream   LiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
 
   @@id([fanId, streamId])
+}
+
+// One row per minute of a stream a fan has PAID FOR, written in the same
+// transaction as the charge.
+//
+// The composite primary key is the whole anti-double-billing design: billing
+// the same minute twice cannot be a race to lose, it is a primary key
+// violation. A retried request, a double-tapped client, two tabs on the same
+// stream -- all of them collide here and the loser's charge rolls back with
+// its transaction. Nothing has to remember what was already billed.
+//
+// minuteIndex counts from the fan's first paid minute, not from wall-clock
+// time, so a fan who joins late is never billed for minutes before they
+// arrived.
+model LiveMinute {
+  fanId       String
+  streamId    String
+  minuteIndex Int
+  stream      LiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
+  paidCents   Int
+  createdAt   DateTime   @default(now())
+
+  @@id([fanId, streamId, minuteIndex])
 }
 
 // ---------- MODERATION ----------

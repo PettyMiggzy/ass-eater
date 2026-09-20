@@ -3646,3 +3646,92 @@ Also worth telling him if it comes up again: the cookie lasts **180 days**,
 so "type it every time" means something is resetting it — most likely that
 these cookies are **host-scoped** and he is moving between joinonlyone.com,
 shoponeonly.com and the vercel.app URL, each of which needs its own visit.
+
+## Live takes 20%; messaging a creator is never free (built 2026-09-20)
+
+Two pricing decisions from the founder in one message, both built in
+`server/`. He also said **"no dont record them"** — live streams are not
+recorded, which is worth keeping for a second reason he did not raise:
+nothing recorded means no §2257 records to keep on live content and nothing
+to leak later.
+
+### Live revenue takes 20%, everything else stays 10%
+
+`FEES.LIVE_BPS = 2000`, applied via a new `platformBpsFor(type)` table in
+`core/ledger.ts`. Anything not in that table pays `DEFAULT_BPS`, so a new
+`TxType` can never silently inherit a non-standard rate.
+
+**The shape matters as much as the number, and it was the founder's own
+reasoning:** this is a bigger cut of LIVE REVENUE, not a fee on a creator's
+income. A creator who never goes live pays exactly what they paid before and
+has nothing to opt into, read or decline. A creator who lives constantly
+pays more, in proportion to what they actually cost to carry — live is the
+one feature here with a real per-minute marginal cost. **This supersedes the
+earlier "+5% of all income for live access" idea**, which taxed
+subscriptions and marketplace sales to pay for bandwidth a creator might
+barely use, and needed a tier and an explanation.
+
+Three new TxTypes rather than a flag on `TIP`: `LIVE_TICKET` (existed),
+`LIVE_MINUTE`, `LIVE_TIP`. **The rate is a property of the ledger row**, so
+reading the ledger back months later tells you which rate applied without
+re-deriving it from a stream that has since ended.
+
+**`tips.ts` decides live-ness from the database, never from the client's
+`streamId`.** Trusting the field leaks the higher rate in the easy
+direction: a tip sent mid-stream with the field omitted books at 10%, nobody
+has to be malicious, and it would be invisible. It now asks "is this creator
+live right now". `/received` had to widen to `{ in: ['TIP','LIVE_TIP'] }` or
+a creator's tip history would silently lose everything earned while live.
+
+**Per-minute billing: `LiveMinute`, primary key `(fanId, streamId,
+minuteIndex)`.** Billing a minute twice is not a race to lose, it is a
+primary-key violation. Charged a minute at a time IN ADVANCE — the safe
+direction, since the worst case is a viewer paying for up to one unfinished
+minute rather than the platform owing a creator for minutes it never
+collected. **The index is derived server-side from what the fan has already
+paid for**; a client-chosen index lets someone resend the same number
+forever and watch free. `perMinuteCents` is capped at $20 against the
+ticket's $500 precisely because a fat-fingered zero costs a viewer sixty
+times more per hour here.
+
+The P2002 trap from the ticket path applies identically and is handled the
+same way: the error code alone is NOT proof this fan paid, because
+`charge()` upserts shared Account rows and two *different* viewers can
+collide on those. Only the fan's own row at that index proves payment.
+
+### Messaging a creator is never free
+
+Founder: *"sending creators messages cant be free fyi."* He asked twice, so
+it is his call and it is built — but built in the shape where **the money
+goes to the CREATOR, less the standard 10%, exactly like a tip.** It is not
+a platform toll on talking and not a subscription to own an inbox.
+
+That distinction is the whole reason this version is worth having: the fan's
+money reaches the person they were trying to reach, the creator prices their
+own attention, and it prices out bulk junk far harder than a flat monthly
+fee would. It also does not contradict the standing "no fan-facing platform
+charges" rule, because this is creator earnings, not a platform fee.
+
+`CreatorProfile.inboundDmPriceCents` (creator-set) with
+`PlatformConfig.minDmPriceCents` (default 99) as a floor read **live at send
+time**, so lowering the floor later re-prices every creator sitting on it
+with no migration. `max(floor, price)`, not `??`, so a creator who set a
+price below a floor that has since risen cannot keep the old one. Charged as
+`DM_SEND` inside the same transaction that writes the message, so a failure
+cannot leave a fan paying for a message never delivered. That transaction
+was switched from a plain `$transaction` to `money()` — it moves money now,
+and every other charge path runs Serializable with a retry.
+
+89 server tests pass (was 83), `tsc --noEmit` clean, live-site build clean.
+
+### Still open from that message, NOT yet built
+
+- **Creator inbox + email notification** — he said "yes bro start them".
+  Blocked on an email provider: nothing on this stack sends mail at all.
+- **LiveKit Cloud vs self-hosting on his DigitalOcean** — asked, answered in
+  chat, not decided.
+- **SEO** — *"make it a seo power house too"*, new ask, nothing done.
+- **og:image** — he has a logo and offered it. Brand art is exactly what the
+  earlier note said an og:image would have to be, so this is a yes once he
+  sends it.
+- Instagram bio — he asked for copy; given in chat.

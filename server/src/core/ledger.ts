@@ -8,6 +8,23 @@ export const BURNED_ID = '00000000-0000-0000-0000-0000000000b0';
 
 export const FEES = {
   DEFAULT_BPS: 1000, // 10% — standard platform cut
+  // 20% on anything earned DURING a live stream: the ticket, per-minute
+  // viewing, and tips sent while the stream is running.
+  //
+  // Decided 2026-09-20, and the shape matters as much as the number. This is
+  // a higher cut of LIVE REVENUE, not a fee on a creator's income and not a
+  // subscription to unlock a feature. A creator who never goes live pays
+  // exactly what they pay today and has nothing to opt into, read, or
+  // decline; a creator who lives constantly pays more, in proportion to what
+  // they actually cost us to carry. Live is the one thing here with a real
+  // per-minute marginal cost (media servers, egress), so it is the one thing
+  // whose price should track usage.
+  //
+  // The alternative that was rejected: charging creators +5% of ALL their
+  // income for access to live. That taxes a creator's subscriptions and
+  // marketplace sales to pay for bandwidth they may barely use, and it needs
+  // a tier, an opt-in and an explanation. This needs none.
+  LIVE_BPS: 2000,
   DEPOSIT_BPS: 200, // 2% taken when a fan buys credits — see creditDeposit()
   // What share of the platform's OWN revenue is committed to buying $ONLYONE
   // on the open market and burning it. Overridable in PlatformConfig.burnBps.
@@ -19,6 +36,9 @@ export const FEES = {
   INSTANT_PAYOUT_BPS: 200, // +2% on top, for skipping the payout queue -- waived if the creator opted into the token-lock perk
   MIN_PAYOUT_CENTS: 2000,
   MIN_TIP_CENTS: 100,
+  // Fallback floor on paid inbound DMs when PlatformConfig has no row yet.
+  // Admin can raise or lower the live value; it can never be zero.
+  MIN_DM_PRICE_CENTS: 99,
 };
 
 /**
@@ -231,6 +251,28 @@ export async function post(
  * There is also no choice of payment asset: credits are the only thing
  * anyone spends here (see Balance above).
  */
+/**
+ * The platform's cut for a given kind of charge.
+ *
+ * Everything pays FEES.DEFAULT_BPS unless it is listed here, so adding a new
+ * TxType can never silently pick up a non-standard rate -- a new rate has to
+ * be written down in this table on purpose.
+ *
+ * The live types are separate TxTypes rather than a flag on TIP precisely so
+ * the rate is a property of the ledger row: reading the ledger back tells you
+ * which rate applied and why, months later, without re-deriving it from a
+ * stream that has since ended.
+ */
+const PLATFORM_BPS_BY_TYPE: Partial<Record<TxType, number>> = {
+  LIVE_TICKET: FEES.LIVE_BPS,
+  LIVE_MINUTE: FEES.LIVE_BPS,
+  LIVE_TIP: FEES.LIVE_BPS,
+};
+
+export function platformBpsFor(type: TxType): number {
+  return PLATFORM_BPS_BY_TYPE[type] ?? FEES.DEFAULT_BPS;
+}
+
 export async function charge(
   tx: Tx,
   p: { fanId: string; creatorId: string; grossCents: number; type: TxType; refId: string },
@@ -253,7 +295,8 @@ export async function charge(
   const bal = await lockBalance(tx, p.fanId);
   if (bal < BigInt(chargeCents)) throw new InsufficientFunds();
 
-  const fee = Math.floor((chargeCents * FEES.DEFAULT_BPS) / 10_000);
+  const feeBps = platformBpsFor(p.type);
+  const fee = Math.floor((chargeCents * feeBps) / 10_000);
   const net = chargeCents - fee;
 
   // Whoever referred the creator (payee) and whoever referred the fan (payer)
