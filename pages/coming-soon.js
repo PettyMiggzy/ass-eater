@@ -1,5 +1,11 @@
 import Head from 'next/head';
-import { SOCIAL_LINKS } from '../lib/social';
+import {
+  SOCIAL_LINKS,
+  OG_IMAGE,
+  OG_IMAGE_WIDTH,
+  OG_IMAGE_HEIGHT,
+  OG_IMAGE_ALT,
+} from '../lib/social';
 import { Mark } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 
@@ -38,8 +44,8 @@ export default function ComingSoon() {
         <meta name="description" content={description} />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-        {/* Text-only card, deliberately no og:image -- the only photography
-            in this project is creator content, and an auto-expanded
+        {/* The card image may only ever be brand art -- the only other
+            imagery in this project is creator content, and an auto-expanded
             thumbnail of that in someone's timeline or group chat is exactly
             what must not happen. */}
         <meta property="og:type" content="website" />
@@ -47,9 +53,15 @@ export default function ComingSoon() {
         <meta property="og:title" content={title} />
         <meta property="og:description" content={description} />
         <meta property="og:url" content="https://www.joinonlyone.com/" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:title" content={title} />
         <meta name="twitter:description" content={description} />
+        <meta property="og:image" content={OG_IMAGE} />
+        <meta property="og:image:width" content={String(OG_IMAGE_WIDTH)} />
+        <meta property="og:image:height" content={String(OG_IMAGE_HEIGHT)} />
+        <meta property="og:image:alt" content={OG_IMAGE_ALT} />
+        <meta name="twitter:image" content={OG_IMAGE} />
+        <meta name="twitter:image:alt" content={OG_IMAGE_ALT} />
       </Head>
 
       <div className="relative min-h-screen bg-brand-ink text-white overflow-hidden flex flex-col">

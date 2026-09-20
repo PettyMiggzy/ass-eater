@@ -1,5 +1,13 @@
 import Head from 'next/head';
-import { SOCIAL_LINKS, organizationJsonLd, CANONICAL_ORIGIN } from '../lib/social';
+import {
+  SOCIAL_LINKS,
+  organizationJsonLd,
+  CANONICAL_ORIGIN,
+  OG_IMAGE,
+  OG_IMAGE_WIDTH,
+  OG_IMAGE_HEIGHT,
+  OG_IMAGE_ALT,
+} from '../lib/social';
 import { Mark, Icons } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 
@@ -59,11 +67,11 @@ export default function Landing() {
 
         {/* Social share card. This page is the only one safe to paste into a
             post -- it is ungated and carries no creator content -- so these
-            tags describe it and nothing deeper. Deliberately NO og:image:
-            the only photography in this repo is creator content, and a
-            thumbnail of that is exactly what must not be auto-expanded into
-            someone's timeline, Slack or group chat. A text-only card is the
-            correct card for an 18+ platform. */}
+            tags describe it and nothing deeper. The image is the brand
+            lockup and may only ever be brand art: the only other imagery
+            here is creator content, and a thumbnail of that auto-expanding
+            into someone's timeline, Slack or group chat is exactly what
+            must not happen on an 18+ platform. */}
         <meta property="og:type" content="website" />
         <meta property="og:site_name" content="OnlyOne" />
         <meta property="og:title" content="OnlyOne — Real People. Real Connections." />
@@ -72,13 +80,19 @@ export default function Landing() {
           content="A creator platform for women, men, couples and everyone. Launching soon — get notified. 18+ only."
         />
         <meta property="og:url" content="https://www.joinonlyone.com/" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:title" content="OnlyOne — Real People. Real Connections." />
         <meta
           name="twitter:description"
           content="A creator platform for women, men, couples and everyone. Launching soon — get notified. 18+ only."
         />
-      
+        <meta property="og:image" content={OG_IMAGE} />
+        <meta property="og:image:width" content={String(OG_IMAGE_WIDTH)} />
+        <meta property="og:image:height" content={String(OG_IMAGE_HEIGHT)} />
+        <meta property="og:image:alt" content={OG_IMAGE_ALT} />
+        <meta name="twitter:image" content={OG_IMAGE} />
+        <meta name="twitter:image:alt" content={OG_IMAGE_ALT} />
+
         {/* Canonical: every apex domain 308s to its www form and several
             mirror domains serve this same page, so without this a search
             engine sees one page at five addresses and splits whatever

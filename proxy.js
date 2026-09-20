@@ -87,13 +87,26 @@ const BLOCKED_STATE_CODES = new Set([
 // know what we do with their data before verifying.
 const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257']);
 
-// Prefix exemptions, for assets an exempt page actually renders. Empty
-// today because every mark the exempt pages draw is inline SVG, so there is
-// no separate request through this proxy to exempt. Kept as the hook: an
-// exempt page that starts loading a real file needs it listed here, or that
-// request gets rewritten to /blocked-region and the page renders broken.
-// Only brand art ever belongs here; creator content never does.
-const SFW_PREFIXES = [];
+// Brand art, and the ONLY files under /images/ that skip either gate.
+//
+// These are the social-card and structured-data images. They have to be
+// fetchable with no cookie and from anywhere, because the thing that
+// fetches them is Facebook's, X's, iMessage's or Slack's scraper -- not a
+// person with a verified session -- and a scraper that gets the
+// blocked-region HTML instead of a PNG renders no card at all. That failure
+// is silent: the link just looks bare, with nothing logged anywhere.
+//
+// Exempting them costs nothing because they carry no creator content: they
+// are the wordmark on black. That is the whole and only basis for this
+// list, and it is the same rule as the pages above -- if either file ever
+// becomes anything but brand art, it comes straight back out.
+const BRAND_ART_PATHS = ['/images/og-onlyone.png', '/images/logo-onlyone.png'];
+
+// Prefix exemptions, for assets an exempt page actually renders, plus the
+// brand art above. Everything else under /images/ stays gated: those hold
+// real creator content, and a blanket exemption there was an actual age
+// bypass once already.
+const SFW_PREFIXES = [...BRAND_ART_PATHS];
 
 // The verify-age flow has to be able to complete from a blocked state, the
 // takedown form is required by the TAKE IT DOWN Act to be freely reachable,
@@ -137,9 +150,14 @@ const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content', '/api/waitl
 // "/" is deliberately NOT here: without an invite it serves /coming-soon,
 // which is the whole feature. Anything added to these lists must carry no
 // creator content and need no account.
+// The brand art is listed here too, for the same reason it is exempt from
+// the age gate: a preview site whose whole purpose is a link someone pastes
+// somewhere cannot have the card image behind the invite. A page and the
+// assets its card points at are exempted together or not at all.
 const PREVIEW_PUBLIC_PATHS = new Set([
   '/coming-soon', '/founding-creator', '/terms', '/privacy', '/2257',
   '/report-content', '/blocked-region', '/verify-age',
+  ...BRAND_ART_PATHS,
 ]);
 
 // The waitlist is the entire job of the preview site, so its endpoint has to

@@ -1,5 +1,12 @@
 import Head from 'next/head';
-import { SOCIAL_LINKS } from '../lib/social';
+import {
+  SOCIAL_LINKS,
+  OG_IMAGE,
+  OG_IMAGE_WIDTH,
+  OG_IMAGE_HEIGHT,
+  OG_IMAGE_ALT,
+  CANONICAL_ORIGIN,
+} from '../lib/social';
 import { Mark, Icons, FoundingBadge } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 import { PREVIEW_COOKIE_NAME, previewModeEnabled, previewSecret, verifyPreviewToken } from '../lib/preview-access';
@@ -108,6 +115,10 @@ const PERKS = [
   },
 ];
 
+// One string for the page description and both social cards -- three copies
+// of the same sentence is three chances for them to drift apart.
+const shareDescription = `The first ${FOUNDING_LIMIT} creators on OnlyOne keep 100% of their earnings for ${FEE_WAIVER_DAYS} days, get a permanent Founding Creator badge, and lead every browse page.`;
+
 export default function FoundingCreator({ taken, left, paymentsLive, signupLocked }) {
   // Unknown counts read as open: the cap is enforced server-side on the
   // actual grant, so the worst case here is one extra applicant, not an
@@ -119,12 +130,30 @@ export default function FoundingCreator({ taken, left, paymentsLive, signupLocke
   return (
     <>
       <Head>
-        <title>Become one of the first 100 OnlyOne creators</title>
-        <meta
-          name="description"
-          content={`The first ${FOUNDING_LIMIT} creators on OnlyOne keep 100% of their earnings for ${FEE_WAIVER_DAYS} days, get a permanent Founding Creator badge, and lead every browse page.`}
-        />
+        <title>{`Become one of the first ${FOUNDING_LIMIT} OnlyOne creators`}</title>
+        <meta name="description" content={shareDescription} />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+        {/* This page exists to be pasted into a recruitment post, so it needs
+            its own card rather than inheriting nothing. The image may only
+            ever be brand art -- the only other imagery here is creator
+            content, and a thumbnail of that auto-expanding into someone's
+            feed is exactly what must not happen on an 18+ platform. */}
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="OnlyOne" />
+        <meta property="og:title" content={`Become one of the first ${FOUNDING_LIMIT} OnlyOne creators`} />
+        <meta property="og:description" content={shareDescription} />
+        <meta property="og:url" content={`${CANONICAL_ORIGIN}/founding-creator`} />
+        <meta property="og:image" content={OG_IMAGE} />
+        <meta property="og:image:width" content={String(OG_IMAGE_WIDTH)} />
+        <meta property="og:image:height" content={String(OG_IMAGE_HEIGHT)} />
+        <meta property="og:image:alt" content={OG_IMAGE_ALT} />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content={`Become one of the first ${FOUNDING_LIMIT} OnlyOne creators`} />
+        <meta name="twitter:description" content={shareDescription} />
+        <meta name="twitter:image" content={OG_IMAGE} />
+        <meta name="twitter:image:alt" content={OG_IMAGE_ALT} />
+        <link rel="canonical" href={`${CANONICAL_ORIGIN}/founding-creator`} />
       </Head>
 
       <div className="relative min-h-screen bg-brand-ink text-white overflow-hidden">
