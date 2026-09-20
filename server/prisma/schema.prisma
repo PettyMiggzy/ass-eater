@@ -664,3 +664,27 @@ model Notification {
   @@index([userId, readAt])
   @@index([userId, createdAt])
 }
+
+// An address this platform must stop emailing, and why.
+//
+// This is the piece AWS explicitly asks about before granting SES
+// production access ("how do you manage bounces, complaints, and
+// unsubscribe requests"), and it is the one gap that made that question
+// unanswerable honestly before now -- sendNotificationMail() had no way to
+// know an address was dead or had complained, so it would try again next
+// time regardless. SES suspends an account over bounce/complaint RATE
+// (roughly 5% / 0.1%), so this is not paperwork, it is what keeps the
+// account able to send at all.
+//
+// PERMANENT bounces and ANY complaint suppress on the first occurrence --
+// a complaint means a real person marked this as spam, and sending again
+// is the one guaranteed way to make the next review worse. TRANSIENT
+// bounces (mailbox full, greylisted) do NOT suppress here; see
+// lib/ses-webhook.ts for why treating those as permanent would silently
+// stop notifying a creator over a Monday-morning full inbox.
+model Suppression {
+  email     String   @id
+  reason    String // 'bounce' | 'complaint'
+  detail    String? // SES's own bounce sub-type / complaint feedback type, kept for support tickets like this one
+  createdAt DateTime @default(now())
+}

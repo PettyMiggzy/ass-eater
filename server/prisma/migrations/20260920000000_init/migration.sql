@@ -11,7 +11,7 @@ CREATE TYPE "KycStatus" AS ENUM ('NONE', 'PENDING', 'APPROVED', 'REJECTED');
 CREATE TYPE "Asset" AS ENUM ('STABLE', 'ETH', 'ONLYONE');
 
 -- CreateEnum
-CREATE TYPE "TxType" AS ENUM ('DEPOSIT', 'SUBSCRIPTION', 'PPV', 'TIP', 'MESSAGE_UNLOCK', 'LIVE_TICKET', 'PAYOUT', 'PAYOUT_REVERSAL', 'PLATFORM_FEE', 'REFERRAL', 'ADJUSTMENT', 'TOKEN_LOCK', 'MARKETPLACE_SALE', 'REFUND', 'AUCTION_BID_HOLD', 'AUCTION_BID_RELEASE', 'TOKEN_BURN');
+CREATE TYPE "TxType" AS ENUM ('DEPOSIT', 'SUBSCRIPTION', 'PPV', 'TIP', 'MESSAGE_UNLOCK', 'LIVE_TICKET', 'LIVE_MINUTE', 'LIVE_TIP', 'DM_SEND', 'PAYOUT', 'PAYOUT_REVERSAL', 'PLATFORM_FEE', 'REFERRAL', 'ADJUSTMENT', 'TOKEN_LOCK', 'MARKETPLACE_SALE', 'REFUND', 'AUCTION_BID_HOLD', 'AUCTION_BID_RELEASE', 'TOKEN_BURN');
 
 -- CreateEnum
 CREATE TYPE "SaleType" AS ENUM ('FIXED', 'AUCTION');
@@ -42,6 +42,9 @@ CREATE TYPE "StreamStatus" AS ENUM ('LIVE', 'ENDED');
 
 -- CreateEnum
 CREATE TYPE "ReportStatus" AS ENUM ('OPEN', 'ACTIONED', 'DISMISSED');
+
+-- CreateEnum
+CREATE TYPE "NotificationKind" AS ENUM ('DM_RECEIVED');
 
 -- CreateTable
 CREATE TABLE "User" (
@@ -75,6 +78,9 @@ CREATE TABLE "CreatorProfile" (
     "userId" TEXT NOT NULL,
     "displayName" TEXT NOT NULL,
     "bio" TEXT NOT NULL DEFAULT '',
+    "notifyEmail" TEXT,
+    "notifyOnDm" BOOLEAN NOT NULL DEFAULT true,
+    "inboundDmPriceCents" INTEGER,
     "avatarKey" TEXT,
     "bannerKey" TEXT,
     "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
@@ -270,6 +276,7 @@ CREATE TABLE "Account" (
 CREATE TABLE "PlatformConfig" (
     "id" INTEGER NOT NULL DEFAULT 1,
     "vipPriceCents" INTEGER NOT NULL DEFAULT 2000,
+    "minDmPriceCents" INTEGER NOT NULL DEFAULT 99,
     "burnBps" INTEGER NOT NULL DEFAULT 2500,
 
     CONSTRAINT "PlatformConfig_pkey" PRIMARY KEY ("id")
@@ -379,6 +386,7 @@ CREATE TABLE "LiveStream" (
     "roomName" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "ticketPriceCents" INTEGER NOT NULL DEFAULT 0,
+    "perMinuteCents" INTEGER NOT NULL DEFAULT 0,
     "status" "StreamStatus" NOT NULL DEFAULT 'LIVE',
     "startedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "endedAt" TIMESTAMP(3),
@@ -395,6 +403,17 @@ CREATE TABLE "LiveTicket" (
 );
 
 -- CreateTable
+CREATE TABLE "LiveMinute" (
+    "fanId" TEXT NOT NULL,
+    "streamId" TEXT NOT NULL,
+    "minuteIndex" INTEGER NOT NULL,
+    "paidCents" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "LiveMinute_pkey" PRIMARY KEY ("fanId","streamId","minuteIndex")
+);
+
+-- CreateTable
 CREATE TABLE "Report" (
     "id" TEXT NOT NULL,
     "reporterId" TEXT NOT NULL,
@@ -406,6 +425,30 @@ CREATE TABLE "Report" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Report_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Notification" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "kind" "NotificationKind" NOT NULL,
+    "actorId" TEXT,
+    "refId" TEXT,
+    "readAt" TIMESTAMP(3),
+    "emailedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Notification_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Suppression" (
+    "email" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+    "detail" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Suppression_pkey" PRIMARY KEY ("email")
 );
 
 -- CreateIndex
@@ -476,6 +519,12 @@ CREATE UNIQUE INDEX "Deposit_chainId_txHash_logIndex_key" ON "Deposit"("chainId"
 
 -- CreateIndex
 CREATE UNIQUE INDEX "LiveStream_roomName_key" ON "LiveStream"("roomName");
+
+-- CreateIndex
+CREATE INDEX "Notification_userId_readAt_idx" ON "Notification"("userId", "readAt");
+
+-- CreateIndex
+CREATE INDEX "Notification_userId_createdAt_idx" ON "Notification"("userId", "createdAt");
 
 -- AddForeignKey
 ALTER TABLE "User" ADD CONSTRAINT "User_referredById_fkey" FOREIGN KEY ("referredById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -557,4 +606,10 @@ ALTER TABLE "LiveStream" ADD CONSTRAINT "LiveStream_creatorId_fkey" FOREIGN KEY 
 
 -- AddForeignKey
 ALTER TABLE "LiveTicket" ADD CONSTRAINT "LiveTicket_streamId_fkey" FOREIGN KEY ("streamId") REFERENCES "LiveStream"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "LiveMinute" ADD CONSTRAINT "LiveMinute_streamId_fkey" FOREIGN KEY ("streamId") REFERENCES "LiveStream"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

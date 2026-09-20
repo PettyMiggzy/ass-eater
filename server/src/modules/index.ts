@@ -14,3 +14,4 @@ export { stake } from './stake';
 export { marketplace } from './marketplace';
 export { vip } from './vip';
 export { notifications } from './notifications';
+export { sesWebhook } from './ses-webhook';

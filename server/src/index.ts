@@ -72,6 +72,10 @@ for (const [prefix, routes] of Object.entries({
   '/posts': m.posts, '/media': m.media, '/messages': m.messages, '/tips': m.tips,
   '/wallet': m.wallet, '/payouts': m.payouts, '/live': m.live, '/kyc': m.kyc, '/admin': m.admin, '/stake': m.stake,
   '/marketplace': m.marketplace, '/vip': m.vip, '/notifications': m.notifications,
+  // No auth prefix guard applies here on purpose -- SNS cannot carry a
+  // bearer token, so this route is unauthenticated by necessity and relies
+  // entirely on verifySnsMessage() (lib/sns-verify.ts) for authenticity.
+  '/webhooks': m.sesWebhook,
 })) await app.register(routes, { prefix });
 
 await app.listen({ port: Number(process.env.PORT ?? 4000), host: '0.0.0.0' });

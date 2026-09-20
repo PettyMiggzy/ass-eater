@@ -37,9 +37,11 @@
  * provider is not a guarantee, which is the whole reason for this seam.
  */
 
+import { prisma } from './prisma';
+
 export type MailResult =
   | { sent: true; provider: string }
-  | { sent: false; reason: 'not_configured' | 'no_address' | 'provider_error'; detail?: string };
+  | { sent: false; reason: 'not_configured' | 'no_address' | 'suppressed' | 'provider_error'; detail?: string };
 
 export function mailProvider(): string {
   return process.env.EMAIL_PROVIDER || '';
@@ -107,6 +109,17 @@ export function mailConfigured(): boolean {
 
 export async function sendNotificationMail(mail: NotificationMail): Promise<MailResult> {
   if (!mail.to) return { sent: false, reason: 'no_address' };
+
+  // Checked before the transport, not after a failed send -- an address
+  // that bounced or complained gets no further attempts at all, which is
+  // what keeps this account's bounce/complaint RATE (what SES actually
+  // measures) from climbing every time a caller tries the same dead
+  // address again. lib/prisma is imported here, not deferred, because this
+  // check has to run before every send regardless of which caller forgot
+  // to check it themselves -- see the no-content rule above for the same
+  // reasoning applied to a different guarantee.
+  const suppressed = await prisma.suppression.findUnique({ where: { email: mail.to.toLowerCase() } });
+  if (suppressed) return { sent: false, reason: 'suppressed', detail: suppressed.reason };
 
   if (!transport) {
     // Deliberately not an error and deliberately not silent. The same
