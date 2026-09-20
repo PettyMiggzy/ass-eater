@@ -9,7 +9,7 @@ import { getListings } from '../lib/listings-store';
 import { tokenGateLive, sanitizeGateTokens, gateTokensOf } from '../lib/token-gate';
 import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator, foundingProfileGaps, foundingSlotsLeft, FEE_WAIVER_DAYS } from '../lib/founding';
 import { Icons, SolidIcons } from '../components/Brand';
-import { TAG_GROUPS } from '../lib/tag-taxonomy';
+import { TAG_GROUPS, LISTING_TAG_GROUPS } from '../lib/tag-taxonomy';
 
 export async function getServerSideProps({ req }) {
   // getSessionUser rather than a stateless token check, so a session that
@@ -897,7 +897,7 @@ function Inbox({ currentUserId }) {
   );
 }
 
-const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false };
+const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false, tags: '' };
 
 function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia, onToggleStatus }) {
   const [form, setForm] = useState(BLANK_LISTING_FORM);
@@ -926,6 +926,7 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
       kind: form.physical ? 'physical' : 'digital', shippingCents,
       signatureRequired: form.physical && form.signatureRequired,
       aiGenerated: form.aiGenerated,
+      tags: form.tags,
     });
     setCreating(false);
     if (listing) setForm(BLANK_LISTING_FORM);
@@ -963,6 +964,55 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
           rows={2}
           className="sm:col-span-2 w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
         />
+
+        <div className="sm:col-span-2">
+          <input
+            value={form.tags}
+            onChange={(e) => setForm({ ...form, tags: e.target.value })}
+            placeholder="Tags (up to 8 — how fans find this while browsing)"
+            className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+          />
+          {/* Same picker pattern as the creator's own profile tags -- the
+              free-text box above still takes anything, this exists so
+              "feet", "used" and "worn" mean the same thing across every
+              listing instead of three creators spelling it three ways. */}
+          <div className="mt-2 space-y-2">
+            {LISTING_TAG_GROUPS.map((group) => (
+              <div key={group.label} className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-bold tracking-wide text-gray-500 mr-1 shrink-0">
+                  {group.label}:
+                </span>
+                {group.tags.map((t) => {
+                  const current = form.tags.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+                  const active = current.includes(t);
+                  return (
+                    <button
+                      type="button"
+                      key={t}
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          tags: active
+                            ? current.filter((x) => x !== t).join(', ')
+                            : current.length < 8
+                              ? [...current, t].join(', ')
+                              : form.tags,
+                        })
+                      }
+                      className={`text-[11px] px-2 py-0.5 rounded-full border transition ${
+                        active
+                          ? 'bg-brand-gold border-brand-gold text-black font-bold'
+                          : 'border-brand-purple/30 text-gray-500 hover:border-brand-gold/50 hover:text-gray-300'
+                      }`}
+                    >
+                      #{t}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
         <label className="flex items-center gap-2 text-sm text-gray-400">
           <input
             type="checkbox"
@@ -1029,6 +1079,9 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
                     {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping)` : ' (free shipping)'}${l.signatureRequired ? ' · signature required' : ''}`}
                     {l.aiGenerated && ' · AI'}
                   </p>
+                  {Array.isArray(l.tags) && l.tags.length > 0 && (
+                    <p className="text-xs text-brand-gold mt-1">{l.tags.map((t) => `#${t}`).join(' ')}</p>
+                  )}
                 </div>
                 {l.status !== 'sold' && (
                   <button

@@ -3,8 +3,9 @@ import { getListings, updateListing } from '../../../lib/listings-store';
 import { getReports } from '../../../lib/reports-store';
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
+import { sanitizeTags } from '../../../lib/creator-status';
 
-const ALLOWED = ['title', 'description', 'priceCents', 'status', 'kind', 'shippingCents', 'signatureRequired', 'aiGenerated'];
+const ALLOWED = ['title', 'description', 'priceCents', 'status', 'kind', 'shippingCents', 'signatureRequired', 'aiGenerated', 'tags'];
 
 // The only two states a creator sets themselves (the dashboard's Remove /
 // Reactivate button). 'sold' is not in here on purpose -- it's set by the
@@ -54,6 +55,7 @@ export default async function handler(req, res) {
   if ('kind' in safeFields) safeFields.kind = safeFields.kind === 'physical' ? 'physical' : 'digital';
   if ('signatureRequired' in safeFields) safeFields.signatureRequired = !!safeFields.signatureRequired;
   if ('aiGenerated' in safeFields) safeFields.aiGenerated = !!safeFields.aiGenerated;
+  if ('tags' in safeFields) safeFields.tags = sanitizeTags(safeFields.tags);
   if ('status' in safeFields && !ALLOWED_STATUSES.includes(safeFields.status)) {
     return res.status(400).json({ error: 'Invalid listing status' });
   }

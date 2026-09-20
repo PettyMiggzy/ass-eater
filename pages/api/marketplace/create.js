@@ -12,7 +12,7 @@ export default async function handler(req, res) {
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
 
-  const { title, description, priceCents, unlimited, kind, shippingCents, signatureRequired, aiGenerated } = req.body || {};
+  const { title, description, priceCents, unlimited, kind, shippingCents, signatureRequired, aiGenerated, tags } = req.body || {};
   // `!title` lets an object through (truthy) and `"abc" < 100` is false, so
   // the original check accepted both a non-string title and a non-numeric
   // price -- each of which 500s /search and /marketplace for every visitor
@@ -47,6 +47,7 @@ export default async function handler(req, res) {
       shippingCents: shipping,
       signatureRequired: !!signatureRequired,
       aiGenerated: !!aiGenerated,
+      tags,
     });
     return res.status(200).json({ ok: true, listing });
   } catch (err) {

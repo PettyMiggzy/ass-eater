@@ -49,7 +49,13 @@ export async function getServerSideProps({ req }) {
       if (founding !== 0) return founding;
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
-  return { props: { listings: active, sessionUser } };
+  // Every distinct tag any ACTIVE, visible listing actually has -- same
+  // rule as /search's creator tag cloud. No fabricated category list with
+  // invented counts like "Fetish (231)": if nothing is tagged "feet" yet,
+  // "feet" simply doesn't appear as a filter option, rather than appearing
+  // with a made-up number next to it.
+  const allTags = [...new Set(active.flatMap((l) => (Array.isArray(l.tags) ? l.tags : [])))].sort();
+  return { props: { listings: active, allTags, sessionUser } };
 }
 
 // The real ceiling for the price slider, derived from what's actually
@@ -59,7 +65,7 @@ export async function getServerSideProps({ req }) {
 // range to show rather than a single point at $0.
 const FALLBACK_MAX_CENTS = 20000;
 
-export default function Marketplace({ listings, sessionUser }) {
+export default function Marketplace({ listings, allTags, sessionUser }) {
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
   const [reason, setReason] = useState('');
@@ -68,6 +74,7 @@ export default function Marketplace({ listings, sessionUser }) {
   const [creatorQ, setCreatorQ] = useState('');
   const [buying, setBuying] = useState(null);
   const [kind, setKind] = useState('all');
+  const [tag, setTag] = useState('');
   const maxCents = Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => l.priceCents || 0));
   const [maxPriceCents, setMaxPriceCents] = useState(maxCents);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
@@ -129,7 +136,8 @@ export default function Marketplace({ listings, sessionUser }) {
   const byCreator = creatorQ.trim()
     ? byText.filter((l) => l.creatorName.toLowerCase().includes(creatorQ.trim().toLowerCase()))
     : byText;
-  const filtered = byCreator.filter((l) => (l.priceCents || 0) <= maxPriceCents);
+  const byTag = tag ? byCreator.filter((l) => Array.isArray(l.tags) && l.tags.includes(tag)) : byCreator;
+  const filtered = byTag.filter((l) => (l.priceCents || 0) <= maxPriceCents);
 
   return (
     <>
@@ -245,9 +253,9 @@ export default function Marketplace({ listings, sessionUser }) {
         <div className="max-w-6xl mx-auto px-6 pt-10 grid lg:grid-cols-[220px_1fr] gap-8">
           {/* Filters. Every one of these is real and wired to `filtered`
               below -- no fabricated category list with invented counts like
-              "Fetish (231)". This platform has no per-listing tagging yet,
-              so a category filter isn't here; Content Type, price and
-              creator are the fields a listing actually has today. */}
+              "Fetish (231)". TAGS only lists values at least one active
+              listing actually has (see allTags in getServerSideProps); a tag
+              nobody's used yet simply isn't a button, never a zero. */}
           <aside className="space-y-6 lg:sticky lg:top-20 self-start">
             <div>
               <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">SEARCH</p>
@@ -306,6 +314,33 @@ export default function Marketplace({ listings, sessionUser }) {
                 className="w-full px-4 py-2.5 rounded-full bg-white/5 border border-white/10 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-brand-pink/60"
               />
             </div>
+
+            {allTags.length > 0 && (
+              <div>
+                <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">TAGS</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    onClick={() => setTag('')}
+                    className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                      tag === '' ? 'bg-brand-pink border-brand-pink text-white font-bold' : 'border-white/15 text-gray-400 hover:bg-white/5'
+                    }`}
+                  >
+                    All
+                  </button>
+                  {allTags.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setTag(t === tag ? '' : t)}
+                      className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                        tag === t ? 'bg-brand-pink border-brand-pink text-white font-bold' : 'border-white/15 text-gray-400 hover:bg-white/5'
+                      }`}
+                    >
+                      #{t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </aside>
 
           <div>
@@ -370,7 +405,10 @@ export default function Marketplace({ listings, sessionUser }) {
                           {l.creatorName}
                         </span>
                       </a>
-                      <p className="font-bold text-sm leading-snug mb-3 line-clamp-2">{l.title}</p>
+                      <p className="font-bold text-sm leading-snug mb-1 line-clamp-2">{l.title}</p>
+                      {Array.isArray(l.tags) && l.tags.length > 0 && (
+                        <p className="text-[10px] text-brand-pink/80 mb-2 line-clamp-1">{l.tags.map((t) => `#${t}`).join(' ')}</p>
+                      )}
                       <button
                         onClick={() => openBuy(l)}
                         className="mt-auto w-full py-2.5 rounded-full bg-white/10 hover:bg-brand-pink text-sm font-bold transition"
