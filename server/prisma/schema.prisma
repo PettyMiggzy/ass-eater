@@ -144,6 +144,7 @@ model User {
   createdAt    DateTime   @default(now())
 
   creator        CreatorProfile?
+  notifications  Notification[]
   account        Account?
   ledger         LedgerEntry[]
   refreshTokens  RefreshToken[]
@@ -169,6 +170,14 @@ model CreatorProfile {
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   displayName         String
   bio                 String    @default("")
+  // Where to email this creator when something needs their attention.
+  // Null = use their account email. A separate field because a creator may
+  // well want work mail somewhere other than the address they log in with.
+  notifyEmail         String?
+  // Creators can turn DM notification off. On by default: a creator who
+  // does not know a fan messaged them does not reply, and the reply is the
+  // product.
+  notifyOnDm          Boolean   @default(true)
   // What a fan pays this creator to send them a message, in cents. The
   // creator sets it; PlatformConfig.minDmPriceCents is the floor and is
   // applied at send time, so lowering the floor later re-prices every
@@ -617,4 +626,41 @@ model Report {
   status     ReportStatus @default(OPEN)
   resolvedBy String?
   createdAt  DateTime     @default(now())
+}
+
+// ---------- NOTIFICATIONS ----------
+
+enum NotificationKind {
+  DM_RECEIVED
+}
+
+// One row per thing a creator should know about.
+//
+// The ROW is the source of truth and email is only a delivery channel on
+// top of it. That split is deliberate and load-bearing: this platform is in
+// a category most mainstream email providers refuse to serve (Resend
+// prohibits "Pornography/sexually explicit content" and "Escort services"
+// outright), so the provider is the part most likely to be missing, to be
+// swapped, or to terminate the account mid-flight. Recording first means
+// the in-app inbox badge works with no provider at all, nothing is lost
+// while email is off, and turning it on later does not need a backfill.
+//
+// emailedAt is null until a send actually succeeds -- NOT set optimistically
+// when one is attempted, or a provider outage would look like a delivered
+// notification forever.
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      NotificationKind
+  // Who caused it, for "X messaged you". Never the message body -- see
+  // lib/mailer.ts for why content never leaves this system by email.
+  actorId   String?
+  refId     String?
+  readAt    DateTime?
+  emailedAt DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
 }

@@ -3792,3 +3792,101 @@ bug recorded earlier — a regex insert that captures a closing tag has to
 either exclude it or not re-add it.
 
 179 live-site tests pass, `next build` clean.
+
+## Creator inbox + notifications built; Resend is OUT (2026-09-20)
+
+Founder: *"yes bro start them."* Built, and the provider question was
+settled by reading policies rather than assuming.
+
+### Resend prohibits this platform outright
+
+Read Resend's Acceptable Use Policy directly
+(`resend.com/legal/acceptable-use`): its prohibited-content list names
+**"Pornography/sexually explicit content"** and, separately, **"Escort
+services."** So Resend is a no, the same answer Stripe, Transak and Circle
+Mint gave on payments. **Don't wire it in; don't revisit it.**
+
+**Amazon SES is the recommendation, and it is a real difference rather than
+a guess.** Read AWS's Acceptable Use Policy directly (`aws.amazon.com/aup`):
+it prohibits illegal activity, violating others' rights, violence/terrorism,
+**child sexual exploitation**, security violations and spam — and does NOT
+name adult content anywhere. Honest caveat kept in the code: leaving SES's
+sandbox needs a human use-case review that can still be declined, so even
+the chosen provider is not a guarantee.
+
+**A first-pass answer I nearly gave was wrong and was caught:** a fetch of
+the SES docs page returned only the page title, and the summarising model
+filled the gap with a plausible generic list that included "Adult/sexually
+explicit content (yes, this is typically prohibited)" — the opposite of what
+the real AUP says. It was re-fetched from the actual policy rather than
+relayed. Same failure mode this file already records twice (the Arc
+liquidity claim, the `err.name` checks): **an inference presented as a
+finding.**
+
+### What was built, and why it is shaped this way
+
+`lib/mailer.ts` + `core/notify.ts` + `modules/notifications.ts` +
+`Notification` model.
+
+**The Notification ROW is the source of truth; email is a delivery channel
+on top.** That split is the whole design, and it follows directly from the
+vendor risk above: the provider is the component most likely to be missing,
+swapped, or pulled with no notice. Recording first means the in-app inbox is
+a complete feature with no provider at all, nothing is lost while email is
+off, and turning a provider on later needs no backfill.
+
+**`lib/mailer.ts` ships with NO provider and NO SDK dependency.** The
+transport is a registered function; SES is a recommendation, not a decision
+the founder has made, and adding a large AWS client for a feature that is
+off would be choosing for him. Wiring one up is: install its SDK, write a
+function of that shape, call `registerMailTransport()` once at startup.
+Nothing else changes.
+
+**Two rules enforced structurally, not by convention:**
+1. **No message content ever leaves by email.** `NotificationMail` has no
+   field content could be passed through — the body always reads "someone
+   messaged you". Two independent reasons, either sufficient: the message
+   may be one the fan PAID to send and the creator has not opened, so
+   mailing the text hands it over outside the product; and piping
+   adult-platform message bodies through a third party's content scanners is
+   the fastest way to get terminated by a provider whose policy already
+   disallows the category.
+2. **A failed send is never an error the caller handles.** It returns a
+   result, never throws. A message the fan paid for must not roll back
+   because a mail API was down.
+
+`emailedAt` is stamped **only on a real success**, never optimistically on
+an attempt — otherwise a provider outage leaves rows that look delivered
+forever and there is no way to find what was missed.
+
+**Only creators are emailed, never fans.** A fan's stored address is
+frequently not a real one by design — fans can sign up with a bare username
+precisely so nothing about this platform reaches an inbox someone else can
+see. There is a test asserting a fan is never mailed even when a creator
+messages them.
+
+The notify call sits **outside** the money transaction and is not awaited
+into the response: a slow provider must not roll back a paid message, and a
+sender should not wait on someone else's SMTP to see their own message
+appear.
+
+`CreatorProfile.notifyEmail` (forward-to override, null = account email) and
+`notifyOnDm` (default true). `GET /notifications`, `POST /notifications/read`,
+`PATCH /notifications/settings`.
+
+7 new tests (`core/notify.test.ts`) covering the cases that actually matter:
+the row survives no provider, a disabled preference, and a provider that
+throws; the forwarding address is used; a fan is never mailed; and the
+rendered email contains no content. 96 server tests pass (was 89), tsc
+clean, live-site build clean.
+
+### Still open
+
+- **The founder has not picked a provider.** SES recommended; nothing
+  installed until he says so.
+- Facebook Page username still unset — the link is the numeric
+  `profile.php?id=` form. He confirmed it IS a Page (administered by his
+  personal profile, which is how Pages work), so that flag is closed.
+- SEO beyond the canonical + JSON-LD shipped earlier: the pages worth
+  ranking are creator profiles and they sit behind the age gate. Needs its
+  own design pass.

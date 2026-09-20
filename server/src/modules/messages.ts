@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { charge, money, isVip, FEES } from '../core/ledger';
 import { canViewMessage, isSubscribed } from '../core/access';
 import { publish, sub, broadcastQueue } from '../lib/redis';
+import { notifyDmReceived } from '../core/notify';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
@@ -116,6 +117,21 @@ export const messages: FastifyPluginAsync = async (app) => {
       }
       return tx.message.findUniqueOrThrow({ where: { id: m.id }, include: { media: { select: { id: true, mime: true, previewKey: true } } } });
     });
+    // Notify the recipient, OUTSIDE the transaction above and deliberately
+    // not awaited into the response.
+    //
+    // Outside, because a mail provider being slow or down must never roll
+    // back a message the fan already paid to send. Not awaited, because the
+    // sender should not wait on someone else's SMTP to see their own
+    // message appear. Errors are logged and dropped: the Notification row
+    // is written either way, so the recipient still sees it in-app.
+    void notifyDmReceived({
+      recipientId: to,
+      actorId: req.user.id,
+      messageId: msg.id,
+      siteUrl: process.env.SITE_URL || 'https://www.joinonlyone.com',
+    }).catch((e) => req.log.error({ err: e }, 'dm notification failed'));
+
     // The realtime push goes to the recipient, who hasn't paid/unlocked yet
     // -- redact the same way the GET /with/:userId REST path does, so a
     // priced message's text/media can't be read straight off the websocket.
