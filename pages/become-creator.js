@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
+import SignupsClosed from '../components/SignupsClosed';
+import { signupsOpen } from '../lib/signups';
 
 // Mirrors the caps pages/api/creator/submit.js enforces server-side (the
 // server is the actual gate -- these just keep the form from letting someone
@@ -10,7 +12,11 @@ const MAX_NAME = 80;
 const MAX_HANDLE = 40;
 const MAX_BIO = 1000;
 
-export default function BecomeCreator() {
+export async function getServerSideProps() {
+  return { props: { open: signupsOpen() } };
+}
+
+export default function BecomeCreator({ open }) {
   const [form, setForm] = useState({ name: '', handle: '', bio: '', email: '', price: '9.99' });
   const [avatar, setAvatar] = useState(null);
   const [galleryFiles, setGalleryFiles] = useState([]);
@@ -63,6 +69,19 @@ export default function BecomeCreator() {
       setSubmitting(false);
     }
   };
+
+  // Below every hook on purpose -- see the same note in pages/signup.js.
+  if (!open) {
+    return (
+      <SignupsClosed
+        title="Creator Applications Open Soon — OnlyOne"
+        heading="Creator applications aren’t open yet"
+        body="OnlyOne is live to browse, but we’re not taking creator applications just yet. Leave your email and you’ll be first to know — founding spots are still unclaimed."
+        defaultRole="creator"
+        source="become-creator-page"
+      />
+    );
+  }
 
   if (done) {
     return (

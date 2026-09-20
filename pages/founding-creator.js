@@ -2,6 +2,7 @@ import Head from 'next/head';
 import { Mark, Icons, FoundingBadge } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 import { PREVIEW_COOKIE_NAME, previewModeEnabled, previewSecret, verifyPreviewToken } from '../lib/preview-access';
+import { signupsOpen } from '../lib/signups';
 import { getCreators } from '../lib/creators-store';
 import {
   FOUNDING_LIMIT,
@@ -48,18 +49,23 @@ export async function getServerSideProps({ req }) {
     console.error('[founding-creator] could not read the creator roster:', err);
   }
 
-  // This page stays public during the pre-launch preview, but /signup does
-  // not -- so without an invite the "claim your spot" button would land on
-  // /coming-soon, which is a dead end for the one visitor this page exists
-  // to convert. When that is the case the button points at the waitlist on
-  // this same page instead.
+  // This page stays public, but its "claim your spot" button points at
+  // /signup -- which can be shut for either of two independent reasons.
+  // Whenever it is, the button would dead-end the one visitor this page
+  // exists to convert, so it points at the waitlist on this same page
+  // instead. Both reasons are checked because either alone is enough:
+  //
+  //   1. the pre-launch preview gate is on and this visitor has no invite
+  //      (/signup is behind it, this page is not)
+  //   2. signups are closed outright (lib/signups.js)
   let previewLocked = false;
   if (previewModeEnabled()) {
     const token = req.cookies?.[PREVIEW_COOKIE_NAME];
     previewLocked = !(await verifyPreviewToken(previewSecret(), token));
   }
+  const signupLocked = previewLocked || !signupsOpen();
 
-  return { props: { taken, left, paymentsLive: !!PAYMENTS_LIVE_AT, previewLocked } };
+  return { props: { taken, left, paymentsLive: !!PAYMENTS_LIVE_AT, signupLocked } };
 }
 
 const PERKS = [
@@ -101,7 +107,7 @@ const PERKS = [
   },
 ];
 
-export default function FoundingCreator({ taken, left, paymentsLive, previewLocked }) {
+export default function FoundingCreator({ taken, left, paymentsLive, signupLocked }) {
   // Unknown counts read as open: the cap is enforced server-side on the
   // actual grant, so the worst case here is one extra applicant, not an
   // over-granted programme.
@@ -206,7 +212,7 @@ export default function FoundingCreator({ taken, left, paymentsLive, previewLock
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            {previewLocked ? (
+            {signupLocked ? (
               <>
                 <a
                   href="#waitlist"

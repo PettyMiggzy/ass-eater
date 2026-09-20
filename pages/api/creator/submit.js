@@ -3,6 +3,7 @@ import { addPendingCreator } from '../../../lib/creators-store';
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
 import { checkRateLimit, clientIp, recordFailure } from '../../../lib/rate-limit';
+import { signupsOpen, SIGNUPS_CLOSED_MESSAGE } from '../../../lib/signups';
 
 export const config = {
   api: {
@@ -51,6 +52,15 @@ async function readMultipart(req) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // The second, older creator-onboarding path. It creates a pending creator
+  // profile rather than a login, but it is still someone applying to work
+  // here -- same reason to wait as the main signup route. Checked before the
+  // body is read, so a closed site refuses a 50MB upload instead of
+  // buffering it first.
+  if (!signupsOpen()) {
+    return res.status(403).json({ error: SIGNUPS_CLOSED_MESSAGE });
   }
 
   const ipKey = `creator-application:ip:${clientIp(req)}`;

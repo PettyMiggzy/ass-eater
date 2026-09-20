@@ -3,8 +3,17 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import SiteNav from '../components/SiteNav';
 import { readReferralCookie } from '../lib/referral';
+import SignupsClosed from '../components/SignupsClosed';
+import { signupsOpen } from '../lib/signups';
 
-export default function Signup() {
+export async function getServerSideProps() {
+  // Read server-side rather than through a NEXT_PUBLIC_ flag, so opening or
+  // closing signups takes effect on the next request instead of needing a
+  // rebuild to re-inline the value into the client bundle.
+  return { props: { open: signupsOpen() } };
+}
+
+export default function Signup({ open }) {
   const router = useRouter();
   const [role, setRole] = useState('fan');
   // /founding-creator and the creator-facing links send people here with
@@ -49,6 +58,13 @@ export default function Signup() {
       setSubmitting(false);
     }
   };
+
+  // Below every hook on purpose: an early return above them would change
+  // hook order on any render where `open` differs, which is the one way
+  // this could crash a page instead of just closing a form.
+  if (!open) {
+    return <SignupsClosed title="Signups Open Soon — OnlyOne" source="signup-page" />;
+  }
 
   return (
     <>

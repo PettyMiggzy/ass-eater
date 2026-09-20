@@ -3507,3 +3507,103 @@ unformed entity by accident. Recruitment copy stays public; the signup
 itself does not.
 
 179 live-site tests pass, `next build` clean.
+
+## Site went live with signups closed (2026-09-20)
+
+Founder: *"ok make sight live just cant sign up as yet so we stay legal?"*
+Both halves done.
+
+**`PREVIEW_ACCESS_KEY` deleted from Vercel production** — the preview gate
+from yesterday is off and the site is fully public. The code stays (see the
+section above); it is one env var away from being re-armed if ever wanted.
+
+**`lib/signups.js` is the new, narrower switch: it closes ACCOUNT CREATION
+only.** Browsing is public and anonymous; signing someone up creates an
+account, a data-protection obligation, and for a creator the start of a
+commercial relationship — those are the parts worth holding until the LLC is
+approved. Closed:
+
+- `pages/api/auth/signup.js` — 403 before anything else runs
+- `pages/api/creator/submit.js` — 403 **before the body is read**, so a
+  closed site refuses a 50MB upload rather than buffering it first
+- `/signup` and `/become-creator` render `components/SignupsClosed.js`
+  (the waitlist, plus a link to login) instead of their forms
+- `/founding-creator`'s CTA swaps to the waitlist — the prop is now
+  `signupLocked`, true if EITHER the preview gate blocks this visitor OR
+  signups are closed, because either alone dead-ends the one visitor that
+  page exists to convert
+
+**Login is deliberately untouched.** Anyone who already has an account keeps
+it. Closing the door behind existing people is a different and worse
+decision than not opening it to new ones.
+
+**`SIGNUPS_OPEN=true` is the only thing that opens signups — it DEFAULTS
+CLOSED.** That direction is deliberate: a deploy that loses the variable
+refuses new accounts rather than silently accepting them, and refusing is
+the recoverable mistake. It is only safe to default that way because the
+state is *visible* — `/signup` says so in plain words rather than failing in
+a way someone has to debug.
+
+**A rules-of-hooks trap, caught before pushing:** the first version put
+`if (!open) return <SignupsClosed/>` at the top of both page components,
+above their `useState`/`useEffect`/`useRef`. That changes hook order on any
+render where `open` differs and would crash the page rather than just close
+a form. Both early returns now sit below every hook, with a comment saying
+why. `next build` was perfectly happy with the broken version.
+
+**Verified against a real `next start`, both directions:** with the flag
+unset, `/` `/home` `/creators` `/marketplace` `/search` `/login` all serve
+the real site, `/api/marketplace/list` is 200, both signup endpoints 403,
+both pages carry `"pageProps":{"open":false}`, and the founding CTA reads
+GET EARLY ACCESS. With `SIGNUPS_OPEN=true`, a real account is created (200)
+and then logs in (200), and the CTA reads CLAIM YOUR SPOT.
+
+**Testing note worth keeping:** `/signup` and `/become-creator` serve a
+~2.3KB empty document to curl, because they are NOT in `_app.js`'s
+`NO_NOTICE_PATHS` and the 18+ notice returns null on first render. That is
+correct, not a break — the page renders in a real browser after the notice.
+Assert against `__NEXT_DATA__`'s `pageProps` and the built client bundle
+instead of grepping the SSR HTML for copy, or a working page reads as a
+broken one. (The inverse of this same fact is what silently blanked `/terms`
+and `/2257` on 2026-09-19.)
+
+179 live-site tests pass, `next build` clean.
+
+### The inbox idea: half of it is right, half of it costs money
+
+Founder floated, in the same message: creators get an on-platform inbox they
+can forward/notify to email, and fans get an inbox **free with VIP or $2.99
+a month**. Asked whether that's a good idea. My answer, recorded because it
+will come back:
+
+**The creator inbox with email notification: yes, and it is closer to table
+stakes than to a feature.** A creator who does not know a fan messaged them
+does not reply, and on this kind of platform the reply IS the product.
+Note the hard blocker: **nothing on this stack sends email at all** —
+checked, there is no mail library, no provider, no sending code anywhere in
+`lib/`, `pages/` or `server/`. "Forward to my email" needs a transactional
+email provider wired up first, and that is a real (small) project, not a
+toggle. Worth also remembering that a fan's address is often deliberately
+not real here (fans may sign up with a bare username) — only the CREATOR
+side of this can reliably email anyone.
+
+**Charging fans $2.99 for an inbox: recommended against, and the reasoning
+matters more than the verdict.** A fan's message is what generates revenue —
+it leads to a subscription, a tip, a paid unlock. Putting a toll in front of
+it taxes the thing that makes money. A fan who would spend $50/month is
+worth $5 to the platform at the flat 10% and $45 to a creator; $2.99
+competes with that spend and can suppress it. It also contradicts the
+decision already recorded above (flat 10%, VIP at $20/mo for perks, **no
+other fan-facing charges**), and OnlyFans — already researched — charges
+fans nothing at all, so it would make us a worse deal than the incumbent on
+the most basic feature a fan expects.
+
+**The real problem he is probably reacting to — creators drowning in junk DMs
+— is already solved by the design, without charging anyone:** a fan can only
+DM a creator they subscribe to, creators can price any message, and VIP
+already sorts to the top of a creator's inbox. If VIP needs another inbox
+hook, make it something *about* the inbox (priority, a badge the creator
+sees) rather than the inbox itself.
+
+**Not built. Flagged for a decision**, since it is his call and he was asking
+rather than instructing.

@@ -4,6 +4,7 @@ import { normalizeReferralCode } from '../../../lib/referral';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
 import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
 import { withTransaction } from '../../../lib/db';
+import { signupsOpen, SIGNUPS_CLOSED_MESSAGE } from '../../../lib/signups';
 
 // Signup unavoidably tells the caller whether an identifier is already
 // taken: there is no email-confirmation channel on this site (nothing here
@@ -22,6 +23,13 @@ const MAX_SIGNUPS_PER_IP = 5;
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Checked here, before anything else, because this is the actual gate --
+  // the /signup page hiding its form is a courtesy, not a control. A stale
+  // tab, a bookmarked fetch or a direct POST all land here.
+  if (!signupsOpen()) {
+    return res.status(403).json({ error: SIGNUPS_CLOSED_MESSAGE });
   }
 
   const { password, role, displayName, handle, bio } = req.body || {};
