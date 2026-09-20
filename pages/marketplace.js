@@ -54,8 +54,26 @@ export async function getServerSideProps({ req }) {
   // invented counts like "Fetish (231)": if nothing is tagged "feet" yet,
   // "feet" simply doesn't appear as a filter option, rather than appearing
   // with a made-up number next to it.
-  const allTags = [...new Set(active.flatMap((l) => (Array.isArray(l.tags) ? l.tags : [])))].sort();
-  return { props: { listings: active, allTags, sessionUser } };
+  const tagCounts = {};
+  for (const l of active) {
+    for (const t of Array.isArray(l.tags) ? l.tags : []) tagCounts[t] = (tagCounts[t] || 0) + 1;
+  }
+  const allTags = Object.keys(tagCounts).sort();
+  // Same rule for content-type counts in the sidebar -- computed from the
+  // same classification the client-side filter uses (kindOf below), never a
+  // guessed or hardcoded number.
+  const kindCounts = { all: active.length, photo: 0, video: 0, physical: 0 };
+  for (const l of active) kindCounts[kindOf(l)] += 1;
+  return { props: { listings: active, allTags, tagCounts, kindCounts, sessionUser } };
+}
+
+// Shared by the server-side counts above and the client-side filter below --
+// two separate classifications of the same listing would eventually drift
+// and show a count that doesn't match what the filter actually returns.
+function kindOf(l) {
+  if (l.kind === 'physical') return 'physical';
+  if (l.media?.[0]?.type === 'video') return 'video';
+  return 'photo';
 }
 
 // The real ceiling for the price slider, derived from what's actually
@@ -65,7 +83,13 @@ export async function getServerSideProps({ req }) {
 // range to show rather than a single point at $0.
 const FALLBACK_MAX_CENTS = 20000;
 
-export default function Marketplace({ listings, allTags, sessionUser }) {
+const SORTS = [
+  { value: 'newest', label: 'Newest' },
+  { value: 'price-low', label: 'Price: Low to High' },
+  { value: 'price-high', label: 'Price: High to Low' },
+];
+
+export default function Marketplace({ listings, allTags, tagCounts, kindCounts, sessionUser }) {
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
   const [reason, setReason] = useState('');
@@ -75,6 +99,7 @@ export default function Marketplace({ listings, allTags, sessionUser }) {
   const [buying, setBuying] = useState(null);
   const [kind, setKind] = useState('all');
   const [tag, setTag] = useState('');
+  const [sort, setSort] = useState('newest');
   const maxCents = Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => l.priceCents || 0));
   const [maxPriceCents, setMaxPriceCents] = useState(maxCents);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
@@ -137,7 +162,16 @@ export default function Marketplace({ listings, allTags, sessionUser }) {
     ? byText.filter((l) => l.creatorName.toLowerCase().includes(creatorQ.trim().toLowerCase()))
     : byText;
   const byTag = tag ? byCreator.filter((l) => Array.isArray(l.tags) && l.tags.includes(tag)) : byCreator;
-  const filtered = byTag.filter((l) => (l.priceCents || 0) <= maxPriceCents);
+  const byPrice = byTag.filter((l) => (l.priceCents || 0) <= maxPriceCents);
+  // 'newest' needs no re-sort -- `listings` already arrives in that order
+  // (Founding Creators first, then newest) from getServerSideProps, and
+  // re-deriving it here would mean two places agreeing on one ordering.
+  const filtered =
+    sort === 'price-low'
+      ? [...byPrice].sort((a, b) => (a.priceCents || 0) - (b.priceCents || 0))
+      : sort === 'price-high'
+      ? [...byPrice].sort((a, b) => (b.priceCents || 0) - (a.priceCents || 0))
+      : byPrice;
 
   return (
     <>
@@ -285,7 +319,8 @@ export default function Marketplace({ listings, allTags, sessionUser }) {
                     >
                       {kind === k.value && <Icons.check className="h-3 w-3 text-white" />}
                     </span>
-                    {k.label}
+                    <span className="flex-1">{k.label}</span>
+                    <span className="text-[11px] text-gray-500">{kindCounts[k.value]}</span>
                   </button>
                 ))}
               </div>
@@ -317,25 +352,25 @@ export default function Marketplace({ listings, allTags, sessionUser }) {
 
             {allTags.length > 0 && (
               <div>
-                <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">TAGS</p>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    onClick={() => setTag('')}
-                    className={`text-xs px-2.5 py-1 rounded-full border transition ${
-                      tag === '' ? 'bg-brand-pink border-brand-pink text-white font-bold' : 'border-white/15 text-gray-400 hover:bg-white/5'
-                    }`}
-                  >
-                    All
-                  </button>
+                <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">CATEGORY</p>
+                <div className="space-y-1">
                   {allTags.map((t) => (
                     <button
                       key={t}
                       onClick={() => setTag(t === tag ? '' : t)}
-                      className={`text-xs px-2.5 py-1 rounded-full border transition ${
-                        tag === t ? 'bg-brand-pink border-brand-pink text-white font-bold' : 'border-white/15 text-gray-400 hover:bg-white/5'
+                      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left transition ${
+                        tag === t ? 'bg-brand-pink/15 text-brand-pink font-bold' : 'text-gray-300 hover:bg-white/5'
                       }`}
                     >
-                      #{t}
+                      <span
+                        className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center ${
+                          tag === t ? 'bg-brand-pink border-brand-pink' : 'border-white/25'
+                        }`}
+                      >
+                        {tag === t && <Icons.check className="h-3 w-3 text-white" />}
+                      </span>
+                      <span className="flex-1 truncate">#{t}</span>
+                      <span className="text-[11px] text-gray-500">{tagCounts[t]}</span>
                     </button>
                   ))}
                 </div>
@@ -344,6 +379,35 @@ export default function Marketplace({ listings, allTags, sessionUser }) {
           </aside>
 
           <div>
+          {/* Quick content-type chips, same `kind` state as the sidebar --
+              a second way to set the same filter, not a second filter. */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+            <div className="flex flex-wrap gap-2">
+              {KINDS.map((k) => (
+                <button
+                  key={k.value}
+                  onClick={() => setKind(k.value)}
+                  className={`text-xs sm:text-sm px-3.5 py-1.5 rounded-full border transition ${
+                    kind === k.value ? 'bg-brand-pink border-brand-pink text-white font-bold' : 'border-white/15 text-gray-300 hover:bg-white/5'
+                  }`}
+                >
+                  {k.label}
+                </button>
+              ))}
+            </div>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              className="text-xs sm:text-sm px-3 py-2 rounded-full bg-white/5 border border-white/10 text-gray-300 focus:outline-none focus:border-brand-pink/60"
+            >
+              {SORTS.map((s) => (
+                <option key={s.value} value={s.value} className="bg-brand-ink">
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {filtered.length === 0 ? (
             <div className="text-center py-24">
               <p className="text-gray-400">
