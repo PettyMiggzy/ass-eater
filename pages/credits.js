@@ -4,7 +4,7 @@ import SiteNav from '../components/SiteNav';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { formatCredits } from '../lib/brand';
-import { Icons } from '../components/Brand';
+import { Icons, SolidIcons } from '../components/Brand';
 import { useWallet } from '../lib/wallet';
 import { getMarketplacePaymentConfig, marketplacePaymentsLive } from '../lib/marketplace-payment-config';
 import { FEES } from '../lib/fees';
@@ -27,6 +27,8 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
   const [buying, setBuying] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [simulating, setSimulating] = useState(false);
+  const [simResult, setSimResult] = useState(null);
 
   const loadBalance = () => {
     fetch('/api/credits/balance')
@@ -38,6 +40,30 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
 
   const feeCents = Math.floor((amountCents * FEES.DEPOSIT_BPS) / 10_000);
   const netCents = amountCents - feeCents;
+
+  const runSimulation = async () => {
+    if (!wallet.address) return;
+    setSimulating(true);
+    setSimResult(null);
+    try {
+      const res = await fetch('/api/marketplace/simulate-tx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chainId: paymentConfig.chainId,
+          from: wallet.address,
+          to: paymentConfig.usdcAddress,
+          data: '0x', // the safety signal covers a known transfer() to our own fixed address, not an arbitrary contract interaction
+          value: '0',
+        }),
+      });
+      setSimResult(await res.json());
+    } catch {
+      setSimResult({ available: false });
+    } finally {
+      setSimulating(false);
+    }
+  };
 
   const buy = async () => {
     setError(null);
@@ -147,6 +173,27 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                 </div>
               </div>
 
+              {wallet.address && (
+                <>
+                  {!simResult && !simulating && (
+                    <button onClick={runSimulation} className="w-full mb-3 py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 text-xs font-semibold transition">
+                      Run a safety check before paying
+                    </button>
+                  )}
+                  {simulating && <p className="text-xs text-gray-500 text-center mb-3">Checking transaction safety…</p>}
+                  {simResult?.available && simResult.safe === true && (
+                    <div className="flex items-center justify-center gap-1.5 text-xs text-green-400 mb-3">
+                      <SolidIcons.verified className="h-4 w-4" /> Verified safe by GoPlus Security
+                    </div>
+                  )}
+                  {simResult?.available && simResult.safe === false && (
+                    <div className="flex items-center justify-center gap-1.5 text-xs text-red-400 mb-3">
+                      <Icons.warning className="h-4 w-4" /> This transaction flagged as risky — {simResult.reason || 'do not proceed'}
+                    </div>
+                  )}
+                </>
+              )}
+
               {error && <p className="text-xs text-red-400 text-center mb-3">{error}</p>}
               {wallet.error === 'no_wallet' && (
                 <p className="text-xs text-red-400 text-center mb-3">No wallet extension detected — install MetaMask or a compatible wallet.</p>
@@ -154,7 +201,7 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
 
               <button
                 onClick={buy}
-                disabled={buying || !paymentsLive || amountCents <= 0}
+                disabled={buying || !paymentsLive || amountCents <= 0 || (simResult?.available && simResult.safe === false)}
                 className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <Icons.wallet className="h-4 w-4" />

@@ -4,6 +4,7 @@ import { effectiveCreatorStatus } from '../../lib/creator-status';
 import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
 import { gateTokensOf, sanitizeGateTokens } from '../../lib/token-gate';
 import { Icons, SolidIcons } from '../../components/Brand';
+import { formatCredits } from '../../lib/brand';
 
 export default function AdminPanel() {
   const [adminKey, setAdminKey] = useState('');
@@ -341,6 +342,12 @@ export default function AdminPanel() {
             >
               WAITLIST
             </button>
+            <button
+              onClick={() => setPage('payouts')}
+              className={`pb-3 font-bold text-sm ${page === 'payouts' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+            >
+              PAYOUTS
+            </button>
           </div>
 
           {status && (
@@ -359,6 +366,8 @@ export default function AdminPanel() {
             <PerformerRecordsPanel adminKey={adminKey} creators={creators} />
           ) : page === 'waitlist' ? (
             <WaitlistPanel adminKey={adminKey} />
+          ) : page === 'payouts' ? (
+            <PayoutsPanel adminKey={adminKey} />
           ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
@@ -1205,6 +1214,102 @@ function WaitlistPanel({ adminKey }) {
                 className="text-[11px] text-red-400 hover:text-red-300 disabled:opacity-50"
               >
                 {busyId === e.id ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The balance was already debited the moment the creator requested this --
+// see lib/db.js's payout_requests comment. Marking one "paid" here is
+// purely a record: the admin sends the real USDG by hand FIRST, then enters
+// the transaction hash to close the loop. There is no button anywhere that
+// moves real money -- that's the point.
+function PayoutsPanel({ adminKey }) {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null);
+  const [txInputs, setTxInputs] = useState({});
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/admin/payouts', { headers: { 'x-admin-key': adminKey } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load payout requests');
+      setRequests(data.requests || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const markPaid = async (id) => {
+    const txHash = (txInputs[id] || '').trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      setError('Enter the real transaction hash (0x + 64 hex characters) once the USDG has actually been sent.');
+      return;
+    }
+    setBusyId(id);
+    setError('');
+    try {
+      const res = await fetch('/api/admin/payouts-mark-paid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+        body: JSON.stringify({ id, txHash }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to mark paid');
+      setRequests((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div>
+      <p className="text-sm text-gray-400 mb-4">
+        A creator's balance is already debited the moment they request one of these. Send the real USDG to their wallet
+        yourself, THEN paste the transaction hash here to close it out.
+      </p>
+
+      {error && <div className="mb-4 px-4 py-3 rounded-md bg-red-900/30 border border-red-500/40 text-red-300 text-sm">{error}</div>}
+
+      {loading ? (
+        <p className="text-gray-500 text-sm">Loading…</p>
+      ) : !requests.length ? (
+        <p className="text-gray-500 text-sm">No pending payout requests.</p>
+      ) : (
+        <div className="space-y-2">
+          {requests.map((r) => (
+            <div key={r.id} className="premium-card p-4 flex flex-wrap items-center gap-3">
+              <span className="font-bold text-white">{formatCredits(r.amount_cents)}</span>
+              <span className="text-[11px] text-gray-500">user {r.user_id}</span>
+              <span className="font-mono text-[11px] text-gray-400 break-all">{r.payout_wallet}</span>
+              <span className="text-[11px] text-gray-600">{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
+              <div className="flex-1" />
+              <input
+                value={txInputs[r.id] || ''}
+                onChange={(e) => setTxInputs((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                placeholder="0x… tx hash"
+                className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white font-mono w-64"
+              />
+              <button
+                onClick={() => markPaid(r.id)}
+                disabled={busyId === r.id}
+                className="premium-button text-xs px-4 py-1.5 disabled:opacity-50"
+              >
+                {busyId === r.id ? 'Marking…' : 'Mark Paid'}
               </button>
             </div>
           ))}

@@ -10,6 +10,7 @@ import { tokenGateLive, sanitizeGateTokens, gateTokensOf } from '../lib/token-ga
 import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator, foundingProfileGaps, foundingSlotsLeft, FEE_WAIVER_DAYS } from '../lib/founding';
 import { Icons, SolidIcons } from '../components/Brand';
 import { TAG_GROUPS, LISTING_TAG_GROUPS } from '../lib/tag-taxonomy';
+import { formatCredits } from '../lib/brand';
 
 export async function getServerSideProps({ req }) {
   // getSessionUser rather than a stateless token check, so a session that
@@ -41,6 +42,10 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
   const router = useRouter();
   const [creator, setCreator] = useState(initialCreator);
   const [listings, setListings] = useState(initialListings || []);
+  const [balanceCents, setBalanceCents] = useState(null);
+  const [payoutAmount, setPayoutAmount] = useState('');
+  const [payoutBusy, setPayoutBusy] = useState(false);
+  const [payoutMsg, setPayoutMsg] = useState('');
   const [draft, setDraft] = useState({
     name: initialCreator?.name || '',
     handle: initialCreator?.handle || '',
@@ -74,6 +79,40 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     router.push('/');
+  };
+
+  useEffect(() => {
+    if (!creator) return;
+    fetch('/api/credits/balance')
+      .then((r) => r.json())
+      .then((d) => setBalanceCents(d.balanceCents ?? 0))
+      .catch(() => {});
+  }, [creator]);
+
+  const requestCashOut = async () => {
+    setPayoutMsg('');
+    const cents = Math.round(Number(payoutAmount) * 100);
+    if (!Number.isFinite(cents) || cents <= 0) {
+      setPayoutMsg('Enter a valid amount.');
+      return;
+    }
+    setPayoutBusy(true);
+    try {
+      const res = await fetch('/api/credits/payout-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountCents: cents }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Cash out failed');
+      setBalanceCents(data.balanceCents);
+      setPayoutAmount('');
+      setPayoutMsg(`Requested — $${(cents / 100).toFixed(2)} in USDG is on its way to your saved wallet.`);
+    } catch (err) {
+      setPayoutMsg(err.message);
+    } finally {
+      setPayoutBusy(false);
+    }
   };
 
   const saveProfile = async () => {
@@ -525,12 +564,47 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 </div>
               </div>
               <p className="text-xs text-gray-500 -mt-2">
-                Your earnings are paid out to this wallet in USDG — the dollar stablecoin on Robinhood Chain, worth $1 each. Bridge it out and it arrives as USDC, which Coinbase accepts. The platform takes a 10% fee.
+                Your earnings are paid out to this wallet in USDG — the dollar stablecoin on Robinhood Chain, worth $1 each. Bridge it out and it arrives as USDC, which Coinbase accepts. The platform takes 10% (15% on marketplace sales) automatically when a fan spends — what lands in your credits balance below is already net.
               </p>
 
               <button onClick={saveProfile} disabled={busy || isRestricted} className="premium-button disabled:opacity-50">
                 Save Profile
               </button>
+
+              <div className="premium-card p-5 mt-6">
+                <p className="text-sm font-bold text-white mb-1">Credits balance</p>
+                <p className="text-2xl font-black text-brand-gold mb-4">
+                  {balanceCents === null ? '…' : formatCredits(balanceCents)}
+                </p>
+                <p className="text-xs text-gray-500 mb-4">
+                  Fans pay you in credits with no wallet needed on their end. Cash out to the wallet address saved above —
+                  real USDG is sent to you by hand once requested (usually within a day), never automatically.
+                </p>
+                {!creator?.walletAddress ? (
+                  <p className="text-xs text-brand-gold">Add a payout wallet address above and save your profile before cashing out.</p>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={payoutAmount}
+                      onChange={(e) => setPayoutAmount(e.target.value)}
+                      placeholder="Amount ($)"
+                      className="px-4 py-2.5 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm w-40"
+                    />
+                    <button onClick={requestCashOut} disabled={payoutBusy || !balanceCents} className="premium-button text-sm disabled:opacity-50">
+                      {payoutBusy ? 'Requesting…' : 'Cash Out'}
+                    </button>
+                    {balanceCents > 0 && (
+                      <button
+                        onClick={() => setPayoutAmount((balanceCents / 100).toFixed(2))}
+                        className="text-xs text-gray-400 hover:text-white transition"
+                      >
+                        Max
+                      </button>
+                    )}
+                  </div>
+                )}
+                {payoutMsg && <p className="text-xs text-gray-400 mt-3">{payoutMsg}</p>}
+              </div>
 
               <hr className="border-brand-purple/20" />
 

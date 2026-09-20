@@ -1,12 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { Icons, SolidIcons } from '../components/Brand';
+import { formatCredits } from '../lib/brand';
 import { useCart } from '../lib/cart';
-import { useWallet } from '../lib/wallet';
-import { getMarketplacePaymentConfig, marketplacePaymentsLive } from '../lib/marketplace-payment-config';
 
 const MAIN_SITE = 'https://joinonlyone.com';
 const ADDRESS_FIELDS = [
@@ -21,67 +20,48 @@ const ADDRESS_FIELDS = [
 
 export async function getServerSideProps({ req }) {
   const sessionUser = publicUser(await getSessionUser(req));
-  return { props: { sessionUser, paymentConfig: getMarketplacePaymentConfig(), paymentsLive: marketplacePaymentsLive() } };
+  return { props: { sessionUser } };
 }
 
-export default function CartPage({ sessionUser, paymentConfig, paymentsLive }) {
+// Checkout spends from the fan's credits balance -- no wallet, no on-chain
+// step here at all. The only place a wallet is ever involved is /credits,
+// converting real USDG into that balance once. See pages/credits.js.
+export default function CartPage({ sessionUser }) {
   const cart = useCart();
-  const wallet = useWallet();
+  const [balanceCents, setBalanceCents] = useState(null);
   const [address, setAddress] = useState({});
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [tosAccepted, setTosAccepted] = useState(false);
-  const [simulating, setSimulating] = useState(false);
-  const [simResult, setSimResult] = useState(null); // { available, safe, reason }
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState(null);
   const [paidOrders, setPaidOrders] = useState(null);
 
-  const canCheckout = ageConfirmed && tosAccepted && cart.items.length > 0 && (!cart.needsShipping || ADDRESS_FIELDS.every((f) => f.optional || String(address[f.key] || '').trim()));
+  useEffect(() => {
+    if (!sessionUser) return;
+    fetch('/api/credits/balance')
+      .then((r) => r.json())
+      .then((d) => setBalanceCents(d.balanceCents ?? 0))
+      .catch(() => {});
+  }, [sessionUser]);
 
-  const runSimulation = async () => {
-    if (!wallet.address) return;
-    setSimulating(true);
-    setSimResult(null);
-    try {
-      const res = await fetch('/api/marketplace/simulate-tx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chainId: paymentConfig.chainId,
-          from: wallet.address,
-          to: paymentConfig.usdcAddress,
-          data: '0x', // the actual transfer calldata isn't needed for the safety signal -- this is a known transfer() to our own fixed contract, not an arbitrary interaction
-          value: '0',
-        }),
-      });
-      setSimResult(await res.json());
-    } catch {
-      setSimResult({ available: false });
-    } finally {
-      setSimulating(false);
-    }
-  };
+  const hasEnough = balanceCents !== null && balanceCents >= cart.totalCents;
+  const canCheckout =
+    !!sessionUser &&
+    hasEnough &&
+    ageConfirmed &&
+    tosAccepted &&
+    cart.items.length > 0 &&
+    (!cart.needsShipping || ADDRESS_FIELDS.every((f) => f.optional || String(address[f.key] || '').trim()));
 
   const pay = async () => {
     setPayError(null);
     setPaying(true);
     try {
-      const txHash = await wallet.sendUsdc({
-        tokenAddress: paymentConfig.usdcAddress,
-        payoutAddress: paymentConfig.payoutAddress,
-        amountCents: cart.totalCents,
-        chainId: paymentConfig.chainId,
-        chainName: paymentConfig.chainName,
-        rpcUrl: paymentConfig.publicRpcUrl,
-        nativeSymbol: paymentConfig.nativeSymbol,
-      });
-
       const res = await fetch('/api/marketplace/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items: cart.items.map((it) => ({ listingId: it.id })),
-          txHash,
           shippingAddress: cart.needsShipping ? address : undefined,
           ageConfirmed,
           tosAccepted,
@@ -90,6 +70,7 @@ export default function CartPage({ sessionUser, paymentConfig, paymentsLive }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Payment could not be confirmed');
       setPaidOrders(data.orders);
+      setBalanceCents(data.balanceCents);
       cart.clear();
     } catch (err) {
       setPayError(err.message || 'Payment failed');
@@ -124,12 +105,18 @@ export default function CartPage({ sessionUser, paymentConfig, paymentsLive }) {
       <div className="min-h-screen bg-brand-ink text-white pb-24">
         <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
         <div className="max-w-3xl mx-auto px-6 py-10">
-          <h1 className="text-3xl font-black mb-6">Your Cart</h1>
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-3xl font-black">Your Cart</h1>
+            {sessionUser && (
+              <a href="/credits" className="text-xs text-gray-400 hover:text-brand-pink transition">
+                Balance: <span className="font-bold text-white">{balanceCents === null ? '…' : formatCredits(balanceCents)}</span>
+              </a>
+            )}
+          </div>
 
-          {!paymentsLive && (
+          {!sessionUser && (
             <div className="mb-6 px-4 py-3 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300">
-              <span className="text-brand-pink font-bold">Heads up: </span>
-              Crypto checkout isn't fully configured yet — you can build your cart, but payment isn't accepted until it is.
+              <a href="/login?next=/cart" className="text-brand-pink underline font-bold">Log in</a> to check out.
             </div>
           )}
 
@@ -173,7 +160,7 @@ export default function CartPage({ sessionUser, paymentConfig, paymentsLive }) {
                 )}
                 <div className="flex justify-between font-bold text-white pt-2 mt-2 border-t border-white/10">
                   <span>Total</span>
-                  <span>${(cart.totalCents / 100).toFixed(2)} {paymentConfig.stableSymbol}</span>
+                  <span>{formatCredits(cart.totalCents)}</span>
                 </div>
               </div>
 
@@ -211,66 +198,24 @@ export default function CartPage({ sessionUser, paymentConfig, paymentsLive }) {
                 </label>
               </div>
 
-              {!wallet.address ? (
-                <>
-                  <button
-                    onClick={wallet.connect}
-                    disabled={wallet.connecting}
-                    className="w-full py-3.5 rounded-full bg-white/10 hover:bg-white/15 font-bold text-sm transition disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <Icons.wallet className="h-4 w-4" />
-                    {wallet.connecting ? 'Connecting…' : 'Connect Wallet'}
-                  </button>
-                  {wallet.error === 'no_wallet' && (
-                    <p className="text-xs text-red-400 text-center mt-3">No wallet extension detected — install MetaMask or a compatible wallet.</p>
-                  )}
-                  {wallet.error === 'rejected' && (
-                    <p className="text-xs text-gray-500 text-center mt-3">Connection cancelled.</p>
-                  )}
-                  {wallet.error === 'connect_failed' && (
-                    <p className="text-xs text-red-400 text-center mt-3">Could not connect to your wallet — try again.</p>
-                  )}
-                </>
-              ) : (
-                <>
-                  <p className="text-xs text-gray-500 mb-3 text-center">
-                    Connected: {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
-                  </p>
-
-                  {/* Trust layer: a GoPlus safety check on the transaction before the
-                      buyer signs it. Non-blocking -- if GoPlus isn't configured or
-                      unreachable, checkout still works, it just doesn't show the badge. */}
-                  {!simResult && !simulating && (
-                    <button onClick={runSimulation} className="w-full mb-3 py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 text-xs font-semibold transition">
-                      Run a safety check before paying
-                    </button>
-                  )}
-                  {simulating && <p className="text-xs text-gray-500 text-center mb-3">Checking transaction safety…</p>}
-                  {simResult?.available && simResult.safe === true && (
-                    <div className="flex items-center justify-center gap-1.5 text-xs text-green-400 mb-3">
-                      <SolidIcons.verified className="h-4 w-4" /> Verified safe by GoPlus Security
-                    </div>
-                  )}
-                  {simResult?.available && simResult.safe === false && (
-                    <div className="flex items-center justify-center gap-1.5 text-xs text-red-400 mb-3">
-                      <Icons.warning className="h-4 w-4" /> This transaction flagged as risky — {simResult.reason || 'do not proceed'}
-                    </div>
-                  )}
-
-                  {payError && <p className="text-xs text-red-400 text-center mb-3">{payError}</p>}
-                  {!paymentsLive && (
-                    <p className="text-xs text-gray-500 text-center mb-3">Crypto checkout isn't configured yet — this button will start working once it is.</p>
-                  )}
-
-                  <button
-                    onClick={pay}
-                    disabled={!canCheckout || paying || !paymentsLive || (simResult?.available && simResult.safe === false)}
-                    className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50"
-                  >
-                    {paying ? 'Confirm in your wallet…' : `Pay $${(cart.totalCents / 100).toFixed(2)} in ${paymentConfig.stableSymbol}`}
-                  </button>
-                </>
+              {sessionUser && balanceCents !== null && !hasEnough && (
+                <div className="mb-4 px-4 py-3 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300 flex items-center justify-between gap-3">
+                  <span>You're short {formatCredits(cart.totalCents - balanceCents)}.</span>
+                  <a href="/credits" className="shrink-0 px-3 py-1.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-white transition">
+                    Buy credits
+                  </a>
+                </div>
               )}
+
+              {payError && <p className="text-xs text-red-400 text-center mb-3">{payError}</p>}
+
+              <button
+                onClick={pay}
+                disabled={!canCheckout || paying}
+                className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50"
+              >
+                {paying ? 'Processing…' : `Pay ${formatCredits(cart.totalCents)}`}
+              </button>
             </>
           )}
         </div>
