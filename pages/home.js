@@ -7,7 +7,7 @@ import { byPlacement } from '../lib/founding';
 // `locked` on its own is not a gate -- see lib/token-gate.js. Blurring on the
 // bare flag put a blur and a padlock on creators with no threshold set.
 import { isTokenGated, formatGate } from '../lib/token-gate';
-import { Icons, SolidIcons } from '../components/Brand';
+import { Icons, SolidIcons, Tagline } from '../components/Brand';
 
 export async function getServerSideProps({ req }) {
   const sessionUser = publicUser(await getSessionUser(req));
@@ -111,15 +111,13 @@ export default function Home({ creators, sessionUser }) {
 
             <div className="relative min-h-[320px] lg:min-h-[560px]">
               <img
-                src="/images/demo_female_1.jpg"
+                src="/images/home-hero.jpg"
                 alt=""
                 className="absolute inset-0 w-full h-full object-cover object-top"
               />
               <div className="absolute inset-0 bg-gradient-to-r from-brand-ink via-brand-ink/40 to-transparent lg:from-brand-ink lg:via-transparent" />
               <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-transparent to-transparent" />
-              <p className="absolute bottom-10 right-8 text-right font-serif italic text-brand-pink text-2xl sm:text-3xl leading-tight [text-shadow:0_2px_12px_rgba(0,0,0,0.9)]">
-                You&apos;re<br />Not Alone<br />Here <SolidIcons.heart className="inline-block h-[0.8em] w-[0.8em] align-baseline text-brand-pink" />
-              </p>
+              <Tagline className="absolute bottom-10 right-8 text-right">You&apos;re Not Alone Here</Tagline>
             </div>
           </div>
         </section>
