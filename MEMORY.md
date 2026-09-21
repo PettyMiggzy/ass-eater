@@ -4637,3 +4637,155 @@ explicitly named, in this file, as waiting on something specific.
 Postgres. `npx next build` clean. Verified against a real `next start`
 server that every fixed route still returns its correct, specific
 message.
+
+## "do all", "then build more", "then audit all repo" -- a full sweep, live-site and server/ (2026-09-21)
+
+Three instructions in one breath, taken in order: do everything safely
+buildable from the standing backlog, keep going past that, then run a
+genuine full-repo audit rather than another scoped one. Read as: proceed on
+engineering work; do NOT unilaterally reopen the founder's own
+already-recorded business/legal calls (Indiana geoblock, the VIP-threshold
+referral discount, the §2257 custodian address) -- those stayed exactly
+where he left them.
+
+### Declined, and why: sharp-based media watermarking
+
+`server/src/lib/watermark.ts` already burns a viewer mark into images
+server-side and is flagged in this file as "NOT wired to the live site" --
+the obvious next task. **Not built this pass.** It needs `sharp`, a native
+binary dependency, added fresh to a live serverless deployment with no way
+to verify from this container that it actually builds and runs on Vercel's
+real platform (different libc/arch than this sandbox, a build step this
+container can't reproduce). Shipping something unverifiable onto a site
+that deploys straight to production on every push is the wrong trade --
+flagged instead of guessed at.
+
+### `lib/db.js`: TLS verification made a real, informed choice instead of a guess
+
+Checked Neon's own docs before touching anything (`DB_SSL_REJECT_UNAUTHORIZED`
+research): Neon serves certs off the publicly-trusted ISRG Root X1 (Let's
+Encrypt) chain and documents `rejectUnauthorized: true` /
+`sslmode=verify-full` as the correct posture. But this container cannot open
+an outbound connection to the real production Neon endpoint to prove that
+setting doesn't break something specific to this deployment (a proxy, a
+pooler quirk) -- and a wrong guess here means the whole site can't reach its
+database. Shipped as opt-in rather than flipping the default:
+`DB_SSL_REJECT_UNAUTHORIZED=true` turns on real verification with no code
+change once someone can confirm it against the actual production connection;
+the default stays exactly what it was.
+
+### Live-site fixes (commits `2c04edb`, `8b58c0d`, `2b081f6`)
+
+- **`pages/api/wall/list.js` leaked a pending/suspended/banned creator's wall
+  posts to anyone**, unauthenticated -- it read posts by `creatorId` with no
+  visibility check at all, the one wall endpoint that had never gotten the
+  `isPubliclyVisible()` treatment every other public surface already has.
+  Now returns an empty list for a creator that isn't publicly visible.
+- **`pages/api/admin/gallery-delete.js` had no upper-bound check on `index`**
+  -- an out-of-range index silently no-op'd or (depending on array semantics)
+  touched the wrong slot; now refuses any index outside the real gallery
+  length, fetched fresh, not client-supplied.
+- **No rate limits on avatar upload (creator + admin) or marketplace listing
+  creation** -- added `consumeAttempt`-based limits matching this session's
+  established pattern (10/15min per creator on avatar, 20/hr per creator on
+  listings, 20/15min per IP on the admin avatar route).
+- **`pages/api/marketplace/simulate-tx.js` had no auth check and no rate
+  limit at all** -- confirmed its only caller (`/credits`) already requires
+  login via `getServerSideProps`, so this was reachable unauthenticated by
+  anyone who knew the route. Added session auth (401 without one) plus
+  per-user and per-IP limits.
+- **`lib/performer-records-store.js`'s `readPerformerDocument()` threw an
+  unhandled decrypt error** on a record saved under a rotated
+  `RECORDS_ENCRYPTION_KEY` -- fixed to catch it and return a clear,
+  actionable message naming the real cause, matching the "flag the bad row,
+  don't take down the whole list" lesson this file already recorded for the
+  same store's list endpoint. Test tightened to assert the exact message.
+- **`proxy.js`: `/gateway` and `/token` were geoblock-exempt but not
+  preview-gate-exempt** -- the same "exemption lists have to move together"
+  failure this file has now recorded three separate times (host exemptions,
+  `/terms`/`/2257` vs. `_app.js`'s notice list, and now this one against
+  `PREVIEW_PUBLIC_PATHS`). Added both paths.
+- **`lib/creators-store.js`'s `getCreators()` sorted ids as TEXT**, so
+  numeric seed ids (`"2"`, `"10"`) interleaved wrong against real UUID-style
+  ids and against each other (`"10"` before `"2"`). Fixed to sort seed
+  (numeric) ids numerically, ahead of real (non-numeric) ids, matching the
+  intended "seed roster first" ordering.
+- **`lib/deposit.js`** was missing a guard `assertTokenDecimals()`-style
+  callers already have elsewhere: a misconfigured `usdcDecimals < 2` would
+  have driven a BigInt exponent into nonsense pricing rather than refusing
+  outright. Added the same fail-loud guard.
+- **`components/ProtectedMedia.js` had no way to autoplay a video** (no
+  `autoPlay` prop), so `pages/creator/[id].js`'s featured hero media was
+  still a bare, unprotected `<video>`/`<img>` outside the wrapper every
+  other tile on the page already uses -- the exact "wrap every tile, not
+  just some" gap this file's own component notes warn about. Added the
+  prop and switched the hero to `ProtectedMedia`.
+- **`pages/creators.js` and `pages/marketplace.js`** called `.toLowerCase()`
+  directly on `name`/`handle`/`title`/`creatorName` -- the same non-string
+  SSR-crash class this file has now fixed in half a dozen other spots this
+  session, just never chased down in these two search/filter paths. Wrapped
+  in `String(x || '')`.
+
+### server/ fixes (commit `3e753f0`, none live -- server/ still isn't deployed)
+
+- **`admin.ts`'s `/vip-config` route was completely broken, on every call.**
+  It still read/wrote a field (`vipBurnBps`) that stopped existing when the
+  burn was widened from "VIP only" to "all platform revenue" (renamed to
+  `burnBps`) -- PATCH threw `PrismaClientValidationError` unconditionally,
+  and GET's fallback default (10_000 = 100%) didn't match the schema's real
+  default (2500 = 25%) either. `tsc` never catches a spread like
+  `{ id: 1, ...body }` carrying an unknown field, which is exactly why this
+  sat broken with a clean typecheck. Verified against real local Postgres,
+  both before (throws) and after (succeeds with the right numbers).
+- **`token-burn.ts`'s slippage floor read `ONLYONE_PRICE_OVERRIDE` directly**
+  instead of going through the real price oracle (`lib/price.ts`'s
+  `getUsdPrice`, which already falls back to that same override before
+  reading the live pool). That env var is documented pre-launch-only --
+  the moment it's removed for a real launch, this function would have
+  silently computed a zero slippage floor on every automatic burn swap,
+  which is exactly the sandwich-attack surface the function's own comment
+  says it exists to prevent. Only reachable if `TOKEN_BURN_AUTOMATIC=true`
+  is ever set (off by default, a deliberate "don't run a hot swap wallet in
+  this runtime" choice already recorded above) -- fixed anyway, since the
+  whole point of building it now is for it to be correct whenever that flag
+  is flipped later. Now routes through `getUsdPrice` and **defers the whole
+  batch** (obligations stay safely pending) if no price is available,
+  rather than proceeding with `amountOutMinimum: 0`.
+- **`payout-worker.ts`'s reversal path left a phantom `TokenBurn`
+  obligation.** The withdrawal fee's `postPlatformRevenue()` call writes a
+  burn obligation in the same transaction as the fee charge; when a payout
+  later fails and gets reversed, the fee is refunded but nothing cancelled
+  the obligation it had created -- overstating what the platform owes the
+  supply for revenue it no longer has. Fixed by deleting the matching
+  pending obligation atomically inside the same reversal transaction,
+  guarded on `executedAt: null` so an obligation the burn worker already
+  executed is correctly left alone.
+- **`ledger.ts`'s `FAN_CHARGE_TYPES` (the allowlist behind the "Top
+  Supporter" VIP perk) predated `DM_SEND`/`LIVE_MINUTE`/`LIVE_TIP`** as real
+  fan-to-creator charge types and was never updated when they were added --
+  a fan who only ever paid a creator through priced DMs or live tipping was
+  invisible to `getTopSupporters()` no matter how much they'd spent.
+  Regression test added.
+- **`posts.ts` and `messages.ts`'s `/unlock` endpoints had a real
+  double-click race**: a pre-check-then-create with no handling for two
+  concurrent requests both passing the check before either commits. The
+  loser hit the DB's own unique-constraint error unhandled -- confirmed safe
+  (no double charge, no info leak; the original audit finding was accurate
+  that this couldn't cause harm) but it surfaced as a raw error where a
+  genuine double-click should just succeed. Closed with the exact
+  P2002-then-re-read pattern `live.ts` already established for ticket and
+  per-minute purchases: never trust the error code alone, re-read the
+  fan's own row before treating it as success.
+
+All 118 server tests pass against real local Postgres + Redis (was 117
+before the new top-supporters case), `tsc --noEmit` clean. Live-site:
+`npx next build` clean throughout, full test suite (207-208 tests across
+this session's various additions) green after every change.
+
+**No fifth vitest/route-level test exists for the posts.ts/messages.ts
+race fix**, same reasoning already recorded for the KYC-webhook and
+global-error-handler findings: this repo's server/ tests hit Prisma/pure
+functions directly, none use Fastify's `.inject()` to test at the HTTP
+layer, and building that harness from scratch wasn't justified for one
+finding. The fix is unambiguous on inspection and mirrors an already-tested
+pattern (`live.ts`'s own P2002 handling has coverage).
