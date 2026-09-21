@@ -4290,3 +4290,72 @@ notifications (blocked on the same "nothing here sends mail" gap as the
 installed); a per-notification read/dismiss action (opening the bell marks
 everything read, which is enough for what exists today: two notification
 types, neither actionable beyond "go look at the dashboard").
+
+## Audit pass on the notifications feature + marketplace fix: 2 more real bugs (2026-09-21)
+
+Continuing the standing "drive man" instruction, ran an independent Agent-tool
+audit specifically over everything shipped in the section above (nothing
+else this time -- a focused pass, not another full-repo sweep). Found and
+fixed two real bugs, neither security-critical but both genuine defects in
+code that shipped an hour earlier.
+
+**Marketplace: the newly-"fixed" faceted filter had its own divergence.**
+`kindOf()` (used for the sidebar counts) checks `l.kind === 'physical'`
+FIRST, before ever looking at media type. `matchesKind()` (the actual filter
+predicate, hand-written separately) did NOT -- its `'video'` branch was just
+`l.media?.[0]?.type === 'video'`, with no exclusion for physical listings.
+Real, reachable failure: nothing in `pages/api/marketplace/upload.js` stops
+a creator from attaching a video as the first media item on a `kind:
+'physical'` merch listing (confirmed -- the upload route's type check is
+`image|video` regardless of listing kind). Such a listing matched BOTH the
+"Physical" and "Video" filter chips, so the Video count and what clicking
+Video actually returned disagreed -- the exact defect the tag-count fix from
+this same session was supposed to close, just on a different axis (kind
+instead of tag). **Fixed by deleting the duplicate:** `matchesKind` is now
+`(l, k) => k === 'all' || kindOf(l) === k` -- one classification function,
+not two that can drift again.
+
+**`createNotification`'s "never breaks the caller" promise didn't hold
+against a real Postgres-level failure.** The function's own try/catch only
+protects against JS-side throws (a bad `meta` value, already fixed earlier
+the same session). But once ANY statement inside a Postgres transaction
+fails server-side -- a deadlock, a dropped connection, a statement timeout
+-- every later statement on that same connection fails too
+("current transaction is aborted"), even though the JS catch already
+swallowed the original error. In `createOrdersFromCredits`, that means a
+rare DB-level hiccup specifically on the notification insert would silently
+poison the shared transaction, and the VERY NEXT statement (the real orders
+insert) would then throw -- rolling back an already-successful charge over
+a notification failure. Backwards from the stated goal, just reached by a
+different door than the one already closed. **Fixed with a SAVEPOINT**:
+when `createNotification` is given a shared `client`, the insert now runs
+inside `savepoint notification_insert` / `rollback to savepoint` on failure,
+so a bad insert undoes only itself and the rest of the transaction stays
+usable. Caveat stated plainly by the audit: not exploitable via attacker
+input today (both call sites pass only literal/template-built values that
+can't violate the schema) -- the trigger is a genuine transient DB failure,
+low-probability but real, and the fix is cheap enough that "low-probability"
+isn't a reason to skip it.
+
+**New regression test proves the fix with a REAL DB-level failure, not a
+simulated one:** the test passes `message: null` (violates the column's
+NOT NULL constraint at the Postgres level, not a JS-side throw) inside a
+shared transaction, then calls `createNotification` again with valid data
+on the same client, and asserts the second call's row survives. This test
+genuinely fails against the pre-fix code (the second call would itself hit
+the poisoned-transaction error, get silently swallowed by its own catch,
+and never insert) -- it isn't just asserting the code path was taken.
+
+Audit also explicitly checked and cleared: `getVerifiedSessionUserId` is the
+real revocation-aware session check (not spoofable, matches how
+`pages/api/credits/*` uses it); both notification routes are correctly
+scoped to the caller's own `uid` with no IDOR; every query is parameterized
+(no SQL injection surface); `NotificationBell.js` renders message text as
+plain JSX (no `dangerouslySetInnerHTML`, nothing to XSS); `markPayoutPaid`'s
+notification call is correctly outside the money-moving transaction so it
+can't undo an already-committed payout; and the faceted tag/text/creator/
+price counts from the prior fix are genuinely correct under compound
+filters (only the kind axis had the bug).
+
+21 notification tests (was 19) + 42 credits tests + 107 store tests pass
+against real local Postgres. `npx next build` clean.
