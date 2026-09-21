@@ -149,8 +149,8 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
   // filtered result disagreed.
   const matchesKind = (l, k) => k === 'all' || kindOf(l) === k;
   const matchesText = (l) =>
-    !q.trim() || l.title.toLowerCase().includes(q.toLowerCase()) || (l.description || '').toLowerCase().includes(q.toLowerCase());
-  const matchesCreator = (l) => !creatorQ.trim() || l.creatorName.toLowerCase().includes(creatorQ.trim().toLowerCase());
+    !q.trim() || String(l.title || '').toLowerCase().includes(q.toLowerCase()) || (l.description || '').toLowerCase().includes(q.toLowerCase());
+  const matchesCreator = (l) => !creatorQ.trim() || String(l.creatorName || '').toLowerCase().includes(creatorQ.trim().toLowerCase());
   const matchesTag = (l, t) => !t || (Array.isArray(l.tags) && l.tags.includes(t));
   const matchesPrice = (l) => (l.priceCents || 0) <= maxPriceCents;
 

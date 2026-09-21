@@ -37,6 +37,7 @@ export default function ProtectedMedia({
   alt = '',
   className = '',
   mark = '',
+  autoPlay = false,
   children,
 }) {
   const block = (e) => e.preventDefault();
@@ -52,6 +53,7 @@ export default function ProtectedMedia({
           muted
           loop
           playsInline
+          autoPlay={autoPlay}
           disablePictureInPicture
           controlsList="nodownload noplaybackrate"
           onContextMenu={block}

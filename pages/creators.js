@@ -164,8 +164,8 @@ export default function Creators({ creators, sessionUser }) {
         (activeFilter === 'trending' && c.trending);
       const matchesSearch =
         search === '' ||
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.handle.toLowerCase().includes(search.toLowerCase());
+        String(c.name || '').toLowerCase().includes(search.toLowerCase()) ||
+        String(c.handle || '').toLowerCase().includes(search.toLowerCase());
       return matchesFilter && matchesSearch;
     });
   }, [activeFilter, search]);

@@ -388,11 +388,22 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                 <div className="space-y-8">
                   <div className="grid md:grid-cols-[1.6fr_1fr] gap-4">
                     <div className="relative rounded-xl overflow-hidden bg-white/5 border border-white/5 aspect-video">
-                      {featured.type === 'video' ? (
-                        <video src={featured.src} muted loop playsInline autoPlay className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
-                      ) : (
-                        <img src={featured.src} alt="" className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`} />
-                      )}
+                      {/* Was a bare <video>/<img> -- the single largest, most
+                          prominent tile on the page, and the only one NOT
+                          wrapped in ProtectedMedia, so it had no right-click/
+                          drag/long-press blocking and no per-viewer
+                          watermark, unlike every other tile below it on the
+                          same page (and unlike what dashboard.js tells
+                          creators this platform actually does). A blurred
+                          (locked) featured item still carries no mark, same
+                          rule as Tile above -- nothing identifiable to leak. */}
+                      <ProtectedMedia
+                        src={featured.src}
+                        type={featured.type === 'video' ? 'video' : 'image'}
+                        mark={locked ? '' : viewerMark}
+                        autoPlay={featured.type === 'video'}
+                        className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`}
+                      />
                       {locked && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/40">
                           <span className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center text-white"><SolidIcons.lock className="h-5 w-5" /></span>
