@@ -4593,3 +4593,47 @@ if that file is touched again, not urgent enough on its own.
 242 tests pass against real local Postgres, `npx next build` clean.
 This closes the raw-exception-leak hunt that started with the
 `credits/buy.js` catch-all finding several sections above.
+
+## Last two small backlog items, and the backlog is genuinely worked down (2026-09-21)
+
+Ran one more research pass to find the next safely-buildable item. Most of
+what it went looking for -- the payment-circumvention filter's spacing/
+homoglyph bypass, `creator/submit.js`'s hardening, the old 2026-09-17
+login/logout SHOULD-FIX list, `marketplace/update.js`'s validation gaps,
+the three "stale hardcoded copy" pages -- **turned out to already be
+fixed**, verified directly against current code rather than trusted from
+old notes. The payment filter in particular is now well past the 2026-09-
+17 gap: NFKD normalization, a homoglyph map, zero-width stripping,
+leet-speak tolerance, context-gating on ambiguous terms.
+
+What was actually still open, both fixed:
+
+1. **Three more routes said `'internal'`** on their generic 500 fallback
+   instead of the standard string this session's whole sweep settled on
+   (`payout-request.js` got this fix earlier; these three were missed by
+   that pass): `marketplace/update.js`, `marketplace/report.js`,
+   `wall/report.js`.
+2. **`admin/performer-records.js`/`admin/performer-record-document.js`**
+   matched safe error messages with a regex over curated words rather
+   than an exact-string allowlist -- correct today, but the one place
+   left using the fragile pattern every other route in this cycle already
+   moved off. Replaced with a `Set` of the exact messages
+   `lib/performer-records-store.js` actually throws.
+
+**Bottom line, stated plainly rather than manufacturing more findings:**
+the backlog has been worked down hard enough this session that
+essentially everything flagged anywhere in this file as a "quick win" is
+now fixed. Genuinely remaining open items all require something this
+container or this session cannot supply on its own: a founder decision
+(Indiana geoblock, the VIP-threshold referral discount, trademark
+clearance), an external account/credential (AWS SES production access,
+a real payment processor), or a real infrastructure connection this
+sandbox doesn't have (the live Neon connection to safely verify
+`lib/db.js`'s TLS setting, a real chain RPC for the signed/expiring
+media-gating endpoint). None of those are silently punted -- each is
+explicitly named, in this file, as waiting on something specific.
+
+37 performer-records tests + 107 store tests pass against real local
+Postgres. `npx next build` clean. Verified against a real `next start`
+server that every fixed route still returns its correct, specific
+message.
