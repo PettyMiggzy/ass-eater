@@ -4552,3 +4552,44 @@ one before it. Worth doing after any "we fixed pattern X" claim, not just
 trusting the file list a research pass already handed over.
 
 242 tests pass against real local Postgres, `npx next build` clean.
+
+## Raw-exception-leak audit cycle closed at 2 consecutive clean passes (2026-09-21)
+
+A from-scratch, full `pages/api/` tree re-grep (not a re-check of the
+files a prior pass named) came back clean -- every catch block in all 63
+API route files now either has no message/code check at all (falls
+straight to a generic message) or enumerates specific known-safe
+messages/codes with a `console.error` + generic fallback for anything
+else. Every one of this session's fixes was independently re-verified
+line-by-line against its underlying store function's actual throw sites,
+including the `signup.js` handle-collision claim (re-derived from
+`lib/db.js`'s real unique indexes rather than trusting the comment: `users`
+has exactly one, on email; `creators` has exactly one, on handle; the
+signup transaction contains exactly those two inserts, so a `23505`
+reaching the outer catch there can only ever mean the handle).
+
+**One small gap flagged, fixed the same pass:** `pages/api/admin/create.js`
+was the one place still missing the same 23505 handle-collision handling
+`me/profile.js`, `admin/profile.js` and `auth/signup.js` already had for
+the identical constraint -- not a leak (it already had the sweep's generic
+fallback), just less helpful than its siblings. An admin creating a
+creator with a taken handle got a plain 500 instead of "That handle is
+already taken. Pick another." Fixed and verified against a real server
+(create, then a duplicate-handle create, now correctly returns 200 then
+409 with the right message).
+
+Two other minor, pre-existing, NOT fixed observations from the audit,
+recorded so they aren't re-discovered as new: `messages/send.js`'s
+`'Message cannot be empty'` check on `sendMessage`'s error is dead code
+at that call site (the route already validates non-empty text before
+calling it) -- harmless, not a regression. `admin/performer-records.js`/
+`admin/performer-record-document.js` gate on a regex over `err.message`
+rather than an exact-string allowlist like everywhere else this cycle
+touched -- currently safe (every message the store actually throws
+matches the regex, and no real Postgres error phrasing collides with it),
+but structurally more fragile than the enumerated pattern; worth aligning
+if that file is touched again, not urgent enough on its own.
+
+242 tests pass against real local Postgres, `npx next build` clean.
+This closes the raw-exception-leak hunt that started with the
+`credits/buy.js` catch-all finding several sections above.
