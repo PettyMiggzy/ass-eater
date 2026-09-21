@@ -1,6 +1,7 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM } from '../../../lib/deposit';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
+import { findUserById } from '../../../lib/users-store';
 
 /**
  * Support fallback for a fan whose payment landed on-chain but the browser
@@ -37,9 +38,22 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'fromAddress is not a valid wallet address' });
   }
 
+  // credit_balances/credit_ledger have no foreign key to users -- a typo'd
+  // userId would otherwise silently succeed (crediting an orphan row nobody
+  // can ever see, or worse, a real DIFFERENT account) and there is no
+  // reversal tool: used_payment_tx permanently claims the real hash the
+  // instant this succeeds, so even a caught mistake can't be resubmitted.
+  // Resolving the account FIRST, before anything is credited, and echoing
+  // back who it actually belongs to, is what makes this a real check
+  // rather than a typo waiting to happen.
+  const user = await findUserById(userId);
+  if (!user) {
+    return res.status(404).json({ error: `No account with id "${userId}" exists. Double-check it before crediting real money -- this cannot be undone once submitted.` });
+  }
+
   try {
     const result = await creditDepositFromChain({ userId, txHash, expectedFrom: fromAddress, config });
-    return res.status(200).json({ ok: true, ...result });
+    return res.status(200).json({ ok: true, ...result, creditedUserEmail: user.email });
   } catch (err) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });

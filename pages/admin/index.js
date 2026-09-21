@@ -1298,7 +1298,7 @@ function PayoutsPanel({ adminKey }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not credit that payment');
-      setManualMsg(`Credited ${formatCredits(data.creditedCents)} to user ${manual.userId}.`);
+      setManualMsg(`Credited ${formatCredits(data.creditedCents)} to ${data.creditedUserEmail || `user ${manual.userId}`}.`);
       setManual({ userId: '', txHash: '', fromAddress: '' });
     } catch (err) {
       setManualMsg(err.message);
