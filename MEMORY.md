@@ -4789,3 +4789,41 @@ functions directly, none use Fastify's `.inject()` to test at the HTTP
 layer, and building that harness from scratch wasn't justified for one
 finding. The fix is unambiguous on inspection and mirrors an already-tested
 pattern (`live.ts`'s own P2002 handling has coverage).
+
+### Correction, same day: that fix didn't actually work, caught by verification
+
+A verification agent set to independently re-check every fix in this
+section (rather than trust the commit message) found the posts.ts/
+messages.ts unlock-race fix above was broken on inspection AND
+reproducible against real Postgres. The re-read after catching P2002 ran
+on the SAME `tx` whose `create()` had just failed. Postgres aborts an
+entire transaction after any statement error until it's rolled back --
+so that re-read itself threw `25P02` ("current transaction is aborted")
+instead of returning the row. The fix as shipped just traded a raw P2002
+for a raw 25P02; a genuine double-click still failed, only with an
+uglier error. The commit message's claim to mirror `live.ts` was wrong:
+`live.ts`'s own re-read runs on the plain `prisma` client, **outside**
+the already-rolled-back transaction (its try/catch wraps the whole
+`money()` call, not code living inside it) -- the difference that
+actually matters, and the one the original fix missed.
+
+**Fixed for real** by restructuring both endpoints to match `live.ts`'s
+actual shape: `unlockPost()`/`unlockMessage()` are now exported functions
+(`posts.ts`/`messages.ts`) whose try/catch wraps the whole `money()` call,
+with the re-read on `prisma`. Extracting them also made the fix directly
+testable against real Postgres with no Fastify HTTP harness needed (this
+repo has none) -- `posts.unlock-race.test.ts` proves it two ways: two
+real concurrent `unlockPost()` calls both resolve successfully with
+exactly one charge recorded (fails against the previous version), and a
+direct repro confirming a query on an aborted `tx` really does throw
+25P02 rather than assuming it. 120 server tests pass (was 118).
+
+**The lesson, on top of the ones this file already records about
+just-shipped code being the prime suspect in the next audit:** a fix that
+"mirrors an existing, working pattern" still needs the actual mechanism
+checked line-by-line, not just the shape -- catching P2002 and re-reading
+looked identical to `live.ts` at a glance, but WHICH client re-reads on
+is the entire fix, and the wrong one compiles, typechecks, and passes
+every test that doesn't specifically exercise concurrency (this repo has
+no such test for `live.ts` either, so the working pattern there was
+never proven by its own test suite -- only by this newer test, indirectly).
