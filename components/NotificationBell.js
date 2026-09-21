@@ -10,11 +10,15 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState(null);
   const [unread, setUnread] = useState(0);
+  const [error, setError] = useState(false);
   const rootRef = useRef(null);
+  // Guards against a slow fetch from an earlier open/close resolving after
+  // a later one and overwriting it with stale data.
+  const requestId = useRef(0);
 
   useEffect(() => {
     fetch('/api/notifications')
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => setUnread(d.unreadCount || 0))
       .catch(() => {});
   }, []);
@@ -32,11 +36,20 @@ export default function NotificationBell() {
     const next = !open;
     setOpen(next);
     if (next) {
-      const res = await fetch('/api/notifications');
-      const data = await res.json();
-      setItems(data.notifications || []);
-      setUnread(0);
-      fetch('/api/notifications/read', { method: 'POST' }).catch(() => {});
+      const id = ++requestId.current;
+      setError(false);
+      try {
+        const res = await fetch('/api/notifications');
+        if (!res.ok) throw new Error('bad response');
+        const data = await res.json();
+        if (id !== requestId.current) return; // a later open/close already superseded this
+        setItems(data.notifications || []);
+        setUnread(0);
+        fetch('/api/notifications/read', { method: 'POST' }).catch(() => {});
+      } catch {
+        if (id !== requestId.current) return;
+        setError(true);
+      }
     }
   };
 
@@ -60,7 +73,9 @@ export default function NotificationBell() {
           <div className="px-4 py-3 border-b border-white/10 text-xs font-bold tracking-widest text-gray-400">
             NOTIFICATIONS
           </div>
-          {items === null ? (
+          {error ? (
+            <p className="px-4 py-6 text-sm text-gray-500">Couldn't load notifications. Try again in a moment.</p>
+          ) : items === null ? (
             <p className="px-4 py-6 text-sm text-gray-500">Loading…</p>
           ) : items.length === 0 ? (
             <p className="px-4 py-6 text-sm text-gray-500">Nothing yet.</p>
