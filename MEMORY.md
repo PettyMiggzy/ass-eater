@@ -4147,13 +4147,41 @@ isn't disabled when payments aren't configured -- harmless since
 `buy.js` still refuses server-side with a clear 501, just a slightly
 confusing UI state.
 
-**Audit cycle closed.** Total: 8 independent passes, 6 real issues found and
-fixed (1 critical -- deposit theft via missing sender check; 1 critical --
-unlimited re-crediting via tx-hash case variation; 2 high -- one-of-a-kind
-listing double-sale, sender-check false-rejection; 1 medium -- admin
-manual-credit had no user-existence check; several lower-severity items
-folded into the original 5-agent pass 1 report: non-string field crashes,
-missing rate limits, the /gateway+/token age-notice gap, stale copy). Every
-fix has a regression test where the bug was DB-testable
-(`lib/credits.test.mjs`, 38 tests) or was verified against a real build;
-nothing here was taken on faith from a single audit's say-so.
+**Audit cycle "closed" at 8 passes, then reopened by the founder ("continue
+audit fix build repeat") and found a 7th real bug immediately:**
+
+- **Pass 9, CRITICAL:** `pages/api/marketplace/update.js`'s
+  `ALLOWED_STATUSES` only validated the TARGET status value, never the
+  listing's CURRENT one -- so `{status: 'active'}` against a listing
+  `claimUniqueListing()` had already marked `'sold'` passed straight
+  through, un-selling it for a second buyer to pay for. The dashboard UI
+  hid the Reactivate button for sold listings, but the endpoint itself
+  enforced nothing. Fixed at the store layer, not just the route: the fix
+  from pass 2 of this same list (one-of-a-kind double-sale) only covered
+  the CHECKOUT side of "sold is terminal" -- this is the EDIT side of the
+  identical invariant, missed the first time because it's a different
+  code path to the same bug. `updateListing()`'s own UPDATE now excludes
+  already-sold rows from its WHERE clause whenever the target status is
+  `'active'`, checked against the row's live state at write time (same
+  atomicity pattern as `claimUniqueListing`), not a value read moments
+  earlier -- closing the race, not just the straightforward case.
+- Same pass also found two smaller, non-security findings: `dashboard.js`'s
+  Marketplace section had hardcoded "buying isn't live yet" copy with no
+  `marketplacePaymentsLive()` check (same stale-copy bug class already hit
+  twice this session), and its per-listing Remove/Reactivate button +
+  upload input weren't disabled for a suspended/banned creator (cosmetic,
+  server already refuses it). Also tightened `credits.js`'s `paymentsLive`
+  prop to the stricter `marketplaceVerificationLive()` (includes the
+  server-only RPC URL check) so the Buy/recovery buttons can't render
+  enabled in a config state the server would 501.
+
+**Running total: 9 audit passes, 7 real bugs found and fixed.** Passes 7
+and 8 were clean; pass 9 (after the founder asked to keep going) found
+another real one. The lesson holding up across this whole cycle: a clean
+pass means "nothing found by that pass's specific angle," not "nothing
+left" -- the same underlying invariant (a sold one-of-a-kind listing must
+stay sold) had TWO separate enforcement points (checkout and edit) and
+only one was covered by the original fix. Every fix has a regression test
+where the bug was DB-testable (`lib/credits.test.mjs`, 42 tests) or was
+verified against a real build; nothing here was taken on faith from a
+single audit's say-so.
