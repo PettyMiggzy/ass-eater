@@ -1,5 +1,5 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
-import { getListings, updateListing } from '../../../lib/listings-store';
+import { getListings, updateListing, LISTING_SOLD } from '../../../lib/listings-store';
 import { getReports } from '../../../lib/reports-store';
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
@@ -9,7 +9,14 @@ const ALLOWED = ['title', 'description', 'priceCents', 'status', 'kind', 'shippi
 
 // The only two states a creator sets themselves (the dashboard's Remove /
 // Reactivate button). 'sold' is not in here on purpose -- it's set by the
-// purchase flow, not by the seller, so an edit can't put a sold item back up.
+// purchase flow, not by the seller.
+//
+// That alone does NOT stop a sold listing being put back up, though: this
+// only restricts the TARGET value, not the listing's CURRENT status, so
+// {status: 'active'} still passed straight through for a listing whose
+// existing.status was 'sold' -- a real bug (found in this session's audit
+// cycle), not the comment's original claim. Fixed below, explicitly, the
+// same way the moderated-'removed' case already is.
 const ALLOWED_STATUSES = ['active', 'removed'];
 
 export default async function handler(req, res) {
@@ -71,6 +78,17 @@ export default async function handler(req, res) {
   const existing = listings.find((l) => String(l.id) === String(listingId) && String(l.creatorId) === String(ctx.creator.id));
   if (!existing) return res.status(404).json({ error: 'Listing not found' });
 
+  // A one-of-a-kind listing's 'sold' status is set by claimUniqueListing()
+  // inside the checkout transaction (lib/listings-store.js) -- it is
+  // terminal, never something an edit should be able to undo. Without this,
+  // {listingId, fields: {status: 'active'}} against a sold listing passed
+  // straight through (ALLOWED_STATUSES only checks the target value), the
+  // listing became buyable again, and a second fan's checkout would happily
+  // pay for and "buy" an item already sold and paid for once.
+  if (safeFields.status === 'active' && existing.status === 'sold') {
+    return res.status(403).json({ error: 'This one-of-a-kind item has already sold and cannot be relisted.' });
+  }
+
   // An admin takedown (pages/api/admin/reports-resolve.js -> markListingRemoved)
   // only writes status: 'removed', leaving a moderated listing indistinguishable
   // from one the creator pulled themselves -- so the dashboard's Reactivate
@@ -125,6 +143,11 @@ export default async function handler(req, res) {
     const listing = await updateListing(listingId, ctx.creator.id, safeFields);
     return res.status(200).json({ ok: true, listing });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    // The fast-path check above already catches this in the common case; this
+    // is the backstop for a listing that sold in the window between that
+    // check and this write (see updateListing's own atomic WHERE-clause guard).
+    if (err.code === LISTING_SOLD) return res.status(403).json({ error: err.message });
+    console.error('[marketplace/update] unexpected error:', err);
+    return res.status(500).json({ error: 'internal' });
   }
 }

@@ -11,6 +11,7 @@ import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator,
 import { Icons, SolidIcons } from '../components/Brand';
 import { TAG_GROUPS, LISTING_TAG_GROUPS } from '../lib/tag-taxonomy';
 import { formatCredits } from '../lib/brand';
+import { marketplacePaymentsLive } from '../lib/marketplace-payment-config';
 
 export async function getServerSideProps({ req }) {
   // getSessionUser rather than a stateless token check, so a session that
@@ -35,10 +36,10 @@ export async function getServerSideProps({ req }) {
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
-  return { props: { user: publicUser(user), creator, listings, foundingLeft } };
+  return { props: { user: publicUser(user), creator, listings, foundingLeft, paymentsLive: marketplacePaymentsLive() } };
 }
 
-export default function Dashboard({ user, creator: initialCreator, listings: initialListings, foundingLeft }) {
+export default function Dashboard({ user, creator: initialCreator, listings: initialListings, foundingLeft, paymentsLive }) {
   const router = useRouter();
   const [creator, setCreator] = useState(initialCreator);
   const [listings, setListings] = useState(initialListings || []);
@@ -783,6 +784,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 listings={listings}
                 busy={busy}
                 disabled={isRestricted}
+                paymentsLive={paymentsLive}
                 onCreate={createListing}
                 onUploadMedia={uploadListingMedia}
                 onToggleStatus={toggleListingStatus}
@@ -1050,7 +1052,7 @@ function Inbox({ currentUserId }) {
 
 const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false, tags: '' };
 
-function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia, onToggleStatus }) {
+function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, onUploadMedia, onToggleStatus }) {
   const [form, setForm] = useState(BLANK_LISTING_FORM);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState('');
@@ -1088,8 +1090,10 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
       <h3 className="font-bold text-brand-gold mb-3">Sell on the Marketplace (shoponeonly.com)</h3>
       <p className="text-xs text-gray-500 mb-4">
         List images, videos, or anything else at whatever price you want. Platform takes 10% commission + a 5%
-        listing fee on top when it sells. Buying isn't live yet — listings show up on the Marketplace now, ready
-        to sell as soon as payments launch.
+        listing fee on top when it sells.{' '}
+        {paymentsLive
+          ? 'Buying is live — fans pay with credits, no wallet needed on their end.'
+          : "Buying isn't live yet — listings show up on the Marketplace now, ready to sell as soon as payments launch."}
       </p>
 
       <form onSubmit={submit} className="grid sm:grid-cols-2 gap-3 mb-6">
@@ -1237,7 +1241,8 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
                 {l.status !== 'sold' && (
                   <button
                     onClick={() => onToggleStatus(l.id, l.status === 'active' ? 'removed' : 'active')}
-                    className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition"
+                    disabled={busy || disabled}
+                    className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
                   >
                     {l.status === 'active' ? 'Remove' : 'Reactivate'}
                   </button>
@@ -1254,9 +1259,9 @@ function MarketplaceSection({ listings, busy, disabled, onCreate, onUploadMedia,
                   </div>
                 ))}
                 {(l.media || []).length < 10 && (
-                  <label className={`aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <label className={`aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition ${busy || disabled ? 'opacity-50 pointer-events-none' : ''}`}>
                     + Add
-                    <input type="file" accept="image/*,video/*" className="hidden" disabled={busy} onChange={(e) => onUploadMedia(l.id, e.target.files[0])} />
+                    <input type="file" accept="image/*,video/*" className="hidden" disabled={busy || disabled} onChange={(e) => onUploadMedia(l.id, e.target.files[0])} />
                   </label>
                 )}
               </div>

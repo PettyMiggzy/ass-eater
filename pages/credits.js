@@ -6,7 +6,7 @@ import { publicUser } from '../lib/users-store';
 import { formatCredits } from '../lib/brand';
 import { Icons, SolidIcons } from '../components/Brand';
 import { useWallet } from '../lib/wallet';
-import { getMarketplacePaymentConfig, marketplacePaymentsLive } from '../lib/marketplace-payment-config';
+import { getMarketplacePaymentConfig, getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../lib/marketplace-payment-config';
 import { FEES } from '../lib/fees';
 
 export async function getServerSideProps({ req }) {
@@ -14,7 +14,19 @@ export async function getServerSideProps({ req }) {
   if (!sessionUser) {
     return { redirect: { destination: '/login?next=/credits', permanent: false } };
   }
-  return { props: { sessionUser, paymentConfig: getMarketplacePaymentConfig(), paymentsLive: marketplacePaymentsLive() } };
+  // marketplaceVerificationLive() (payoutAddress + usdcAddress + chainId +
+  // MARKETPLACE_RPC_URL), not the narrower marketplacePaymentsLive() -- this
+  // page's Buy/recovery buttons must be disabled in EXACTLY the case where
+  // the server-side pages/api/credits/buy.js would 501. Using the narrower
+  // check let a config missing only the server-only RPC URL render both
+  // buttons as enabled right up until the click failed.
+  return {
+    props: {
+      sessionUser,
+      paymentConfig: getMarketplacePaymentConfig(),
+      paymentsLive: marketplaceVerificationLive(getMarketplaceVerificationConfig()),
+    },
+  };
 }
 
 const PRESETS = [1000, 2500, 5000, 10000]; // cents
