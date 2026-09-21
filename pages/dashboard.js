@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { getSessionUser } from '../lib/session';
@@ -95,9 +95,19 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
   // Loaded once activity is actually opened, not on every dashboard visit --
   // a creator who never clicks "Recent activity" shouldn't pay for two extra
   // fetches just for landing on their own dashboard.
+  //
+  // Two overlapping calls are possible (opening the panel, then cashing out
+  // again before the first reload lands) and fetch responses aren't
+  // guaranteed to resolve in request order -- without the sequence guard
+  // below, a slower FIRST call's response could land after a faster SECOND
+  // one's and overwrite fresher state with stale data. Bumping a ref per
+  // call and only applying a response if it's still the latest one fixes
+  // that without needing to cancel/await anything.
+  const activityRequestId = useRef(0);
   const loadActivity = () => {
-    fetch('/api/credits/ledger').then((r) => r.json()).then((d) => setLedger(d.entries || [])).catch(() => setLedger([]));
-    fetch('/api/credits/payout-status').then((r) => r.json()).then((d) => setPayoutHistory(d.requests || [])).catch(() => setPayoutHistory([]));
+    const id = ++activityRequestId.current;
+    fetch('/api/credits/ledger').then((r) => r.json()).then((d) => { if (activityRequestId.current === id) setLedger(d.entries || []); }).catch(() => { if (activityRequestId.current === id) setLedger([]); });
+    fetch('/api/credits/payout-status').then((r) => r.json()).then((d) => { if (activityRequestId.current === id) setPayoutHistory(d.requests || []); }).catch(() => { if (activityRequestId.current === id) setPayoutHistory([]); });
   };
 
   const requestCashOut = async () => {
