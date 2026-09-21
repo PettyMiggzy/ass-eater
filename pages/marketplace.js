@@ -141,12 +141,13 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
   // but not itself, or picking "Video" and then looking at the tag list
   // shows tag counts computed before "Video" was ever applied -- a number
   // that visibly disagrees with what clicking the tag actually returns.
-  const matchesKind = (l, k) => {
-    if (k === 'all') return true;
-    if (k === 'physical') return l.kind === 'physical';
-    if (k === 'video') return l.media?.[0]?.type === 'video';
-    return l.kind !== 'physical' && l.media?.[0]?.type !== 'video';
-  };
+  // Derived from kindOf() itself, not a second hand-written classification --
+  // two functions computing the same thing (one for the count, one for the
+  // filter) is exactly how they drift: a physical listing whose first media
+  // item happens to be a video used to match BOTH the "Physical" and "Video"
+  // filters under the old duplicated version, so its count and its actual
+  // filtered result disagreed.
+  const matchesKind = (l, k) => k === 'all' || kindOf(l) === k;
   const matchesText = (l) =>
     !q.trim() || l.title.toLowerCase().includes(q.toLowerCase()) || (l.description || '').toLowerCase().includes(q.toLowerCase());
   const matchesCreator = (l) => !creatorQ.trim() || l.creatorName.toLowerCase().includes(creatorQ.trim().toLowerCase());
