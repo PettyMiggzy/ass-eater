@@ -31,6 +31,14 @@ export default async function handler(req, res) {
     const creator = await createCreator(profile);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
+    // Same handle-uniqueness index as me/profile.js, admin/profile.js and
+    // auth/signup.js -- createCreator() doesn't catch its own 23505, so
+    // without this check an admin creating a creator with a taken handle
+    // got a generic 500 instead of the same friendly message its siblings
+    // already give for the identical constraint.
+    if (err && err.code === '23505') {
+      return res.status(409).json({ error: 'That handle is already taken. Pick another.' });
+    }
     console.error('[admin/create] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
