@@ -50,6 +50,6 @@ export default async function handler(req, res) {
   } catch (err) {
     if (err.code === INSUFFICIENT_BALANCE) return res.status(402).json({ error: 'Not enough credits' });
     console.error('[credits/payout-request] unexpected error:', err);
-    return res.status(500).json({ error: 'internal' });
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

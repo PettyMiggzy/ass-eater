@@ -87,7 +87,16 @@ export default async function handler(req, res) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });
     if (err.code === 'SENDER_MISMATCH') return res.status(402).json({ error: err.message, code: err.code });
-    if (err.code) return res.status(402).json({ error: err.message, code: err.code });
+    // The rest of verifyUsdcPayment's deliberately-thrown codes (lib/chain-verify.js)
+    // -- every one of them was written with a message safe to show the buyer.
+    // Enumerated explicitly rather than a bare `if (err.code)`: a Postgres
+    // driver error or a viem/RPC network failure also carries a truthy
+    // `.code` (a SQLSTATE, ECONNREFUSED, etc.), and a catch-all here would
+    // leak that raw infra text straight past the generic-message fallback
+    // this exact function exists to provide.
+    if (['BAD_HASH', 'NOT_CONFIRMED', 'TX_REVERTED', 'NO_MATCHING_TRANSFER'].includes(err.code)) {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
     console.error('[credits/buy] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong confirming your payment. If USDG left your wallet, use "Already paid?" below with the same transaction to retry.' });
   }
