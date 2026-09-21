@@ -4115,7 +4115,20 @@ stopping after one pass. Real bugs kept surfacing through pass 4:
   addresses -- just never applied to tx hashes in the same feature.
 
 Passes 3 and 4's non-bug findings all confirmed the earlier fixes correct
-and un-regressed. As of this note, waiting on further passes to reach two
-CONSECUTIVE clean audits before considering this done -- each pass so far
-has found something real, which is itself the reason to keep going rather
-than stop at "looks done."
+and un-regressed. Passes 3 and 5 came back clean; pass 6 found one more
+real (but non-exploitable) gap:
+
+- **Pass 6:** `pages/api/admin/manual-credit.js` took an admin-typed userId
+  with no check it's a real account -- `credit_balances`/`credit_ledger`
+  have no foreign key to `users`, so a typo either strands a real deposit's
+  credit in an orphan row nobody can see, or worse, credits a different real
+  account, and it's irreversible (`used_payment_tx` claims the real hash the
+  instant it succeeds; there's no admin reversal tool anywhere). Requires
+  the already-gated admin key, so not attacker-exploitable -- an operational
+  safety gap, not a vulnerability. Fixed: resolves the account via
+  `findUserById()` before crediting anything, refuses with a clear warning
+  if it doesn't exist, and echoes back the real account's email on success.
+
+Six passes in, four real bugs plus this operational gap found and fixed.
+Continuing per the standing instruction to reach two CONSECUTIVE clean
+passes before stopping.
