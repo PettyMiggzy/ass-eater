@@ -12,15 +12,23 @@ export const admin: FastifyPluginAsync = async (app) => {
   // redeploy: as $ONLYONE's price rises, lower how many tokens it takes to
   // reach VIP (see core/vip.ts) rather than letting the USD cost of VIP
   // status float upward indefinitely.
+  // `vipBurnBps` was renamed to `burnBps` when the burn was widened to cover
+  // all platform revenue, not just VIP (see core/ledger.ts's
+  // postPlatformRevenue). This route was never updated -- `vipBurnBps` isn't
+  // a real PlatformConfig field, so PATCH threw PrismaClientValidationError
+  // on every call, and the GET fallback's 10_000 (100%) didn't match the
+  // schema's real default of 2500 (25%) either. tsc doesn't catch a spread
+  // like `{ id: 1, ...body }` carrying an unknown property, which is why
+  // this stayed broken silently.
   app.get('/vip-config', async () =>
-    (await prisma.platformConfig.findUnique({ where: { id: 1 } })) ?? { id: 1, vipPriceCents: 2000, vipBurnBps: 10_000 });
+    (await prisma.platformConfig.findUnique({ where: { id: 1 } })) ?? { id: 1, vipPriceCents: 2000, burnBps: 2500 });
 
   app.patch('/vip-config', async (req: any) => {
     const body = z.object({
       vipPriceCents: z.number().int().positive().optional(),
       // Capped at 100%: the platform cannot commit to burning more than the
       // revenue it took in, which would be spending money it does not have.
-      vipBurnBps: z.number().int().min(0).max(10_000).optional(),
+      burnBps: z.number().int().min(0).max(10_000).optional(),
     }).parse(req.body);
     return prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, ...body }, update: body });
   });

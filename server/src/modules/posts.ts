@@ -90,7 +90,23 @@ export const posts: FastifyPluginAsync = async (app) => {
       if (p.visibility !== 'PPV' || p.removed) return reply.code(400).send({ error: 'not_ppv' });
       const already = await tx.postUnlock.findUnique({ where: { fanId_postId: { fanId: req.user.id, postId: p.id } } });
       if (already) return { ok: true, already: true };
-      await tx.postUnlock.create({ data: { fanId: req.user.id, postId: p.id } });
+      try {
+        await tx.postUnlock.create({ data: { fanId: req.user.id, postId: p.id } });
+      } catch (e: any) {
+        // A genuine double-click: two concurrent requests both passed the
+        // `already` check above before either had created its row. The
+        // loser hits the unique constraint on (fanId, postId) -- same P2002
+        // race live.ts already handles for ticket/minute purchases. Never
+        // trust the error code alone as proof this fan already paid (a
+        // *different* fan can't collide on this row at all, since it's
+        // keyed by fanId, but re-reading is what live.ts's own comment
+        // insists on and it costs nothing here either): confirm the row
+        // exists before treating this as success rather than a real error.
+        if (e.code !== 'P2002') throw e;
+        const bought = await tx.postUnlock.findUnique({ where: { fanId_postId: { fanId: req.user.id, postId: p.id } } });
+        if (!bought) throw e;
+        return { ok: true, already: true };
+      }
       const r = await charge(tx, { fanId: req.user.id, creatorId: p.creatorId, grossCents: p.priceCents, type: 'PPV', refId: p.id });
       return { ok: true, ...r };
     });

@@ -154,7 +154,18 @@ export const messages: FastifyPluginAsync = async (app) => {
       if (m.priceCents === 0 || m.senderId === req.user.id) return reply.code(400).send({ error: 'not_locked' });
       if (![m.conversation.aId, m.conversation.bId].includes(req.user.id)) return reply.code(403).send({ error: 'forbidden' });
       if (await tx.messageUnlock.findUnique({ where: { fanId_messageId: { fanId: req.user.id, messageId: m.id } } })) return { ok: true, already: true };
-      await tx.messageUnlock.create({ data: { fanId: req.user.id, messageId: m.id } });
+      try {
+        await tx.messageUnlock.create({ data: { fanId: req.user.id, messageId: m.id } });
+      } catch (e: any) {
+        // Same double-click race as posts.ts's /unlock, closed the same way
+        // live.ts already does for ticket/minute purchases: a P2002 here
+        // means a concurrent request won the create first, so re-read this
+        // fan's own row before treating it as a real success.
+        if (e.code !== 'P2002') throw e;
+        const bought = await tx.messageUnlock.findUnique({ where: { fanId_messageId: { fanId: req.user.id, messageId: m.id } } });
+        if (!bought) throw e;
+        return { ok: true, already: true };
+      }
       const r = await charge(tx, { fanId: req.user.id, creatorId: m.senderId, grossCents: m.priceCents, type: 'MESSAGE_UNLOCK', refId: m.id });
       await publish(m.senderId, { type: 'unlock', messageId: m.id, by: req.user.id, ...r });
       return { ok: true, ...r };

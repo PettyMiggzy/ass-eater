@@ -168,7 +168,17 @@ export async function creditDeposit(
  * someone decides, explicitly, that a public badge is worth that trade --
  * and if it ever is, it should be opt-in per fan, not automatic.
  */
-const FAN_CHARGE_TYPES = ['TIP', 'SUBSCRIPTION', 'PPV', 'MESSAGE_UNLOCK', 'LIVE_TICKET', 'MARKETPLACE_SALE', 'TOKEN_LOCK'];
+// Stale allowlist, missed when DM_SEND/LIVE_MINUTE/LIVE_TIP were added as
+// fan-to-creator TxTypes (the live/DM pricing work) -- a fan who only tips
+// during live streams, pays per-minute to watch, or pays to DM a creator was
+// invisible here however much they'd actually paid, while equivalent spend
+// via TIP/SUBSCRIPTION/PPV counted. This list has to be every TxType where
+// `meta.fanId` identifies who paid the creator; check here whenever a new
+// fan-facing charge type is added.
+const FAN_CHARGE_TYPES = [
+  'TIP', 'SUBSCRIPTION', 'PPV', 'MESSAGE_UNLOCK', 'LIVE_TICKET', 'MARKETPLACE_SALE', 'TOKEN_LOCK',
+  'LIVE_MINUTE', 'LIVE_TIP', 'DM_SEND',
+];
 
 export async function getTopSupporters(tx: Tx, creatorId: string, limit = 10) {
   const rows = await tx.$queryRaw<{ fanId: string; totalCents: bigint }[]>`

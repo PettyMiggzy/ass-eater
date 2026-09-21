@@ -1,6 +1,7 @@
 import { parseAbi, parseUnits, type Address } from 'viem';
 import { prisma } from '../lib/prisma';
 import { publicClient, treasuryClient, treasury, TOKENS, HEDGE_STABLE, erc20Abi } from '../lib/chain';
+import { getUsdPrice } from '../lib/price';
 
 /**
  * Buys $ONLYONE on the open market with VIP revenue and destroys it.
@@ -64,6 +65,18 @@ export async function runBurnBatch() {
   if (totalCents < MIN_BATCH_CENTS) return;
 
   const amountIn = parseUnits((Number(totalCents) / 100).toFixed(HEDGE_STABLE.decimals), HEDGE_STABLE.decimals);
+
+  // Computed BEFORE the balance check / allowance approval below, and the
+  // whole batch is deferred (obligations stay pending, safely) if this
+  // throws -- never proceed to a real swap with no real slippage floor.
+  let amountOutMinimum: bigint;
+  try {
+    amountOutMinimum = await minimumOut(amountIn);
+  } catch (e) {
+    console.warn('token-burn: could not determine a spot price, deferring batch', e);
+    return;
+  }
+
   const treasuryBal = await publicClient.readContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'balanceOf', args: [treasury.address] });
   if (treasuryBal < amountIn) {
     // The ledger says this is owed but the wallet cannot cover it. Leaving the
@@ -92,7 +105,7 @@ export async function runBurnBatch() {
       fee: POOL_FEE,
       recipient: DEAD,
       amountIn,
-      amountOutMinimum: minimumOut(amountIn),
+      amountOutMinimum,
       sqrtPriceLimitX96: 0n,
     }],
   });
@@ -116,14 +129,22 @@ export async function runBurnBatch() {
  * hand the platform almost nothing for its money.
  *
  * Deliberately conservative rather than clever: no quote is taken, so this is
- * only a sanity floor derived from the configured slippage cap. It returns 0
- * when no spot price is configured, which is the one case where the batch
- * should not run at all -- and it does not, because ROUTER and the pool env
- * are checked above.
+ * only a sanity floor derived from the configured slippage cap.
+ *
+ * Uses the real price oracle (getUsdPrice, lib/price.ts) rather than reading
+ * ONLYONE_PRICE_OVERRIDE directly -- that env var is documented as pre-launch
+ * only, and getUsdPrice already falls back to it before reading the live pool
+ * once it's unset. Reading the raw env var here meant this function silently
+ * went back to computing spot=0 the moment the override was removed for a
+ * real launch, at which point runBurnBatch (below) would have sent the swap
+ * with amountOutMinimum: 0 -- zero slippage protection on a real batch, the
+ * exact sandwich risk this function exists to prevent. getUsdPrice throwing
+ * (a stale oracle, no pool configured, an RPC hiccup) now propagates up to
+ * runBurnBatch, which must defer the whole batch rather than treat "no price"
+ * as "assume zero minimum and swap anyway".
  */
-function minimumOut(amountIn: bigint): bigint {
-  const spot = Number(process.env.ONLYONE_PRICE_OVERRIDE ?? 0);
-  if (!(spot > 0)) return 0n;
+async function minimumOut(amountIn: bigint): Promise<bigint> {
+  const spot = await getUsdPrice('ONLYONE');
   const dollars = Number(amountIn) / 10 ** HEDGE_STABLE.decimals;
   const expected = parseUnits((dollars / spot).toFixed(TOKENS.ONLYONE.decimals), TOKENS.ONLYONE.decimals);
   return (expected * (10_000n - MAX_SLIPPAGE_BPS)) / 10_000n;

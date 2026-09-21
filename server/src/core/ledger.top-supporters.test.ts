@@ -103,6 +103,23 @@ describe('getTopSupporters', () => {
     expect(row?.totalCents).toBe(2700); // 90% net of 1000 + 90% net of 2000
   });
 
+  // FAN_CHARGE_TYPES was written before DM_SEND/LIVE_MINUTE/LIVE_TIP existed
+  // as fan-to-creator TxTypes and was never updated -- a fan who only ever
+  // paid a creator through live tipping or a priced DM was invisible to this
+  // perk however much they'd spent. Regression test for that fix.
+  it('counts DM_SEND, LIVE_MINUTE and LIVE_TIP as real supporter spend', async () => {
+    const creator = await makeCreator();
+    const fan = await makeUser();
+    await fund(fan, 10_000);
+    await makeVip(fan);
+    await money(prisma, (tx) => charge(tx, { fanId: fan, creatorId: creator, grossCents: 100, type: 'DM_SEND', refId: 'dm-1' }));
+    await money(prisma, (tx) => charge(tx, { fanId: fan, creatorId: creator, grossCents: 200, type: 'LIVE_MINUTE', refId: 'lm-1' }));
+    await money(prisma, (tx) => charge(tx, { fanId: fan, creatorId: creator, grossCents: 300, type: 'LIVE_TIP', refId: 'lt-1' }));
+
+    const top = await money(prisma, (tx) => getTopSupporters(tx, creator, 10));
+    expect(top.map((r) => r.fanId)).toContain(fan);
+  });
+
   it('never returns supporters belonging to a different creator', async () => {
     const creatorA = await makeCreator();
     const creatorB = await makeCreator();

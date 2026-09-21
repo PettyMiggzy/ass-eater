@@ -40,6 +40,16 @@ new Worker('payout', async (job) => {
         const gross = p.amountCents + p.feeCents;
         await post(tx, p.creatorId, gross, 'PAYOUT_REVERSAL', p.id, { error: e.message });
         await post(tx, PLATFORM_ID, -p.feeCents, 'PAYOUT_REVERSAL', p.id);
+        // The withdrawal fee's postPlatformRevenue() call (payouts.ts) wrote a
+        // TokenBurn obligation with refId=p.id in the same transaction that
+        // charged the fee. Reversing the fee without also cancelling that
+        // obligation leaves a phantom burn on the books for revenue the
+        // platform no longer has -- pendingBurnCents()/GET /admin/token-burns
+        // would overstate what's actually owed, and a manual burn would be
+        // burning against money that was given back. Guarded on
+        // executedAt: null so an obligation the burn worker already executed
+        // (already turned into a real on-chain burn) is correctly left alone.
+        await tx.tokenBurn.deleteMany({ where: { refId: p.id, executedAt: null } });
       });
     }
     await prisma.payout.update({ where: { id: p.id }, data: { status: 'FAILED', txHash: hash, error: String(e.message).slice(0, 500) } });
