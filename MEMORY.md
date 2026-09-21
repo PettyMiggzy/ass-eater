@@ -4504,3 +4504,51 @@ same as every path INTO that fallback being correctly gated -- worth
 re-checking on any future "we already fixed this pattern here" file.
 
 242 tests still pass against real local Postgres, `npx next build` clean.
+
+## Same leak class, closed everywhere else it lived, plus a real bug it found (2026-09-21)
+
+Followed up on the `credits/buy.js` catch-all fix above by grepping the
+whole codebase for the exact same `if (err.code)`/unconditional
+`err.message`-echo shape rather than assuming it was the only instance.
+
+**`pages/api/admin/manual-credit.js` had the identical bare
+`if (err.code)` catch-all** as `credits/buy.js` -- same fix, same
+enumerated-codes list. Admin-key gated, so lower exposure than the fan-
+facing endpoint, but the same infra-error-leak class.
+
+**Eight more routes** (`admin/payouts-mark-paid.js`, `admin/waitlist.js`,
+`auth/signup.js`, `messages/send.js`, `favorites/toggle.js`, `waitlist.js`,
+`wall/delete.js`, `wall/post.js`) had an unconditional `res.status(4xx)
+.json({ error: err.message })` with no distinction between a store
+function's own deliberately-thrown, safe message and a genuine unexpected
+DB failure. Checked each underlying store function's actual thrown
+messages/codes (`messages-store.js`, `favorites-store.js`, `waitlist-
+store.js`, `wall-store.js`, `credits-store.js`) and matched explicitly
+against those; `favorites/toggle.js`'s `toggleFavorite` throws nothing of
+its own at all, so its catch is now unconditionally generic.
+
+**Real bug this check surfaced, not just a leak:**
+`pages/api/auth/signup.js` could leak a raw Postgres constraint-violation
+message on a duplicate CREATOR HANDLE at signup. `createUser()` already
+converts its own email-uniqueness collision into a friendly, code-less
+`Error` (`lib/users-store.js`) -- but `createCreator()`
+(`lib/creators-store.js`) does nothing of the kind, so a duplicate handle
+hit the same partial-unique-index `me/profile.js` and `admin/profile.js`
+already give a friendly "That handle is already taken" message for, but
+signup.js was echoing the raw "duplicate key value violates unique
+constraint ..." text straight to an unauthenticated caller. Fixed to
+match. Verified against a real `next start` server: two creator signups
+with the same handle now get 200 then a correctly-worded 409, not a raw
+DB error -- this is the kind of concrete verification this session
+insists on over trusting that a code-review-shaped fix is actually
+right.
+
+**The pattern worth remembering:** the previous audit's own "clean pass"
+verdict on the 21-file sweep was correct for the files it was asked to
+check -- the miss was scope, not diligence. A grep for the exact
+anti-pattern signature across the WHOLE codebase, not just the files a
+prior pass named, is what surfaced both this section's finding and the
+one before it. Worth doing after any "we fixed pattern X" claim, not just
+trusting the file list a research pass already handed over.
+
+242 tests pass against real local Postgres, `npx next build` clean.
