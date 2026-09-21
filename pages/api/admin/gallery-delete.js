@@ -1,4 +1,4 @@
-import { removeGalleryItem } from '../../../lib/creators-store';
+import { removeGalleryItem, getCreatorById } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 
 export default async function handler(req, res) {
@@ -9,11 +9,21 @@ export default async function handler(req, res) {
   if (!requireAdminKey(req, res)) return;
 
   // See pages/api/me/gallery-delete.js -- a negative or non-numeric index
-  // splices out a different photo than the one that was clicked.
+  // splices out a different photo than the one that was clicked. Also
+  // range-checked against the real current length, not just >= 0 --
+  // `removeGalleryItem`'s splice silently no-ops on an out-of-range index,
+  // which without this check returned {ok:true} having deleted nothing,
+  // unlike the creator's own version of this endpoint which already caught
+  // that case.
   const { creatorId, index: rawIndex, knownGallery } = req.body || {};
   const index = Number(rawIndex);
   if (!creatorId || !Number.isInteger(index) || index < 0) {
     return res.status(400).json({ error: 'Missing creatorId or a valid index' });
+  }
+
+  const creator = await getCreatorById(creatorId);
+  if (!creator || index >= (creator.gallery || []).length) {
+    return res.status(400).json({ error: 'That item is no longer in the gallery' });
   }
 
   try {

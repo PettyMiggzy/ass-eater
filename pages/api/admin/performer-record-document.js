@@ -71,6 +71,13 @@ export default async function handler(req, res) {
     if (err instanceof Error && SAFE_MESSAGES.has(err.message)) {
       return res.status(400).json({ error: err.message });
     }
+    // A key-rotation/config problem, not a bad request -- the admin needs
+    // this exact message to go fix it, same reasoning RecordsNotConfigured
+    // gets its own real message above rather than the generic fallback.
+    if (err instanceof Error && err.message === 'That document could not be decrypted (check RECORDS_ENCRYPTION_KEY).') {
+      console.error('[performer-record-document] decrypt failure:', err);
+      return res.status(500).json({ error: err.message });
+    }
     console.error('[performer-record-document]', err);
     return res.status(500).json({ error: 'Could not handle that document.' });
   }

@@ -27,11 +27,37 @@
  * independent "this is safe" check before they sign, not gating checkout on
  * a third party being reachable.
  */
+import { getVerifiedSessionUserId } from '../../../lib/session';
+import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
+
 const GOPLUS_SUPPORTED_CHAIN_IDS = new Set(['0x1', '0x38', '0x2105']); // Ethereum, BSC, Base
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_PER_USER = 30;
+const MAX_PER_IP = 60;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Was reachable with no auth of any kind, forwarding whatever to/data/value
+  // the caller sent to a third-party API -- an unbounded free relay to
+  // GoPlus for anyone, not just someone actually checking out. Login is a
+  // real gate here (only a signed-in fan reaches the checkout flow this
+  // exists for), and the rate limit bounds it further for a compromised or
+  // scripted account.
+  const uid = await getVerifiedSessionUserId(req);
+  if (!uid) return res.status(401).json({ error: 'Log in first' });
+
+  const perUser = consumeAttempt(`marketplace-simulate-tx:user:${uid}`, { limit: MAX_PER_USER, windowMs: WINDOW_MS });
+  if (perUser.limited) {
+    res.setHeader('Retry-After', String(perUser.retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
+  const perIp = consumeAttempt(`marketplace-simulate-tx:ip:${clientIp(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
+  if (perIp.limited) {
+    res.setHeader('Retry-After', String(perIp.retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
   }
 
   const { chainId, from, to, data, value } = req.body || {};

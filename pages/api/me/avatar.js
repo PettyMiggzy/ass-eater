@@ -2,12 +2,21 @@ import { put } from '@vercel/blob';
 import { readLimitedBody, acceptedUploadType, UPLOAD_TYPE_MESSAGE, UPLOAD_SIZE_MESSAGE } from '../../../lib/upload-guard';
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { setCreatorAvatar } from '../../../lib/creators-store';
+import { consumeAttempt } from '../../../lib/rate-limit';
 
 export const config = {
   api: {
     bodyParser: false,
   },
 };
+
+// Unlike the gallery, an avatar has no slot cap to bound abuse -- the blob
+// path is timestamp-named, so allowOverwrite never actually limits how many
+// blobs get written, and there was no rate limit either. A compromised or
+// scripted creator account could otherwise write an unbounded number of
+// blobs (up to MAX_UPLOAD_BYTES each) with nothing to stop it.
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_PER_CREATOR = 10;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -16,6 +25,15 @@ export default async function handler(req, res) {
 
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
+
+  const { limited, retryAfterSeconds } = consumeAttempt(`me-avatar:creator:${ctx.creator.id}`, {
+    limit: MAX_PER_CREATOR,
+    windowMs: WINDOW_MS,
+  });
+  if (limited) {
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
 
   const fileName = req.headers['x-file-name'] || `avatar-${Date.now()}`;
 

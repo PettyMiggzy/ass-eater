@@ -170,6 +170,14 @@ const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content', '/api/waitl
 const PREVIEW_PUBLIC_PATHS = new Set([
   '/coming-soon', '/founding-creator', '/terms', '/privacy', '/2257',
   '/report-content', '/blocked-region', '/verify-age', '/owner',
+  // /gateway and /token are the two SFW mirror-domain landing pages
+  // (onlyass.online, onlyass.xyz) and are already exempt from the state
+  // geoblock via SFW_PATHS above -- they were missing here, which has no
+  // live effect while PREVIEW_ACCESS_KEY is unset, but would have shown
+  // "coming soon" to those two supposedly-always-public pages the moment
+  // preview mode was ever re-armed. Same "exemption lists move together"
+  // rule as everywhere else in this file.
+  '/gateway', '/token',
   ...BRAND_ART_PATHS,
 ]);
 

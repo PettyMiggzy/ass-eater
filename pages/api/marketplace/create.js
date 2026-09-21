@@ -3,6 +3,15 @@ import { createListing } from '../../../lib/listings-store';
 import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
 import { validateTextFields } from '../../../lib/field-validation';
+import { consumeAttempt } from '../../../lib/rate-limit';
+
+// No cap of any kind existed here, unlike the gallery's slot limit or the
+// rate limits on every other comparable write path (wall posts, DMs,
+// marketplace reports) -- a scripted creator account could otherwise create
+// listings without bound, each one a DB write and eligible for its own
+// media-upload allotment.
+const WINDOW_MS = 60 * 60 * 1000;
+const MAX_PER_CREATOR = 20;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -11,6 +20,15 @@ export default async function handler(req, res) {
 
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
+
+  const { limited, retryAfterSeconds } = consumeAttempt(`marketplace-create:creator:${ctx.creator.id}`, {
+    limit: MAX_PER_CREATOR,
+    windowMs: WINDOW_MS,
+  });
+  if (limited) {
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many listings created recently. Please wait a while and try again.' });
+  }
 
   const { title, description, priceCents, unlimited, kind, shippingCents, signatureRequired, aiGenerated, tags } = req.body || {};
   // `!title` lets an object through (truthy) and `"abc" < 100` is false, so
