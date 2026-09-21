@@ -41,6 +41,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ ok: true, blob, creator });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[admin/avatar] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

@@ -68,6 +68,7 @@ export default async function handler(req, res) {
     const creator = await addGalleryItem(ctx.creator.id, { type: fileType, src: blob.url, aiGenerated }, knownGallery);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[me/upload] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

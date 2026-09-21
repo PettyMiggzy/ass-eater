@@ -20,6 +20,8 @@ export default async function handler(req, res) {
     const order = await markOrderShipped(orderId, ctx.creator.id, { carrier: String(carrier).slice(0, 100), trackingNumber: String(trackingNumber).slice(0, 100) });
     return res.status(200).json({ ok: true, order });
   } catch (err) {
-    return res.status(err.message === 'Order not found' ? 404 : 500).json({ error: err.message });
+    if (err.message === 'Order not found') return res.status(404).json({ error: err.message });
+    console.error('[marketplace/orders/ship] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

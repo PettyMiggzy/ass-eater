@@ -17,6 +17,7 @@ export default async function handler(req, res) {
     const creators = await deleteCreator(creatorId);
     return res.status(200).json({ ok: true, creators });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[admin/delete] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

@@ -12,6 +12,7 @@ export default async function handler(req, res) {
     const creators = await getCreators();
     return res.status(200).json({ creators });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[admin/creators] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

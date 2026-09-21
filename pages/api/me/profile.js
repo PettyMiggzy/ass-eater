@@ -73,6 +73,7 @@ export default async function handler(req, res) {
     if (err && err.code === '23505') {
       return res.status(409).json({ error: 'That handle is already taken. Pick another.' });
     }
-    return res.status(500).json({ error: err.message });
+    console.error('[me/profile] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

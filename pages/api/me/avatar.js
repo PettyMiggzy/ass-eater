@@ -36,6 +36,7 @@ export default async function handler(req, res) {
     const creator = await setCreatorAvatar(ctx.creator.id, blob.url);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[me/avatar] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

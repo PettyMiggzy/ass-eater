@@ -101,6 +101,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, listing: updated });
   } catch (err) {
     if (err.code === MEDIA_CAP_EXCEEDED) return res.status(403).json({ error: MEDIA_CAP_MESSAGE });
-    return res.status(500).json({ error: err.message });
+    console.error('[marketplace/upload] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

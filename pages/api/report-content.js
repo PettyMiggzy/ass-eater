@@ -53,6 +53,7 @@ export default async function handler(req, res) {
     const report = await addNciiReport({ reporterName, reporterContact, contentLocation, description, consentStatement });
     return res.status(200).json({ ok: true, report: { id: report.id } });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[report-content] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

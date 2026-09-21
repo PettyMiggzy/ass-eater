@@ -16,9 +16,12 @@ export default async function handler(req, res) {
       // Session tokens are stateless and valid for 30 days, so dropping the
       // cookie alone leaves a copied token working long after the person
       // thought they'd logged out. Bumping the user's session epoch is what
-      // retires it (see lib/users-store.js and getSessionUser in
-      // lib/session.js -- note that only /api/auth/me consults the epoch so
-      // far, so this is not yet the whole fix).
+      // retires it -- lib/session.js's getSessionUser/getVerifiedSessionUserId
+      // both check it, and every route that authenticates a session
+      // (dashboard, messages, credits, notifications, etc.) goes through one
+      // of those two, not the old non-revocation-aware getSessionUserId,
+      // which was deleted outright rather than left around to be used by
+      // accident (see lib/session.js's own comment on that removal).
       //
       // The epoch from the presented token is passed along so this call can
       // only ever retire the session that token belongs to. Without that,

@@ -31,6 +31,7 @@ export default async function handler(req, res) {
     const creator = await createCreator(profile);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[admin/create] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

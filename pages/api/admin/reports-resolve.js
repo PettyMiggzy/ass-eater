@@ -32,6 +32,7 @@ export default async function handler(req, res) {
     const updated = await updateReportStatus(id, action === 'dismiss' ? 'dismissed' : 'actioned', 'admin');
     return res.status(200).json({ ok: true, report: updated });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[admin/reports-resolve] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

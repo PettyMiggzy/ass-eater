@@ -103,6 +103,7 @@ export default async function handler(req, res) {
       user: { id: user.id, email: user.email, role: user.role, creatorId: user.creatorId },
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[auth/login] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

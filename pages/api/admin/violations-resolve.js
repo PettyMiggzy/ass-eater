@@ -17,6 +17,7 @@ export default async function handler(req, res) {
     const updated = await updateViolationStatus(id, action, 'admin');
     return res.status(200).json({ ok: true, violation: updated });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[admin/violations-resolve] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

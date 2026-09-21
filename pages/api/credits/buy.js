@@ -4,6 +4,7 @@ import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '.
 import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM } from '../../../lib/deposit';
 import { ageVerificationSecret } from '../../../lib/age-verification';
 import { readWalletNonce, depositProofMessage, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
+import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
 
 /**
  * The ONLY place a fan ever needs a wallet: converting a real on-chain USDG
@@ -19,6 +20,10 @@ import { readWalletNonce, depositProofMessage, DEPOSIT_NONCE_COOKIE_NAME } from 
  * txHash to their own account and steal the credit. See lib/chain-verify.js
  * and lib/wallet-auth.js for the full reasoning.
  */
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_PER_USER = 20;
+const MAX_PER_IP = 40;
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -31,6 +36,21 @@ export default async function handler(req, res) {
 
   const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to buy credits' });
+
+  // Every call here does a real on-chain RPC lookup, unlike most rate-limited
+  // routes in this codebase -- both keys guard against a different abuse: a
+  // compromised/scripted account hammering the RPC provider, and many
+  // accounts behind one IP doing the same.
+  const perUser = consumeAttempt(`credits-buy:user:${uid}`, { limit: MAX_PER_USER, windowMs: WINDOW_MS });
+  if (perUser.limited) {
+    res.setHeader('Retry-After', String(perUser.retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
+  const perIp = consumeAttempt(`credits-buy:ip:${clientIp(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
+  if (perIp.limited) {
+    res.setHeader('Retry-After', String(perIp.retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
+  }
 
   const { txHash, signature } = req.body || {};
   if (!txHash) return res.status(400).json({ error: 'Missing transaction hash' });
