@@ -4464,3 +4464,43 @@ per-request media endpoint (blur-until-purchased NFT gating, real
 watermarking) -- a genuine new subsystem, not a bounded fix; automatic
 mute/ban escalation after N payment-circumvention violations (the
 threshold is a policy call).
+
+## Audit on the backlog sweep found the one real gap the sweep itself missed (2026-09-21)
+
+Independent audit of the sweep above (21 files + the two new rate limiters
++ NotificationBell's race guard + the logout.js comment) came back clean
+on all of that -- but caught a real MEDIUM-severity leak in
+`pages/api/credits/buy.js` that predates the sweep and the sweep's own
+21-file grep didn't touch, because this file already had the "right"
+shape (log-and-generic-message) for its TRUE unexpected-error path; the
+bug was one line above it.
+
+**`buy.js`'s catch block had a bare `if (err.code) return res.status(402)
+.json({ error: err.message, code: err.code })`** sitting after its three
+explicit business-error checks (TX_ALREADY_USED, BELOW_MINIMUM,
+SENDER_MISMATCH) -- catching ANY error with a truthy `.code`, not just
+the app's own deliberately-thrown ones. Postgres driver errors always
+carry a `.code` (a SQLSTATE), and viem/RPC network failures commonly do
+too (`ECONNREFUSED`, a JSON-RPC error code). `creditDepositFromChain`
+does a real DB write (`lib/deposit.js`) and RPC calls
+(`lib/chain-verify.js`, `assertTokenDecimals`'s `readContract` call has
+no surrounding try/catch of its own) -- a transient Postgres error or an
+RPC outage would hit this catch-all and leak raw infra error text on a
+money-moving endpoint, exactly the failure mode the generic-message
+fallback two lines below exists to prevent. Fixed by enumerating the
+actual known-safe codes `chain-verify.js`/`deposit.js` can throw
+(`BAD_HASH`, `NOT_CONFIRMED`, `TX_REVERTED`, `NO_MATCHING_TRANSFER` --
+all written with buyer-safe messages) instead of a bare truthiness check.
+Also fixed a wording inconsistency the same audit flagged: `payout-
+request.js`'s generic fallback said `'internal'` instead of the standard
+`'Something went wrong. Please try again.'` string used everywhere else.
+
+**The lesson, consistent with this session's whole audit history:** a
+"sweep for pattern X across files A-U" pass can correctly clear every file
+it names while missing a variant of the SAME bug class sitting one line
+above the code the sweep was looking for, in a file the sweep considered
+already-fixed. The generic-message fallback existing in a file is not the
+same as every path INTO that fallback being correctly gated -- worth
+re-checking on any future "we already fixed this pattern here" file.
+
+242 tests still pass against real local Postgres, `npx next build` clean.
