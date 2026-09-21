@@ -4204,3 +4204,89 @@ one was covered by the original fix. Every fix has a regression test where
 the bug was DB-testable (`lib/credits.test.mjs`, 42 tests) or was verified
 against a real build; nothing here was taken on faith from a single
 audit's say-so.
+
+## In-app notifications, and the marketplace tag-count bug fixed (2026-09-21)
+
+Founder: "alllllllllllllllllllllllll drive man" -- pick from the standing
+backlog and build it, rather than asking again. Built the two concrete items
+already on the list (in-app sale/payout notifications, the marketplace
+faceted-count bug) plus a real bug the new test-writing itself surfaced.
+
+**In-app notifications, database-only, no email.** Nothing on this stack
+sends mail (same standing blocker as the creator-inbox-notifications idea
+from 2026-09-20) -- so this follows the exact "record first, provider on
+top" shape `server/`'s `core/notify.ts` design already settled on for the
+same reason: the delivery channel is the piece most likely to be missing or
+swapped, so the in-app row has to be a complete feature with nothing riding
+on one. `lib/notifications-store.js` (new) + a `notifications` table
+(`lib/db.js`) -- `createNotification`, `getNotificationsForUser`,
+`getUnreadCount`, `markAllRead`. Wired into two real events:
+
+- **A sale.** `lib/orders-store.js`'s `createOrdersFromCredits` records a
+  `sale` notification for the creator INSIDE the same DB transaction as the
+  charge -- if the transaction rolls back (a later cart item fails, a
+  one-of-a-kind listing was already claimed), there's no notification for a
+  sale that never happened either. Same reasoning already applied to the
+  ledger entry it sits next to.
+- **A payout being marked paid.** `lib/credits-store.js`'s `markPayoutPaid`
+  records a `payout_paid` notification AFTER the real status update commits
+  -- deliberately outside that transaction, because the status change is the
+  thing that actually matters (an admin who really paid someone) and a
+  notification failing to write must never make it look like the payout
+  didn't happen.
+
+`components/NotificationBell.js` (new, wired into `SiteNav.js`) -- fetches
+the unread count on mount, fetches the full list and marks everything read
+on open (no per-notification action exists, so opening the panel IS the
+acknowledgment). `pages/api/notifications/{index,read}.js` are both
+session-authed; a 401 with no session, verified directly with curl before
+committing.
+
+**Bug this test-writing surfaced, fixed before shipping:**
+`createNotification()`'s own doc comment promises it never breaks the
+money-moving call site it's attached to -- but `JSON.stringify(meta)` was
+computed in the `params` array literal, OUTSIDE the try/catch. A bad `meta`
+value (a circular object -- not reachable from either of today's two call
+sites, both plain objects, but nothing stops a future one) would throw
+synchronously and escape the "never throws" contract entirely, which for
+the sale path means it could roll back a real, already-charged purchase over
+a notification failure. Moved the `JSON.stringify` inside the `try`. Proven
+by `lib/notifications.test.mjs`'s own test for exactly this case, which
+fails against the version that shipped first.
+
+**Marketplace tag-count bug, the one flagged as cosmetic in the pass-9
+notes above:** `pages/marketplace.js`'s sidebar counts (content-type and
+tag) were computed once in `getServerSideProps`, over the FULL unfiltered
+listing set, and sent down as static props -- so picking "Video" and then
+looking at the tag list showed tag counts computed before "Video" was ever
+applied, a number that visibly disagreed with what clicking the tag
+actually returned. Fixed by moving the counts client-side and computing
+them as genuinely faceted: `matchesKind`/`matchesText`/`matchesCreator`/
+`matchesTag`/`matchesPrice` are now independent predicate functions (used
+both by the real `filtered` list and by each facet's own count, which
+applies every OTHER active filter but leaves off the one it's counting).
+`kindOf()` -- previously duplicated server- and client-side with a comment
+claiming it was "shared" that wasn't true -- is now actually the one
+function both `getServerSideProps` and the client component use.
+
+Verified end-to-end against a real `next start` server on the local scratch
+Postgres, not just a clean build: signed up a creator and a fan, approved
+the creator (mirroring the real pending->active admin flow), created a
+listing, credited the fan's balance directly (bypassing the wallet-proof
+deposit flow, which needs a real chain to test), bought it through the real
+checkout endpoint, and confirmed the creator's `/api/notifications` showed
+the correct sale notification with the correct net-of-fee amount
+(500¢ list price, 15% marketplace fee -> 425¢ net), then confirmed
+`markAllRead` actually zeroed the unread count.
+
+42 credits/listings tests (unchanged from the pass-9 work above) + 19 new
+notification tests pass against real local Postgres; the full existing
+suite (179 tests: 107 store + 10 session + 5 profile + 5 brand + 37
+performer-records + 15 waitlist) is unaffected. `npx next build` clean.
+
+**Not built, out of scope for this pass:** email/push delivery for these
+notifications (blocked on the same "nothing here sends mail" gap as the
+2026-09-20 creator-inbox idea -- SES is recommended there but not
+installed); a per-notification read/dismiss action (opening the bell marks
+everything read, which is enough for what exists today: two notification
+types, neither actionable beyond "go look at the dashboard").
