@@ -4383,3 +4383,84 @@ briefly showing outdated items. Neither is a data-safety or money-
 correctness issue (the class of bug this whole audit chain has been
 hunting) -- cosmetic polish, left for whenever the bell gets more feature
 work rather than justifying reopening the cycle for.
+
+## Backlog sweep: raw-exception leaks, missing rate limits, stale comment (2026-09-21)
+
+Founder: "keep building no stopping." With the notifications/marketplace
+audit cycle closed, ran a research pass over the rest of MEMORY.md's own
+backlog for concrete, safely-buildable items -- explicitly excluding
+anything gated on a founder decision, an external account, or a business
+call (Indiana geoblock, wallet-owner-auth needing his address, the VIP-
+threshold referral discount he deferred, SES production access, trademark
+clearance, etc.). Found and fixed three real, bounded items:
+
+**Fixed both flagged UX bugs from the last audit in NotificationBell.js**
+first (no error handling on a failed fetch, a rapid-double-toggle race
+showing stale results) -- these were left open at the end of that pass as
+"cosmetic, not worth reopening the cycle for," but "keep building" means
+building them now rather than leaving them permanently deferred.
+
+**Swept the raw-exception-message leak across 21 more API routes.**
+`pages/api/credits/buy.js` and `marketplace/orders/create.js` established
+the right shape earlier this session (log the real error server-side,
+return a fixed generic message to the client) but it was never applied
+anywhere else. `pages/api/me/{upload,gallery-delete,avatar,profile}.js`,
+`admin/{gallery-delete,delete-all,avatar,violations-resolve,create,
+reports-resolve,profile,creators,upload,delete,ncii-reports-resolve}.js`,
+`marketplace/{create,upload}.js`, `marketplace/orders/ship.js`,
+`report-content.js`, `auth/login.js`, and `creator/submit.js` were all
+still doing `res.status(500).json({ error: err.message })` on an
+unexpected failure -- leaking DB/blob-provider internals on a genuine 500.
+Every intentionally-thrown, already-safe error (23505 handle conflicts,
+"Order not found", underage-profile refusals, payment-circumvention
+messages) was left untouched; only the unexpected-failure fallback
+changed. Mechanical fix applied via a small script rather than by hand
+across 20 near-identical single-line matches, then every file's diff was
+read back to confirm nothing else moved.
+
+**Rate-limited `/api/credits/buy` and `/api/credits/payout-request`,
+neither of which had any.** `buy.js` does a real on-chain RPC lookup per
+call -- every other RPC/DB-cost endpoint in this codebase (wallet-nonce,
+login, DM send, wall posts, reports) already has a `consumeAttempt` guard
+and this one didn't. Added both a per-user and a per-IP limit (per-IP
+because the abuse case worth guarding against here is a scripted account
+or many accounts behind one IP hammering the RPC provider, not just one
+account). `payout-request.js` got a per-user limit too, since every
+successful call writes a real `payout_requests` row an admin has to
+manually triage regardless of whether the request was legitimate.
+
+**Fixed a stale comment in `pages/api/auth/logout.js`** claiming session
+revocation was "not yet the whole fix" because only `/api/auth/me`
+consulted the epoch. That was true once but is stale now --
+`getSessionUser`/`getVerifiedSessionUserId` are the standard auth path
+across the entire site today, and the old non-revocation-aware
+`getSessionUserId` was deleted outright specifically so nothing could
+keep using it by accident. Left uncorrected, a future pass could have
+re-flagged this as a live gap it isn't.
+
+**Also checked and confirmed CLOSED, not built:** `search.js`'s tag cloud
+has no counts at all to diverge (unlike marketplace.js before its fix), so
+there's no analogous bug there. The "sold listing, multiple enforcement
+points" pattern from pass 9 has exactly two real code paths
+(`claimUniqueListing` at checkout, `updateListing`'s reactivation guard on
+self-edit), both already atomic, and no third path exists (admin's
+`markListingRemoved` is moderation-only and correctly doesn't check
+current status). `get-crypto.js`'s Step 4 copy, which an earlier MEMORY.md
+note still listed as stale, was in fact already fixed in a prior
+(undocumented) pass -- verified directly against the live file rather than
+trusting the note.
+
+242 tests pass (107 store + 42 credits + 21 notifications + 37
+performer-records + 15 waitlist + 10 session + 5 profile + 5 brand)
+against real local Postgres. `npx next build` clean. `buy.js`/
+`payout-request.js` verified end-to-end against a real `next start`
+server (501 when unconfigured, 401 when logged out, neither regressed
+by the new rate-limit checks sitting after them).
+
+**Not built, correctly excluded:** `lib/db.js`'s
+`ssl: { rejectUnauthorized: false }` (needs verifying against the real
+Neon connection, which this container can't open); the signed/expiring
+per-request media endpoint (blur-until-purchased NFT gating, real
+watermarking) -- a genuine new subsystem, not a bounded fix; automatic
+mute/ban escalation after N payment-circumvention violations (the
+threshold is a policy call).
