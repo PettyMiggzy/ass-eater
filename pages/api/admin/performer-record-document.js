@@ -6,6 +6,16 @@ import {
   RecordsNotConfigured,
 } from '../../../lib/performer-records-store';
 
+// The exact, complete set of plain-Error messages attachPerformerDocument()
+// throws (lib/performer-records-store.js) -- an exact-string allowlist
+// rather than a regex, same reasoning as admin/performer-records.js's fix.
+const SAFE_MESSAGES = new Set([
+  'An ID document must be a JPEG, PNG, WebP, HEIC or PDF.',
+  'No document was received.',
+  'That document is too large (4MB maximum).',
+  'Record not found',
+]);
+
 // Raw body, like every other upload route here -- base64 in JSON would
 // inflate a 3MB ID photo past Vercel's request limit for no gain.
 export const config = { api: { bodyParser: false } };
@@ -58,7 +68,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (err) {
     if (err instanceof RecordsNotConfigured) return res.status(503).json({ error: err.message });
-    if (err instanceof Error && /not found|too large|must be a|No document/i.test(err.message)) {
+    if (err instanceof Error && SAFE_MESSAGES.has(err.message)) {
       return res.status(400).json({ error: err.message });
     }
     console.error('[performer-record-document]', err);

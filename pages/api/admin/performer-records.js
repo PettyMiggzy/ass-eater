@@ -8,6 +8,19 @@ import {
   UnderagePerformerRecord,
 } from '../../../lib/performer-records-store';
 
+// The exact, complete set of plain-Error messages
+// lib/performer-records-store.js's create/update/archive paths throw --
+// an exact-string allowlist rather than a regex, same fix already applied
+// to credits/buy.js and admin/manual-credit.js's err.code checks: matching
+// on curated words risked a real Postgres error someday coincidentally
+// containing one of them and leaking past the generic fallback below.
+const SAFE_MESSAGES = new Set([
+  'A legal name is required.',
+  'A date of birth is required.',
+  'That date of birth or production date could not be read.',
+  'Record not found',
+]);
+
 // 18 U.S.C. §2257 performer records. Admin-key only, and there is
 // deliberately no public or creator-facing read of this data anywhere.
 export default async function handler(req, res) {
@@ -46,7 +59,7 @@ export default async function handler(req, res) {
     // thing to hand back.
     if (err instanceof RecordsNotConfigured) return res.status(503).json({ error: err.message });
     if (err instanceof UnderagePerformerRecord) return res.status(400).json({ error: err.message });
-    if (err instanceof Error && /required|not found|could not be read|too large|must be a/i.test(err.message)) {
+    if (err instanceof Error && SAFE_MESSAGES.has(err.message)) {
       return res.status(400).json({ error: err.message });
     }
     console.error('[performer-records]', err);

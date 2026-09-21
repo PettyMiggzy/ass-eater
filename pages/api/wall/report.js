@@ -43,6 +43,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, report });
   } catch (err) {
     console.error('[wall/report] unexpected error:', err);
-    return res.status(500).json({ error: 'internal' });
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

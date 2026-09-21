@@ -148,6 +148,6 @@ export default async function handler(req, res) {
     // check and this write (see updateListing's own atomic WHERE-clause guard).
     if (err.code === LISTING_SOLD) return res.status(403).json({ error: err.message });
     console.error('[marketplace/update] unexpected error:', err);
-    return res.status(500).json({ error: 'internal' });
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }
