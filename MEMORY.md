@@ -4078,3 +4078,44 @@ payout-lifecycle cases above are all tested against a real local Postgres,
 not just read over. Full existing suite (107 store tests + 10 session + 5
 profile + 5 brand + 37 performer-records + 15 waitlist + filter suite) still
 passes. `npx next build` clean.
+
+### Follow-up audit rounds, same day: 4 more real bugs found and fixed
+
+Founder: "keep auditing until 2 clean passes the build, fox repeat" -- ran
+repeated independent re-audits of the just-shipped fixes above rather than
+stopping after one pass. Real bugs kept surfacing through pass 4:
+
+- **Pass 2** found `verifyUsdcPayment` aborting its whole log scan on the
+  FIRST sender mismatch instead of continuing to check remaining logs --
+  could false-reject a real deposit if a tx happened to contain more than
+  one qualifying Transfer log (a smart-contract wallet, a batched call)
+  before the real one. Fixed to scan every log and only report
+  `SENDER_MISMATCH` if nothing at all matched the sender. Also deleted
+  `createOrdersFromPayment` (`lib/orders-store.js`) as dead code: zero
+  callers anywhere, but it still carried the OLD non-sender-checked trust
+  model under the same `used_payment_tx` table the new path uses -- a real
+  risk if anyone ever wired a route back to it without noticing it predated
+  the sender-verification fix. `createOrder` (singular, used by the
+  pre-existing test suite) is unrelated and untouched.
+- **Pass 2** also found a cosmetic race in `dashboard.js`'s new activity
+  loader (rapid double cash-out could show a stale view briefly) -- fixed
+  with a per-call sequence ref.
+- **Pass 4, CRITICAL:** Ethereum tx hashes are case-insensitive at the
+  RPC/node level, but `used_payment_tx`'s replay guard was a plain
+  case-sensitive Postgres `text` primary key. A fan could make one real
+  deposit, then resubmit the SAME hash with different letter-casing (via
+  the "Already paid?" recovery box, no tooling needed) and get credited
+  again for every distinct casing -- the sender check still passed because
+  it's genuinely the same real transaction. `lib/deposit.js` now lowercases
+  every hash before it's used anywhere; `lib/db.js` also got a
+  belt-and-suspenders unique index on `lower(tx_hash)` so a future call
+  site that forgets to normalize fails loudly instead of reopening this
+  silently. This is the same "compare addresses/hashes case-insensitively"
+  lesson `lib/wallet-auth.js`'s `sameAddress()` already encoded for wallet
+  addresses -- just never applied to tx hashes in the same feature.
+
+Passes 3 and 4's non-bug findings all confirmed the earlier fixes correct
+and un-regressed. As of this note, waiting on further passes to reach two
+CONSECUTIVE clean audits before considering this done -- each pass so far
+has found something real, which is itself the reason to keep going rather
+than stop at "looks done."
