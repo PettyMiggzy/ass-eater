@@ -4359,3 +4359,27 @@ filters (only the kind axis had the bug).
 
 21 notification tests (was 19) + 42 credits tests + 107 store tests pass
 against real local Postgres. `npx next build` clean.
+
+**Audit cycle closed at 2 consecutive clean passes** (the two after the
+fixes above) -- each independently re-verified both fixes from scratch
+rather than trusting the prior pass's own report, re-ran both test suites
+against a real local Postgres, and specifically chased down the one
+theoretical edge case flagged along the way (whether reusing the literal
+savepoint name `notification_insert` across `createOrdersFromCredits`'s
+per-cart-item loop could collide) by re-grepping every real call site
+rather than trusting the earlier pass's claim that it's safe -- confirmed
+safe: both current call sites (`createOrdersFromCredits`, sequential,
+shared client; `markPayoutPaid`, no client/no transaction) never overlap,
+and Postgres allows immediate reuse of a released savepoint name.
+
+**Two low-priority, non-blocking UX rough edges flagged, not fixed:**
+`components/NotificationBell.js`'s `toggle()` has no try/catch or
+`res.ok` check around its fetch -- a network failure is an unhandled
+rejection that leaves the dropdown stuck on "Loading…", and a non-2xx
+response (e.g. a stale session cookie) parses as JSON and silently renders
+"Nothing yet." instead of surfacing an error. A rapid double-toggle can
+also let a stale fetch resolve after the panel's been closed and reopened,
+briefly showing outdated items. Neither is a data-safety or money-
+correctness issue (the class of bug this whole audit chain has been
+hunting) -- cosmetic polish, left for whenever the bell gets more feature
+work rather than justifying reopening the cycle for.
