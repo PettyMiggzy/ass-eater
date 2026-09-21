@@ -3942,3 +3942,139 @@ Also from that page, and likely relevant since this Page is days old:
 **"Newly-created Pages may not immediately be able to create a username."**
 If the option is missing after switching in, that is why — it is not a
 misconfiguration to hunt for.
+
+## Full-repo audit + fixes on the new credits system (2026-09-21)
+
+Founder: "well audit the entire repo" / "look for missingshit i dont think its
+done end to end im sure there are things to build still." Ran 5
+parallel Agent-tool audits (credits/payments correctness, credits/payments
+completeness, remaining pages, lib/+proxy.js, pages/api/ excluding
+credits/marketplace) over the credits system built the same session. Every
+finding below was fixed and verified, not just reported.
+
+**CRITICAL, fixed — deposit theft.** `pages/api/credits/buy.js` verified a
+payment's amount and destination but never its SENDER. The payout address is
+public (in the client bundle), so anyone watching the chain could take
+someone else's real, in-flight deposit's txHash and submit it to their own
+account first — the real depositor's own submission then 409s as
+"already used" and they get nothing. Fixed with a proof-of-control step,
+reusing the existing owner-wallet-login primitive
+(`lib/wallet-auth.js`, originally built for `/owner` — its own header already
+called this out as a general "prove you own this address" primitive, not an
+owner-only one): `GET /api/credits/wallet-nonce` issues a nonce+cookie, the
+fan signs a message with their wallet (`lib/wallet.js`'s new `signMessage`),
+and `verifyUsdcPayment` (`lib/chain-verify.js`) now takes an `expectedFrom`
+and rejects the tx unless its own on-chain sender matches. Shared between the
+fan endpoint and a new admin manual-credit tool
+(`lib/deposit.js`'s `creditDepositFromChain`, `pages/api/admin/manual-credit.js`)
+so the money-moving logic exists in exactly one place.
+
+**HIGH, fixed — a one-of-a-kind marketplace listing could be sold more than
+once.** Nothing ever marked a `unlimited: false` listing sold, and the
+checkout endpoint didn't dedupe repeated listing ids in one cart either.
+Fixed with `claimUniqueListing()` (`lib/listings-store.js`) — an atomic
+`UPDATE ... WHERE status='active'` inside the SAME transaction as the charge,
+called BEFORE the money moves, so a listing that's already gone is caught
+before any transfer happens. A duplicate id within one cart request is also
+rejected outright. Regression-tested (`lib/credits.test.mjs`): two buyers
+racing the same listing, exactly one wins and the loser is never charged;
+unlimited listings are unaffected.
+
+**HIGH, fixed — stablecoin decimals were hardcoded (6) with no check against
+the real contract**, unlike the equivalent `assertTokenDecimals()` this
+codebase already built once for the exact same risk in `server/`. Added the
+same guard to `lib/chain-verify.js`, wired through
+`NEXT_PUBLIC_MARKETPLACE_USDC_DECIMALS` (default 6) in
+`lib/marketplace-payment-config.js`. Also closed the sub-cent rounding dead
+zone found alongside it: a real on-chain payment under ~1 cent used to
+compute to `grossCents = 0` and permanently burn the tx hash with nothing
+credited and no way to retry. `MIN_DEPOSIT_CENTS` ($1, `lib/fees.js`) now
+rejects it BEFORE claiming the hash, so a too-small payment can still be
+resubmitted at a real amount.
+
+**MEDIUM, fixed — no idempotency on the credits checkout.** A dropped
+response or a double-click before the button's own disabled state landed
+could charge a cart twice. `checkout_idempotency` (new table, `lib/db.js`) is
+claimed inside the same transaction as the charge; the client
+(`pages/cart.js`) generates one key per checkout attempt and reuses it across
+retries of that same attempt only.
+
+**MEDIUM, fixed — the exact "non-string crashes SSR via `.toLowerCase()`"
+bug class this repo has fixed twice before, in two spots that were missed:**
+`pages/api/auth/signup.js` (the creator path — unauthenticated, no login
+needed to trigger it) and `pages/api/admin/create.js`/`admin/profile.js` had
+no `validateTextFields` guard at all, unlike `me/profile.js` and
+`marketplace/create.js`/`update.js`. All four now share the same guard.
+Also fixed: `report-content.js`/`wall/report.js`/`marketplace/report.js`
+threw raw TypeErrors on a non-string field (now `typeof` checks); the latter
+two also had NO rate limiting at all (now 20/min/user, matching
+`wall/post.js`); `marketplace/create.js` still threw on an omitted `title`
+(validateTextFields skips undefined values, so `.trim()` ran on `undefined`).
+
+**HIGH, fixed — found independently by two separate audit agents:**
+`/gateway` and `/token` (the SFW mirror-domain landing pages for
+onlyass.online/onlyass.xyz) were exempt from proxy.js's state geoblock but
+NOT from `_app.js`'s client-side 18+ notice — the exact "the two exemption
+lists have to move together" failure this file already documents happening
+once to `/terms` and `/2257`. Both now added to `NO_NOTICE_PATHS`.
+
+**Also fixed:** stale marketplace.js banner copy still described the old
+wallet-per-item checkout design (dead since the credits pivot); dashboard's
+Cash Out section wasn't disabled for a suspended/banned creator (server-side
+already refused it, this was cosmetic-but-confusing); raw exception messages
+leaking on unexpected 500s in the credits/marketplace endpoints (now generic
++ server-logged, matching the pattern this codebase already applies in
+`server/`'s global error handler).
+
+**Completeness gaps closed** (confirmed real by a dedicated end-to-end audit
+that traced 10 specific user journeys through the new system):
+- **Fan order history**: `pages/orders.js` (new) — the backend
+  (`orders/mine.js`) already worked, nothing pointed at it. Linked from
+  `/cart`'s post-checkout screen and SiteNav.
+- **Creator earnings breakdown**: `GET /api/credits/ledger` (new) reads
+  `credit_ledger`, which every money movement already wrote to but nothing
+  ever read back. Shown in a new "Recent activity" section on the dashboard.
+- **Creator payout status**: `GET /api/credits/payout-status` (new) +
+  `getPayoutRequestsForUser()` — a creator can now tell pending from paid
+  instead of a one-time toast that's gone on refresh.
+- **Admin paid-payout history**: `/api/admin/payouts` now returns paid
+  history alongside the pending queue (`getRecentPaidPayoutRequests()`);
+  before this a paid request just vanished from the admin UI (the row
+  survived in Postgres, nothing read it back).
+- **Crash recovery for a stuck deposit**: `/credits` has an "Already paid but
+  didn't get credited?" box that resubmits a txHash through the same
+  (now sender-verified) endpoint with no new payment. For a fan who can't
+  self-recover, the admin PayoutsPanel's new "Manually credit a stuck
+  deposit" tool does the same thing with an admin-confirmed sender address.
+
+**Explicitly NOT built, per direct instruction:** fan-side refunds/disputes
+("fans dont get refunds"). The marketplace ToS disclaimer already says
+OnlyOne isn't a party to the sale — that stands. What WAS required
+("ya need this secure in") was the sender-verification fix above, which is
+done.
+
+**Not built, lower priority, still open:**
+- Real-time notifications (email/push) for "you made a sale" / "your payout
+  was paid" — the dashboard's new activity view closes the *visibility* gap
+  (a creator CAN check), but nothing pushes to them proactively. Same
+  "nothing on this stack sends email" blocker as the creator-inbox
+  notifications idea from 2026-09-20.
+- `lib/db.js`'s `ssl: { rejectUnauthorized: false }` for non-localhost
+  Postgres connections — flagged MEDIUM CONFIDENCE by one audit pass, not
+  changed: flipping this blind, without being able to verify it against the
+  real Neon production endpoint from this container, risks a total DB outage
+  if the justification (a cert this container's root store doesn't trust)
+  doesn't actually hold in production. Needs verifying against the real
+  connection before touching it, not guessing.
+- Marketplace sidebar tag counts don't intersect with other active filters
+  under compound conditions (cosmetic, numbers are still real).
+- `get-crypto.js` Step 4 hardcodes "not live yet" instead of checking
+  `marketplacePaymentsLive()` like every other page that mentions this flow
+  now does — will go stale the moment payments are actually configured.
+
+**Regression tests added:** `lib/credits.test.mjs` (new, 37 tests) — the
+racing-overdraft, one-of-a-kind double-sale, checkout-idempotency, and
+payout-lifecycle cases above are all tested against a real local Postgres,
+not just read over. Full existing suite (107 store tests + 10 session + 5
+profile + 5 brand + 37 performer-records + 15 waitlist + filter suite) still
+passes. `npx next build` clean.

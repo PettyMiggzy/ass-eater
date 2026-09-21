@@ -21,7 +21,10 @@ export default async function handler(req, res) {
   if (invalid) return res.status(400).json({ error: invalid });
 
   const price = Math.round(Number(priceCents));
-  if (!title.trim() || !Number.isFinite(price) || price < 100) {
+  // typeof, not just truthiness -- validateTextFields skips a key whose
+  // value is undefined entirely (treats "not provided" as valid), so an
+  // omitted title passed that check and then threw on `.trim()` here.
+  if (typeof title !== 'string' || !title.trim() || !Number.isFinite(price) || price < 100) {
     return res.status(400).json({ error: 'Title and a price of at least $1 are required' });
   }
   const shipping = shippingCents == null ? null : Math.round(Number(shippingCents));

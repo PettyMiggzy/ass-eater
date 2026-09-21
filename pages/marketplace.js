@@ -234,7 +234,7 @@ export default function Marketplace({ listings, allTags, tagCounts, kindCounts, 
               <span className="text-brand-pink font-bold">Heads up:</span>
               <span>
                 {paymentsLive
-                  ? `Checkout is live — pay with a crypto wallet (${stableSymbol}). Add items to your cart to get started.`
+                  ? `Checkout is live — pay with credits, no wallet needed at checkout. Buy credits once with a crypto wallet (${stableSymbol}) on the Credits page, then spend anywhere on OnlyOne.`
                   : 'Browsing is live. Checkout opens when payments do — nothing here can charge you yet.'}
               </span>
             </div>

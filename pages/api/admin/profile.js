@@ -4,6 +4,7 @@ import { requireAdminKey } from '../../../lib/admin-auth';
 import { detectPaymentCircumvention } from '../../../lib/payment-circumvention-filter';
 import { addViolation } from '../../../lib/violations-store';
 import { sanitizeGateTokens } from '../../../lib/token-gate';
+import { validateTextFields } from '../../../lib/field-validation';
 
 const FIELD_LABELS = { name: 'Display name', handle: 'Handle', bio: 'Bio' };
 
@@ -30,6 +31,17 @@ export default async function handler(req, res) {
   for (const key of allowed) {
     if (key in fields) safeFields[key] = fields[key];
   }
+  if ('locked' in safeFields) safeFields.locked = !!safeFields.locked;
+
+  // Same crash class already fixed on the creator's own editor
+  // (pages/api/me/profile.js) and marketplace listings: a non-string
+  // name/handle/bio written here 500s /search and /creators for every
+  // visitor via .toLowerCase() the moment this creator becomes publicly
+  // visible. This endpoint writes the exact same fields, so it needs the
+  // exact same guard.
+  const invalid = validateTextFields(safeFields, ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress', 'img']);
+  if (invalid) return res.status(400).json({ error: invalid });
+
   if ('socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if ('tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
   if ('gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);

@@ -1230,10 +1230,15 @@ function WaitlistPanel({ adminKey }) {
 // moves real money -- that's the point.
 function PayoutsPanel({ adminKey }) {
   const [requests, setRequests] = useState([]);
+  const [paid, setPaid] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [txInputs, setTxInputs] = useState({});
+  const [manual, setManual] = useState({ userId: '', txHash: '', fromAddress: '' });
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualMsg, setManualMsg] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -1243,6 +1248,7 @@ function PayoutsPanel({ adminKey }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load payout requests');
       setRequests(data.requests || []);
+      setPaid(data.paid || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1268,11 +1274,36 @@ function PayoutsPanel({ adminKey }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to mark paid');
-      setRequests((prev) => prev.filter((r) => r.id !== id));
+      load(); // re-fetch rather than splice locally -- the row now belongs in "paid" too
     } catch (err) {
       setError(err.message);
     } finally {
       setBusyId(null);
+    }
+  };
+
+  // Support fallback for a fan whose payment landed on-chain but the credit
+  // call never ran (see pages/api/admin/manual-credit.js) -- fromAddress is
+  // confirmed by the admin some other way (support conversation, screenshot);
+  // the on-chain check still refuses unless a real matching transfer from
+  // that exact address exists.
+  const manualCredit = async () => {
+    setManualMsg('');
+    setManualBusy(true);
+    try {
+      const res = await fetch('/api/admin/manual-credit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+        body: JSON.stringify(manual),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not credit that payment');
+      setManualMsg(`Credited ${formatCredits(data.creditedCents)} to user ${manual.userId}.`);
+      setManual({ userId: '', txHash: '', fromAddress: '' });
+    } catch (err) {
+      setManualMsg(err.message);
+    } finally {
+      setManualBusy(false);
     }
   };
 
@@ -1288,9 +1319,9 @@ function PayoutsPanel({ adminKey }) {
       {loading ? (
         <p className="text-gray-500 text-sm">Loading…</p>
       ) : !requests.length ? (
-        <p className="text-gray-500 text-sm">No pending payout requests.</p>
+        <p className="text-gray-500 text-sm mb-6">No pending payout requests.</p>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2 mb-6">
           {requests.map((r) => (
             <div key={r.id} className="premium-card p-4 flex flex-wrap items-center gap-3">
               <span className="font-bold text-white">{formatCredits(r.amount_cents)}</span>
@@ -1315,6 +1346,63 @@ function PayoutsPanel({ adminKey }) {
           ))}
         </div>
       )}
+
+      <button onClick={() => setShowHistory((v) => !v)} className="text-xs text-gray-400 hover:text-white transition mb-3">
+        {showHistory ? 'Hide' : 'Show'} recently paid ({paid.length})
+      </button>
+      {showHistory && (
+        <div className="space-y-2 mb-6">
+          {!paid.length ? (
+            <p className="text-gray-500 text-sm">Nothing paid yet.</p>
+          ) : (
+            paid.map((r) => (
+              <div key={r.id} className="premium-card p-4 flex flex-wrap items-center gap-3 opacity-75">
+                <span className="font-bold text-white">{formatCredits(r.amount_cents)}</span>
+                <span className="text-[11px] text-gray-500">user {r.user_id}</span>
+                <span className="font-mono text-[11px] text-gray-400 break-all">{r.tx_hash}</span>
+                <span className="text-[11px] text-gray-600">{r.paid_at ? new Date(r.paid_at).toLocaleString() : ''}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      <div className="premium-card p-4">
+        <p className="text-xs font-bold tracking-widest text-gray-400 mb-2">MANUALLY CREDIT A STUCK DEPOSIT</p>
+        <p className="text-xs text-gray-500 mb-3">
+          For a fan whose payment confirmed on-chain but whose browser died before the credit call ran, and who couldn't
+          self-recover it from the Credits page. Verifies the exact transaction really came from the address given
+          before crediting anything.
+        </p>
+        <div className="flex flex-wrap gap-2 mb-2">
+          <input
+            value={manual.userId}
+            onChange={(e) => setManual((m) => ({ ...m, userId: e.target.value }))}
+            placeholder="User id"
+            className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white w-32"
+          />
+          <input
+            value={manual.txHash}
+            onChange={(e) => setManual((m) => ({ ...m, txHash: e.target.value }))}
+            placeholder="0x… tx hash"
+            className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white font-mono w-64"
+          />
+          <input
+            value={manual.fromAddress}
+            onChange={(e) => setManual((m) => ({ ...m, fromAddress: e.target.value }))}
+            placeholder="0x… sender wallet"
+            className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white font-mono w-64"
+          />
+          <button
+            onClick={manualCredit}
+            disabled={manualBusy || !manual.userId || !manual.txHash || !manual.fromAddress}
+            className="premium-button text-xs px-4 py-1.5 disabled:opacity-50"
+          >
+            {manualBusy ? 'Checking…' : 'Verify & Credit'}
+          </button>
+        </div>
+        {manualMsg && <p className="text-xs text-gray-400">{manualMsg}</p>}
+      </div>
     </div>
   );
 }

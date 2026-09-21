@@ -49,6 +49,15 @@ import { CartProvider } from '../lib/cart';
 const NO_NOTICE_PATHS = new Set([
   '/', '/coming-soon', '/founding-creator', '/report-content', '/blocked-region', '/verify-age',
   '/terms', '/privacy', '/2257', '/owner',
+  // /gateway (onlyass.online's SFW landing) and /token (onlyass.xyz's) are
+  // both exempt from proxy.js's state geoblock (SFW_PATHS) specifically
+  // because they show no adult content -- but they were never added here,
+  // so every visitor got this generic 18+ modal in front of a page that was
+  // built and exempted to NOT need one, and any non-JS client (a crawler, an
+  // exchange-listing bot) got the blank document instead of the page at all.
+  // Exactly the failure this comment already warns about, just in two spots
+  // nobody had gotten to yet.
+  '/gateway', '/token',
 ]);
 
 function MyApp({ Component, pageProps }) {

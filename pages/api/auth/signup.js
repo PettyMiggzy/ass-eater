@@ -5,6 +5,7 @@ import { createSessionToken, setSessionCookie } from '../../../lib/session';
 import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
 import { withTransaction } from '../../../lib/db';
 import { signupsOpen, SIGNUPS_CLOSED_MESSAGE } from '../../../lib/signups';
+import { validateTextFields } from '../../../lib/field-validation';
 
 // Signup unavoidably tells the caller whether an identifier is already
 // taken: there is no email-confirmation channel on this site (nothing here
@@ -48,6 +49,17 @@ export default async function handler(req, res) {
   }
   if (role === 'creator' && (!displayName || !handle)) {
     return res.status(400).json({ error: 'Display name and handle are required for creator accounts' });
+  }
+  // Same crash class already fixed on every other creator-writing endpoint
+  // (me/profile.js, admin/profile.js, admin/create.js, marketplace/create.js):
+  // an object or over-length value here would be written straight into
+  // Postgres and later 500 /search and /creators via .toLowerCase() for every
+  // visitor, the moment this creator becomes publicly visible. This is the
+  // one creator-writing path that's reachable with no login at all, so it
+  // gets the same guard as the others.
+  if (role === 'creator') {
+    const invalid = validateTextFields({ name: displayName, handle, bio }, ['name', 'handle', 'bio']);
+    if (invalid) return res.status(400).json({ error: invalid });
   }
 
   // Counted after the shape checks, so somebody fumbling the form doesn't

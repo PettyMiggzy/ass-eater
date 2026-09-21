@@ -32,13 +32,17 @@ export default async function handler(req, res) {
 
   const { reporterName, reporterContact, contentLocation, description, consentStatement } = req.body || {};
 
-  if (!reporterName || !reporterName.trim()) {
+  // typeof checks, not just truthiness: `!x` lets a truthy non-string
+  // (an object, a number) through, and `.trim()` on it throws a raw
+  // TypeError -- an unhandled 500 on a public, unauthenticated, deliberately
+  // must-stay-freely-accessible TAKE IT DOWN Act endpoint.
+  if (typeof reporterName !== 'string' || !reporterName.trim()) {
     return res.status(400).json({ error: 'Your name is required' });
   }
-  if (!reporterContact || !reporterContact.trim()) {
+  if (typeof reporterContact !== 'string' || !reporterContact.trim()) {
     return res.status(400).json({ error: 'A way to contact you is required' });
   }
-  if (!contentLocation || !contentLocation.trim()) {
+  if (typeof contentLocation !== 'string' || !contentLocation.trim()) {
     return res.status(400).json({ error: 'Please describe or link the specific content' });
   }
   if (!consentStatement) {

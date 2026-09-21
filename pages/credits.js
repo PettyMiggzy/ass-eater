@@ -29,6 +29,10 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
   const [result, setResult] = useState(null);
   const [simulating, setSimulating] = useState(false);
   const [simResult, setSimResult] = useState(null);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoverHash, setRecoverHash] = useState('');
+  const [recovering, setRecovering] = useState(false);
+  const [recoverError, setRecoverError] = useState(null);
 
   const loadBalance = () => {
     fetch('/api/credits/balance')
@@ -65,6 +69,27 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
     }
   };
 
+  // Proves the connected wallet is the one about to pay (or that already
+  // paid, for recovery) before the server will trust a txHash's sender.
+  // Two wallet prompts by design: sign, then send -- see lib/wallet-auth.js.
+  const signDepositProof = async () => {
+    const nonceRes = await fetch('/api/credits/wallet-nonce');
+    const nonceData = await nonceRes.json();
+    if (!nonceRes.ok) throw new Error(nonceData.error || 'Could not start wallet verification');
+    return wallet.signMessage(nonceData.message);
+  };
+
+  const submitPayment = async (txHash, signature) => {
+    const res = await fetch('/api/credits/buy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ txHash, signature }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not confirm payment');
+    return data;
+  };
+
   const buy = async () => {
     setError(null);
     setBuying(true);
@@ -73,28 +98,52 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
         const acct = await wallet.connect();
         if (!acct) throw new Error(wallet.error === 'no_wallet' ? 'No wallet extension detected' : 'Could not connect wallet');
       }
+      const signature = await signDepositProof();
       const txHash = await wallet.sendUsdc({
         tokenAddress: paymentConfig.usdcAddress,
         payoutAddress: paymentConfig.payoutAddress,
         amountCents,
+        decimals: paymentConfig.usdcDecimals,
         chainId: paymentConfig.chainId,
         chainName: paymentConfig.chainName,
         rpcUrl: paymentConfig.publicRpcUrl,
         nativeSymbol: paymentConfig.nativeSymbol,
       });
-      const res = await fetch('/api/credits/buy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ txHash }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not confirm payment');
+      const data = await submitPayment(txHash, signature);
       setBalanceCents(data.balanceCents);
       setResult(data);
     } catch (err) {
       setError(err.message || 'Something went wrong');
     } finally {
       setBuying(false);
+    }
+  };
+
+  // Recovery path: the payment already went out on-chain (tab closed,
+  // wallet crashed, network dropped right after broadcasting) but the
+  // credit call never ran. /api/credits/buy is safe to call again for a
+  // real, unclaimed txHash -- this just gives a fan a way to retry it
+  // without re-sending money.
+  const recover = async () => {
+    setRecoverError(null);
+    setRecovering(true);
+    try {
+      if (!/^0x[0-9a-fA-F]{64}$/.test(recoverHash.trim())) {
+        throw new Error('That doesn’t look like a transaction hash (should start with 0x, 66 characters total)');
+      }
+      if (!wallet.address) {
+        const acct = await wallet.connect();
+        if (!acct) throw new Error(wallet.error === 'no_wallet' ? 'No wallet extension detected' : 'Could not connect wallet');
+      }
+      const signature = await signDepositProof();
+      const data = await submitPayment(recoverHash.trim(), signature);
+      setBalanceCents(data.balanceCents);
+      setResult(data);
+      setShowRecovery(false);
+    } catch (err) {
+      setRecoverError(err.message || 'Could not recover that payment');
+    } finally {
+      setRecovering(false);
     }
   };
 
@@ -207,6 +256,34 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                 <Icons.wallet className="h-4 w-4" />
                 {buying ? 'Confirm in your wallet…' : wallet.address ? `Pay $${(amountCents / 100).toFixed(2)}` : 'Connect Wallet & Pay'}
               </button>
+
+              <div className="mt-6 pt-5 border-t border-white/10">
+                {!showRecovery ? (
+                  <button onClick={() => setShowRecovery(true)} className="w-full text-xs text-gray-500 hover:text-gray-300 transition">
+                    Already paid but didn't get credited?
+                  </button>
+                ) : (
+                  <div>
+                    <p className="text-xs text-gray-400 mb-2">
+                      If USDG already left your wallet but the page closed before it confirmed, paste that transaction's hash below and we'll check the chain again — nothing is charged twice.
+                    </p>
+                    <input
+                      value={recoverHash}
+                      onChange={(e) => setRecoverHash(e.target.value)}
+                      placeholder="0x…"
+                      className="w-full px-4 py-2.5 rounded-full bg-white/5 border border-white/10 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-brand-pink/60 mb-2"
+                    />
+                    {recoverError && <p className="text-xs text-red-400 mb-2">{recoverError}</p>}
+                    <button
+                      onClick={recover}
+                      disabled={recovering || !recoverHash.trim()}
+                      className="w-full py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 text-xs font-semibold transition disabled:opacity-50"
+                    >
+                      {recovering ? 'Checking…' : 'Verify this transaction'}
+                    </button>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>

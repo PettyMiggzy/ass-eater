@@ -26,9 +26,20 @@ export async function getServerSideProps({ req }) {
 // Checkout spends from the fan's credits balance -- no wallet, no on-chain
 // step here at all. The only place a wallet is ever involved is /credits,
 // converting real USDG into that balance once. See pages/credits.js.
+function newIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function CartPage({ sessionUser }) {
   const cart = useCart();
   const [balanceCents, setBalanceCents] = useState(null);
+  // One key per checkout ATTEMPT, not per render -- generated once and
+  // reused across retries of the same submission (a network drop, a
+  // double-click before the button's disabled state lands), so the server
+  // can tell "resending the same attempt" apart from "starting a new one".
+  // A fresh key is only minted after a successful checkout clears the cart.
+  const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey);
   const [address, setAddress] = useState({});
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [tosAccepted, setTosAccepted] = useState(false);
@@ -65,6 +76,7 @@ export default function CartPage({ sessionUser }) {
           shippingAddress: cart.needsShipping ? address : undefined,
           ageConfirmed,
           tosAccepted,
+          idempotencyKey,
         }),
       });
       const data = await res.json();
@@ -72,6 +84,7 @@ export default function CartPage({ sessionUser }) {
       setPaidOrders(data.orders);
       setBalanceCents(data.balanceCents);
       cart.clear();
+      setIdempotencyKey(newIdempotencyKey());
     } catch (err) {
       setPayError(err.message || 'Payment failed');
     } finally {
@@ -89,9 +102,14 @@ export default function CartPage({ sessionUser }) {
           <p className="text-gray-400 text-sm mb-8">
             {paidOrders.length} {paidOrders.length === 1 ? 'order has' : 'orders have'} been placed. Digital items are unlocked now; physical items ship once the creator confirms your address.
           </p>
-          <a href="/marketplace" className="inline-block px-6 py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition">
-            Keep browsing
-          </a>
+          <div className="flex items-center justify-center gap-3">
+            <a href="/marketplace" className="inline-block px-6 py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition">
+              Keep browsing
+            </a>
+            <a href="/orders" className="inline-block px-6 py-3 rounded-full border border-white/15 hover:bg-white/5 font-bold text-sm transition">
+              View orders
+            </a>
+          </div>
         </div>
       </div>
     );
@@ -108,9 +126,12 @@ export default function CartPage({ sessionUser }) {
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-3xl font-black">Your Cart</h1>
             {sessionUser && (
-              <a href="/credits" className="text-xs text-gray-400 hover:text-brand-pink transition">
-                Balance: <span className="font-bold text-white">{balanceCents === null ? '…' : formatCredits(balanceCents)}</span>
-              </a>
+              <div className="flex items-center gap-4">
+                <a href="/orders" className="text-xs text-gray-400 hover:text-brand-pink transition">Order history</a>
+                <a href="/credits" className="text-xs text-gray-400 hover:text-brand-pink transition">
+                  Balance: <span className="font-bold text-white">{balanceCents === null ? '…' : formatCredits(balanceCents)}</span>
+                </a>
+              </div>
             )}
           </div>
 

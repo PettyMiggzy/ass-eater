@@ -81,6 +81,12 @@ export default function SiteNav({ signedIn = false, viewerAvatar = null, viewerH
           <SolidIcons.heart className="h-4 w-4" />
         </a>
 
+        {signedIn && (
+          <a href="/orders" title="Your orders" className="hidden sm:block shrink-0 text-xs text-gray-400 hover:text-brand-pink transition">
+            Orders
+          </a>
+        )}
+
         <a href="/cart" title="Cart" className="relative shrink-0 w-9 h-9 rounded-full border border-white/10 flex items-center justify-center text-gray-300 hover:text-brand-pink hover:border-brand-pink/50 transition">
           <Icons.cart className="h-4 w-4" />
           {cart.items.length > 0 && (

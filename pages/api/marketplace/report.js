@@ -1,5 +1,9 @@
 import { getVerifiedSessionUserId } from '../../../lib/session';
 import { addReport } from '../../../lib/reports-store';
+import { consumeAttempt } from '../../../lib/rate-limit';
+
+const MAX_REPORTS = 20;
+const WINDOW_MS = 60 * 1000;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -10,8 +14,17 @@ export default async function handler(req, res) {
   if (!uid) return res.status(401).json({ error: 'Log in to report a listing' });
 
   const { listingId, reason } = req.body || {};
-  if (!listingId || !reason || !reason.trim()) {
+  if (!listingId || typeof reason !== 'string' || !reason.trim()) {
     return res.status(400).json({ error: 'Missing listing id or reason' });
+  }
+
+  const { limited, retryAfterSeconds } = consumeAttempt(`marketplace-report:user:${uid}`, {
+    limit: MAX_REPORTS,
+    windowMs: WINDOW_MS,
+  });
+  if (limited) {
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({ error: 'You are reporting too quickly. Give it a moment.' });
   }
 
   try {
@@ -23,6 +36,7 @@ export default async function handler(req, res) {
     });
     return res.status(200).json({ ok: true, report });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[marketplace/report] unexpected error:', err);
+    return res.status(500).json({ error: 'internal' });
   }
 }

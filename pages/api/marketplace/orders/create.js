@@ -19,12 +19,22 @@ export default async function handler(req, res) {
   const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to place an order' });
 
-  const { items: cartItems, shippingAddress, ageConfirmed, tosAccepted } = req.body || {};
+  const { items: cartItems, shippingAddress, ageConfirmed, tosAccepted, idempotencyKey } = req.body || {};
   if (!Array.isArray(cartItems) || cartItems.length === 0) {
     return res.status(400).json({ error: 'Cart is empty' });
   }
   if (ageConfirmed !== true || tosAccepted !== true) {
     return res.status(400).json({ error: 'Age confirmation and Marketplace Terms acceptance are both required' });
+  }
+
+  // A cart can't legitimately contain the same listing twice -- there's
+  // nothing to "quantity 2" here, every listing is its own item. Rejecting
+  // this up front (rather than relying only on the atomic claim inside the
+  // transaction below) gives a clear error instead of a generic
+  // "just sold to someone else" for what's actually a client bug.
+  const ids = cartItems.map((it) => String(it.listingId));
+  if (new Set(ids).size !== ids.length) {
+    return res.status(400).json({ error: 'Your cart has a duplicate item in it -- remove it and try again.' });
   }
 
   // Re-price and re-validate every item against the CURRENT stored listing --
@@ -73,16 +83,22 @@ export default async function handler(req, res) {
         priceCents: listing.priceCents,
         shippingCents: listing.kind === 'physical' ? listing.shippingCents : 0,
         kind: listing.kind,
+        unlimited: !!listing.unlimited,
+        title: listing.title,
         signatureRequired: listing.signatureRequired,
         shippingAddress,
       })),
       ageConfirmed,
       tosAccepted,
+      idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey.slice(0, 200) : undefined,
     });
     const newBalance = await getBalanceCents(uid);
     return res.status(200).json({ ok: true, orders, balanceCents: newBalance });
   } catch (err) {
     if (err.code === INSUFFICIENT_BALANCE) return res.status(402).json({ error: 'Not enough credits' });
-    return res.status(500).json({ error: err.message });
+    if (err.code === 'LISTING_UNAVAILABLE') return res.status(409).json({ error: err.message });
+    if (err.code === 'DUPLICATE_CHECKOUT') return res.status(409).json({ error: err.message });
+    console.error('[marketplace/orders/create] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong placing your order. Check your order history before trying again.' });
   }
 }

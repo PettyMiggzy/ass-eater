@@ -1,5 +1,6 @@
 import { createCreator } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
+import { validateTextFields } from '../../../lib/field-validation';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -18,6 +19,13 @@ export default async function handler(req, res) {
   if ('id' in profile) {
     return res.status(400).json({ error: 'id is assigned automatically and cannot be set' });
   }
+
+  // Same crash class as pages/api/admin/profile.js -- this writes a brand
+  // new creator's name/handle/bio straight through with no type check at
+  // all, and a non-string value here 500s /search and /creators the moment
+  // this creator is publicly visible.
+  const invalid = validateTextFields(profile, ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress', 'img']);
+  if (invalid) return res.status(400).json({ error: invalid });
 
   try {
     const creator = await createCreator(profile);

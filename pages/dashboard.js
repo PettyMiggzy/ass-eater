@@ -46,6 +46,9 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
   const [payoutAmount, setPayoutAmount] = useState('');
   const [payoutBusy, setPayoutBusy] = useState(false);
   const [payoutMsg, setPayoutMsg] = useState('');
+  const [ledger, setLedger] = useState(null);
+  const [payoutHistory, setPayoutHistory] = useState(null);
+  const [showActivity, setShowActivity] = useState(false);
   const [draft, setDraft] = useState({
     name: initialCreator?.name || '',
     handle: initialCreator?.handle || '',
@@ -89,6 +92,14 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
       .catch(() => {});
   }, [creator]);
 
+  // Loaded once activity is actually opened, not on every dashboard visit --
+  // a creator who never clicks "Recent activity" shouldn't pay for two extra
+  // fetches just for landing on their own dashboard.
+  const loadActivity = () => {
+    fetch('/api/credits/ledger').then((r) => r.json()).then((d) => setLedger(d.entries || [])).catch(() => setLedger([]));
+    fetch('/api/credits/payout-status').then((r) => r.json()).then((d) => setPayoutHistory(d.requests || [])).catch(() => setPayoutHistory([]));
+  };
+
   const requestCashOut = async () => {
     setPayoutMsg('');
     const cents = Math.round(Number(payoutAmount) * 100);
@@ -108,6 +119,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
       setBalanceCents(data.balanceCents);
       setPayoutAmount('');
       setPayoutMsg(`Requested — $${(cents / 100).toFixed(2)} in USDG is on its way to your saved wallet.`);
+      if (payoutHistory !== null) loadActivity(); // keep an already-open history list in sync with the request just made
     } catch (err) {
       setPayoutMsg(err.message);
     } finally {
@@ -580,7 +592,11 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   Fans pay you in credits with no wallet needed on their end. Cash out to the wallet address saved above —
                   real USDG is sent to you by hand once requested (usually within a day), never automatically.
                 </p>
-                {!creator?.walletAddress ? (
+                {isRestricted ? (
+                  <p className="text-xs text-red-400">
+                    Cash-outs are disabled while your account is {creatorStatus} — this is enforced server-side either way, but shown here so it's not a surprise after typing an amount.
+                  </p>
+                ) : !creator?.walletAddress ? (
                   <p className="text-xs text-brand-gold">Add a payout wallet address above and save your profile before cashing out.</p>
                 ) : (
                   <div className="flex flex-wrap items-center gap-2">
@@ -588,9 +604,10 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                       value={payoutAmount}
                       onChange={(e) => setPayoutAmount(e.target.value)}
                       placeholder="Amount ($)"
+                      disabled={isRestricted}
                       className="px-4 py-2.5 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm w-40"
                     />
-                    <button onClick={requestCashOut} disabled={payoutBusy || !balanceCents} className="premium-button text-sm disabled:opacity-50">
+                    <button onClick={requestCashOut} disabled={payoutBusy || !balanceCents || isRestricted} className="premium-button text-sm disabled:opacity-50">
                       {payoutBusy ? 'Requesting…' : 'Cash Out'}
                     </button>
                     {balanceCents > 0 && (
@@ -604,6 +621,56 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   </div>
                 )}
                 {payoutMsg && <p className="text-xs text-gray-400 mt-3">{payoutMsg}</p>}
+
+                <button
+                  onClick={() => { const next = !showActivity; setShowActivity(next); if (next && ledger === null) loadActivity(); }}
+                  className="text-xs text-brand-pink hover:underline mt-4"
+                >
+                  {showActivity ? 'Hide' : 'Show'} recent activity & cash-out history
+                </button>
+
+                {showActivity && (
+                  <div className="mt-4 grid sm:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs font-bold tracking-widest text-gray-500 mb-2">RECENT ACTIVITY</p>
+                      {ledger === null ? (
+                        <p className="text-xs text-gray-500">Loading…</p>
+                      ) : !ledger.length ? (
+                        <p className="text-xs text-gray-500">Nothing yet.</p>
+                      ) : (
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                          {ledger.map((e) => (
+                            <div key={e.id} className="flex items-center justify-between text-xs bg-black/20 rounded-lg px-3 py-2">
+                              <span className="text-gray-400 truncate pr-2">{e.type.replace(/_/g, ' ')}</span>
+                              <span className={`font-bold shrink-0 ${e.amountCents >= 0 ? 'text-green-400' : 'text-gray-300'}`}>
+                                {e.amountCents >= 0 ? '+' : ''}{formatCredits(e.amountCents)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold tracking-widest text-gray-500 mb-2">CASH-OUT HISTORY</p>
+                      {payoutHistory === null ? (
+                        <p className="text-xs text-gray-500">Loading…</p>
+                      ) : !payoutHistory.length ? (
+                        <p className="text-xs text-gray-500">No cash-out requests yet.</p>
+                      ) : (
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                          {payoutHistory.map((r) => (
+                            <div key={r.id} className="flex items-center justify-between text-xs bg-black/20 rounded-lg px-3 py-2">
+                              <span className="text-gray-400">{formatCredits(r.amountCents)}</span>
+                              <span className={`font-bold shrink-0 ${r.status === 'paid' ? 'text-green-400' : 'text-brand-gold'}`}>
+                                {r.status === 'paid' ? 'Paid' : 'Pending'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <hr className="border-brand-purple/20" />
