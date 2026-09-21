@@ -61,12 +61,7 @@ export async function getServerSideProps({ req }) {
     for (const t of Array.isArray(l.tags) ? l.tags : []) tagCounts[t] = (tagCounts[t] || 0) + 1;
   }
   const allTags = Object.keys(tagCounts).sort();
-  // Same rule for content-type counts in the sidebar -- computed from the
-  // same classification the client-side filter uses (kindOf below), never a
-  // guessed or hardcoded number.
-  const kindCounts = { all: active.length, photo: 0, video: 0, physical: 0 };
-  for (const l of active) kindCounts[kindOf(l)] += 1;
-  return { props: { listings: active, allTags, tagCounts, kindCounts, sessionUser, paymentsLive: marketplacePaymentsLive(), stableSymbol: getMarketplacePaymentConfig().stableSymbol } };
+  return { props: { listings: active, allTags, sessionUser, paymentsLive: marketplacePaymentsLive(), stableSymbol: getMarketplacePaymentConfig().stableSymbol } };
 }
 
 // Shared by the server-side counts above and the client-side filter below --
@@ -91,7 +86,7 @@ const SORTS = [
   { value: 'price-high', label: 'Price: High to Low' },
 ];
 
-export default function Marketplace({ listings, allTags, tagCounts, kindCounts, sessionUser, paymentsLive, stableSymbol }) {
+export default function Marketplace({ listings, allTags, sessionUser, paymentsLive, stableSymbol }) {
   const cart = useCart();
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
@@ -139,29 +134,54 @@ export default function Marketplace({ listings, allTags, tagCounts, kindCounts, 
 
   // Filters are derived, never stored -- a listing's kind/media is the source
   // of truth, so a mislabelled chip can't hide a real listing permanently.
-  const byKind = listings.filter((l) => {
-    if (kind === 'all') return true;
-    if (kind === 'physical') return l.kind === 'physical';
-    if (kind === 'video') return l.media?.[0]?.type === 'video';
+  //
+  // Written as independent predicates (one per filter dimension) rather than
+  // a fixed chain, specifically so the sidebar's counts can be computed
+  // correctly: a facet's own count has to reflect every OTHER active filter
+  // but not itself, or picking "Video" and then looking at the tag list
+  // shows tag counts computed before "Video" was ever applied -- a number
+  // that visibly disagrees with what clicking the tag actually returns.
+  const matchesKind = (l, k) => {
+    if (k === 'all') return true;
+    if (k === 'physical') return l.kind === 'physical';
+    if (k === 'video') return l.media?.[0]?.type === 'video';
     return l.kind !== 'physical' && l.media?.[0]?.type !== 'video';
-  });
-  const byText = q.trim()
-    ? byKind.filter((l) => l.title.toLowerCase().includes(q.toLowerCase()) || (l.description || '').toLowerCase().includes(q.toLowerCase()))
-    : byKind;
-  const byCreator = creatorQ.trim()
-    ? byText.filter((l) => l.creatorName.toLowerCase().includes(creatorQ.trim().toLowerCase()))
-    : byText;
-  const byTag = tag ? byCreator.filter((l) => Array.isArray(l.tags) && l.tags.includes(tag)) : byCreator;
-  const byPrice = byTag.filter((l) => (l.priceCents || 0) <= maxPriceCents);
+  };
+  const matchesText = (l) =>
+    !q.trim() || l.title.toLowerCase().includes(q.toLowerCase()) || (l.description || '').toLowerCase().includes(q.toLowerCase());
+  const matchesCreator = (l) => !creatorQ.trim() || l.creatorName.toLowerCase().includes(creatorQ.trim().toLowerCase());
+  const matchesTag = (l, t) => !t || (Array.isArray(l.tags) && l.tags.includes(t));
+  const matchesPrice = (l) => (l.priceCents || 0) <= maxPriceCents;
+
+  const filtered0 = listings.filter(
+    (l) => matchesKind(l, kind) && matchesText(l) && matchesCreator(l) && matchesTag(l, tag) && matchesPrice(l),
+  );
   // 'newest' needs no re-sort -- `listings` already arrives in that order
   // (Founding Creators first, then newest) from getServerSideProps, and
   // re-deriving it here would mean two places agreeing on one ordering.
   const filtered =
     sort === 'price-low'
-      ? [...byPrice].sort((a, b) => (a.priceCents || 0) - (b.priceCents || 0))
+      ? [...filtered0].sort((a, b) => (a.priceCents || 0) - (b.priceCents || 0))
       : sort === 'price-high'
-      ? [...byPrice].sort((a, b) => (b.priceCents || 0) - (a.priceCents || 0))
-      : byPrice;
+      ? [...filtered0].sort((a, b) => (b.priceCents || 0) - (a.priceCents || 0))
+      : filtered0;
+
+  // Faceted counts: every OTHER active filter applied, that facet's own
+  // filter left off -- so "how many if I picked this" is always accurate,
+  // including under compound filters (a kind + a tag + a search term at once).
+  const kindCounts = { all: 0, photo: 0, video: 0, physical: 0 };
+  for (const l of listings) {
+    if (matchesText(l) && matchesCreator(l) && matchesTag(l, tag) && matchesPrice(l)) {
+      kindCounts.all += 1;
+      kindCounts[kindOf(l)] += 1;
+    }
+  }
+  const tagCounts = {};
+  for (const t of allTags) {
+    tagCounts[t] = listings.filter(
+      (l) => matchesKind(l, kind) && matchesText(l) && matchesCreator(l) && matchesTag(l, t) && matchesPrice(l),
+    ).length;
+  }
 
   return (
     <>

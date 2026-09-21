@@ -150,6 +150,12 @@ function Svg({ children, className }) {
  * rather than drawn.
  */
 export const Icons = {
+  bell: (p) => (
+    <Svg {...p}>
+      <path d="M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6.5H4c.5-1 2-2.5 2-6.5z" {...STROKE} />
+      <path d="M10 19a2 2 0 0 0 4 0" {...STROKE} />
+    </Svg>
+  ),
   video: (p) => (
     <Svg {...p}>
       <rect x="2.5" y="6.5" width="13" height="11" rx="2.5" {...STROKE} />
