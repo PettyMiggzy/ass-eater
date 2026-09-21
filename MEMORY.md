@@ -4175,13 +4175,32 @@ audit fix build repeat") and found a 7th real bug immediately:**
   server-only RPC URL check) so the Buy/recovery buttons can't render
   enabled in a config state the server would 501.
 
-**Running total: 9 audit passes, 7 real bugs found and fixed.** Passes 7
-and 8 were clean; pass 9 (after the founder asked to keep going) found
-another real one. The lesson holding up across this whole cycle: a clean
-pass means "nothing found by that pass's specific angle," not "nothing
-left" -- the same underlying invariant (a sold one-of-a-kind listing must
-stay sold) had TWO separate enforcement points (checkout and edit) and
-only one was covered by the original fix. Every fix has a regression test
-where the bug was DB-testable (`lib/credits.test.mjs`, 42 tests) or was
-verified against a real build; nothing here was taken on faith from a
-single audit's say-so.
+Passes 10 and 11 came back clean -- pass 10 specifically re-applied the
+"multiple enforcement points" lesson from pass 9 by checking, invariant by
+invariant, whether `checkout_idempotency`, `used_payment_tx`,
+`payout_requests.status`, and `credit_balances`'s non-negativity each have
+exactly one real writer with no bypass (all confirmed single-writer, no
+gaps), and re-verified the moderated-'removed' reactivation guard still
+works independently of the new sold-guard in the same function. Pass 11
+covered admin bulk/destructive operations (delete/delete-all correctly
+distinguish seed vs. real creators, cascade correctly so a deleted
+creator's listings vanish from every public surface), physical order
+fulfillment (`markOrderShipped`'s `kind='physical'` check is baked into
+the UPDATE's own WHERE clause, not a pre-check -- a digital order can
+never be marked shipped by construction), the separate
+`creator/submit.js` onboarding path (confirmed still intentionally
+disconnected from login, not silently fixed or broken), and a full
+rate-limit key-namespace audit across every `consumeAttempt` key added
+this session (no collision possible -- confirmed by literal string
+comparison, not sampling).
+
+**Running total: 11 audit passes, 7 real bugs found and fixed, closing on
+two consecutive clean passes (10 and 11).** The lesson that held up across
+the whole cycle: a clean pass means "nothing found by that pass's specific
+angle," not "nothing left" -- the sold-listing bug (pass 9) existed because
+the same underlying invariant had two separate enforcement points
+(checkout, fixed early; edit, missed until explicitly hunted for) and only
+one was covered by the original fix. Every fix has a regression test where
+the bug was DB-testable (`lib/credits.test.mjs`, 42 tests) or was verified
+against a real build; nothing here was taken on faith from a single
+audit's say-so.
