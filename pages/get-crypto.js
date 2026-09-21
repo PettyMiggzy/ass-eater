@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Head from 'next/head';
+import { marketplacePaymentsLive } from '../lib/marketplace-payment-config';
 
 const ROBINHOOD_CHAIN = {
   chainId: '0x1237', // 4663 in hex
@@ -9,7 +10,16 @@ const ROBINHOOD_CHAIN = {
   blockExplorerUrls: ['https://robinhoodchain.blockscout.com'],
 };
 
-export default function GetCrypto() {
+// Was hardcoded "not live yet" text with no config check at all, unlike
+// every other page that mentions this flow (marketplace.js, credits.js) --
+// it would have kept saying that even after payments went live, directly
+// contradicting /credits' real, working buy-credits flow on the same
+// onboarding journey.
+export async function getServerSideProps() {
+  return { props: { paymentsLive: marketplacePaymentsLive() } };
+}
+
+export default function GetCrypto({ paymentsLive }) {
   const [status, setStatus] = useState('');
 
   const addNetwork = async () => {
@@ -128,17 +138,22 @@ export default function GetCrypto() {
             </div>
 
             {/* Step 4 */}
-            <div className="premium-card p-6 opacity-75">
+            <div className={`premium-card p-6 ${paymentsLive ? '' : 'opacity-75'}`}>
               <div className="flex items-center gap-3 mb-3">
                 <span className="w-8 h-8 rounded-full bg-brand-purple/40 text-white font-black flex items-center justify-center shrink-0">4</span>
                 <h2 className="font-black text-lg">Buy credits on OnlyOne</h2>
               </div>
               <p className="text-gray-300 text-sm">
-                Once payments are live, your dashboard will show a unique deposit address — send your USDG
-                there and it becomes credits, ready to subscribe, tip, and unlock. One credit is one dollar,
-                less a 2% purchase fee, so $100 lands as 98 credits. This step launches with the platform's
-                payment system — not live yet.
+                Head to the <a href="/credits" className="text-brand-pink underline">Credits</a> page, connect
+                your wallet, and pay with USDG — it becomes credits, ready to subscribe, tip, and unlock. One
+                credit is one dollar, less a 2% purchase fee, so $100 lands as 98 credits.
+                {!paymentsLive && ' This step isn’t configured yet.'}
               </p>
+              {paymentsLive && (
+                <a href="/credits" className="premium-button inline-block mt-4 text-sm">
+                  Buy Credits
+                </a>
+              )}
             </div>
           </div>
 

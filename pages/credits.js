@@ -276,7 +276,7 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                     {recoverError && <p className="text-xs text-red-400 mb-2">{recoverError}</p>}
                     <button
                       onClick={recover}
-                      disabled={recovering || !recoverHash.trim()}
+                      disabled={recovering || !recoverHash.trim() || !paymentsLive}
                       className="w-full py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 text-xs font-semibold transition disabled:opacity-50"
                     >
                       {recovering ? 'Checking…' : 'Verify this transaction'}
