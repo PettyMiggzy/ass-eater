@@ -42,6 +42,48 @@ export async function earlyAccessFilter(viewerId: string | null) {
   };
 }
 
+/**
+ * Charges a fan for a PPV post and records the unlock. Exported (not inlined
+ * in the route) so the double-click race below is directly testable against
+ * a real Postgres connection, with no Fastify harness needed.
+ *
+ * Caller must already have confirmed `post.visibility === 'PPV'` and that
+ * the fan hasn't already unlocked it -- that pre-check is a cheap, common
+ * path, but it does NOT close the race: two concurrent requests can both
+ * pass it before either commits.
+ */
+export async function unlockPost(fanId: string, post: { id: string; creatorId: string; priceCents: number }) {
+  try {
+    return await money(prisma, async (tx) => {
+      await tx.postUnlock.create({ data: { fanId, postId: post.id } });
+      const r = await charge(tx, { fanId, creatorId: post.creatorId, grossCents: post.priceCents, type: 'PPV', refId: post.id });
+      return { ok: true, ...r };
+    });
+  } catch (e: any) {
+    // A genuine double-click: two concurrent requests both passed the
+    // caller's pre-check before either had created its row. The loser hits
+    // the unique constraint on (fanId, postId), which rolls its whole
+    // transaction back -- same P2002 race live.ts already handles for
+    // ticket/minute purchases.
+    //
+    // The re-read below MUST run on the plain `prisma` client, never on
+    // `tx`: Postgres aborts an entire transaction after any statement error
+    // until it's rolled back, so a second query against the same `tx` here
+    // would itself throw 25P02 ("current transaction is aborted") instead
+    // of returning the row -- the first version of this fix made exactly
+    // that mistake and never actually closed the race, it just traded a
+    // raw P2002 for a raw 25P02. `money()` has already rolled the
+    // transaction back by the time this catch runs, so `prisma` is a fresh
+    // connection and free to query normally. See
+    // posts.unlock-race.test.ts for a real-Postgres regression proving
+    // this against the wrong (tx-based) version.
+    if (e.code !== 'P2002') throw e;
+    const bought = await prisma.postUnlock.findUnique({ where: { fanId_postId: { fanId, postId: post.id } } });
+    if (!bought) throw e;
+    return { ok: true, already: true };
+  }
+}
+
 export const posts: FastifyPluginAsync = async (app) => {
   app.post('/', { preHandler: app.creatorOk }, async (req) => {
     const b = z.object({
@@ -85,31 +127,10 @@ export const posts: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:id/unlock', { preHandler: app.auth }, async (req: any, reply) => {
-    return money(prisma, async (tx) => {
-      const p = await tx.post.findUniqueOrThrow({ where: { id: req.params.id } });
-      if (p.visibility !== 'PPV' || p.removed) return reply.code(400).send({ error: 'not_ppv' });
-      const already = await tx.postUnlock.findUnique({ where: { fanId_postId: { fanId: req.user.id, postId: p.id } } });
-      if (already) return { ok: true, already: true };
-      try {
-        await tx.postUnlock.create({ data: { fanId: req.user.id, postId: p.id } });
-      } catch (e: any) {
-        // A genuine double-click: two concurrent requests both passed the
-        // `already` check above before either had created its row. The
-        // loser hits the unique constraint on (fanId, postId) -- same P2002
-        // race live.ts already handles for ticket/minute purchases. Never
-        // trust the error code alone as proof this fan already paid (a
-        // *different* fan can't collide on this row at all, since it's
-        // keyed by fanId, but re-reading is what live.ts's own comment
-        // insists on and it costs nothing here either): confirm the row
-        // exists before treating this as success rather than a real error.
-        if (e.code !== 'P2002') throw e;
-        const bought = await tx.postUnlock.findUnique({ where: { fanId_postId: { fanId: req.user.id, postId: p.id } } });
-        if (!bought) throw e;
-        return { ok: true, already: true };
-      }
-      const r = await charge(tx, { fanId: req.user.id, creatorId: p.creatorId, grossCents: p.priceCents, type: 'PPV', refId: p.id });
-      return { ok: true, ...r };
-    });
+    const p = await prisma.post.findUniqueOrThrow({ where: { id: req.params.id } });
+    if (p.visibility !== 'PPV' || p.removed) return reply.code(400).send({ error: 'not_ppv' });
+    if (await prisma.postUnlock.findUnique({ where: { fanId_postId: { fanId: req.user.id, postId: p.id } } })) return { ok: true, already: true };
+    return unlockPost(req.user.id, p);
   });
 
   app.delete('/:id', { preHandler: app.auth }, async (req: any) => {

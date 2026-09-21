@@ -8,6 +8,32 @@ import { notifyDmReceived } from '../core/notify';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
+/**
+ * Charges a fan for a priced message and records the unlock. Exported (not
+ * inlined in the route) so the double-click race below is directly
+ * testable against a real Postgres connection, mirroring
+ * posts.ts's `unlockPost` -- see that function's comment for why the
+ * re-read on P2002 has to run on `prisma`, never on the failed `tx`.
+ *
+ * Caller must already have confirmed the fan hasn't unlocked this message
+ * yet -- that pre-check is cheap and common, but does NOT close the race:
+ * two concurrent requests can both pass it before either commits.
+ */
+export async function unlockMessage(fanId: string, message: { id: string; senderId: string; priceCents: number }) {
+  try {
+    return await money(prisma, async (tx) => {
+      await tx.messageUnlock.create({ data: { fanId, messageId: message.id } });
+      const r = await charge(tx, { fanId, creatorId: message.senderId, grossCents: message.priceCents, type: 'MESSAGE_UNLOCK', refId: message.id });
+      return { ok: true, ...r };
+    });
+  } catch (e: any) {
+    if (e.code !== 'P2002') throw e;
+    const bought = await prisma.messageUnlock.findUnique({ where: { fanId_messageId: { fanId, messageId: message.id } } });
+    if (!bought) throw e;
+    return { ok: true, already: true };
+  }
+}
+
 export const messages: FastifyPluginAsync = async (app) => {
   app.get('/conversations', { preHandler: app.auth }, async (req) => {
     const convs = await prisma.conversation.findMany({
@@ -149,27 +175,13 @@ export const messages: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:id/unlock', { preHandler: app.auth }, async (req: any, reply) => {
-    return money(prisma, async (tx) => {
-      const m = await tx.message.findUniqueOrThrow({ where: { id: req.params.id }, include: { conversation: true } });
-      if (m.priceCents === 0 || m.senderId === req.user.id) return reply.code(400).send({ error: 'not_locked' });
-      if (![m.conversation.aId, m.conversation.bId].includes(req.user.id)) return reply.code(403).send({ error: 'forbidden' });
-      if (await tx.messageUnlock.findUnique({ where: { fanId_messageId: { fanId: req.user.id, messageId: m.id } } })) return { ok: true, already: true };
-      try {
-        await tx.messageUnlock.create({ data: { fanId: req.user.id, messageId: m.id } });
-      } catch (e: any) {
-        // Same double-click race as posts.ts's /unlock, closed the same way
-        // live.ts already does for ticket/minute purchases: a P2002 here
-        // means a concurrent request won the create first, so re-read this
-        // fan's own row before treating it as a real success.
-        if (e.code !== 'P2002') throw e;
-        const bought = await tx.messageUnlock.findUnique({ where: { fanId_messageId: { fanId: req.user.id, messageId: m.id } } });
-        if (!bought) throw e;
-        return { ok: true, already: true };
-      }
-      const r = await charge(tx, { fanId: req.user.id, creatorId: m.senderId, grossCents: m.priceCents, type: 'MESSAGE_UNLOCK', refId: m.id });
-      await publish(m.senderId, { type: 'unlock', messageId: m.id, by: req.user.id, ...r });
-      return { ok: true, ...r };
-    });
+    const m = await prisma.message.findUniqueOrThrow({ where: { id: req.params.id }, include: { conversation: true } });
+    if (m.priceCents === 0 || m.senderId === req.user.id) return reply.code(400).send({ error: 'not_locked' });
+    if (![m.conversation.aId, m.conversation.bId].includes(req.user.id)) return reply.code(403).send({ error: 'forbidden' });
+    if (await prisma.messageUnlock.findUnique({ where: { fanId_messageId: { fanId: req.user.id, messageId: m.id } } })) return { ok: true, already: true };
+    const result = await unlockMessage(req.user.id, m);
+    await publish(m.senderId, { type: 'unlock', messageId: m.id, by: req.user.id, ...result });
+    return result;
   });
 
   // Mass DM to all active subscribers (huge OF revenue feature: paid mass PPV drops)
