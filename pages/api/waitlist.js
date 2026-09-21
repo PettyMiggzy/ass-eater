@@ -61,6 +61,13 @@ export default async function handler(req, res) {
     });
     return res.status(200).json({ ok: true });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    // addToWaitlist's own defense-in-depth checks (already validated above
+    // via isValidWaitlistEmail/normalizeWaitlistRole, so not normally
+    // reachable) -- anything else is an unexpected DB failure.
+    if (err.message === 'A valid email address is required' || err.message === 'Tell us whether you are joining as a fan or a creator') {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('[waitlist] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

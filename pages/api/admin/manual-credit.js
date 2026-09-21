@@ -58,8 +58,14 @@ export default async function handler(req, res) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });
     if (err.code === 'SENDER_MISMATCH') return res.status(400).json({ error: `That transaction was not sent from ${fromAddress}.` });
-    if (err.code) return res.status(400).json({ error: err.message });
+    // Same fix as pages/api/credits/buy.js: enumerate the actual known-safe
+    // codes lib/chain-verify.js can throw rather than a bare `if (err.code)`,
+    // which would also match a Postgres SQLSTATE or an RPC network error's
+    // code and leak that raw text to whoever holds the admin key.
+    if (['BAD_HASH', 'NOT_CONFIRMED', 'TX_REVERTED', 'NO_MATCHING_TRANSFER'].includes(err.code)) {
+      return res.status(400).json({ error: err.message, code: err.code });
+    }
     console.error('[admin/manual-credit] unexpected error:', err);
-    return res.status(500).json({ error: 'internal' });
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

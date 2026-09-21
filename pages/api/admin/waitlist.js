@@ -44,7 +44,9 @@ export default async function handler(req, res) {
       await removeFromWaitlist(id);
       return res.status(200).json({ ok: true });
     } catch (err) {
-      return res.status(404).json({ error: err.message });
+      if (err.message === 'Not on the list') return res.status(404).json({ error: err.message });
+      console.error('[admin/waitlist] unexpected error:', err);
+      return res.status(500).json({ error: 'Something went wrong. Please try again.' });
     }
   }
 

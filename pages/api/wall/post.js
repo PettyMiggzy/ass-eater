@@ -46,6 +46,8 @@ export default async function handler(req, res) {
     const post = await addWallPost({ creatorId, authorId: uid, authorName: await displayNameFor(user), text });
     return res.status(200).json({ ok: true, post });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    if (err.message === 'Comment cannot be empty') return res.status(400).json({ error: err.message });
+    console.error('[wall/post] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

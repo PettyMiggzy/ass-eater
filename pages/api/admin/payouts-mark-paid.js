@@ -18,6 +18,12 @@ export default async function handler(req, res) {
     const request = await markPayoutPaid(id, txHash);
     return res.status(200).json({ ok: true, request });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    // markPayoutPaid's own deliberately-thrown, safe errors -- anything
+    // else is an unexpected DB failure and shouldn't reach the client as-is.
+    if (err.message === 'A real transaction hash is required to mark a payout paid' || err.message === 'Payout request not found or already paid') {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('[admin/payouts-mark-paid] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

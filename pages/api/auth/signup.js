@@ -151,6 +151,20 @@ export default async function handler(req, res) {
       user: { id: user.id, email: user.email, role: user.role, creatorId },
     });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    // 23505 here can only be the creator handle-uniqueness index (lib/db.js)
+    // -- createUser() already converts ITS OWN email collision into a plain,
+    // friendly Error with no .code (see lib/users-store.js), so any raw
+    // Postgres constraint violation reaching here is the handle, not the
+    // email. Reported the same friendly way me/profile.js and
+    // admin/profile.js already do for the identical constraint, rather than
+    // as a raw "duplicate key value violates unique constraint ..." message.
+    if (err && err.code === '23505') {
+      return res.status(409).json({ error: 'That handle is already taken. Pick another.' });
+    }
+    if (err.message === 'An account with that email already exists') {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('[auth/signup] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

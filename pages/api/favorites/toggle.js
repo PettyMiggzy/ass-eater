@@ -16,6 +16,9 @@ export default async function handler(req, res) {
     const result = await toggleFavorite(uid, creatorId);
     return res.status(200).json({ ok: true, ...result });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    // toggleFavorite throws nothing of its own -- anything caught here is
+    // an unexpected DB failure.
+    console.error('[favorites/toggle] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

@@ -23,6 +23,10 @@ export default async function handler(req, res) {
     await deleteWallPost(id, uid, { isWallOwner });
     return res.status(200).json({ ok: true });
   } catch (err) {
-    return res.status(403).json({ error: err.message });
+    if (err.message === 'Not authorized to delete this comment' || err.message === 'Comment not found') {
+      return res.status(err.message === 'Comment not found' ? 404 : 403).json({ error: err.message });
+    }
+    console.error('[wall/delete] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }

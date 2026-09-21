@@ -48,6 +48,10 @@ export default async function handler(req, res) {
     const conversation = await sendMessage(uid, toUserId, text);
     return res.status(200).json({ ok: true, conversation });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    if (err.message === 'Message cannot be empty' || err.message === 'Cannot message yourself') {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('[messages/send] unexpected error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 }
