@@ -4827,3 +4827,58 @@ is the entire fix, and the wrong one compiles, typechecks, and passes
 every test that doesn't specifically exercise concurrency (this repo has
 no such test for `live.ts` either, so the working pattern there was
 never proven by its own test suite -- only by this newer test, indirectly).
+
+## A dedicated bypass link for payment-processor site review (2026-09-21)
+
+Founder: payment processors want to check the site out to see what they can
+do -- give them their own link, full access, no gate.
+
+**Built `pages/api/age-verify/reviewer.js`, a straight copy of the existing
+`owner.js` bypass under its own key.** Same signed-cookie mechanism, same
+404-on-failure shape (never confirms the endpoint exists), same per-IP
+guessing budget -- but a separate env var (`REVIEWER_ACCESS_KEY`, not
+`OWNER_ACCESS_KEY`) and a separate rate-limit namespace
+(`reviewer-access:ip:`), so it can be rotated or pulled the instant a review
+is done without touching the owner's own daily-use bypass, and a decoded
+token's `via: 'reviewer'` (vs `via: 'owner'`) tells the two apart. This is
+the same shape CCBill/Epoch/Segpay/Vendo already require before they'll even
+look at an application (a live, working site) -- see this file's earlier
+§2257/processor-research notes -- so a processor's own reviewer, not just
+the founder, needed a way in.
+
+**Generated the key myself: `REVIEWER_ACCESS_KEY` = 32 random bytes,
+base64url** (`node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`),
+handed to the founder in chat, never committed to the repo. Deliberately NOT
+a memorable passphrase like the owner's `Ahria12` -- this one is typed once
+by a third party off a link, not recalled from memory, so there's no reason
+to trade entropy for memorability the way the owner-key conversation did.
+
+**This session had no Vercel API access** (the Vercel MCP connector was
+unavailable), unlike earlier points in this history where secrets were set
+directly. **`REVIEWER_ACCESS_KEY` is NOT yet set in Vercel production** --
+the founder needs to add it himself as a Secret (Vercel dashboard -> the
+`onlyass` project -> Settings -> Environment Variables) before the link
+works on the live site. Until it's set, the endpoint 404s on every request,
+same as `owner.js` does when `OWNER_ACCESS_KEY` is unset -- a deployment
+missing the var has no bypass, not a guessable one.
+
+The link itself, once the key is set: `https://www.joinonlyone.com/api/age-verify/reviewer?key=<REVIEWER_ACCESS_KEY>`
+-- redirects to `/home` with a signed 180-day cookie. **Cookies are
+host-scoped** (recorded above for the owner key, same rule applies): that
+link only grants access on joinonlyone.com/www.joinonlyone.com. If a
+processor also needs to review shoponeonly.com or another mirror, give them
+the same link with that domain swapped in -- one key, revisited per host.
+
+**Verified end-to-end against a real `next start` server on a local scratch
+Postgres**, not just read over: a wrong key 404s; the correct key sets the
+`oa_age_verified` cookie and 302s to `/home`; a Texas (blocked-state)
+visitor with no cookie gets the blocked-region content; the same visitor
+with the reviewer cookie reaches the real `/home` page (confirmed via the
+page's own `__NEXT_DATA__`, not just a status code).
+
+**Practical note for whoever hands this out:** share the link only with the
+specific person reviewing it, over a channel that isn't public (their
+onboarding won't need it forwarded around), and rotate
+`REVIEWER_ACCESS_KEY` in Vercel once the review is done rather than leaving
+a standing bypass live indefinitely -- same "rotate rather than trust it
+stays private" posture already recorded for the owner key.
