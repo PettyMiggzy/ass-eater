@@ -4989,3 +4989,107 @@ Also worth keeping: the SOS confirmation states the first Business Entity
 Report is due 2 years after registration and every other year after that --
 missing it risks administrative dissolution. Not urgent, but real, and
 easy to lose track of two years out.
+
+## `server/` deployed for real, on its own dedicated droplet (2026-09-22)
+
+Founder: "so deploy server then man lets cook." This is the big
+Postgres/Fastify/Redis stack this file has described as "built, not
+deployed" for weeks (subscriptions, DMs, VIP, live streaming, referrals,
+token burns, SES notifications) -- as of today it's live.
+
+**`api.joinonlyone.com` -> `137.184.29.10`**, a fresh 2GB/2vCPU DigitalOcean
+droplet (`ubuntu-s-2vcpu-2gb-nyc1`), real TLS via Certbot (expires
+2026-12-21, auto-renews). Verified end-to-end, not just "the deploy script
+finished": `GET /health` returns real `{"ok":true}` over HTTPS from outside
+the box, and `GET /messages/conversations` correctly 401s unauthenticated --
+confirming auth is wired up, not just that something answers on the port.
+
+**Deliberately a separate, dedicated droplet, not the founder's existing
+`206.189.216.202` or `138.68.248.211` boxes.** The `206` box turned out to
+be unreachable (an SSH key mismatch, never resolved -- may be worth
+tracking down and decommissioning later if it's not used for anything).
+`138` was ruled out on inspection: it's already running unrelated trading-
+bot infrastructure with real wallet keys sitting as plaintext files in
+`~` (`wallets.env`, `funder.env`, `trader3.keys.bak`, etc.). Putting
+OnlyOne's own treasury private key on that same box would mean one
+compromise takes both down together -- not worth the blast radius for the
+cost of one more $18/mo droplet.
+
+**Two real, previously-undetected bugs found and fixed only because this
+was the first time anyone ran the actual compiled output with plain
+`node`, not `tsc --noEmit` or `vitest`:**
+
+1. **`deposit-indexer.ts`'s `assertTokenDecimals()` threw unconditionally
+   on the unconfigured `$ONLYONE` token address at worker startup** --
+   since all workers share one process (`workers/index.ts`), this would
+   have taken down renewals, payouts, and every other worker along with
+   it, every single boot, until the token actually launches. Fixed:
+   `WATCHED_TOKENS` (`lib/chain.ts`) now only includes ONLYONE once
+   `ONLYONE_TOKEN_ADDRESS` is actually set; stablecoin deposit tracking
+   (the part that's real today) is unaffected either way.
+2. **The whole compiled app couldn't actually run under Node at all.**
+   `tsconfig.json` used `moduleResolution: "Bundler"` -- correct for a
+   bundler that resolves extension-less imports itself, wrong for `node
+   dist/index.js` run directly, which is exactly what `onlyone-api.service`
+   does. `tsc` and `vitest` both stayed green throughout this whole
+   project because neither ever executes the compiled `dist/` output --
+   the first thing that did was the seed script on the real droplet,
+   which immediately hit `ERR_MODULE_NOT_FOUND`. Switched to `NodeNext`/
+   `NodeNext`, which enforces Node's real resolution rules at compile time,
+   and fixed everything it then surfaced: explicit `.js` extensions added
+   to every relative import across 39 files (including `workers/index.ts`'s
+   bare side-effect imports, which the first automated pass missed since
+   it only matched `from '...'` and not bare `import '...'`), `'./modules'`
+   -> `'./modules/index.js'` (directory imports need the explicit index
+   file under NodeNext), and `ioredis`'s default-export interop broke
+   under the new resolution -- switched to the named `Redis` export.
+   **Verified against the actual compiled output**, not just a clean
+   build: ran `node dist/index.js` and hit its real `/health` endpoint,
+   ran `node dist/workers/index.js` and confirmed all 7 workers boot
+   clean, ran the seed script for real. 120 server tests still pass.
+   **Also fixed the ethers-vs-viem build failure from the same deploy**
+   (`v4-pool-state.ts` imported `ethers`, which was never a dependency --
+   this repo uses viem everywhere else; rewritten against viem's
+   `encodeAbiParameters`/`keccak256`/`concat`/`pad`/`toHex`, same 7 tests
+   still pass with identical output).
+
+**Neither bug was catchable by anything this session had been running.**
+Every earlier "179/207/242 tests pass, `next build` clean" claim in this
+file was true and still didn't cover this, because none of it ever ran the
+actual production entrypoint the way systemd does. Worth remembering for
+any future backend deploy in this repo: `tsc --noEmit` and a test suite
+that runs against TS source directly are not proof the compiled output
+runs -- only actually running it is.
+
+**Treasury wallet: the founder's own existing key, not a generated one**,
+his explicit call ("i dont want treadury wallet being out of my control"),
+typed directly into the droplet's `.env` via `read -s` (never pasted into
+chat, never touched shell history) and confirmed by deriving and checking
+its public address before writing it. `DEPOSIT_MNEMONIC` is still blank --
+safe to leave blank (it's only read lazily, per-call, not at module load,
+unlike the treasury key) and not urgent since nothing depends on it until
+deposits are actually being derived per-user; a real decision for later,
+not an oversight.
+
+**Not done yet, real next steps, in rough priority order:**
+- `RPC_URL`, `USDC_ADDRESS`/stablecoin config, and `ONLYONE_TOKEN_ADDRESS`
+  are still template/placeholder values in this droplet's `.env` -- the
+  deposit indexer and payout worker are running but have nothing real to
+  index or pay out yet. Needs the same "verify the real contract address
+  yourself before setting it" care this file has flagged before.
+- `DEPOSIT_MNEMONIC` -- generate for real once ready to derive real
+  per-user deposit addresses.
+- SES (`EMAIL_PROVIDER=ses`, `EMAIL_FROM`, AWS credentials) -- AWS already
+  granted production access (recorded above), but nothing's configured on
+  this droplet yet. Creator DM notifications are silent until this is set.
+- S3/Bunny CDN, Sumsub KYC, LiveKit -- none configured; media upload,
+  creator KYC, and live streaming are all still inert on this stack.
+- The Next.js site on Vercel and this new `server/` stack are still two
+  completely separate systems with separate data models -- nothing on
+  joinonlyone.com talks to `api.joinonlyone.com` yet. Wiring the frontend
+  to actually use this backend (or deciding which parts of each stack own
+  what) is a real, undecided next step, not assumed.
+- The `206.189.216.202` droplet's access issue was never resolved, only
+  routed around -- worth a deliberate decision on whether to decommission
+  it or fix access to it, rather than leaving an unreachable box running
+  indefinitely.
