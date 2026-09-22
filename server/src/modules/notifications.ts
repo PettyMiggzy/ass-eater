@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { mailConfigured } from '../lib/mailer';
+import { prisma } from '../lib/prisma.js';
+import { mailConfigured } from '../lib/mailer.js';
 
 /**
  * The creator's notification inbox.

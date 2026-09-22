@@ -1,10 +1,10 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { parseUnits } from 'viem';
-import { prisma } from '../lib/prisma';
-import { charge, money } from '../core/ledger';
-import { getUsdPrice } from '../lib/price';
-import { DECIMALS } from '../lib/chain';
+import { prisma } from '../lib/prisma.js';
+import { charge, money } from '../core/ledger.js';
+import { getUsdPrice } from '../lib/price.js';
+import { DECIMALS } from '../lib/chain.js';
 
 const PERIOD_MS = 30 * 864e5;
 

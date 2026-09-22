@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
-import { prisma } from '../lib/prisma';
-import { verifySnsMessage, SnsMessage } from '../lib/sns-verify';
+import { prisma } from '../lib/prisma.js';
+import { verifySnsMessage, SnsMessage } from '../lib/sns-verify.js';
 
 /**
  * Where SES's bounce and complaint notifications actually land.

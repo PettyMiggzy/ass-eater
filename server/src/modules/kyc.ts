@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../lib/prisma.js';
 
 const SS = { base: process.env.SUMSUB_BASE_URL!, token: process.env.SUMSUB_APP_TOKEN!, secret: process.env.SUMSUB_SECRET_KEY!, level: process.env.SUMSUB_LEVEL ?? 'creator-kyc', webhook: process.env.SUMSUB_WEBHOOK_SECRET! };
 

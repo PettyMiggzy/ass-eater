@@ -1,9 +1,9 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { money, post, PLATFORM_ID } from '../core/ledger';
-import { deleteObject } from '../lib/s3';
-import { recordManualBurn } from '../core/vip';
+import { prisma } from '../lib/prisma.js';
+import { money, post, PLATFORM_ID } from '../core/ledger.js';
+import { deleteObject } from '../lib/s3.js';
+import { recordManualBurn } from '../core/vip.js';
 
 export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));

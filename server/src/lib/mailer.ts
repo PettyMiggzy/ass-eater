@@ -37,7 +37,7 @@
  * provider is not a guarantee, which is the whole reason for this seam.
  */
 
-import { prisma } from './prisma';
+import { prisma } from './prisma.js';
 
 export type MailResult =
   | { sent: true; provider: string }

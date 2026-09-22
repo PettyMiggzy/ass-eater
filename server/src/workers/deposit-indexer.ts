@@ -1,10 +1,10 @@
 import { Worker } from 'bullmq';
 import { formatUnits, parseEther } from 'viem';
-import { prisma } from '../lib/prisma';
-import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, depositWalletClient, treasury, treasuryClient, erc20Abi, assertTokenDecimals } from '../lib/chain';
-import { getUsdPrice, rawToUsdCents } from '../lib/price';
-import { money, post, creditDeposit } from '../core/ledger';
-import { publish, sweepQueue, connection } from '../lib/redis';
+import { prisma } from '../lib/prisma.js';
+import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, depositWalletClient, treasury, treasuryClient, erc20Abi, assertTokenDecimals } from '../lib/chain.js';
+import { getUsdPrice, rawToUsdCents } from '../lib/price.js';
+import { money, post, creditDeposit } from '../core/ledger.js';
+import { publish, sweepQueue, connection } from '../lib/redis.js';
 
 const BATCH = 1000n;
 const TRACK_NATIVE_ETH = process.env.TRACK_NATIVE_ETH === 'true';

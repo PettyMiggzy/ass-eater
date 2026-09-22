@@ -1,10 +1,10 @@
 import { Worker } from 'bullmq';
 import { parseUnits } from 'viem';
-import { prisma } from '../lib/prisma';
-import { publicClient, treasuryClient, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi } from '../lib/chain';
-import { getUsdPrice } from '../lib/price';
-import { money, post, PLATFORM_ID } from '../core/ledger';
-import { publish, connection } from '../lib/redis';
+import { prisma } from '../lib/prisma.js';
+import { publicClient, treasuryClient, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi } from '../lib/chain.js';
+import { getUsdPrice } from '../lib/price.js';
+import { money, post, PLATFORM_ID } from '../core/ledger.js';
+import { publish, connection } from '../lib/redis.js';
 
 new Worker('payout', async (job) => {
   const p = await prisma.payout.findUniqueOrThrow({ where: { id: job.data.payoutId } });

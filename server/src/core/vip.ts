@@ -1,4 +1,4 @@
-import { PLATFORM_ID, lockBalance, post, InsufficientFunds, isVip, type Tx , postPlatformRevenue} from './ledger';
+import { PLATFORM_ID, lockBalance, post, InsufficientFunds, isVip, type Tx , postPlatformRevenue} from './ledger.js';
 
 export { isVip };
 

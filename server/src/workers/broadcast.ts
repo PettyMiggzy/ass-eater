@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
-import { prisma } from '../lib/prisma';
-import { publish, connection } from '../lib/redis';
+import { prisma } from '../lib/prisma.js';
+import { publish, connection } from '../lib/redis.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 

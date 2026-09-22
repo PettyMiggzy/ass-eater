@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
-import { prisma } from '../lib/prisma';
-import { money } from '../core/ledger';
-import { subscribeVip, getVipStatus } from '../core/vip';
+import { prisma } from '../lib/prisma.js';
+import { money } from '../core/ledger.js';
+import { subscribeVip, getVipStatus } from '../core/vip.js';
 
 /**
  * VIP: $20/month, sold on perks alone -- early access, priority, status.

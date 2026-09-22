@@ -2,10 +2,10 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { AccessToken, RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk';
-import { prisma } from '../lib/prisma';
-import { charge, money } from '../core/ledger';
-import { isSubscribed } from '../core/access';
-import { sub } from '../lib/redis';
+import { prisma } from '../lib/prisma.js';
+import { charge, money } from '../core/ledger.js';
+import { isSubscribed } from '../core/access.js';
+import { sub } from '../lib/redis.js';
 
 const LK = { host: process.env.LIVEKIT_HOST!, key: process.env.LIVEKIT_API_KEY!, secret: process.env.LIVEKIT_API_SECRET! };
 

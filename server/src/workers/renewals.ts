@@ -1,9 +1,9 @@
 import { Worker } from 'bullmq';
 import { randomUUID } from 'crypto';
-import { prisma } from '../lib/prisma';
-import { charge, money, InsufficientFunds } from '../core/ledger';
-import { renewalQueue, publish, connection, redis } from '../lib/redis';
-import { PERIOD_MS } from '../modules/subscriptions';
+import { prisma } from '../lib/prisma.js';
+import { charge, money, InsufficientFunds } from '../core/ledger.js';
+import { renewalQueue, publish, connection, redis } from '../lib/redis.js';
+import { PERIOD_MS } from '../modules/subscriptions.js';
 
 await renewalQueue.add('tick', {}, { repeat: { every: 5 * 60_000 }, jobId: 'renewals-tick', removeOnComplete: true });
 

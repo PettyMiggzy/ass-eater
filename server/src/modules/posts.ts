@@ -1,8 +1,8 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { charge, money, isVip } from '../core/ledger';
-import { canViewPost } from '../core/access';
+import { prisma } from '../lib/prisma.js';
+import { charge, money, isVip } from '../core/ledger.js';
+import { canViewPost } from '../core/access.js';
 
 // strip locked media down to preview thumbnails, and locked text down to a
 // teaser that can never be the whole thing

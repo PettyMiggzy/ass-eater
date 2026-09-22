@@ -1,12 +1,12 @@
 import Fastify from 'fastify';
-import { configureSes } from './lib/mail-ses';
+import { configureSes } from './lib/mail-ses.js';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
-import { authPlugin } from './plugins/auth';
-import * as m from './modules';
+import { authPlugin } from './plugins/auth.js';
+import * as m from './modules/index.js';
 
 const app = Fastify({ logger: true, bodyLimit: 1_000_000 });
 await app.register(cors, { origin: process.env.WEB_ORIGIN, credentials: true });

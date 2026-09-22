@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../lib/prisma.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const age = (dob: Date) => Math.floor((Date.now() - dob.getTime()) / 31_557_600_000);

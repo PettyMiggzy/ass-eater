@@ -1,8 +1,8 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { charge, money, FEES } from '../core/ledger';
-import { publish } from '../lib/redis';
+import { prisma } from '../lib/prisma.js';
+import { charge, money, FEES } from '../core/ledger.js';
+import { publish } from '../lib/redis.js';
 import { nanoid } from 'nanoid';
 
 export const tips: FastifyPluginAsync = async (app) => {

@@ -1,5 +1,5 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
-import { registerMailTransport } from './mailer';
+import { registerMailTransport } from './mailer.js';
 
 /**
  * Amazon SES transport.

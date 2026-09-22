@@ -1,6 +1,6 @@
-import { money } from '../core/ledger';
-import { prisma } from '../lib/prisma';
-import { closeAuction } from '../core/auctions';
+import { money } from '../core/ledger.js';
+import { prisma } from '../lib/prisma.js';
+import { closeAuction } from '../core/auctions.js';
 
 // Auctions are time-sensitive (a bidder expects the item within seconds of
 // the clock hitting zero, not whenever an hourly cron gets to it), so this

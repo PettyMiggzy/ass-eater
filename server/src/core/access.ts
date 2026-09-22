@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma';
+import { prisma } from '../lib/prisma.js';
 
 export async function isSubscribed(fanId: string, creatorId: string) {
   if (fanId === creatorId) return true;

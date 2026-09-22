@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { charge, money } from '../core/ledger';
+import { prisma } from '../lib/prisma.js';
+import { charge, money } from '../core/ledger.js';
 
 export const PERIOD_MS = 30 * 864e5;
 

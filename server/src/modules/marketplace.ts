@@ -1,9 +1,9 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, isVip, FEES , postPlatformRevenue} from '../core/ledger';
-import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION } from '../core/marketplace-fees';
-import { placeBid } from '../core/auctions';
+import { prisma } from '../lib/prisma.js';
+import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, isVip, FEES , postPlatformRevenue} from '../core/ledger.js';
+import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION } from '../core/marketplace-fees.js';
+import { placeBid } from '../core/auctions.js';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 // Physical orders pay the creator at purchase time, same as digital -- no

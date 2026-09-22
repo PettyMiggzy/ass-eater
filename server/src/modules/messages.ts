@@ -1,10 +1,10 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
-import { charge, money, isVip, FEES } from '../core/ledger';
-import { canViewMessage, isSubscribed } from '../core/access';
-import { publish, sub, broadcastQueue } from '../lib/redis';
-import { notifyDmReceived } from '../core/notify';
+import { prisma } from '../lib/prisma.js';
+import { charge, money, isVip, FEES } from '../core/ledger.js';
+import { canViewMessage, isSubscribed } from '../core/access.js';
+import { publish, sub, broadcastQueue } from '../lib/redis.js';
+import { notifyDmReceived } from '../core/notify.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 

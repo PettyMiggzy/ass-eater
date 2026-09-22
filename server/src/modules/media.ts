@@ -1,11 +1,11 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
-import { prisma } from '../lib/prisma';
-import { presignPut, headObject, cdnSignedUrl, cdnPublicUrl } from '../lib/s3';
-import { transcodeQueue } from '../lib/redis';
-import { canViewMedia } from '../core/access';
-import { getOrCreateWatermarkedUrl, traceCode } from '../lib/watermark';
+import { prisma } from '../lib/prisma.js';
+import { presignPut, headObject, cdnSignedUrl, cdnPublicUrl } from '../lib/s3.js';
+import { transcodeQueue } from '../lib/redis.js';
+import { canViewMedia } from '../core/access.js';
+import { getOrCreateWatermarkedUrl, traceCode } from '../lib/watermark.js';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm']);
 const MAX_BYTES = 4 * 1024 ** 3;

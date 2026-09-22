@@ -1,5 +1,5 @@
-import { post, lockBalance, PLATFORM_ID, InsufficientFunds, type Tx , postPlatformRevenue} from './ledger';
-import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION } from './marketplace-fees';
+import { post, lockBalance, PLATFORM_ID, InsufficientFunds, type Tx , postPlatformRevenue} from './ledger.js';
+import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION } from './marketplace-fees.js';
 
 // eBay-style auctions on the marketplace. Bids settle in the USD-backed
 // balanceCents pool ONLY -- never the $ONLYONE discount pool. A bid has to

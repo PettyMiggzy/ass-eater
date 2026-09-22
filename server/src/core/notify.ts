@@ -1,5 +1,5 @@
-import { prisma } from '../lib/prisma';
-import { sendNotificationMail } from '../lib/mailer';
+import { prisma } from '../lib/prisma.js';
+import { sendNotificationMail } from '../lib/mailer.js';
 
 /**
  * Record that a creator should know about something, then try to email them.

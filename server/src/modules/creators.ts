@@ -1,9 +1,9 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../lib/prisma.js';
 import { isAddress } from 'viem';
-import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, postPlatformRevenue, getTopSupporters } from '../core/ledger';
-import { isSubscribed } from '../core/access';
+import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, postPlatformRevenue, getTopSupporters } from '../core/ledger.js';
+import { isSubscribed } from '../core/access.js';
 
 export const creators: FastifyPluginAsync = async (app) => {
   // Creator-only analytics -- see the privacy note on getTopSupporters() for

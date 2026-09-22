@@ -1,7 +1,7 @@
 import { parseAbi, type Address } from 'viem';
-import { prisma } from '../lib/prisma';
-import { publicClient, treasury, treasuryClient, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi } from '../lib/chain';
-import { impactBpsOf, selectHedgedDeposits } from './treasury-hedge-math';
+import { prisma } from '../lib/prisma.js';
+import { publicClient, treasury, treasuryClient, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi } from '../lib/chain.js';
+import { impactBpsOf, selectHedgedDeposits } from './treasury-hedge-math.js';
 
 // Fans can deposit $ONLYONE to burn for VIP (core/vip.ts). That balance is
 // booked in fixed USD cents at the price on the day it arrived, but the tokens

@@ -1,9 +1,9 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { isAddress } from 'viem';
-import { prisma } from '../lib/prisma';
-import { money, lockBalance, post, PLATFORM_ID, FEES, InsufficientFunds , postPlatformRevenue} from '../core/ledger';
-import { payoutQueue } from '../lib/redis';
+import { prisma } from '../lib/prisma.js';
+import { money, lockBalance, post, PLATFORM_ID, FEES, InsufficientFunds , postPlatformRevenue} from '../core/ledger.js';
+import { payoutQueue } from '../lib/redis.js';
 
 export const payouts: FastifyPluginAsync = async (app) => {
   app.post('/', { preHandler: app.creatorOk }, async (req, reply) => {

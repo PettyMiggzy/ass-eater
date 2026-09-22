@@ -1,7 +1,7 @@
-import { publicClient } from './chain';
-import { redis } from './redis';
+import { publicClient } from './chain.js';
+import { redis } from './redis.js';
 import { parseAbi, type Address } from 'viem';
-import { computePoolId, poolStateSlot, decodeSlot0 } from './v4-pool-state';
+import { computePoolId, poolStateSlot, decodeSlot0 } from './v4-pool-state.js';
 
 const chainlinkAbi = parseAbi(['function latestRoundData() view returns (uint80,int256 answer,uint256,uint256 updatedAt,uint80)']);
 const univ3Abi = parseAbi(['function slot0() view returns (uint160 sqrtPriceX96,int24,uint16,uint16,uint16,uint8,bool)']);

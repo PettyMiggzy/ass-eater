@@ -5,9 +5,9 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { prisma } from '../lib/prisma';
-import { s3, BUCKET } from '../lib/s3';
-import { connection } from '../lib/redis';
+import { prisma } from '../lib/prisma.js';
+import { s3, BUCKET } from '../lib/s3.js';
+import { connection } from '../lib/redis.js';
 
 const run = promisify(execFile);
 const ct = (f: string) => f.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : f.endsWith('.ts') ? 'video/mp2t' : 'image/jpeg';

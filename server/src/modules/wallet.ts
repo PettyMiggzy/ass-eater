@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
-import { prisma } from '../lib/prisma';
-import { CHAIN_ID, depositAccount, TOKENS } from '../lib/chain';
-import { getUsdPrice } from '../lib/price';
+import { prisma } from '../lib/prisma.js';
+import { CHAIN_ID, depositAccount, TOKENS } from '../lib/chain.js';
+import { getUsdPrice } from '../lib/price.js';
 
 // Namespace for the Postgres advisory lock that serialises deposit-address
 // allocation (see POST /deposit-address). Arbitrary -- it only has to not

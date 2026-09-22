@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import { createHash } from 'crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { s3, BUCKET } from './s3';
+import { s3, BUCKET } from './s3.js';
 
 // Leak-deterrent watermark: a tiled, semi-transparent mark burned into the
 // pixels themselves, showing the viewer's username and a short code that

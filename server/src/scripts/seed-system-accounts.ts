@@ -1,5 +1,5 @@
-import { prisma } from '../lib/prisma';
-import { PLATFORM_ID } from '../core/ledger';
+import { prisma } from '../lib/prisma.js';
+import { PLATFORM_ID } from '../core/ledger.js';
 
 // The ledger posts platform fees to PLATFORM_ID as an ordinary Account row --
 // it needs a real User row to hang off of first. Idempotent, safe to run on

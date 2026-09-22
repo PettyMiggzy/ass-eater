@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin';
 import jwt from '@fastify/jwt';
 import type { Role } from '@prisma/client';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../lib/prisma.js';
 
 declare module '@fastify/jwt' { interface FastifyJWT { user: { id: string; role: Role } } }
 declare module 'fastify' {

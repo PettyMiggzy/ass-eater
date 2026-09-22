@@ -1,7 +1,7 @@
 import { parseAbi, parseUnits, type Address } from 'viem';
-import { prisma } from '../lib/prisma';
-import { publicClient, treasuryClient, treasury, TOKENS, HEDGE_STABLE, erc20Abi } from '../lib/chain';
-import { getUsdPrice } from '../lib/price';
+import { prisma } from '../lib/prisma.js';
+import { publicClient, treasuryClient, treasury, TOKENS, HEDGE_STABLE, erc20Abi } from '../lib/chain.js';
+import { getUsdPrice } from '../lib/price.js';
 
 /**
  * Buys $ONLYONE on the open market with VIP revenue and destroys it.
