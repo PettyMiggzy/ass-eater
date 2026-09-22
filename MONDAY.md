@@ -15,7 +15,7 @@ that is the one change that cannot be undone once pushed.
 
 | Item | Status |
 |---|---|
-| **Articles of Organization**, Only One LLC | **Filed 2026-09-19. PENDING.** Indiana SOS reviewing. Online filings normally clear in 1–2 business days, and the SOS does not process over the weekend — so Monday at the earliest. |
+| **Articles of Organization**, Only One LLC | **APPROVED 2026-09-22.** Indiana SOS confirmation received (signed by Secretary of State Diego Morales). Only One LLC is now a real, registered Indiana entity. |
 | Entity type | Single-member Indiana LLC, member-managed |
 | Registered agent | The founder, at the principal office address (on the filing) |
 | **EIN** | **Issued** (CP 575 G, dated 2026-09-18). Entity name on the IRS line is `ONLY ONE` — two words, no "LLC". Banks and processors match that string exactly; "OnlyOne" or "OnlyOne LLC" is a different name and causes verification mismatches. |
@@ -25,17 +25,22 @@ that is the one change that cannot be undone once pushed.
 
 ---
 
-## Blocked until SOS approval lands
+## Unblocked now that SOS approval landed
 
-1. **Indiana DOR tax registration (BT-1)** — needs the approved SOS Business
-   ID, which does not exist yet. This is what issues the Retail Merchant
-   Certificate for marketplace sales tax.
-2. **Business bank account** — bring the EIN letter + the *approved* Articles.
-   Tell the bank what the business actually is, upfront. A bank that finds
-   out later freezes the account; that pattern is already recorded in
-   `MEMORY.md` and applies to processors too.
+1. **Indiana DOR tax registration (BT-1)** — was waiting on the approved SOS
+   Business ID; that ID now exists (see the SOS confirmation received
+   2026-09-22). This is what issues the Retail Merchant Certificate for
+   marketplace sales tax. Register at in.gov/dor.
+2. **Business bank account** — bring the EIN letter + the now-*approved*
+   Articles. Tell the bank what the business actually is, upfront. A bank
+   that finds out later freezes the account; that pattern is already
+   recorded in `MEMORY.md` and applies to processors too.
+3. The SOS confirmation itself flags a real, recurring obligation worth not
+   losing track of: **the first Business Entity Report is due 2 years after
+   registration, then every other year after that** — missing it risks
+   administrative dissolution/revocation. Not urgent now, but real.
 
-Monday sequence: confirm SOS approval → BT-1 at in.gov/dor → bank.
+Sequence: BT-1 at in.gov/dor → bank.
 
 ---
 

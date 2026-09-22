@@ -4882,3 +4882,68 @@ onboarding won't need it forwarded around), and rotate
 `REVIEWER_ACCESS_KEY` in Vercel once the review is done rather than leaving
 a standing bypass live indefinitely -- same "rotate rather than trust it
 stays private" posture already recorded for the owner key.
+
+**Follow-up the same day: the reviewer link didn't work, and the real cause
+was bigger than the link.** Vercel MCP access came back mid-session, so
+`REVIEWER_ACCESS_KEY` was set directly (Secret, production) instead of
+staying a founder to-do -- and a redeploy was triggered from the existing
+production deployment (`dpl_5iyjgAjoS9ByMfgk9KSHsVAcd7rx` -> new
+`dpl_5VpCqCvAR7BQkLhAfdzDBWAstnQY`) since Vercel does not apply a new env
+var to an already-built deployment.
+
+**Found while doing that: `PREVIEW_ACCESS_KEY` is still set in Vercel
+production**, and its own saved comment says exactly why that's wrong --
+*"Temporary preview-gate key for founder review of mock creator data,
+2026-09-20. Remove or clear after review to fully reopen the public site."*
+It was never removed. **This directly contradicts the 2026-09-20 "Site went
+live with signups closed" entry above, which says this key was deleted --
+it was re-added afterward for a one-off review and left on.** While it's
+set, `previewModeEnabled()` (`lib/preview-access.js`) is true, and every
+page outside the small `PREVIEW_PUBLIC_PATHS` allowlist -- which does NOT
+include `/home`, `/creators`, `/marketplace`, `/search`, `/login`, `/signup`,
+or anything else a real visitor would land on -- serves `/coming-soon`
+instead of the real site. **Verified directly against the live production
+site with curl, not assumed:** the reviewer link's age-verification cookie
+sets correctly and passes the geoblock check, but `/home` still serves
+`/coming-soon` because the preview gate runs first and blocks it
+independently. **This means the live site has been showing "coming soon" to
+ordinary visitors since whenever this was re-armed, not just to the
+processor reviewer** -- a real, currently-live regression from the founder's
+own 2026-09-20 "make sight live" instruction, not a new decision.
+
+**Flagged to the founder, not removed unilaterally.** Deleting
+`PREVIEW_ACCESS_KEY` is what actually reopens the site (to everyone, not
+just the reviewer), but it's a site-wide visibility change, not scoped to
+this one task, so it was surfaced as a question rather than acted on in the
+same pass that added the reviewer key. Awaiting a yes before deleting it and
+redeploying.
+
+## AWS moved SES out of the sandbox; Only One LLC is officially registered (2026-09-22)
+
+Two pieces of real news forwarded by the founder, neither requiring code:
+
+**AWS granted SES production access.** Confirmation email: 50,000
+messages/day quota, 14/sec max send rate, moved out of the sandbox,
+effective immediately in us-east-1. This directly closes the one blocker
+`server/`'s already-built mailer (`lib/mail-ses.ts`, `EMAIL_PROVIDER=ses`
+gate, recorded above 2026-09-20) was waiting on -- "notifications to real
+creators will silently go nowhere until this is granted" no longer applies.
+**Still true and unchanged: `server/` is not deployed anywhere**, so this
+doesn't touch the live Vercel site. Once `server/` does deploy, whoever
+configures it needs `EMAIL_PROVIDER=ses`, `EMAIL_FROM`, `AWS_REGION`, and
+real AWS credentials in that runtime -- not Vercel. Domain identity
+verification (ideally `onlyone1.fun` via DKIM, not just one address) is
+still worth doing before real volume goes out, per the standing AWS-side
+checklist already recorded.
+
+**Indiana approved Only One LLC's Articles of Organization, 2026-09-22.**
+Confirmation from the Indiana SOS (signed by Secretary of State Diego
+Morales) -- the entity is no longer PENDING, it's real and registered.
+`MONDAY.md` updated to match. This unblocks the two things that were
+waiting on it: Indiana DOR tax registration (BT-1, needs the now-real SOS
+Business ID) and the business bank account (needs the *approved* Articles,
+not just the filed ones). Both are non-code, founder-side next steps.
+Also worth keeping: the SOS confirmation states the first Business Entity
+Report is due 2 years after registration and every other year after that --
+missing it risks administrative dissolution. Not urgent, but real, and
+easy to lose track of two years out.
