@@ -3,6 +3,7 @@ import { z } from 'zod';
 import argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma.js';
+import { verifyBridgeToken } from '../lib/bridge.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const age = (dob: Date) => Math.floor((Date.now() - dob.getTime()) / 31_557_600_000);
@@ -39,6 +40,47 @@ export const auth: FastifyPluginAsync = async (app) => {
     const { email, password } = z.object({ email: z.string(), password: z.string() }).parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
     if (!user || !(await argon2.verify(user.passwordHash, password))) return reply.code(401).send({ error: 'bad_credentials' });
+    if (user.status === 'BANNED') return reply.code(403).send({ error: 'banned' });
+    return issue(user);
+  });
+
+  // Exchanges a short-lived signed assertion from the Next.js site
+  // (joinonlyone.com) for a real server/ session, auto-provisioning a
+  // matching User row on first use. See lib/bridge.ts for why this uses its
+  // own secret rather than sharing either system's login secret.
+  //
+  // Joined on email, which for a Next.js FAN account is not necessarily a
+  // real email address -- that site deliberately lets fans sign up with a
+  // bare username instead (see MEMORY.md), and this join just carries
+  // whatever string it stored, same as server/'s own /register does for a
+  // real address. Nothing here validates its shape.
+  app.post('/bridge', { config: { rateLimit: { max: 30, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    const { token } = z.object({ token: z.string() }).parse(req.body);
+    const claims = verifyBridgeToken(token);
+    if (!claims) return reply.code(401).send({ error: 'invalid_bridge_token' });
+
+    let user = await prisma.user.findUnique({ where: { email: claims.email } });
+    if (!user) {
+      // The Next.js site's username and this system's are separate
+      // namespaces that can collide by coincidence (two different people).
+      // Disambiguate deterministically rather than fail the whole bridge
+      // over a username clash.
+      let username = claims.username;
+      if (await prisma.user.findUnique({ where: { username } })) {
+        username = `${claims.username}-${claims.uid.slice(0, 8)}`;
+      }
+      user = await prisma.user.create({
+        data: {
+          email: claims.email, username, role: claims.role,
+          // Bridged accounts never log in directly with a password -- this
+          // hash is unusable (nobody knows it, and /login only accepts a
+          // password matching argon2.verify, never bypassed for these rows).
+          passwordHash: await argon2.hash(randomBytes(32).toString('hex')),
+          account: { create: {} },
+          creator: claims.role === 'CREATOR' ? { create: { displayName: claims.username } } : undefined,
+        },
+      });
+    }
     if (user.status === 'BANNED') return reply.code(403).send({ error: 'banned' });
     return issue(user);
   });

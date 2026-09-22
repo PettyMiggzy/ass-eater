@@ -135,7 +135,16 @@ model User {
   passwordHash String
   role         Role       @default(FAN)
   status       UserStatus @default(ACTIVE)
-  dob          DateTime
+  // Nullable: real accounts created via POST /register always have one (age-
+  // gated there, see modules/auth.ts). Accounts auto-provisioned through the
+  // bridge from the Next.js site do not -- that site never collects a DOB at
+  // signup (self-reported 18+ checkbox + AgeChecker.Net only), and inventing
+  // one here would be fabricating exactly the kind of compliance-relevant
+  // fact this codebase has repeatedly refused to fake elsewhere (see
+  // MEMORY.md: sanitizeAge throws rather than guessing, the §2257 custodian
+  // address was never invented). Nothing outside modules/auth.ts's own
+  // /register route reads this field.
+  dob          DateTime?
   kycStatus    KycStatus  @default(NONE)
   kycRef       String? // provider applicant id (2257-adjacent record pointer)
   referredById String?
