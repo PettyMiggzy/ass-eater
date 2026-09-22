@@ -1,4 +1,4 @@
-import { AbiCoder, keccak256, concat, zeroPadValue, toBeHex } from 'ethers';
+import { encodeAbiParameters, parseAbiParameters, keccak256, concat, pad, toHex, type Hex } from 'viem';
 
 // Uniswap V4 has no per-pool contract to call slot0() on -- pool state lives
 // packed into the singleton PoolManager's storage, read via extsload(). This
@@ -13,17 +13,17 @@ const POOLS_SLOT = 6n;
 
 /** PoolId = keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks)) -- see v4-core's PoolId.toId(). */
 export function computePoolId(currency0: string, currency1: string, fee: number, tickSpacing: number, hooks: string): string {
-  const encoded = AbiCoder.defaultAbiCoder().encode(
-    ['address', 'address', 'uint24', 'int24', 'address'],
-    [currency0, currency1, fee, tickSpacing, hooks],
+  const encoded = encodeAbiParameters(
+    parseAbiParameters('address, address, uint24, int24, address'),
+    [currency0 as Hex, currency1 as Hex, fee, tickSpacing, hooks as Hex],
   );
   return keccak256(encoded);
 }
 
 /** The extsload() slot holding a pool's packed Slot0 word, per StateLibrary._getPoolStateSlot. */
 export function poolStateSlot(poolId: string): string {
-  const slotConst = zeroPadValue(toBeHex(POOLS_SLOT), 32);
-  return keccak256(concat([poolId, slotConst]));
+  const slotConst = pad(toHex(POOLS_SLOT), { size: 32 });
+  return keccak256(concat([poolId as Hex, slotConst]));
 }
 
 /** Unpacks the extsload'd word exactly as StateLibrary.getSlot0's assembly does. */
