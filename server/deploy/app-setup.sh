@@ -37,7 +37,15 @@ echo "==> install systemd units"
 cp "$APP_DIR/deploy/onlyone-api.service" /etc/systemd/system/onlyone-api.service
 cp "$APP_DIR/deploy/onlyone-workers.service" /etc/systemd/system/onlyone-workers.service
 systemctl daemon-reload
-systemctl enable --now onlyone-api onlyone-workers
+# `enable --now` only STARTS a unit if it isn't already running -- on every
+# redeploy after the first, both services are already active, so it was a
+# silent no-op and the freshly rebuilt dist/ never actually loaded. Caught
+# live: the bridge route shipped, the build succeeded, "Done" printed, and
+# the API kept serving 404s for it because the old process was still the
+# one running. `enable` (persist across reboots) and `restart` (always pick
+# up the new build) are two different things and both are needed here.
+systemctl enable onlyone-api onlyone-workers
+systemctl restart onlyone-api onlyone-workers
 
 echo "==> nginx site"
 # Certbot rewrites this file in place to add the HTTPS server block once TLS

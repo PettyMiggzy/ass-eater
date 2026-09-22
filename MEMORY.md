@@ -5155,3 +5155,25 @@ against the actual file, not assumed.
 the moment the public endpoint doesn't work at all -- **check the real
 public HTTPS URL after every redeploy**, not just the service status, since
 they can genuinely disagree.
+
+**A second, independent bug in the same script, found immediately after
+fixing the first and re-verifying:** `systemctl enable --now onlyone-api
+onlyone-workers` only STARTS a unit if it is not already running -- on
+every redeploy after the very first one, both services are already active,
+so this line was a silent no-op. The build succeeded, `app-setup.sh`
+printed "Done," and the API kept 404ing on the brand-new `/auth/bridge`
+route because the OLD process, from before the rebuild, was still the one
+actually serving traffic. `enable` (persist across reboots) and `restart`
+(load whatever is newly built) are two different operations that happened
+to look like one line -- `app-setup.sh` now does both explicitly.
+
+**Both bugs were only findable by testing the real public endpoint after
+a real redeploy, not by reading the script.** Neither would show up in a
+review of the script's logic in isolation -- both are specifically about
+what "run this again, later, after state already exists" does differently
+from "run this for the first time," which is exactly the class of bug this
+deploy kit's own `app-setup.sh` never had a chance to be tested against
+until today's second real deploy. If this script gets touched again, the
+standing verification bar for it is: **run it twice in a row against a box
+that already has a working deploy, and check the real public URL after
+the second run**, not just the first.
