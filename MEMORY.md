@@ -5114,3 +5114,44 @@ derived per-user; a real decision for later, not an oversight.
   routed around -- worth a deliberate decision on whether to decommission
   it or fix access to it, rather than leaving an unreachable box running
   indefinitely.
+
+## `app-setup.sh` silently broke HTTPS on the very first redeploy (2026-09-22)
+
+Found immediately after building the identity bridge above, while verifying
+it against production: `curl https://api.joinonlyone.com/health` started
+resetting the connection mid-TLS-handshake, right after a routine
+git-pull-and-rebuild to ship the bridge code. `onlyone-api` itself was
+`active (running)`, `curl http://localhost:4000/health` worked fine on the
+box -- everything LOOKED healthy except the one thing that mattered, the
+actual public HTTPS endpoint.
+
+**Root cause: `app-setup.sh`'s nginx step was not idempotent.** It
+unconditionally `cp`'d the plain-HTTP `nginx-onlyone.conf` template over
+`/etc/nginx/sites-available/onlyone` on every run -- but Certbot had
+already rewritten that exact file in place to add the HTTPS server block
+during the first deploy. The second run of `app-setup.sh` (to ship the
+bridge code) silently reverted nginx back to HTTP-only, and nothing in the
+script's own output said so -- `nginx -t` passes fine on an HTTP-only
+config, so the "Done" message printed same as always.
+
+**Fixed at the root, not patched around:** `app-setup.sh` now checks
+whether the destination file already has a `listen 443` block (Certbot's
+signature) before touching it -- installs the template only before TLS
+exists, leaves it alone forever after. This is the general shape of a bug
+this file has recorded more than once now (session-secret/age-token
+confusion, the exemption-lists-move-together pattern, blob-store fallback
+masking a real error as "not found yet"): **a script whose job is
+"redeploy this" ran a step that was only ever meant to run once**, and
+nothing distinguished the two cases.
+
+**Immediate fix was just re-running `certbot --nginx -d api.joinonlyone.com`**
+-- it detects the existing certificate and reinstalls the HTTPS block,
+no new registration needed. Verified the real fix (the script change) by
+re-reading the diff, not just trusting the one-line description -- confirmed
+against the actual file, not assumed.
+
+**Lesson for next time a service on this droplet needs redeploying:**
+`systemctl status` and a localhost `curl` both look healthy right up until
+the moment the public endpoint doesn't work at all -- **check the real
+public HTTPS URL after every redeploy**, not just the service status, since
+they can genuinely disagree.

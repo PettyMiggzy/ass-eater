@@ -40,8 +40,24 @@ systemctl daemon-reload
 systemctl enable --now onlyone-api onlyone-workers
 
 echo "==> nginx site"
-cp "$APP_DIR/deploy/nginx-onlyone.conf" /etc/nginx/sites-available/onlyone
-ln -sf /etc/nginx/sites-available/onlyone /etc/nginx/sites-enabled/onlyone
+# Certbot rewrites this file in place to add the HTTPS server block once TLS
+# is set up (see DEPLOY.md step 5). Blindly re-copying the plain-HTTP
+# template on every redeploy -- which this script used to do
+# unconditionally -- silently overwrote that HTTPS block on the very next
+# run of this script, leaving nginx listening on 80 only while every other
+# service looked perfectly healthy. Detected the hard way: onlyone-api was
+# green, /health worked on localhost, but the public HTTPS endpoint started
+# resetting connections mid-TLS-handshake right after a routine redeploy.
+# Only install/overwrite the template before TLS exists; once Certbot has
+# added a "listen 443" block, leave the file alone.
+if [[ -f /etc/nginx/sites-available/onlyone ]] && grep -q "listen 443" /etc/nginx/sites-available/onlyone; then
+  echo "    TLS already configured (Certbot has edited this file) -- leaving it as-is."
+  echo "    To change the base proxy config after TLS is live, edit"
+  echo "    /etc/nginx/sites-available/onlyone directly on the box, not this template."
+else
+  cp "$APP_DIR/deploy/nginx-onlyone.conf" /etc/nginx/sites-available/onlyone
+  ln -sf /etc/nginx/sites-available/onlyone /etc/nginx/sites-enabled/onlyone
+fi
 nginx -t && systemctl reload nginx
 
 cat <<'EOF'
