@@ -62,10 +62,21 @@ export const TOKENS: Record<'ONLYONE', { address: Address; decimals: number }> =
 };
 export const DECIMALS = { ETH: 18, ONLYONE: TOKENS.ONLYONE.decimals } as const;
 
-/** Every ERC-20 this platform watches: the accepted stablecoins plus the token. */
+/**
+ * Every ERC-20 this platform watches: the accepted stablecoins plus the
+ * token -- but only once ONLYONE_TOKEN_ADDRESS is actually set. Pre-launch,
+ * $ONLYONE doesn't exist on-chain yet (see MEMORY.md: the founder launches it
+ * himself, later). Including an unconfigured token here would make
+ * assertTokenDecimals() throw at every worker boot, which -- since this file
+ * has no per-worker isolation, all workers share one process
+ * (workers/index.ts) -- would crash deposit tracking for the stablecoins too,
+ * along with every other worker bundled into that same process. Stablecoin
+ * deposits (real money, live today) must keep working whether or not the
+ * token has launched yet.
+ */
 export const WATCHED_TOKENS: { symbol: string; address: Address; decimals: number }[] = [
   ...STABLECOINS,
-  { symbol: 'ONLYONE', address: TOKENS.ONLYONE.address, decimals: TOKENS.ONLYONE.decimals },
+  ...(TOKENS.ONLYONE.address ? [{ symbol: 'ONLYONE', address: TOKENS.ONLYONE.address, decimals: TOKENS.ONLYONE.decimals }] : []),
 ];
 
 /**

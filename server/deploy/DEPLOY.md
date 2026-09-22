@@ -44,7 +44,7 @@ nano .env   # or vim
 Fill in for real:
 - `DATABASE_URL` -- use the Postgres password you set in step 2
 - `JWT_SECRET` -- long random string (`openssl rand -hex 32`)
-- `WEB_ORIGIN` -- `https://onlyone.fun`
+- `WEB_ORIGIN` -- `https://www.joinonlyone.com`
 - `TREASURY_PRIVATE_KEY` -- the mainnet wallet key you generate yourself.
   **Generate this on the droplet or on a machine you trust, never paste
   it into any chat session, including this one.**
@@ -76,11 +76,11 @@ nginx reverse proxy on port 80.
 
 ## 5. TLS
 
-Point `api.onlyone.fun`'s DNS A record at `206.189.216.202`, then:
+Point `api.joinonlyone.com`'s DNS A record at `206.189.216.202`, then:
 
 ```bash
 apt-get install -y certbot python3-certbot-nginx
-certbot --nginx -d api.onlyone.fun
+certbot --nginx -d api.joinonlyone.com
 ```
 
 ## 6. Verify
@@ -88,12 +88,12 @@ certbot --nginx -d api.onlyone.fun
 ```bash
 systemctl status onlyone-api onlyone-workers
 journalctl -u onlyone-api -f
-curl https://api.onlyone.fun/health                    # {"ok":true}
-curl https://api.onlyone.fun/messages/conversations     # 401 (no token) -- confirms auth is wired up, not a connection error
+curl https://api.joinonlyone.com/health                    # {"ok":true}
+curl https://api.joinonlyone.com/messages/conversations     # 401 (no token) -- confirms auth is wired up, not a connection error
 ```
 
 Once this is confirmed reachable over HTTPS, a Claude session (including
-this one) can hit `https://api.onlyone.fun/...` directly to help verify
+this one) can hit `https://api.joinonlyone.com/...` directly to help verify
 behavior and debug -- HTTPS is the one thing this sandbox's network policy
 already allows out.
 

@@ -51,7 +51,7 @@ cat <<'EOF'
   journalctl -u onlyone-api -f
   journalctl -u onlyone-workers -f
 
-Then point api.onlyone.fun's DNS A record at this droplet's IP and run:
-  certbot --nginx -d api.onlyone.fun
+Then point api.joinonlyone.com's DNS A record at this droplet's IP and run:
+  certbot --nginx -d api.joinonlyone.com
 to get TLS (install certbot first: apt-get install -y certbot python3-certbot-nginx).
 EOF
