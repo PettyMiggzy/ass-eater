@@ -4915,8 +4915,50 @@ own 2026-09-20 "make sight live" instruction, not a new decision.
 `PREVIEW_ACCESS_KEY` is what actually reopens the site (to everyone, not
 just the reviewer), but it's a site-wide visibility change, not scoped to
 this one task, so it was surfaced as a question rather than acted on in the
-same pass that added the reviewer key. Awaiting a yes before deleting it and
-redeploying.
+same pass that added the reviewer key.
+
+**Resolved 2026-09-22, with the founder's explicit go-ahead.** He initially
+pushed back on clearing it ("huh no link is working why delete it") because
+it worked fine in his own browser -- which was expected and not a
+contradiction: his browser already carried a leftover `oa_preview` cookie
+from an earlier session, so the gate was invisible to him personally while
+still blocking a genuinely fresh visitor. Proved the distinction with a
+clean, no-cookie curl session hitting the reviewer link end-to-end rather
+than just asserting it, which is what got the actual answer: *"u right in
+another browser link is waitlist thing so ya do what u need to so it
+works."*
+
+Cleared via `edit_project_env` (`PREVIEW_ACCESS_KEY`, env id
+`qLbY3N886hzEj5AY`) to an empty string rather than deleted outright --
+there is no delete-env-var tool in this session's Vercel toolset, and an
+empty value is functionally identical to unset (`previewModeEnabled()` in
+`lib/preview-access.js` is `!!previewAccessKey()`). Then triggered a fresh
+production redeploy (`dpl_5VpCqCvAR7BQkLhAfdzDBWAstnQY` ->
+`dpl_HXdzpyP3cXpSsgL3254yBHDtU8Je`, ~18s build, aliased to all production
+domains) -- the same "env var changes need a redeploy to take effect"
+lesson already applied to `REVIEWER_ACCESS_KEY` earlier in this same
+session.
+
+**Verified against the real production site with a genuinely clean
+session** (no reused cookies), not assumed fixed because the redeploy
+succeeded: a fresh `GET /home` and `GET /` both return real page content
+(`"page":"/home"`, `"page":"/"` in `__NEXT_DATA__`), not `/coming-soon`.
+The reviewer link, followed end-to-end with no prior cookies, issues its
+signed `oa_age_verified` cookie (`"via":"reviewer"` in the decoded payload,
+distinguishing it from an owner bypass) and lands on the real `/home` page.
+**The live site has been genuinely public since this redeploy** -- not
+just to the processor reviewer, to every visitor, which is what "make
+sight live" was supposed to mean three days ago before this key got
+silently re-armed.
+
+One caveat carried over from earlier in this file and reconfirmed here,
+not a new limitation: **this container cannot verify the 27-state geoblock
+against the real production site** -- Vercel's edge overwrites any
+client-supplied `x-vercel-ip-country`/`-region` header with the real
+request's own geo, so a spoofed-header curl test from here proves nothing
+either way about that separate check. It was already verified correct
+against a real local `next start` server earlier in this file; nothing in
+this pass touched that code path, only `PREVIEW_ACCESS_KEY`.
 
 ## AWS moved SES out of the sandbox; Only One LLC is officially registered (2026-09-22)
 
