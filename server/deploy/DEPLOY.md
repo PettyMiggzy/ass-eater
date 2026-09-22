@@ -8,7 +8,7 @@ So these steps need to be run by you (or in a Claude Code session that
 actually has shell access to the box, e.g. one running on your own
 machine or in an environment with unrestricted networking).
 
-Target: `206.189.216.202`, chain: Robinhood Chain (id 4663).
+Target: `137.184.29.10`, chain: Robinhood Chain (id 4663).
 
 ## 1. Get the code onto the box
 
@@ -17,7 +17,7 @@ access to the droplet):
 
 ```bash
 git clone <your repo url> onlyone
-scp -r onlyone/server root@206.189.216.202:/opt/onlyone/server
+scp -r onlyone/server root@137.184.29.10:/opt/onlyone/server
 # or, on the droplet itself: git clone <your repo url> /opt/onlyone/checkout
 #                            cp -r /opt/onlyone/checkout/server /opt/onlyone/server
 ```
@@ -76,7 +76,7 @@ nginx reverse proxy on port 80.
 
 ## 5. TLS
 
-Point `api.joinonlyone.com`'s DNS A record at `206.189.216.202`, then:
+Point `api.joinonlyone.com`'s DNS A record at `137.184.29.10`, then:
 
 ```bash
 apt-get install -y certbot python3-certbot-nginx
