@@ -5065,11 +5065,32 @@ runs -- only actually running it is.
 his explicit call ("i dont want treadury wallet being out of my control"),
 typed directly into the droplet's `.env` via `read -s` (never pasted into
 chat, never touched shell history) and confirmed by deriving and checking
-its public address before writing it. `DEPOSIT_MNEMONIC` is still blank --
-safe to leave blank (it's only read lazily, per-call, not at module load,
-unlike the treasury key) and not urgent since nothing depends on it until
-deposits are actually being derived per-user; a real decision for later,
-not an oversight.
+its public address before writing it. **The confirmed public address is
+`0xa6D8921021547557F4b6e3AFb0a491C67f290fF4`** -- safe to record here since
+it's a public address, not the key; useful for checking balances or
+confirming config later without needing to SSH in and grep `.env`.
+`DEPOSIT_MNEMONIC` is still blank -- safe to leave blank (it's only read
+lazily, per-call, not at module load, unlike the treasury key) and not
+urgent since nothing depends on it until deposits are actually being
+derived per-user; a real decision for later, not an oversight.
+
+**Operational facts for whoever/whatever touches this droplet next:**
+- SSH access is via a dedicated keypair the founder generated on his own
+  Windows machine specifically for this droplet (`C:\Users\samah\.ssh\id_onlyone`),
+  not his general-purpose key -- `ssh -i C:\Users\samah\.ssh\id_onlyone root@137.184.29.10`.
+  That key isn't backed up anywhere else as far as this session knows; if
+  it's ever lost, DigitalOcean's console access (or adding a new key via
+  the DO dashboard + a droplet recovery step) is the way back in, not a
+  rebuild.
+- Postgres role `onlyone` / database `onlyone` on the droplet itself
+  (localhost only, not exposed -- ufw only allows 22/80/443 inbound).
+  Its password and `JWT_SECRET` live only in `/opt/onlyone/server/.env`
+  on the box (`chmod 600`, owned by the `onlyone` system user) -- neither
+  is, or should ever be, written to this repo.
+- Redeploying after a future code change: the standard `git pull` +
+  rebuild flow in `server/deploy/DEPLOY.md`'s "Redeploying after code
+  changes" section applies as normal now that this initial deploy is
+  done -- no special first-time steps needed anymore.
 
 **Not done yet, real next steps, in rough priority order:**
 - `RPC_URL`, `USDC_ADDRESS`/stablecoin config, and `ONLYONE_TOKEN_ADDRESS`
