@@ -81,8 +81,8 @@ export default function TokenLanding() {
         <section className="pt-16 pb-20 px-6 text-center relative">
           <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-brand-purple/15 rounded-full blur-3xl"></div>
           <div className="max-w-3xl mx-auto relative z-10">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-purple/20 border border-brand-purple/30 text-brand-purple text-xs font-bold tracking-wide mb-6">
-              <span className="w-2 h-2 rounded-full bg-brand-purple animate-pulse"></span>
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-gold/20 border border-brand-gold/30 text-brand-gold text-xs font-bold tracking-wide mb-6">
+              <span className="w-2 h-2 rounded-full bg-brand-gold animate-pulse"></span>
               FAIR LAUNCH — NO PRESALE
             </div>
             <h1 className="text-5xl md:text-6xl font-black leading-[0.95] mb-6 premium-title">

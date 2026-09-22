@@ -1,0 +1,19 @@
+# Most of this site sits behind a 27-state legal age-verification geoblock
+# (see proxy.js) and returns 451 to a crawler with no session in those
+# states -- this file can't fix that, only reflects it. sitemap.xml lists
+# only the pages actually exempt from that check.
+User-agent: *
+Disallow: /api/
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /credits
+Disallow: /cart
+Disallow: /orders
+Disallow: /favorites
+Disallow: /messages
+Disallow: /verify-age
+Disallow: /blocked-region
+Disallow: /owner
+Allow: /
+
+Sitemap: https://www.joinonlyone.com/sitemap.xml

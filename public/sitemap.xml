@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Deliberately short. This lists ONLY pages confirmed exempt from the
+  27-state age-verification geoblock (proxy.js's SFW_PATHS) -- every other
+  page on this site (creators, marketplace, search, dashboard, etc.) 451s
+  for a crawler with no session in a blocked state, so listing them here
+  would tell Google to index pages it can't reliably fetch. If SFW_PATHS
+  in proxy.js changes, this file needs to change with it -- same
+  "exemption lists move together" rule proxy.js's own comments already
+  apply to _app.js and the preview gate.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://www.joinonlyone.com/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://www.joinonlyone.com/founding-creator</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.joinonlyone.com/token</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://www.joinonlyone.com/terms</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.2</priority>
+  </url>
+  <url>
+    <loc>https://www.joinonlyone.com/privacy</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.2</priority>
+  </url>
+  <url>
+    <loc>https://www.joinonlyone.com/2257</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.2</priority>
+  </url>
+  <url>
+    <loc>https://www.joinonlyone.com/report-content</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.3</priority>
+  </url>
+</urlset>

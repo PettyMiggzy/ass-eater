@@ -5,8 +5,16 @@ export default function Document() {
     <Html lang="en">
       <Head>
         <meta charSet="utf-8" />
+        {/* Without this, mobile browsers render the page at desktop width and
+            let the visitor pinch-zoom -- fails Google's mobile-friendly test
+            outright regardless of how responsive the Tailwind layout actually
+            is underneath. viewport-fit=cover lets the pink gradient backgrounds
+            run under the iOS notch/home-indicator instead of leaving a hard
+            black bar there. */}
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#0f0f0f" />
         <meta name="rating" content="RTA-5042-1996-1400-1577-RTA" />
+        <link rel="manifest" href="/manifest.json" />
         <link rel="icon" href="/favicon.ico" sizes="any" />
         <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
