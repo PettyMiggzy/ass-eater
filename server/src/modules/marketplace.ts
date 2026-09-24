@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { money, lockBalance, post, InsufficientFunds, isVip, postPlatformRevenue } from '../core/ledger.js';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION, PHYSICAL_SALES_ENABLED } from '../core/marketplace-fees.js';
 import { placeBid, cancelAuction, statusCode } from '../core/auctions.js';
+import { page } from '../plugins/pagination.js';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 // Physical orders pay the creator at purchase time, same as digital -- no
@@ -161,7 +162,9 @@ export const marketplace: FastifyPluginAsync = async (app) => {
   // acceptance on top, recorded per order for an audit trail.
   app.get('/listings', async (req: any) => {
     const q = z.string().trim().max(60).optional().parse(req.query.q || undefined);
-    const take = Math.min(Number(req.query.limit ?? 30), 100);
+    // page() refuses a negative/NaN limit (Prisma reads a negative take as
+    // "the last N rows", which bypassed the 100-row cap entirely).
+    const { limit: take } = page(req.query);
     // Optional auth: browsing works signed out, but a VIP has to be
     // recognised or their first-look window is worthless.
     const viewerId = await optionalViewer(req);
@@ -174,7 +177,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         status: 'ACTIVE',
         ...(conditions.length ? { AND: conditions } : {}),
       },
-      orderBy: { createdAt: 'desc' }, take, skip: Number(req.query.offset ?? 0),
+      orderBy: { createdAt: 'desc' }, take, skip: page(req.query).offset,
       select: LISTING_SELECT,
     });
     return rows.map((l) => publicListing(l, viewerId));
@@ -267,7 +270,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
 
       await post(tx, req.user.id, -totalCharge, 'MARKETPLACE_SALE', order.id);
       // Paid immediately -- shipping it is the creator's job from here, not the platform's to hold money over.
-      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents, fanId: req.user.id });
+      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents, fanId: req.user.id }, 'CREDITS', { earned: true });
       await postPlatformRevenue(tx, platformFee + listingFee, order.id, { source: 'marketplace', platformFee, listingFee });
 
       return { ok: true, order };
@@ -277,12 +280,18 @@ export const marketplace: FastifyPluginAsync = async (app) => {
   // --- Auctions (see core/auctions.ts) ---
 
   app.post('/listings/:id/bid', { preHandler: app.auth }, async (req: any) => {
-    const { amountCents } = z.object({ amountCents: z.number().int().min(1) }).parse(req.body);
+    // Same explicit 18+ confirmation and ToS acceptance as a fixed-price buy:
+    // a winning bid becomes an order, and the order's audit record is the one
+    // given here (core/auctions.ts closeAuction), not one made up at close.
+    const { amountCents } = z.object({
+      amountCents: z.number().int().min(1),
+      ageConfirmed: z.literal(true), tosAccepted: z.literal(true),
+    }).parse(req.body);
     if (!PHYSICAL_SALES_ENABLED) {
       const l = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { kind: true } });
       if (l?.kind === 'PHYSICAL') throw physicalDisabled();
     }
-    const bid = await money(prisma, (tx) => placeBid(tx, req.params.id, req.user.id, amountCents));
+    const bid = await money(prisma, (tx) => placeBid(tx, req.params.id, req.user.id, amountCents, { ageConfirmedAt: new Date(), tosVersion: CURRENT_TOS_VERSION }));
     return { ok: true, bid };
   });
 

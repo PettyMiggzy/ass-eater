@@ -223,6 +223,25 @@ export async function lockBalance(tx: Tx, userId: string, balance: Balance = 'CR
   return row.balanceCents;
 }
 
+/**
+ * Moves a balance and writes its ledger row, in the caller's transaction.
+ *
+ * Closed-loop credits: `opts.earned` marks a CREDITS posting as money EARNED
+ * from someone else's spend (a creator's share of a charge or sale, a
+ * referral cut, a payout reversal) -- only that raises withdrawableCents,
+ * the part of the balance a payout may take. Deposited credits are
+ * spendable here and never withdrawn. Every CREDITS debit then clamps
+ * withdrawableCents to the new balance, which is what makes a spend consume
+ * the non-withdrawable part first and keeps 0 <= withdrawable <= balance.
+ * A payout reserves withdrawable credits explicitly (reserveWithdrawable)
+ * before debiting.
+ *
+ * `opts.withdrawableCents` is for returning a user's OWN held money (an
+ * auction hold being released): it restores exactly that much of the credit
+ * as withdrawable -- the part the hold took from their earned credits --
+ * and the rest comes back as ordinary spendable credits. Clamped to the
+ * credit itself.
+ */
 export async function post(
   tx: Tx,
   userId: string,
@@ -231,17 +250,47 @@ export async function post(
   refId?: string,
   meta?: object,
   balance: Balance = 'CREDITS',
+  opts: { earned?: boolean; withdrawableCents?: bigint | number } = {},
 ) {
   const amt = BigInt(amountCents);
   const field = balance === 'ONLYONE' ? 'onlyOneCents' : 'balanceCents';
+  let w = 0n;
+  if (balance === 'CREDITS' && amt > 0n) {
+    if (opts.earned) w = amt;
+    else if (opts.withdrawableCents != null) {
+      const r = BigInt(opts.withdrawableCents);
+      w = r < 0n ? 0n : r > amt ? amt : r;
+    }
+  }
   await tx.account.upsert({
     where: { userId },
-    create: { userId, [field]: amt },
-    update: { [field]: { increment: amt } },
+    create: { userId, [field]: amt, ...(w > 0n ? { withdrawableCents: w } : {}) },
+    update: { [field]: { increment: amt }, ...(w > 0n ? { withdrawableCents: { increment: w } } : {}) },
   });
+  if (balance === 'CREDITS' && amt < 0n) {
+    await tx.$executeRaw`
+      UPDATE "Account" SET "withdrawableCents" = GREATEST(0, LEAST("withdrawableCents", "balanceCents"))
+      WHERE "userId" = ${userId} AND "withdrawableCents" > GREATEST(0, "balanceCents")`;
+  }
   await tx.ledgerEntry.create({
     data: { userId, amountCents: amt, type, refId, meta: meta as Prisma.InputJsonValue },
   });
+}
+
+/**
+ * Takes `amountCents` of a creator's withdrawable (earned) credits for a
+ * payout, under the account's row lock. Throws InsufficientFunds when the
+ * earned part of the balance does not cover it -- deposited credits are
+ * never payable. The caller then posts the matching debit.
+ */
+export async function reserveWithdrawable(tx: Tx, userId: string, amountCents: number | bigint) {
+  const amt = BigInt(amountCents);
+  await tx.account.upsert({ where: { userId }, create: { userId }, update: {} });
+  const [row] = await tx.$queryRaw<{ balanceCents: bigint; withdrawableCents: bigint }[]>`
+    SELECT "balanceCents", "withdrawableCents" FROM "Account" WHERE "userId" = ${userId} FOR UPDATE`;
+  if (row.balanceCents < amt || row.withdrawableCents < amt) throw new InsufficientFunds();
+  await tx.account.update({ where: { userId }, data: { withdrawableCents: { decrement: amt } } });
+  return { balanceCents: row.balanceCents, withdrawableCents: row.withdrawableCents };
 }
 
 /**
@@ -343,10 +392,10 @@ export async function charge(
   // fanId rides along so a creator's ledger can be grouped by who paid --
   // see getTopSupporters() below. Nothing before this needed it; adding it
   // here is the one safe place, since every fan->creator charge posts here.
-  await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, originalPriceCents: p.grossCents, fanId: p.fanId });
+  await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, originalPriceCents: p.grossCents, fanId: p.fanId }, 'CREDITS', { earned: true });
   await postPlatformRevenue(tx, fee - referral, p.refId, { source: p.type });
-  if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', p.refId, { for: 'creator' });
-  if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', p.refId, { for: 'fan' });
+  if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', p.refId, { for: 'creator' }, 'CREDITS', { earned: true });
+  if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', p.refId, { for: 'fan' }, 'CREDITS', { earned: true });
 
   return { gross: chargeCents, fee, net, referral };
 }

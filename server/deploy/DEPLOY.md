@@ -72,6 +72,9 @@ warn about any line that does this). In particular:
 - S3/Bunny (incl. `BUNNY_API_KEY` for takedown cache purges), SES
   (`EMAIL_PROVIDER`, `EMAIL_FROM`, `AWS_REGION`, `SES_SNS_TOPIC_ARNS`),
   Sumsub, LiveKit once you have those accounts.
+- `TREASURY_ADDRESS` -- the treasury wallet's PUBLIC address (never the
+  key). The API needs it to accept an admin "mark sent" on a payout: it only
+  accepts a USDG transfer FROM this address.
 
 `.env.workers` (loaded ONLY by `onlyone-workers`):
 - `TREASURY_PRIVATE_KEY` -- the mainnet wallet key you generate yourself.
@@ -130,6 +133,50 @@ Nothing else. `app-setup.sh` is the one place the install, migrate, build,
 seed, restart and nginx steps live, so a hand-written list here cannot drift
 from it. Then check the real public endpoint, not just `systemctl status`:
 `curl https://api.joinonlyone.com/health`.
+
+`app-setup.sh` refuses to run unless `/opt/onlyone/server` is inside a git
+checkout, and prints the commit it built (`==> Deployed commit: ...`) --
+compare it with `git log -1` on the branch you meant to ship.
+
+## Migrating an existing box to the git checkout
+
+A droplet set up by the older runbook has `/opt/onlyone/server` as a REAL
+directory of copied code, and it holds the only copy of `.env` (and maybe
+`.env.workers`). Do NOT just run `ln -sfn` from step 1 against it: `ln -sfn`
+into an existing directory creates `/opt/onlyone/server/server` inside it,
+and the old code keeps being rebuilt (`app-setup.sh` now refuses that
+layout). As root:
+
+```bash
+systemctl stop onlyone-api onlyone-workers
+mv /opt/onlyone/server /opt/onlyone/server.old
+git clone <your repo url> /opt/onlyone/app
+cp -p /opt/onlyone/server.old/.env /opt/onlyone/app/server/.env
+[ -f /opt/onlyone/server.old/.env.workers ] && cp -p /opt/onlyone/server.old/.env.workers /opt/onlyone/app/server/.env.workers
+ln -s /opt/onlyone/app/server /opt/onlyone/server
+bash /opt/onlyone/server/deploy/app-setup.sh
+curl https://api.joinonlyone.com/health
+```
+
+Check the printed `Deployed commit`, then, once everything is verified,
+`rm -rf /opt/onlyone/server.old` (it contains secrets -- do not leave it
+around indefinitely).
+
+## Media bucket lifecycle rule
+
+Do NOT add an expiry rule on `raw/`: completed images are served from their
+raw key, so expiring it would delete real content. Abandoned uploads are
+cleaned by the workers instead -- `sweepAbandonedUploads`
+(workers/transcode.ts) deletes the raw object and the row of every upload
+still UPLOADING after 24 hours, hourly. If your provider supports it, do add
+a rule aborting incomplete multipart uploads after 1 day.
+
+## Live streaming webhook
+
+In the LiveKit project's webhook settings, point it at
+`https://api.joinonlyone.com/live/webhook` and enable at least
+`room_finished` and `participant_joined`. `participant_joined` is what
+removes a per-minute viewer who reconnects without paid time.
 
 ## One-time: moving an existing box to the split env files
 

@@ -4,20 +4,26 @@ import { nanoid } from 'nanoid';
 import { prisma } from '../lib/prisma.js';
 import { presignPut, headObject, cdnSignedUrl, cdnPublicUrlOrNull } from '../lib/s3.js';
 import { transcodeQueue } from '../lib/redis.js';
-import { canViewMedia } from '../core/access.js';
+import { canViewMedia, creatorMayOperate } from '../core/access.js';
 import { getOrCreateWatermarkedUrl, traceCode } from '../lib/watermark.js';
 import { storageKeyOf } from '../core/media-key.js';
+import { maxBytesFor, createUploadWithinQuota } from '../core/upload-limits.js';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm']);
-const MAX_BYTES = 4 * 1024 ** 3;
 
 export const media: FastifyPluginAsync = async (app) => {
   app.post('/upload-url', { preHandler: app.auth }, async (req, reply) => {
-    const b = z.object({ mime: z.string(), bytes: z.number().int().positive().max(MAX_BYTES) }).parse(req.body);
+    const b = z.object({ mime: z.string(), bytes: z.number().int().positive() }).parse(req.body);
     if (!ALLOWED.has(b.mime)) return reply.code(400).send({ error: 'unsupported_type' });
+    const me = await prisma.user.findUnique({ where: { id: req.user.id }, select: { role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true } });
+    const isCreator = creatorMayOperate(me);
+    if (b.bytes > maxBytesFor(b.mime, isCreator)) return reply.code(413).send({ error: 'too_large', maxBytes: maxBytesFor(b.mime, isCreator) });
     const id = nanoid(16);
     const key = `raw/${req.user.id}/${id}`;
-    const m = await prisma.media.create({ data: { ownerId: req.user.id, key, mime: b.mime, bytes: b.bytes } });
+    // Quota check and row insert are one serialized step per account.
+    const r = await createUploadWithinQuota(req.user.id, isCreator, { key, mime: b.mime, bytes: b.bytes });
+    if ('error' in r) return reply.code(429).send({ error: r.error });
+    const m = r.media;
     return { mediaId: m.id, uploadUrl: await presignPut(key, b.mime, b.bytes), method: 'PUT', headers: { 'Content-Type': b.mime } };
   });
 

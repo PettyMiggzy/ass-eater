@@ -42,9 +42,14 @@ export function hlsArgs(src: string, hlsDir: string, audio: boolean): string[] {
  * EXIF rotation into the pixels, since the orientation tag goes with the rest.
  * Same format out as in, so the stored mime stays true.
  */
-export async function sanitizeImage(buf: Buffer, mime: string): Promise<Buffer> {
-  if (mime === 'image/gif') return sharp(buf, { animated: true }).gif().toBuffer();
-  const img = sharp(buf, { autoOrient: true });
+// A decompression bomb (a small file declaring enormous dimensions) is
+// refused before it is decoded into memory. ~50 megapixels covers any real
+// camera/phone photo.
+const LIMIT_INPUT_PIXELS = 50_000_000;
+
+export async function sanitizeImage(input: Buffer | string, mime: string): Promise<Buffer> {
+  if (mime === 'image/gif') return sharp(input, { animated: true, limitInputPixels: LIMIT_INPUT_PIXELS }).gif().toBuffer();
+  const img = sharp(input, { autoOrient: true, limitInputPixels: LIMIT_INPUT_PIXELS });
   if (mime === 'image/png') return img.png().toBuffer();
   if (mime === 'image/webp') return img.webp({ quality: 92 }).toBuffer();
   return img.jpeg({ quality: 92 }).toBuffer();

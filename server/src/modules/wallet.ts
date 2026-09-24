@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { prisma } from '../lib/prisma.js';
 import { CHAIN_ID, depositAddressAt, TOKENS } from '../lib/chain.js';
 import { getUsdPrice } from '../lib/price.js';
+import { page } from '../plugins/pagination.js';
 
 // Namespace for the Postgres advisory lock that serialises deposit-address
 // allocation (see POST /deposit-address). Arbitrary -- it only has to not
@@ -16,11 +17,13 @@ export const wallet: FastifyPluginAsync = async (app) => {
     // (core/vip.ts). Credits (balanceCents) are what pays for everything.
     // (was: a discount when spent from -- removed, the token is not money
     // on subscribe/tip/unlock/buy/join-live). See core/ledger.ts charge().
-    return { balanceCents: Number(a?.balanceCents ?? 0), onlyOneCents: Number(a?.onlyOneCents ?? 0) };
+    // withdrawableCents: the earned part of balanceCents -- the most a
+    // payout (POST /payouts) can take. Deposited credits never are.
+    return { balanceCents: Number(a?.balanceCents ?? 0), withdrawableCents: Number(a?.withdrawableCents ?? 0), onlyOneCents: Number(a?.onlyOneCents ?? 0) };
   });
 
   app.get('/history', { preHandler: app.auth }, async (req: any) => {
-    const rows = await prisma.ledgerEntry.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' }, take: 100, skip: Number(req.query.offset ?? 0) });
+    const rows = await prisma.ledgerEntry.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' }, take: 100, skip: page(req.query).offset });
     return rows.map(r => ({ ...r, amountCents: Number(r.amountCents) }));
   });
 

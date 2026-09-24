@@ -5,7 +5,13 @@ import { money, post, PLATFORM_ID } from '../core/ledger.js';
 import { deleteObject, deletePrefix, purgeCdnPrefix } from '../lib/s3.js';
 import { wmPrefix } from '../lib/watermark.js';
 import { recordManualBurn } from '../core/vip.js';
-import { cancelAuction } from '../core/auctions.js';
+import { applyUserStatus } from '../core/moderation.js';
+import { refundPayout, markPayoutSent } from '../core/payouts.js';
+import { payoutJobOptions, payoutJobId } from '../core/payout-queue.js';
+import { payoutQueue } from '../lib/redis.js';
+import { publicClient, HEDGE_STABLE, TRANSFER_EVENT, treasuryAddress } from '../lib/chain.js';
+import { decodeEventLog, parseUnits } from 'viem';
+import { Prisma } from '@prisma/client';
 import { storageKeyOf } from '../core/media-key.js';
 
 export const admin: FastifyPluginAsync = async (app) => {
@@ -28,7 +34,8 @@ export const admin: FastifyPluginAsync = async (app) => {
 
   app.patch('/vip-config', async (req: any) => {
     const body = z.object({
-      vipPriceCents: z.number().int().positive().optional(),
+      // Upper bound: a fat-fingered extra zero must not become a real price.
+      vipPriceCents: z.number().int().positive().max(100_000).optional(),
       // Capped at 100%: the platform cannot commit to burning more than the
       // revenue it took in, which would be spending money it does not have.
       burnBps: z.number().int().min(0).max(10_000).optional(),
@@ -97,41 +104,13 @@ export const admin: FastifyPluginAsync = async (app) => {
     return prisma.report.update({ where: { id: r.id }, data: { status: action === 'dismiss' ? 'DISMISSED' : 'ACTIONED', resolvedBy: req.user.id } });
   });
 
-  // Suspending or banning freezes payouts; reactivating does NOT unfreeze
-  // them. payoutsFrozen is also set by hand through POST
-  // /creators/:id/freeze (e.g. a chargeback or fraud review), and the flag
-  // can't tell the two reasons apart -- so writing `status !== 'ACTIVE'`
-  // here silently lifted a deliberate manual freeze the moment an admin
-  // reinstated the account. Lifting a freeze is always its own explicit step.
-  async function setStatus(userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'BANNED') {
-    await prisma.$transaction([
-      prisma.user.update({ where: { id: userId }, data: { status } }),
-      prisma.refreshToken.deleteMany({ where: { userId } }),
-      ...(status !== 'ACTIVE' ? [prisma.creatorProfile.updateMany({ where: { userId }, data: { payoutsFrozen: true } })] : []),
-      ...(status === 'BANNED' ? [prisma.subscription.updateMany({ where: { creatorId: userId }, data: { autoRenew: false, status: 'CANCELLED' } })] : []),
-    ]);
-    // A ban takes the creator's marketplace down: fixed-price listings are
-    // removed, and every live auction is cancelled with the leader's hold
-    // returned in the same transaction (a removed auction is never closed by
-    // the sweep, so a hold left on one was stranded). Suspension needs none
-    // of this -- browsing, buying and bidding already refuse a non-ACTIVE
-    // seller, and an auction ending during a suspension closes with no sale
-    // and a full release (core/auctions.ts closeAuction).
-    if (status === 'BANNED') {
-      const auctions = await prisma.listing.findMany({ where: { creatorId: userId, saleType: 'AUCTION', status: 'ACTIVE' }, select: { id: true } });
-      // One auction failing to cancel (the sweep can close it between this
-      // read and its transaction; cancelAuction then no-ops) must never skip
-      // the fixed-price removal below for a creator who is already BANNED.
-      for (const a of auctions) {
-        try {
-          await money(prisma, (tx) => cancelAuction(tx, a.id, 'seller_banned'));
-        } catch (err) {
-          app.log.error({ err, listingId: a.id, userId }, 'ban: failed to cancel auction');
-        }
-      }
-      await prisma.listing.updateMany({ where: { creatorId: userId, saleType: 'FIXED', status: 'ACTIVE' }, data: { status: 'REMOVED' } });
-    }
-  }
+  // Suspend/ban/reactivate, with everything that implies (payout freeze,
+  // cancelled subscriptions, delisting, ending a live stream): see
+  // core/moderation.ts, shared with the site's status push over the bridge.
+  // An admin's decision is never marked as the site's, so the site coming
+  // back 'active' cannot lift it.
+  const setStatus = (userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'BANNED') =>
+    applyUserStatus(userId, status, { log: app.log });
   app.post('/users/:id/status', async (req: any) => {
     const { status } = z.object({ status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']) }).parse(req.body);
     await setStatus(req.params.id, status); return { ok: true };
@@ -207,8 +186,113 @@ export const admin: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/payouts', async (req: any) => {
-    const rows = await prisma.payout.findMany({ where: { status: (req.query.status ?? 'FAILED') as any }, orderBy: { createdAt: 'desc' }, take: 100, include: { creator: { select: { displayName: true } } } });
+    const status = z.enum(['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'HELD', 'REFUNDED']).default('FAILED').parse(req.query.status || undefined);
+    const rows = await prisma.payout.findMany({ where: { status }, orderBy: { createdAt: 'desc' }, take: 100, include: { creator: { select: { displayName: true } } } });
     return rows.map(r => ({ ...r, amountCents: Number(r.amountCents), feeCents: Number(r.feeCents) }));
+  });
+
+  /**
+   * Settle a payout the automatic paths could not (see the reconciler in
+   * workers/payout-worker.ts). Every action is guarded on the payout's
+   * current status, so it can never race the worker into paying or
+   * refunding twice.
+   *
+   *  - mark_sent {txHash}: only against a SUCCESSFUL on-chain transaction
+   *    containing a USDG Transfer FROM the treasury (TREASURY_ADDRESS) TO
+   *    this payout's address for the payout's amount (its recorded
+   *    assetAmount when the worker got that far, else at least the net
+   *    amount at $1), and only a hash no other payout already records (also
+   *    a unique index). Refused while the payout's worker job is still
+   *    queued or running -- that job would broadcast its own transfer and
+   *    pay the creator twice -- and when the payout's own signed tx already
+   *    succeeded (mark it with that hash instead).
+   *  - refund {reason}: PENDING / HELD / FAILED only. A FAILED payout with a
+   *    txHash is refused while its receipt shows success; when no receipt
+   *    exists the admin must pass acknowledgeUnconfirmed after checking the
+   *    explorer, because the tx could still land later.
+   *  - release: HELD -> PENDING and re-queued. Refused while the creator is
+   *    still frozen or not ACTIVE -- lifting a freeze (POST
+   *    /creators/:id/freeze) is its own explicit step.
+   */
+  app.post('/payouts/:id/resolve', async (req: any, reply) => {
+    const b = z.discriminatedUnion('action', [
+      z.object({ action: z.literal('mark_sent'), txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }),
+      z.object({ action: z.literal('refund'), reason: z.string().min(3).max(200), acknowledgeUnconfirmed: z.boolean().optional() }),
+      z.object({ action: z.literal('release') }),
+    ]).parse(req.body);
+    const p = await prisma.payout.findUniqueOrThrow({ where: { id: req.params.id }, include: { creator: { select: { payoutsFrozen: true, user: { select: { status: true } } } } } });
+    const by = { by: req.user.id };
+
+    if (b.action === 'mark_sent') {
+      const hash = b.txHash.toLowerCase() as `0x${string}`;
+      if (!['PENDING', 'PROCESSING', 'FAILED', 'HELD'].includes(p.status)) return reply.code(409).send({ error: 'wrong_status', status: p.status });
+      if (p.status === 'PENDING' || p.status === 'PROCESSING') {
+        const job = await payoutQueue.getJob(payoutJobId(p.id));
+        if (job && (await job.isActive() || await job.isWaiting() || await job.isDelayed())) {
+          return reply.code(409).send({ error: 'payout_in_flight' });
+        }
+      }
+      if (p.txHash && p.txHash.toLowerCase() !== hash) {
+        const own = await publicClient.getTransactionReceipt({ hash: p.txHash as `0x${string}` }).catch(() => null);
+        if (own?.status === 'success') return reply.code(409).send({ error: 'own_tx_succeeded', txHash: p.txHash });
+      }
+      const treasury = treasuryAddress();
+      if (!treasury) return reply.code(409).send({ error: 'treasury_address_not_configured' });
+      const expectedRaw = p.assetAmount != null
+        ? BigInt(p.assetAmount)
+        : parseUnits((Number(p.amountCents) / 100).toFixed(HEDGE_STABLE.decimals), HEDGE_STABLE.decimals);
+      const exact = p.assetAmount != null;
+      const rcpt = await publicClient.getTransactionReceipt({ hash }).catch(() => null);
+      if (!rcpt || rcpt.status !== 'success') return reply.code(409).send({ error: 'tx_not_successful' });
+      const pays = rcpt.logs.some((l) => {
+        if (l.address.toLowerCase() !== HEDGE_STABLE.address.toLowerCase()) return false;
+        try {
+          const ev = decodeEventLog({ abi: [TRANSFER_EVENT], data: l.data, topics: l.topics });
+          if (String(ev.args.from).toLowerCase() !== treasury.toLowerCase()) return false;
+          if (String(ev.args.to).toLowerCase() !== p.address.toLowerCase()) return false;
+          const v = ev.args.value as bigint;
+          return exact ? v === expectedRaw : v >= expectedRaw;
+        } catch { return false; }
+      });
+      if (!pays) return reply.code(409).send({ error: 'tx_does_not_pay_this_payout' });
+      try {
+        const ok = await money(prisma, async (tx) => {
+          const reused = await tx.payout.findFirst({ where: { id: { not: p.id }, txHash: { equals: hash, mode: 'insensitive' } }, select: { id: true } });
+          if (reused) throw Object.assign(new Error('tx_already_used'), { statusCode: 409 });
+          // Only from the status checked above: a PENDING payout the reconciler
+          // re-queued meanwhile may now be PROCESSING with the worker's own
+          // transfer on its way, and marking it SENT then would pay twice.
+          return markPayoutSent(tx, p.id, [p.status], hash, `marked sent by admin ${req.user.id}`);
+        });
+        return ok ? { ok: true, status: 'SENT' } : reply.code(409).send({ error: 'status_changed' });
+      } catch (err: any) {
+        if (err?.message === 'tx_already_used' || (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') || /Payout_txHash_lower_key/.test(String(err?.message ?? ''))) {
+          return reply.code(409).send({ error: 'tx_already_used' });
+        }
+        throw err;
+      }
+    }
+
+    if (b.action === 'refund') {
+      if (!['PENDING', 'HELD', 'FAILED'].includes(p.status)) return reply.code(409).send({ error: 'not_refundable', status: p.status });
+      if (p.txHash) {
+        const rcpt = await publicClient.getTransactionReceipt({ hash: p.txHash as `0x${string}` }).catch(() => null);
+        if (rcpt?.status === 'success') return reply.code(409).send({ error: 'tx_succeeded_use_mark_sent' });
+        if (!rcpt && !b.acknowledgeUnconfirmed) return reply.code(409).send({ error: 'tx_unconfirmed_check_explorer' });
+      }
+      const ok = await money(prisma, (tx) => refundPayout(tx, p.id, ['PENDING', 'HELD', 'FAILED'], `admin refund: ${b.reason}`));
+      req.log.info({ payoutId: p.id, ...by }, 'payout refunded by admin');
+      return ok ? { ok: true, status: 'REFUNDED' } : reply.code(409).send({ error: 'status_changed' });
+    }
+
+    if (p.status !== 'HELD') return reply.code(409).send({ error: 'not_held', status: p.status });
+    if (p.creator.payoutsFrozen || p.creator.user.status !== 'ACTIVE') return reply.code(409).send({ error: 'creator_frozen' });
+    const r = await prisma.payout.updateMany({ where: { id: p.id, status: 'HELD' }, data: { status: 'PENDING', error: null } });
+    if (!r.count) return reply.code(409).send({ error: 'status_changed' });
+    await payoutQueue.add('send', { payoutId: p.id }, payoutJobOptions(p.id, p.instant)).catch((err) => {
+      req.log.error({ err, payoutId: p.id }, 'release: enqueue failed; the reconciler will re-queue it');
+    });
+    return { ok: true, status: 'PENDING' };
   });
 
   app.get('/revenue', async (req: any) => {
@@ -224,10 +308,11 @@ export const admin: FastifyPluginAsync = async (app) => {
   /** Treasury's $ONLYONE hedge exposure: how much of what's come in is still unconverted risk vs already de-risked into stablecoin. */
   app.get('/treasury-hedge', async () => {
     const [pending, batches] = await Promise.all([
-      prisma.deposit.findMany({ where: { asset: 'ONLYONE', hedgedAt: null }, select: { rawAmount: true } }),
+      prisma.deposit.findMany({ where: { asset: 'ONLYONE', hedgedAt: null }, select: { rawAmount: true, hedgedRaw: true } }),
       prisma.treasuryHedgeBatch.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
     ]);
-    const pendingRaw = pending.reduce((s, d) => s + BigInt(d.rawAmount), 0n);
+    // Minus what partial swaps already sold for these deposits (Deposit.hedgedRaw).
+    const pendingRaw = pending.reduce((s, d) => s + BigInt(d.rawAmount) - BigInt(d.hedgedRaw ?? '0'), 0n);
     const swappedRaw = batches.reduce((s, b) => s + BigInt(b.onlyOneRawIn), 0n);
     const usdcRaw = batches.reduce((s, b) => s + BigInt(b.usdcRawOut), 0n);
     return {

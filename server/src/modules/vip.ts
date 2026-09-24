@@ -1,4 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { money } from '../core/ledger.js';
 import { subscribeVip, getVipStatus } from '../core/vip.js';
@@ -17,8 +18,12 @@ import { subscribeVip, getVipStatus } from '../core/vip.js';
 export const vip: FastifyPluginAsync = async (app) => {
   app.get('/status', { preHandler: app.auth }, async (req) => money(prisma, (tx) => getVipStatus(tx, req.user.id)));
 
-  // No body: there is one price and one period. Extends from the current
-  // expiry when there is one, so paying early never burns the remainder.
-  app.post('/subscribe', { preHandler: app.auth }, async (req) =>
-    money(prisma, (tx) => subscribeVip(tx, req.user.id)));
+  // One price and one period. The body carries the price the fan was shown
+  // (GET /vip/status reports it); a mismatch is a 409 price_changed, never a
+  // charge at a price they didn't see. Extends from the current expiry when
+  // there is one, so paying early never burns the remainder.
+  app.post('/subscribe', { preHandler: app.auth }, async (req) => {
+    const { expectedPriceCents } = z.object({ expectedPriceCents: z.number().int().min(1) }).parse(req.body ?? {});
+    return money(prisma, (tx) => subscribeVip(tx, req.user.id, expectedPriceCents));
+  });
 };

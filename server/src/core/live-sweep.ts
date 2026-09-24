@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import { paidThrough } from './live-billing.js';
+import { paidThrough, MAX_PREPAID_MS } from './live-billing.js';
 import type { RoomsLike } from './livekit.js';
 
 // A viewer gets this long after their paid time ends to buy the next minute
@@ -65,4 +65,49 @@ export async function endStaleStreamFor(rooms: RoomsLike, creatorId: string): Pr
   if (exists) return true;
   await prisma.liveStream.updateMany({ where: { id: cur.id, status: 'LIVE' }, data: { status: 'ENDED', endedAt: new Date() } });
   return false;
+}
+
+/**
+ * Lifetime of a viewer's LiveKit token.
+ *
+ * On a per-minute stream the token ends when the viewer's paid time (plus
+ * the grace) does, floored at a minute so a just-paid viewer can finish
+ * connecting. A removed viewer who still held a 10-minute token used to
+ * reconnect with it straight away and watch until the next sweep, over and
+ * over -- paying for ~1 minute in 10. This alone is not enough (LiveKit
+ * hands a connected client refreshed tokens), which is why the
+ * participant_joined webhook also runs checkViewerOnJoin() below.
+ */
+export function viewerTokenTtlSeconds(perMinuteCents: number, through: Date | null, now = Date.now()): number {
+  if (perMinuteCents <= 0) return 10 * 60;
+  const until = (through?.getTime() ?? now) + PAY_GRACE_MS - now;
+  return Math.max(60, Math.min(Math.ceil(until / 1000), Math.ceil((MAX_PREPAID_MS + PAY_GRACE_MS) / 1000)));
+}
+
+/**
+ * LiveKit's participant_joined webhook: a viewer who joins (or rejoins with
+ * a token LiveKit refreshed for them) is removed at once if they have no
+ * paid time left on a per-minute stream, or if the stream's creator is no
+ * longer ACTIVE. Returns true when the participant was removed.
+ */
+export async function checkViewerOnJoin(
+  rooms: Pick<RoomsLike, 'removeParticipant'>,
+  roomName: string,
+  identity: string,
+  now = new Date(),
+): Promise<boolean> {
+  if (!identity) return false;
+  const s = await prisma.liveStream.findUnique({
+    where: { roomName },
+    select: { id: true, creatorId: true, status: true, perMinuteCents: true, creator: { select: { user: { select: { status: true } } } } },
+  });
+  if (!s || identity === s.creatorId) return false;
+  let remove = s.status !== 'LIVE' || s.creator.user.status !== 'ACTIVE';
+  if (!remove && s.perMinuteCents > 0) {
+    const through = await paidThrough(identity, s.id);
+    remove = !through || through.getTime() + PAY_GRACE_MS <= now.getTime();
+  }
+  if (!remove) return false;
+  await rooms.removeParticipant(roomName, identity);
+  return true;
 }

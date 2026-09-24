@@ -18,7 +18,15 @@ const rl = createInterface({ input: process.stdin, terminal: false });
 process.stderr.write('Deposit mnemonic: ');
 rl.once('line', (line) => {
   rl.close();
-  const xpub = xpubFromMnemonic(line);
+  let xpub: string;
+  try {
+    xpub = xpubFromMnemonic(line);
+  } catch (e) {
+    // A typo is refused (BIP-39 checksum) rather than silently deriving an
+    // unrelated wallet -- see lib/chain.ts isValidMnemonic.
+    process.stderr.write(`\n${(e as Error).message}\n`);
+    process.exit(1);
+  }
   process.env.DEPOSIT_XPUB = xpub;
   process.stdout.write(`DEPOSIT_XPUB=${xpub}\n`);
   // Index 1 as a sanity check the operator can compare against an existing

@@ -69,7 +69,10 @@ export const creators: FastifyPluginAsync = async (app) => {
       tags: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
       // Never ONLYONE: paying a creator in the token is still paying
       // someone in a token whose price moves between earning and cashing out.
-      payoutAsset: z.enum(['STABLE', 'ETH']).optional(),
+      // USDG (the chain's primary stablecoin) only. Credits are closed-loop
+      // dollars; paying a creator out in ETH at an oracle price made the
+      // platform an ETH desk (decided: only USDG is paid).
+      payoutAsset: z.literal('STABLE').optional(),
       payoutAddress: z.string().refine(isAddress, 'bad_address').optional(),
       // What a fan pays to send this creator a message (modules/messages.ts
       // POST /to). null = just the platform floor; anything below the floor
@@ -105,7 +108,9 @@ export const creators: FastifyPluginAsync = async (app) => {
     const { offset, limit: take } = page(req.query);
     const now = new Date();
     const base = {
-      user: { status: 'ACTIVE' as const, kycStatus: 'APPROVED' as const },
+      // A bridged creator is listed only while the site has them approved
+      // (core/access.ts creatorMayOperate).
+      user: { status: 'ACTIVE' as const, kycStatus: 'APPROVED' as const, OR: [{ siteUid: null }, { siteCreatorStatus: 'active' }] },
       ...(tag ? { tags: { has: tag } } : {}),
       ...(q ? { OR: [
         { displayName: { contains: q, mode: 'insensitive' as const } },
@@ -132,7 +137,7 @@ export const creators: FastifyPluginAsync = async (app) => {
 
   // All tags currently in use, for building a category filter UI
   app.get('/tags', async () => {
-    const rows = await prisma.creatorProfile.findMany({ where: { user: { status: 'ACTIVE', kycStatus: 'APPROVED' } }, select: { tags: true } });
+    const rows = await prisma.creatorProfile.findMany({ where: { user: { status: 'ACTIVE', kycStatus: 'APPROVED', OR: [{ siteUid: null }, { siteCreatorStatus: 'active' }] } }, select: { tags: true } });
     return [...new Set(rows.flatMap((r) => r.tags))].sort();
   });
 

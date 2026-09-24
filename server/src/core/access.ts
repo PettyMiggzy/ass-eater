@@ -15,6 +15,20 @@ export async function creatorIsActive(creatorId: string) {
 }
 
 /**
+ * May this account act as a creator (publish, sell, price messages,
+ * withdraw)? KYC-approved on this stack, AND -- for an account bridged from
+ * the Next.js site -- approved THERE ('active' as last seen by
+ * lib/bridge.ts). The site's approval queue, including its §2257 gate, is
+ * the platform's creator approval; server-side KYC alone is not.
+ */
+export function creatorMayOperate(u: { role: string; kycStatus: string; siteUid?: string | null; siteCreatorStatus?: string | null } | null) {
+  if (!u) return false;
+  if (u.role === 'ADMIN') return u.kycStatus === 'APPROVED';
+  if (u.role !== 'CREATOR' || u.kycStatus !== 'APPROVED') return false;
+  return !u.siteUid || u.siteCreatorStatus === 'active';
+}
+
+/**
  * True while `obj` is inside its VIP early-access window for this viewer.
  * The list endpoints hide such rows; this is the gate for anyone who has the
  * id anyway (a PPV unlock, a media URL, a bid) -- ids are shareable.
@@ -68,7 +82,14 @@ export async function canViewMessage(
   msg: { id: string; senderId: string; priceCents: number; conversation: { aId: string; bId: string } },
 ) {
   if (![msg.conversation.aId, msg.conversation.bId].includes(userId)) return false;
-  if (msg.senderId === userId || msg.priceCents === 0) return true;
+  if (msg.senderId === userId) return true;
+  // Same rule as posts and listings: once the sender is suspended or banned,
+  // what they sent -- text and media, mass-broadcast copies included -- is
+  // no longer served to anyone but them, paid-for or free. DMs are the most
+  // likely vector for exactly the content a ban is for (e.g. NCII), and
+  // GET /media/:id/url resolves message media through here.
+  if (!(await creatorIsActive(msg.senderId))) return false;
+  if (msg.priceCents === 0) return true;
   return !!(await prisma.messageUnlock.findUnique({ where: { fanId_messageId: { fanId: userId, messageId: msg.id } } }));
 }
 

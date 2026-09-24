@@ -1,5 +1,5 @@
 import { post, lockBalance, InsufficientFunds, isVip, type Tx, postPlatformRevenue } from './ledger.js';
-import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION } from './marketplace-fees.js';
+import { PLATFORM_FEE_BPS, LISTING_FEE_BPS } from './marketplace-fees.js';
 
 // eBay-style auctions on the marketplace. Bids settle in the USD-backed
 // balanceCents pool ONLY -- never the $ONLYONE discount pool. A bid has to
@@ -44,12 +44,28 @@ function heldNow(listing: { currentHoldCents: number | null; currentBidCents: nu
   return listing.currentHoldCents ?? listing.currentBidCents ?? 0;
 }
 
+/** The part of the current hold that came out of the leader's withdrawable credits. */
+function heldWithdrawableNow(listing: { currentHoldWithdrawableCents: number | null }) {
+  return listing.currentHoldWithdrawableCents ?? 0;
+}
+
+async function withdrawableOf(tx: Tx, userId: string) {
+  const a = await tx.account.findUnique({ where: { userId }, select: { withdrawableCents: true } });
+  return a?.withdrawableCents ?? 0n;
+}
+
 async function sellerActive(tx: Tx, creatorId: string) {
   const u = await tx.user.findUnique({ where: { id: creatorId }, select: { status: true } });
   return u?.status === 'ACTIVE';
 }
 
-export async function placeBid(tx: Tx, listingId: string, bidderId: string, amountCents: number) {
+export async function placeBid(
+  tx: Tx, listingId: string, bidderId: string, amountCents: number,
+  // The bidder's own explicit 18+ marketplace confirmation and ToS
+  // acceptance, given with THIS bid (the bid route requires both). Stored on
+  // the Bid; closeAuction copies the winning bid's onto the order.
+  confirmation?: { ageConfirmedAt: Date; tosVersion: string },
+) {
   const listing = await tx.listing.findUniqueOrThrow({ where: { id: listingId } });
   if (listing.saleType !== 'AUCTION') throw statusCode('not_an_auction', 400);
   if (listing.status !== 'ACTIVE') throw statusCode('not_available', 400);
@@ -78,19 +94,26 @@ export async function placeBid(tx: Tx, listingId: string, bidderId: string, amou
 
   // Release the previous leading hold -- exactly what was taken, never a
   // number recomputed from the listing.
+  // The release gives back, as withdrawable, exactly the earned part the hold
+  // took; otherwise a creator bidding with money they earned would have it
+  // turned into credits they can never pay out.
   if (listing.currentBidderId && heldNow(listing) > 0) {
-    await post(tx, listing.currentBidderId, heldNow(listing), 'AUCTION_BID_RELEASE', listingId, { outbidBy: bidderId });
+    await post(tx, listing.currentBidderId, heldNow(listing), 'AUCTION_BID_RELEASE', listingId, { outbidBy: bidderId }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
   }
+  // Measure how much withdrawable this hold consumes (post() clamps
+  // withdrawable down to the new balance), under the row lock taken above.
+  const wBefore = await withdrawableOf(tx, bidderId);
   await post(tx, bidderId, -holdCents, 'AUCTION_BID_HOLD', listingId, { bidCents: amountCents, shippingCents: holdCents - amountCents });
+  const heldWithdrawable = Number(wBefore - (await withdrawableOf(tx, bidderId)));
 
-  const bid = await tx.bid.create({ data: { listingId, bidderId, amountCents, heldCents: holdCents } });
+  const bid = await tx.bid.create({ data: { listingId, bidderId, amountCents, heldCents: holdCents, heldWithdrawableCents: heldWithdrawable, ageConfirmedAt: confirmation?.ageConfirmedAt ?? null, tosVersion: confirmation?.tosVersion ?? null } });
 
   let auctionEndsAt = listing.auctionEndsAt;
   if (auctionEndsAt.getTime() - Date.now() < ANTI_SNIPE_WINDOW_MS) {
     auctionEndsAt = new Date(Date.now() + ANTI_SNIPE_EXTENSION_MS);
   }
 
-  await tx.listing.update({ where: { id: listingId }, data: { currentBidCents: amountCents, currentBidderId: bidderId, currentHoldCents: holdCents, auctionEndsAt } });
+  await tx.listing.update({ where: { id: listingId }, data: { currentBidCents: amountCents, currentBidderId: bidderId, currentHoldCents: holdCents, currentHoldWithdrawableCents: heldWithdrawable, auctionEndsAt } });
   return bid;
 }
 
@@ -112,11 +135,11 @@ export async function cancelAuction(tx: Tx, listingId: string, reason: string) {
   if (listing.status !== 'ACTIVE') return { released: 0 };
   const held = heldNow(listing);
   if (listing.currentBidderId && held > 0) {
-    await post(tx, listing.currentBidderId, held, 'AUCTION_BID_RELEASE', listingId, { reason });
+    await post(tx, listing.currentBidderId, held, 'AUCTION_BID_RELEASE', listingId, { reason }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
   }
   await tx.listing.update({
     where: { id: listingId },
-    data: { status: 'REMOVED', currentBidderId: null, currentBidCents: null, currentHoldCents: null },
+    data: { status: 'REMOVED', currentBidderId: null, currentBidCents: null, currentHoldCents: null, currentHoldWithdrawableCents: null },
   });
   return { released: listing.currentBidderId ? held : 0 };
 }
@@ -132,14 +155,14 @@ export async function closeAuction(tx: Tx, listingId: string) {
   if (!listing.currentBidderId || !listing.currentBidCents || !meetsReserve || !active) {
     const held = heldNow(listing);
     if (listing.currentBidderId && held > 0) {
-      await post(tx, listing.currentBidderId, held, 'AUCTION_BID_RELEASE', listingId, { reserveNotMet: !meetsReserve, sellerInactive: !active });
+      await post(tx, listing.currentBidderId, held, 'AUCTION_BID_RELEASE', listingId, { reserveNotMet: !meetsReserve, sellerInactive: !active }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
     }
     // Clear the lead exactly like cancelAuction: with currentHoldCents null
     // heldNow() falls back to currentBidCents, so leaving the bid set would
     // make a hold that was just returned look like it is still held.
     await tx.listing.update({
       where: { id: listingId },
-      data: { status: 'REMOVED', currentBidderId: null, currentBidCents: null, currentHoldCents: null },
+      data: { status: 'REMOVED', currentBidderId: null, currentBidCents: null, currentHoldCents: null, currentHoldWithdrawableCents: null },
     });
     return { sold: false as const };
   }
@@ -155,11 +178,21 @@ export async function closeAuction(tx: Tx, listingId: string) {
 
   await tx.listing.update({ where: { id: listingId }, data: { status: 'SOLD' } });
 
+  // The order's 18+ / ToS record is the WINNER's own, given on the winning
+  // bid -- never a timestamp invented at close. A bid placed before the bid
+  // route required it has none, and the order says so (null) rather than
+  // claiming a confirmation that never happened.
+  const winning = await tx.bid.findFirst({
+    where: { listingId, bidderId: listing.currentBidderId, amountCents: chargeCents },
+    orderBy: { createdAt: 'desc' },
+    select: { ageConfirmedAt: true, tosVersion: true },
+  });
+
   const order = await tx.listingOrder.create({
     data: {
       listingId, buyerId: listing.currentBidderId, priceCents: chargeCents, shippingCents,
       platformFeeCents: platformFee, listingFeeCents: listingFee,
-      ageConfirmedAt: new Date(), tosVersion: MARKETPLACE_TOS_VERSION,
+      ageConfirmedAt: winning?.ageConfirmedAt ?? null, tosVersion: winning?.tosVersion ?? null,
       shipStatus: listing.kind === 'PHYSICAL' ? 'AWAITING_SHIPMENT' : 'DIGITAL',
     },
   });
@@ -167,7 +200,7 @@ export async function closeAuction(tx: Tx, listingId: string) {
   // The winner's funds (bid + shipping) already left their balance at bid
   // time (AUCTION_BID_HOLD) -- route exactly that total, no second debit:
   // creator net + shipping, platform the fees. The three legs sum to `held`.
-  await post(tx, listing.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { auction: true, gross: chargeCents, platformFee, listingFee, shippingCents, fanId: listing.currentBidderId });
+  await post(tx, listing.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { auction: true, gross: chargeCents, platformFee, listingFee, shippingCents, fanId: listing.currentBidderId }, 'CREDITS', { earned: true });
   await postPlatformRevenue(tx, platformFee + listingFee, order.id, { source: 'marketplace_auction', platformFee, listingFee });
 
   return { sold: true as const, order };

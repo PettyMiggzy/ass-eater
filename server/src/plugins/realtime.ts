@@ -42,7 +42,12 @@ export function serveRealtimeChannel(
   let release: (() => Promise<void>) | null = null;
   let expiryTimer: NodeJS.Timeout | null = null;
 
-  const authTimer = setTimeout(() => socket.close(4001, 'auth_timeout'), AUTH_TIMEOUT_MS);
+  // terminate(), not close(): a close handshake keeps reading from the peer
+  // until ws's 30 s close timeout, so a client that never authenticates could
+  // hold the connection (and keep sending) well past AUTH_TIMEOUT_MS.
+  const authTimer = setTimeout(() => {
+    try { socket.terminate(); } catch { /* already gone */ }
+  }, AUTH_TIMEOUT_MS);
   const pingTimer = setInterval(() => { try { socket.ping(); } catch { /* closing */ } }, PING_MS);
 
   socket.on('close', () => {

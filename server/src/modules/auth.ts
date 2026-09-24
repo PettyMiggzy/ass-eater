@@ -3,7 +3,7 @@ import { z } from 'zod';
 import argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma.js';
-import { verifyBridgeToken, resolveBridgedUser } from '../lib/bridge.js';
+import { verifyBridgeToken, resolveBridgedUser, verifyBridgeStatusToken, syncSiteStanding } from '../lib/bridge.js';
 import { redis } from '../lib/redis.js';
 import { PLATFORM_ID, BURNED_ID } from '../core/ledger.js';
 
@@ -133,6 +133,27 @@ export const auth: FastifyPluginAsync = async (app) => {
       return reply.code(r.status).send({ error: r.error });
     }
     return { access: app.jwt.sign({ id: r.user.id, role: r.user.role }) };
+  });
+
+  // Site -> server push of a creator's standing (lib/server-api.js
+  // pushCreatorStatus on the site, called when its content-violation ladder
+  // or an admin changes a creator's status). Without it a creator banned on
+  // the site stayed a working, earning account here until they happened to
+  // bridge again. Signed with BRIDGE_SECRET under its own `typ`, single-use
+  // like the exchange token. An unknown uid is fine -- nothing to apply.
+  app.post('/bridge/status', {
+    config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { token } = z.object({ token: z.string().max(4096) }).parse(req.body);
+    const claims = verifyBridgeStatusToken(token);
+    if (!claims) return reply.code(401).send({ error: 'invalid_bridge_token' });
+    const ttlMs = Math.max(1_000, claims.exp - Date.now() + 60_000);
+    const fresh = await redis.set(`bridge:jti:${claims.jti}`, '1', 'PX', ttlMs, 'NX');
+    if (fresh !== 'OK') return reply.code(401).send({ error: 'bridge_token_replayed' });
+    const user = await prisma.user.findUnique({ where: { siteUid: claims.uid } });
+    if (!user) return { ok: true, known: false };
+    const applied = await syncSiteStanding(user, claims.creatorStatus);
+    return { ok: true, known: true, applied };
   });
 
   app.post('/refresh', { config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req, reply) => {

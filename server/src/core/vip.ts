@@ -55,8 +55,16 @@ export async function getVipStatus(tx: Tx, userId: string) {
  * the money and never buys the tokens -- the one failure here that nobody
  * would ever notice, because the fan still gets their badge.
  */
-export async function subscribeVip(tx: Tx, userId: string) {
+export async function subscribeVip(tx: Tx, userId: string, expectedPriceCents?: number) {
   const { priceCents } = await getVipConfig(tx);
+  // The price the fan was shown, checked against the one read inside this
+  // transaction: an admin can move vipPriceCents at any time (PATCH
+  // /admin/vip-config), and a click must never buy at a price nobody saw.
+  // Every other purchase path makes the same check. The route always passes
+  // it; it is optional here only for internal callers and tests.
+  if (expectedPriceCents !== undefined && expectedPriceCents !== priceCents) {
+    throw Object.assign(new Error('price_changed'), { statusCode: 409 });
+  }
 
   const bal = await lockBalance(tx, userId);
   if (bal < BigInt(priceCents)) throw new InsufficientFunds();

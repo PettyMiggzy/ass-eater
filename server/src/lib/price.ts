@@ -80,5 +80,17 @@ export async function getUsdPrice(asset: 'STABLE' | 'ETH' | 'ONLYONE'): Promise<
   return px;
 }
 
-export const rawToUsdCents = (raw: bigint, decimals: number, px: number) =>
-  BigInt(Math.floor((Number(raw) / 10 ** decimals) * px * 100));
+/**
+ * Token units -> whole cents, floored, in integer arithmetic. The float
+ * version (Number(raw) / 10**d * px * 100) landed just under the integer for
+ * ~6% of exact-cent stablecoin amounts -- 1.15 USDG became 114 cents -- so
+ * the ledger gross stopped reconciling with the chain. A dollar stablecoin
+ * (px === 1) is exact; any other price is fixed to 8 decimal places first.
+ */
+const PX_SCALE = 10n ** 8n;
+export function rawToUsdCents(raw: bigint, decimals: number, px: number): bigint {
+  const unit = 10n ** BigInt(decimals);
+  if (px === 1) return (raw * 100n) / unit;
+  const pxScaled = BigInt(Math.round(px * 1e8));
+  return (raw * pxScaled * 100n) / (unit * PX_SCALE);
+}

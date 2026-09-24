@@ -1,3 +1,4 @@
+import type { Worker } from 'bullmq';
 import { warnLegacyEnv } from '../lib/chain.js';
 
 /**
@@ -20,3 +21,34 @@ process.on('unhandledRejection', (reason) => {
 });
 
 warnLegacyEnv();
+
+/**
+ * Graceful stop. systemd sends SIGTERM on every redeploy (app-setup.sh
+ * restarts this unit); without a handler the process died mid-job, and a
+ * payout waiting for its confirmations was abandoned in PROCESSING. Each
+ * BullMQ Worker is closed, which stops it taking new jobs and waits for the
+ * active ones to finish (onlyone-workers.service allows long enough for a
+ * payout's receipt wait). Anything still interrupted is picked up by the
+ * payout reconciler (workers/payout-worker.ts) on the next start.
+ */
+const workers: Worker[] = [];
+const stopHooks: (() => void)[] = [];
+export function registerWorker<T extends Worker>(w: T): T {
+  workers.push(w);
+  return w;
+}
+/** For interval loops (reconcilers, sweeps) that should stop taking new work on SIGTERM. */
+export function onStop(fn: () => void) { stopHooks.push(fn); }
+let stopping = false;
+export const isStopping = () => stopping;
+async function stop(signal: string) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`workers: ${signal}, draining ${workers.length} workers`);
+  for (const fn of stopHooks) { try { fn(); } catch { /* best effort */ } }
+  await Promise.allSettled(workers.map((w) => w.close()));
+  console.log('workers: drained, exiting');
+  process.exit(0);
+}
+process.once('SIGTERM', () => { void stop('SIGTERM'); });
+process.once('SIGINT', () => { void stop('SIGINT'); });

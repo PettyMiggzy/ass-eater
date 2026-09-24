@@ -98,13 +98,18 @@ describe('resolveBridgedUser -- joined on the site uid, never on email', () => {
     expect(r.ok && r.user.email.endsWith('@bridge.invalid')).toBe(true);
   });
 
-  it('upgrades FAN -> CREATOR with a profile, and never downgrades', async () => {
+  it('upgrades FAN -> CREATOR with a profile only once the site approves them, and never downgrades', async () => {
     const c = claims();
     const fan = await resolveBridgedUser(c);
-    const creator = await resolveBridgedUser({ ...c, role: 'CREATOR', creatorStatus: 'pending' });
+    // A site creator still 'pending' (not approved, no §2257 record) is NOT a
+    // creator here -- server KYC alone must not bypass the site's approval.
+    const pending = await resolveBridgedUser({ ...c, role: 'CREATOR', creatorStatus: 'pending' });
+    expect(pending.ok && pending.user.role).toBe('FAN');
+    const creator = await resolveBridgedUser({ ...c, role: 'CREATOR', creatorStatus: 'active' });
     expect(fan.ok && creator.ok).toBe(true);
     if (!creator.ok) return;
     expect(creator.user.role).toBe('CREATOR');
+    expect(creator.user.siteCreatorStatus).toBe('active');
     expect(await prisma.creatorProfile.findUnique({ where: { userId: creator.user.id } })).not.toBeNull();
     const again = await resolveBridgedUser({ ...c, role: 'FAN' });
     expect(again.ok && again.user.role).toBe('CREATOR');

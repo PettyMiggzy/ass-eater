@@ -3,6 +3,7 @@ import { Prisma, type User } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { PLATFORM_ID, BURNED_ID } from '../core/ledger.js';
+import { applyUserStatus } from '../core/moderation.js';
 
 /**
  * Verifies short-lived identity assertions minted by the Next.js site
@@ -117,24 +118,45 @@ export type BridgeResolution =
  * into it, and what bridged a site fan named 'treasury@internal' into the
  * platform ADMIN account.
  *
- * Role only ever moves FAN -> CREATOR (a site fan who became a creator);
- * nothing here issues ADMIN, and an ADMIN or system row is refused outright.
+ * Role only ever moves FAN -> CREATOR, and only for a creator the site has
+ * approved ('active'); nothing here issues ADMIN, and an ADMIN or system row
+ * is refused outright.
  */
 export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeResolution> {
   // Fail closed (verifyBridgeToken already rejects this shape; repeated so
   // no other caller can bridge a creator of unknown standing as unrestricted).
   if (claims.role === 'CREATOR' && !claims.creatorStatus) return { ok: false, status: 403, error: 'banned' };
-  if (claims.creatorStatus === 'banned') return { ok: false, status: 403, error: 'banned' };
-  if (claims.creatorStatus === 'suspended') return { ok: false, status: 403, error: 'suspended' };
 
   let user = await prisma.user.findUnique({ where: { siteUid: claims.uid } });
-  if (!user) user = await provisionBridgedUser(claims);
 
-  if (claims.role === 'CREATOR' && user.role === 'FAN') {
+  // A ban or suspension on the site is APPLIED here, not just used to refuse
+  // this one exchange: the account would otherwise keep earning -- fans'
+  // subscriptions renewing, listings buyable, a queued payout going out --
+  // while the owner believes it is banned. The site also pushes status
+  // changes directly (POST /auth/bridge/status), so this is the second of
+  // two routes, not the only one.
+  if (claims.creatorStatus === 'banned' || claims.creatorStatus === 'suspended') {
+    if (user) await syncSiteStanding(user, claims.creatorStatus);
+    return { ok: false, status: 403, error: claims.creatorStatus };
+  }
+
+  if (!user) user = await provisionBridgedUser(claims);
+  if (SYSTEM_IDS.has(user.id) || user.role === 'ADMIN' || user.siteUid !== claims.uid) {
+    return { ok: false, status: 403, error: 'forbidden' };
+  }
+
+  // Only an APPROVED ('active') site creator is a creator here. A 'pending'
+  // one -- not yet approved, and by the owner's rule unapprovable without a
+  // §2257 performer record -- is provisioned and kept as a FAN, so it cannot
+  // start server KYC and publish, sell or withdraw outside the site's
+  // approval queue. The last-seen site status is stored on the row and
+  // checked by app.creatorOk (plugins/auth.ts), which also catches a creator
+  // who was active here and later reverted on the site.
+  if (claims.role === 'CREATOR' && claims.creatorStatus === 'active' && user.role === 'FAN') {
     // Upgrade in one transaction so a row can never be a CREATOR with no
     // CreatorProfile (every creator route assumes one exists).
     const [updated] = await prisma.$transaction([
-      prisma.user.update({ where: { id: user.id }, data: { role: 'CREATOR' } }),
+      prisma.user.update({ where: { id: user.id }, data: { role: 'CREATOR', siteCreatorStatus: 'active' } }),
       prisma.creatorProfile.upsert({
         where: { userId: user.id },
         create: { userId: user.id, displayName: claims.username },
@@ -143,13 +165,78 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
     ]);
     user = updated;
   }
-
-  if (SYSTEM_IDS.has(user.id) || user.role === 'ADMIN' || user.siteUid !== claims.uid) {
-    return { ok: false, status: 403, error: 'forbidden' };
+  const standing = claims.creatorStatus ?? null;
+  if (user.siteCreatorStatus !== standing) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { siteCreatorStatus: standing } });
   }
+  // A suspension the SITE applied lifts when the site says the creator is
+  // active again (its suspensions expire by themselves after 30 days). One
+  // an admin applied here, and any ban, is not lifted this way. Payouts stay
+  // frozen either way until an admin unfreezes them (core/moderation.ts).
+  if (standing === 'active' && user.status === 'SUSPENDED' && user.statusBySite) {
+    await applyUserStatus(user.id, 'ACTIVE', { bySite: true });
+    user = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+  }
+
   if (user.status !== 'ACTIVE') return { ok: false, status: 403, error: 'account_' + user.status.toLowerCase() };
   return { ok: true, user };
 }
+
+/**
+ * Applies the site's word on a bridged account's standing: 'banned' and
+ * 'suspended' run the same effects as an admin action here
+ * (core/moderation.ts), marked as coming from the site; 'active' lifts only
+ * a suspension the site itself applied. Never touches a system or ADMIN
+ * row, and never softens an existing ban. Returns what it did.
+ */
+export async function syncSiteStanding(user: User, status: SiteCreatorStatus): Promise<'banned' | 'suspended' | 'reactivated' | 'unchanged'> {
+  if (SYSTEM_IDS.has(user.id) || user.role === 'ADMIN' || !user.siteUid) return 'unchanged';
+  if (user.siteCreatorStatus !== status) {
+    await prisma.user.update({ where: { id: user.id }, data: { siteCreatorStatus: status } });
+  }
+  if (status === 'banned') {
+    if (user.status === 'BANNED') return 'unchanged';
+    await applyUserStatus(user.id, 'BANNED', { bySite: true });
+    return 'banned';
+  }
+  if (status === 'suspended') {
+    if (user.status !== 'ACTIVE') return 'unchanged';
+    await applyUserStatus(user.id, 'SUSPENDED', { bySite: true });
+    return 'suspended';
+  }
+  if (status === 'active' && user.status === 'SUSPENDED' && user.statusBySite) {
+    await applyUserStatus(user.id, 'ACTIVE', { bySite: true });
+    return 'reactivated';
+  }
+  return 'unchanged';
+}
+
+export type BridgeStatusClaims = { typ: 'bridge_status'; uid: string; creatorStatus: SiteCreatorStatus; jti: string; exp: number };
+
+/**
+ * Verifies a site -> server standing push (lib/server-api.js
+ * pushCreatorStatus). Same secret as the exchange token but its own `typ`,
+ * so neither can be replayed as the other. Never throws on bad input.
+ */
+export function verifyBridgeStatusToken(token: unknown): BridgeStatusClaims | null {
+  if (typeof token !== 'string' || !token.includes('.')) return null;
+  const [payloadB64, sig] = token.split('.');
+  if (!payloadB64 || !sig) return null;
+  let expected: Buffer;
+  try { expected = Buffer.from(sign(payloadB64)); } catch { return null; }
+  const actual = Buffer.from(sig);
+  if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return null;
+  let c: BridgeStatusClaims;
+  try { c = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')); } catch { return null; }
+  if (!c || c.typ !== 'bridge_status') return null;
+  if (typeof c.exp !== 'number' || c.exp < Date.now()) return null;
+  if (typeof c.uid !== 'string' || !c.uid || c.uid.length > 128) return null;
+  if (typeof c.jti !== 'string' || c.jti.length < 16 || c.jti.length > 128) return null;
+  if (!['active', 'pending', 'suspended', 'banned'].includes(c.creatorStatus)) return null;
+  return c;
+}
+
+const isApprovedCreator = (c: BridgeClaims) => c.role === 'CREATOR' && c.creatorStatus === 'active';
 
 async function provisionBridgedUser(claims: BridgeClaims): Promise<User> {
   const asEmail = claims.email.trim().toLowerCase();
@@ -164,13 +251,16 @@ async function provisionBridgedUser(claims: BridgeClaims): Promise<User> {
     try {
       return await prisma.user.create({
         data: {
-          siteUid: claims.uid, email, username, role: claims.role,
+          // A creator claim is provisioned as a CREATOR only when the site
+          // has approved it ('active'); see resolveBridgedUser.
+          siteUid: claims.uid, email, username, role: isApprovedCreator(claims) ? 'CREATOR' : 'FAN',
+          siteCreatorStatus: claims.creatorStatus ?? null,
           // Bridged accounts never log in directly with a password -- this
           // hash is unusable (nobody knows it), and /login refuses any row
           // with a siteUid regardless.
           passwordHash: await argon2Placeholder(),
           account: { create: {} },
-          creator: claims.role === 'CREATOR' ? { create: { displayName: claims.username } } : undefined,
+          creator: isApprovedCreator(claims) ? { create: { displayName: claims.username } } : undefined,
         },
       });
     } catch (err) {

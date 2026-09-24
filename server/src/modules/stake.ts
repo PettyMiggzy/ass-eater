@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js';
 import { charge, money } from '../core/ledger.js';
 import { getUsdPrice } from '../lib/price.js';
 import { DECIMALS } from '../lib/chain.js';
+import { page } from '../plugins/pagination.js';
 
 const PERIOD_MS = 30 * 864e5;
 
@@ -97,6 +98,6 @@ export const stake: FastifyPluginAsync = async (app) => {
     prisma.tokenLock.findMany({
       where: { creatorId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } },
       include: { fan: { select: { id: true, username: true } } },
-      orderBy: { createdAt: 'desc' }, take: 200, skip: Number(req.query.offset ?? 0),
+      orderBy: { createdAt: 'desc' }, take: 200, skip: page(req.query).offset,
     }));
 };

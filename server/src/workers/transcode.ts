@@ -1,14 +1,19 @@
 import { Worker } from 'bullmq';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
+import { createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
+import type { Readable } from 'stream';
 import { hasAudio, hlsArgs, sanitizeImage } from './transcode-steps.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { prisma } from '../lib/prisma.js';
-import { s3, BUCKET, deletePrefix, deleteObject } from '../lib/s3.js';
+import { s3, BUCKET, deletePrefix, deleteObject, isNotFound } from '../lib/s3.js';
+import { UPLOAD_LIMITS } from '../core/upload-limits.js';
 import { connection } from '../lib/redis.js';
+import { registerWorker, onStop } from './process-guards.js';
 
 const run = promisify(execFile);
 
@@ -23,9 +28,14 @@ if (process.env.NODE_ENV !== 'test') {
 
 const ct = (f: string) => f.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : f.endsWith('.ts') ? 'video/mp2t' : 'image/jpeg';
 
+// Streamed straight to disk. transformToByteArray() buffered the whole object
+// and Buffer.from() copied it again -- ~2x the upload in RAM, in the one
+// process every worker shares (payouts, renewals, deposits), on a 2 GB box.
+// A 1.5 GB video was enough to OOM-kill all of them.
 async function download(key: string, dest: string) {
   const r = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
-  await writeFile(dest, Buffer.from(await r.Body!.transformToByteArray()));
+  if (!r.Body) throw new Error('empty_object');
+  await pipeline(r.Body as Readable, createWriteStream(dest));
 }
 async function uploadDir(dir: string, prefix: string) {
   for (const f of await readdir(dir))
@@ -51,7 +61,7 @@ async function undoAfterTakedown(m: { id: string; key: string }, outPrefix: stri
   if (wroteRaw) await deleteObject(m.key);
 }
 
-new Worker('transcode', async (job) => {
+registerWorker(new Worker('transcode', async (job) => {
   const m = await prisma.media.findUnique({ where: { id: job.data.mediaId } });
   // Deleted, or taken down before the job started: nothing to do.
   if (!m || m.status !== 'PROCESSING') return;
@@ -78,7 +88,10 @@ new Worker('transcode', async (job) => {
       // before the media can become READY -- the unsanitized original is
       // never served to anyone. (If the bucket keeps object versions, the
       // prior version still exists there; this bucket is not versioned.)
-      const clean = await sanitizeImage(await readFile(src), m.mime);
+      // From the file path, not a buffer of it: sharp streams the decode and
+      // refuses anything past its pixel limit (transcode-steps.ts).
+      if ((await stat(src)).size > UPLOAD_LIMITS.IMAGE_MAX_BYTES) throw new Error('image_too_large');
+      const clean = await sanitizeImage(src, m.mime);
       await writeFile(src, clean);
       // Then the blurred preview shown to fans who haven't unlocked it yet.
       await run('ffmpeg', ['-y', '-i', src, '-vf', 'scale=480:-2,boxblur=20:5', preview]);
@@ -103,4 +116,34 @@ new Worker('transcode', async (job) => {
   } finally {
     await rm(work, { recursive: true, force: true });
   }
-}, { ...connection, concurrency: 2 });
+}, { ...connection, concurrency: 2 }));
+
+/**
+ * Never-completed uploads: a presigned PUT URL lives 15 minutes, so an
+ * UPLOADING row older than UPLOAD_LIMITS.STALE_UPLOAD_MS will never be
+ * completed. Its raw object (if anything was PUT) is deleted and the row
+ * removed, so abandoned uploads neither cost storage forever nor count
+ * against the owner's open-upload limit. This sweep is the ONLY cleanup for
+ * raw/: do NOT add a bucket lifecycle rule expiring raw/ objects --
+ * completed images are served from their raw key, so an expiry rule would
+ * delete live content. The only bucket rule to add is one aborting
+ * incomplete multipart uploads (server/deploy/DEPLOY.md).
+ */
+export async function sweepAbandonedUploads(now = Date.now()) {
+  const stale = await prisma.media.findMany({
+    where: { status: 'UPLOADING', createdAt: { lt: new Date(now - UPLOAD_LIMITS.STALE_UPLOAD_MS) } },
+    select: { id: true, key: true }, take: 500,
+  });
+  let removed = 0;
+  for (const m of stale) {
+    try { await deleteObject(m.key); } catch (e) { if (!isNotFound(e)) { console.error('upload sweep: delete', m.id, e); continue; } }
+    const r = await prisma.media.deleteMany({ where: { id: m.id, status: 'UPLOADING' } });
+    removed += r.count;
+  }
+  return removed;
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  const t = setInterval(() => { sweepAbandonedUploads().catch((e) => console.error('upload sweep', e)); }, 60 * 60 * 1000);
+  onStop(() => clearInterval(t));
+}

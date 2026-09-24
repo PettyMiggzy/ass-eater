@@ -4,21 +4,24 @@ import { nanoid } from 'nanoid';
 import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
 import { prisma } from '../lib/prisma.js';
 import { charge, money } from '../core/ledger.js';
-import { isSubscribed } from '../core/access.js';
+import { isSubscribed, creatorIsActive } from '../core/access.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { LK, rooms } from '../core/livekit.js';
 import { ensureMinutePaid, payNextMinute } from '../core/live-billing.js';
-import { endStaleStreamFor } from '../core/live-sweep.js';
+import { endStaleStreamFor, checkViewerOnJoin, viewerTokenTtlSeconds } from '../core/live-sweep.js';
 
 let _receiver: WebhookReceiver | undefined;
 const receiver = () => (_receiver ??= new WebhookReceiver(LK.key, LK.secret));
 
-// The token only gates the initial connect, so its lifetime is not what
-// bills a viewer -- core/live-sweep.ts removes a per-minute viewer whose paid
-// time lapses. A viewer's token is still kept short so a leaked one is only
-// good for a fresh connect for a few minutes; the creator's is a full session.
-async function token(identity: string, room: string, publish: boolean) {
-  const at = new AccessToken(LK.key, LK.secret, { identity, ttl: publish ? '6h' : '10m' });
+// The token gates the connect. On a per-minute stream a viewer's token lives
+// only as long as their paid time (core/live-sweep.ts viewerTokenTtlSeconds),
+// so a lapsed viewer's reconnect has to come back through /join, which
+// charges; the participant_joined webhook and the periodic sweep remove
+// anyone who gets in without paid time anyway. Other viewer tokens stay short
+// so a leaked one is only good for a fresh connect for a few minutes; the
+// creator's is a full session.
+async function token(identity: string, room: string, publish: boolean, ttlSeconds?: number) {
+  const at = new AccessToken(LK.key, LK.secret, { identity, ttl: publish ? '6h' : (ttlSeconds ?? 600) });
   at.addGrant({ roomJoin: true, room, canPublish: publish, canSubscribe: true, canPublishData: true });
   return at.toJwt();
 }
@@ -48,6 +51,11 @@ export const live: FastifyPluginAsync = async (app) => {
     if (s.creatorId === req.user.id) {
       return { token: await token(req.user.id, s.roomName, false), wsUrl: process.env.LIVEKIT_WS_URL, streamId: s.id, creatorId: s.creatorId };
     }
+    // A suspended or banned creator's stream is not joinable by anyone else
+    // (core/moderation.ts also ends it; this covers the moment in between).
+    // Subscriptions are left ACTIVE on a suspension, so without this every
+    // subscriber could keep joining a subscriber-only stream for free.
+    if (!(await creatorIsActive(s.creatorId))) return reply.code(404).send({ error: 'not_live' });
     let allowed = await isSubscribed(req.user.id, s.creatorId);
     if (s.ticketPriceCents > 0) {
       const has = await prisma.liveTicket.findUnique({ where: { fanId_streamId: { fanId: req.user.id, streamId: s.id } } });
@@ -86,7 +94,7 @@ export const live: FastifyPluginAsync = async (app) => {
     let paidThrough: Date | null = null;
     if (s.perMinuteCents > 0) paidThrough = (await ensureMinutePaid(req.user.id, s)).paidThrough;
     return {
-      token: await token(req.user.id, s.roomName, false), wsUrl: process.env.LIVEKIT_WS_URL, streamId: s.id, creatorId: s.creatorId,
+      token: await token(req.user.id, s.roomName, false, viewerTokenTtlSeconds(s.perMinuteCents, paidThrough)), wsUrl: process.env.LIVEKIT_WS_URL, streamId: s.id, creatorId: s.creatorId,
       perMinuteCents: s.perMinuteCents, paidThrough,
     };
   });
@@ -108,7 +116,12 @@ export const live: FastifyPluginAsync = async (app) => {
     // A creator watching their own stream is not a customer of it.
     if (s.creatorId === req.user.id) return { paidMinutes: null, perMinuteCents: 0 };
     const r = await payNextMinute(req.user.id, s);
-    return { paidMinutes: r.paidMinutes, paidThrough: r.paidThrough, perMinuteCents: s.perMinuteCents };
+    // A fresh token covering the time just bought: the one /join issued ends
+    // with the viewer's earlier paid time, so a reconnect needs this one.
+    return {
+      paidMinutes: r.paidMinutes, paidThrough: r.paidThrough, perMinuteCents: s.perMinuteCents,
+      token: await token(req.user.id, s.roomName, false, viewerTokenTtlSeconds(s.perMinuteCents, r.paidThrough)),
+    };
   });
 
   app.post('/:id/end', { preHandler: app.auth }, async (req: any) => {
@@ -118,7 +131,8 @@ export const live: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/active', async () =>
-    prisma.liveStream.findMany({ where: { status: 'LIVE' }, include: { creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } }, _count: { select: { tickets: true } } } }));
+    // A suspended or banned creator's stream is not listed.
+    prisma.liveStream.findMany({ where: { status: 'LIVE', creator: { user: { status: 'ACTIVE' } } }, include: { creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } }, _count: { select: { tickets: true } } } }));
 
   // LiveKit → us. Needs raw body for signature check.
   app.addContentTypeParser('application/webhook+json', { parseAs: 'string' }, (_r, body, done) => done(null, body));
@@ -126,6 +140,14 @@ export const live: FastifyPluginAsync = async (app) => {
     let evt; try { evt = await receiver().receive(req.body, req.headers.authorization); } catch { return reply.code(401).send(); }
     if (evt.event === 'room_finished' && evt.room?.name)
       await prisma.liveStream.updateMany({ where: { roomName: evt.room.name, status: 'LIVE' }, data: { status: 'ENDED', endedAt: new Date() } });
+    // A (re)joining viewer with no paid time left -- including one whose
+    // token LiveKit refreshed while they were connected -- is removed now,
+    // not at the next sweep. Enable participant_joined on the LiveKit
+    // webhook for this to run.
+    if (evt.event === 'participant_joined' && evt.room?.name && evt.participant?.identity) {
+      try { await checkViewerOnJoin(rooms(), evt.room.name, evt.participant.identity); }
+      catch (err) { req.log.error({ err, room: evt.room.name }, 'live webhook: join check failed'); }
+    }
     return { ok: true };
   });
 
@@ -140,6 +162,7 @@ export const live: FastifyPluginAsync = async (app) => {
       if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
       const s = await prisma.liveStream.findUnique({ where: { id }, select: { id: true, creatorId: true } });
       if (!s) return null;
+      if (s.creatorId !== user.id && !(await creatorIsActive(s.creatorId))) return null;
       const ok = s.creatorId === user.id
         || (await isSubscribed(user.id, s.creatorId))
         || !!(await prisma.liveTicket.findUnique({ where: { fanId_streamId: { fanId: user.id, streamId: s.id } } }))

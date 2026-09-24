@@ -1,7 +1,7 @@
 import { parseAbi, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
 import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi, envInt } from '../lib/chain.js';
-import { impactBpsOf, selectHedgedDeposits } from './treasury-hedge-math.js';
+import { impactBpsOf, allocateHedge, hedgeRemaining } from './treasury-hedge-math.js';
 
 // Fans can deposit $ONLYONE to burn for VIP (core/vip.ts). That balance is
 // booked in fixed USD cents at the price on the day it arrived, but the tokens
@@ -58,8 +58,20 @@ async function sweep() {
 
   const pending = await prisma.deposit.findMany({ where: { asset: 'ONLYONE', hedgedAt: null }, orderBy: { createdAt: 'asc' } });
   if (!pending.length) return;
-  const totalRaw = pending.reduce((s, d) => s + BigInt(d.rawAmount), 0n);
-  const desiredRaw = (totalRaw * BigInt(HEDGE_BPS)) / 10_000n;
+  // What is still owed to the hedge: each deposit's target less what earlier
+  // swaps already sold for it (Deposit.hedgedRaw). Selling the full target
+  // again every cycle is what kept draining the treasury's own tokens when a
+  // deposit was bigger than one impact-capped slice.
+  let desiredRaw = pending.reduce((s, d) => s + hedgeRemaining(d, HEDGE_BPS), 0n);
+  // Never more than the treasury wallet actually holds. This caps the swap at
+  // the WHOLE wallet balance, not at the deposit tokens already swept into
+  // it: deposits are not tracked per sweep, so a deposit whose tokens are
+  // still at the fan's deposit address is hedged out of whatever else the
+  // wallet holds -- including the founder's own tokens, since the treasury
+  // wallet is also his. Keep hedging off (no ONLYONE_POOL / router) unless
+  // that is acceptable, or add per-deposit sweep tracking first.
+  const held = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'balanceOf', args: [treasuryAccount().address] });
+  if (held < desiredRaw) desiredRaw = held;
   if (desiredRaw <= 0n) return;
 
   const spot = await spotPrice();
@@ -82,8 +94,12 @@ async function sweep() {
 
   // The uncovered remainder of each deposit is intentional treasury exposure,
   // not a balance owed to anyone -- it just stays in the treasury wallet as-is.
-  const doneIds = selectHedgedDeposits(pending, sized.amountIn);
-  if (doneIds.length) await prisma.deposit.updateMany({ where: { id: { in: doneIds } }, data: { hedgedAt: new Date() } });
+  const alloc = allocateHedge(pending, sized.amountIn, HEDGE_BPS);
+  const now = new Date();
+  await prisma.$transaction(alloc.map((a) => prisma.deposit.update({
+    where: { id: a.id }, data: { hedgedRaw: a.hedgedRaw.toString(), ...(a.done ? { hedgedAt: now } : {}) },
+  })));
+  const doneIds = alloc.filter((a) => a.done).map((a) => a.id);
 
   await prisma.treasuryHedgeBatch.create({ data: {
     depositCount: doneIds.length, onlyOneRawIn: sized.amountIn.toString(), usdcRawOut: sized.amountOut.toString(), priceImpactBps: Math.round(sized.impactBps), txHash: hash,

@@ -5,6 +5,7 @@ import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_T
 import { getUsdPrice, rawToUsdCents } from '../lib/price.js';
 import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
+import { registerWorker } from './process-guards.js';
 
 const BATCH = 1000n;
 const TRACK_NATIVE_ETH = process.env.TRACK_NATIVE_ETH === 'true';
@@ -309,10 +310,46 @@ async function reconcileSweeps() {
   }
 })().catch((e) => console.error('indexer: reconcile loop crashed', e));
 
+/**
+ * The signing key for a deposit index must derive the address the API gave
+ * the fan (from DEPOSIT_XPUB) and the DB recorded. A wrong DEPOSIT_MNEMONIC
+ * -- one mistyped word that still passes as a mnemonic -- derived a
+ * different wallet, found a zero balance there and reported the sweep done,
+ * forever, while the real funds sat at an address whose key nobody held.
+ * Thrown loudly (the job fails and stays visible) instead.
+ */
+export class DepositKeyMismatchError extends Error {}
+export async function expectedDepositSigner(derivationIndex: number) {
+  const row = await prisma.depositAddress.findFirst({ where: { chainId: CHAIN_ID, derivationIndex }, select: { address: true } });
+  if (!row) throw new DepositKeyMismatchError(`no DepositAddress row for index ${derivationIndex}`);
+  const wc = depositWalletClient(derivationIndex);
+  if (wc.account.address.toLowerCase() !== row.address.toLowerCase()) {
+    throw new DepositKeyMismatchError(`DEPOSIT_MNEMONIC derives ${wc.account.address} for index ${derivationIndex}, but deposits go to ${row.address} -- the mnemonic does not match DEPOSIT_XPUB. Sweeps are disabled until it is fixed.`);
+  }
+  return wc;
+}
+
+// Checked once at startup against a real row: a mismatched mnemonic disables
+// sweeping (loudly) rather than letting every sweep "complete" against the
+// wrong wallet. Skipped when no deposit address exists yet or the mnemonic is
+// not set in this process.
+let sweepsDisabled: string | null = null;
+(async function checkDepositKey() {
+  if (!process.env.DEPOSIT_MNEMONIC) return;
+  try {
+    const sample = await prisma.depositAddress.findFirst({ where: { chainId: CHAIN_ID }, orderBy: { derivationIndex: 'desc' }, select: { derivationIndex: true } });
+    if (sample) await expectedDepositSigner(sample.derivationIndex);
+  } catch (e) {
+    sweepsDisabled = String((e as Error).message);
+    console.error('indexer: DEPOSIT KEY CHECK FAILED -- sweeps disabled:', sweepsDisabled);
+  }
+})().catch((e) => console.error('indexer: deposit key check crashed', e));
+
 /** Move funds from deposit address → treasury. ERC20 sweeps need gas first. */
-new Worker('sweep', async (job) => {
+registerWorker(new Worker('sweep', async (job) => {
   const { derivationIndex, asset, tokenAddress } = job.data as SweepJob;
-  const wc = depositWalletClient(derivationIndex); const me = wc.account.address;
+  if (sweepsDisabled) throw new DepositKeyMismatchError(sweepsDisabled);
+  const wc = await expectedDepositSigner(derivationIndex); const me = wc.account.address;
   const treasuryAddress = treasuryAccount().address;
   if (asset === 'ETH') {
     const bal = await publicClient.getBalance({ address: me });
@@ -334,4 +371,4 @@ new Worker('sweep', async (job) => {
   }
   const h = await wc.writeContract({ address: tok.address, abi: erc20Abi, functionName: 'transfer', args: [treasuryAddress, bal] });
   await publicClient.waitForTransactionReceipt({ hash: h });
-}, { ...connection, concurrency: 1 });
+}, { ...connection, concurrency: 1 }));

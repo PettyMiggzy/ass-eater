@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { publish, connection } from '../lib/redis.js';
 import { broadcastCopyKey } from '../core/media-key.js';
+import { registerWorker } from './process-guards.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
@@ -19,7 +20,7 @@ const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, b
  * Resumable: every message carries the job's broadcastId, unique per
  * conversation, so a retried job skips fans it already reached.
  */
-new Worker('broadcast', async (job) => {
+registerWorker(new Worker('broadcast', async (job) => {
   const { creatorId, text, mediaIds, priceCents } = job.data as {
     creatorId: string; text: string; mediaIds: string[]; priceCents: number; broadcastId?: string;
   };
@@ -34,6 +35,15 @@ new Worker('broadcast', async (job) => {
   const sourceMedia = mediaIds.length
     ? await prisma.media.findMany({ where: { id: { in: mediaIds }, ownerId: creatorId, status: 'READY', sourceMediaId: null } })
     : [];
+  // All or nothing. The route checks this at queue time, but media can be
+  // taken down (REJECTED) between then and now; a priced message that went
+  // out with part of its content missing would still be sold at full price
+  // to every subscriber. Sends nothing rather than something partial. Not
+  // thrown: a retry cannot make missing media reappear.
+  if (sourceMedia.length !== new Set(mediaIds).size) {
+    console.error('broadcast: skipped, requested media missing or not READY', { broadcastId, creatorId, requested: mediaIds.length, ready: sourceMedia.length });
+    return { skipped: 'media_not_ready' };
+  }
 
   const subs = await prisma.subscription.findMany({
     where: { creatorId, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } },
@@ -73,4 +83,4 @@ new Worker('broadcast', async (job) => {
     const locked = msg.priceCents > 0;
     await publish(fanId, { type: 'message', message: { ...msg, text: locked ? '' : msg.text, locked } });
   }
-}, { ...connection, concurrency: 1 });
+}, { ...connection, concurrency: 1 }));

@@ -2,6 +2,7 @@ import fp from 'fastify-plugin';
 import jwt from '@fastify/jwt';
 import type { Role } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { creatorMayOperate } from '../core/access.js';
 
 declare module '@fastify/jwt' { interface FastifyJWT { user: { id: string; role: Role } } }
 declare module 'fastify' {
@@ -27,12 +28,15 @@ export const authPlugin = fp(async (app) => {
     if (!roles.includes(req.user.role)) return reply.code(403).send({ error: 'forbidden' });
   });
 
-  // creator must be KYC-approved to publish/sell/withdraw
+  // creator must be KYC-approved (and, if bridged, site-approved) to publish/sell/withdraw
   app.decorate('creatorOk', async (req: any, reply: any) => {
     await app.auth(req, reply);
     if (reply.sent) return;
-    const u = await prisma.user.findUnique({ where: { id: req.user.id }, select: { role: true, kycStatus: true } });
+    const u = await prisma.user.findUnique({ where: { id: req.user.id }, select: { role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true } });
     if (u?.role !== 'CREATOR' && u?.role !== 'ADMIN') return reply.code(403).send({ error: 'not_creator' });
     if (u.kycStatus !== 'APPROVED') return reply.code(403).send({ error: 'kyc_required' });
+    // A creator bridged from the site must also be approved there -- see
+    // core/access.ts creatorMayOperate.
+    if (!creatorMayOperate(u)) return reply.code(403).send({ error: 'creator_not_approved' });
   });
 });

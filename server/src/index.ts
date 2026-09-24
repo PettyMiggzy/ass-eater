@@ -40,7 +40,13 @@ const app = Fastify({
   trustProxy: 'loopback',
 });
 await app.register(cors, { origin: process.env.WEB_ORIGIN, credentials: true });
-await app.register(websocket);
+// ws defaults maxPayload to 100 MiB, and both realtime routes accept an
+// anonymous upgrade (they authenticate with their first message, see
+// plugins/realtime.ts), so twenty sockets each streaming one huge frame could
+// hold ~2 GB of RAM on the droplet before any check ran. The only message
+// either route ever reads is the ~1 KB auth message; ws closes an oversize
+// frame with 1009 before buffering it.
+await app.register(websocket, { options: { maxPayload: 16 * 1024 } });
 await app.register(authPlugin);
 await app.register(rateLimit, {
   max: 200,
@@ -77,7 +83,7 @@ await app.register(rateLimit, {
 // their first message (plugins/realtime.ts); the auth routes are the way in.
 const ANONYMOUS_ROUTES = new Set([
   'GET /health',
-  'POST /auth/bridge', 'POST /auth/register', 'POST /auth/login', 'POST /auth/refresh',
+  'POST /auth/bridge', 'POST /auth/bridge/status', 'POST /auth/register', 'POST /auth/login', 'POST /auth/refresh',
   'POST /webhooks/ses', 'POST /kyc/webhook', 'POST /live/webhook',
   'GET /messages/ws', 'GET /live/:id/events',
 ]);

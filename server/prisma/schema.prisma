@@ -114,7 +114,17 @@ enum PayoutStatus {
   PENDING
   PROCESSING
   SENT
+  // Needs an admin: the transaction's fate could not be settled automatically
+  // (its txHash is kept). Resolve with POST /admin/payouts/:id/resolve.
   FAILED
+  // Not signed because the creator was frozen, suspended or banned when it
+  // came up (workers/payout-worker.ts). The money stays reserved -- never
+  // handed back automatically to someone just banned -- until an admin
+  // releases (sends) or refunds it.
+  HELD
+  // Reversed: the gross went back to the creator (as withdrawable earnings)
+  // and the fee back out of platform revenue, with its burn obligation.
+  REFUNDED
 }
 
 enum StreamStatus {
@@ -153,6 +163,15 @@ model User {
   // into the platform ADMIN account). Null for native (/register) rows and
   // system accounts, which the bridge therefore can never reach.
   siteUid      String?    @unique
+  // The site creator's standing as last seen by the bridge (lib/bridge.ts):
+  // 'active' | 'pending' | 'suspended' | 'banned', null for fans and native
+  // rows. app.creatorOk requires 'active' for a bridged row -- the site's
+  // approval (with its §2257 gate) is the platform's creator approval.
+  siteCreatorStatus String?
+  // True when `status` was set by the site's standing (bridge exchange or
+  // status push) rather than by an admin here. Only a site-set suspension
+  // is lifted by the site reporting the creator active again.
+  statusBySite Boolean @default(false)
   kycStatus    KycStatus  @default(NONE)
   kycRef       String? // provider applicant id (2257-adjacent record pointer)
   referredById String?
@@ -310,6 +329,11 @@ model Listing {
   // the payout differ from what was taken. Null on rows from before it
   // existed, which held exactly currentBidCents.
   currentHoldCents     Int?
+  // How much of currentHoldCents came out of the leader's WITHDRAWABLE
+  // (earned) credits. Every release restores exactly this much as
+  // withdrawable, so a creator bidding with money they earned and being
+  // outbid does not have it turned into non-payable credits. Null = 0.
+  currentHoldWithdrawableCents Int?
   bids                 Bid[]
 
   @@index([status, createdAt])
@@ -329,6 +353,12 @@ model Bid {
   bidder      User     @relation(fields: [bidderId], references: [id])
   amountCents Int
   heldCents   Int? // bid + shipping actually held when this bid was placed (audit trail)
+  heldWithdrawableCents Int? // the part of heldCents taken from withdrawable (earned) credits
+  // The bidder's explicit 18+ marketplace confirmation and ToS acceptance,
+  // given ON THIS BID. closeAuction copies the winning bid's values onto
+  // the order; null on bids placed before the bid route required them.
+  ageConfirmedAt DateTime?
+  tosVersion     String?
   createdAt   DateTime @default(now())
 
   @@index([listingId, amountCents])
@@ -348,8 +378,11 @@ model ListingOrder {
   shippingCents    Int      @default(0) // locked at purchase, physical only
   platformFeeCents Int // 10% commission (on priceCents only, not shipping)
   listingFeeCents  Int // 5% listing fee (on priceCents only, not shipping)
-  ageConfirmedAt   DateTime // explicit 18+ marketplace confirmation, separate from account-level DOB check
-  tosVersion       String
+  // Explicit 18+ marketplace confirmation, separate from account-level DOB
+  // check. Nullable only for an auction won with a bid placed before bids
+  // required it -- never filled in with a made-up time.
+  ageConfirmedAt   DateTime?
+  tosVersion       String?
   createdAt        DateTime @default(now())
 
   shipStatus     ShipStatus @default(DIGITAL)
@@ -459,6 +492,12 @@ model Account {
   // Funded only by depositing in $ONLYONE directly (see deposit-indexer.ts).
   // No longer discounted just for spending from here -- see charge()/MEMORY.md.
   onlyOneCents BigInt    @default(0)
+  // The part of balanceCents that may be paid out: credits EARNED from
+  // someone else's spend (core/ledger.ts post(..., { earned: true })).
+  // Deposited credits are closed-loop -- spendable here, never withdrawn.
+  // A spend consumes the non-withdrawable part first; always
+  // 0 <= withdrawableCents <= balanceCents.
+  withdrawableCents BigInt @default(0)
   // VIP runs while this is in the future. A paid monthly membership, NOT a
   // one-time burn: decided 2026-09-18, replacing the earlier "burn tokens for
   // permanent VIP" design outright.
@@ -561,6 +600,11 @@ model Deposit {
   feeCents     BigInt    @default(0)
   priceUsed    Float
   createdAt    DateTime  @default(now())
+  // How much of this deposit's hedge target has actually been sold, in raw
+  // token units (workers/treasury-hedge.ts). A deposit larger than one
+  // impact-capped swap is covered across several cycles; hedgedAt is set
+  // only once this reaches the target.
+  hedgedRaw    String    @default("0")
   hedgedAt     DateTime? // set once the treasury-hedge worker has converted this $ONLYONE deposit's share; null = pending. Unused for non-ONLYONE assets.
   // An ETH / $ONLYONE deposit that could not be priced when it was indexed.
   // Recorded (usdCents 0, nothing posted, not swept, hedgedAt set so the
@@ -597,6 +641,10 @@ model Payout {
   assetAmount String?
   priceUsed   Float?
   txHash      String?
+  // The treasury nonce the signed transaction used, persisted with txHash so
+  // a payout interrupted mid-flight can be settled later (the reconciler in
+  // workers/payout-worker.ts proves a never-broadcast tx dead by nonce).
+  nonce       Int?
   status      PayoutStatus   @default(PENDING)
   error       String?
   createdAt   DateTime       @default(now())

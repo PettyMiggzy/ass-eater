@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { charge, money } from '../core/ledger.js';
+import { page } from '../plugins/pagination.js';
 
 export const PERIOD_MS = 30 * 864e5;
 
@@ -58,6 +59,6 @@ export const subscriptions: FastifyPluginAsync = async (app) => {
     prisma.subscription.findMany({
       where: { creatorId: req.user.id, status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } },
       include: { fan: { select: { id: true, username: true } }, tier: { select: { name: true } } },
-      orderBy: { createdAt: 'desc' }, take: 200, skip: Number(req.query.offset ?? 0),
+      orderBy: { createdAt: 'desc' }, take: 200, skip: page(req.query).offset,
     }));
 };

@@ -15,6 +15,16 @@ EnvironmentFile=-/opt/onlyone/server/.env.workers
 ExecStart=/usr/bin/node dist/workers/index.js
 Restart=on-failure
 RestartSec=3
+# Contain an overrun to this unit. The droplet has 2 GB shared with
+# Postgres, Redis and the API; without a cap a runaway transcode could get
+# the kernel OOM killer to take Postgres instead of this process.
+MemoryHigh=900M
+MemoryMax=1200M
+# On SIGTERM (every redeploy) the workers stop taking jobs and wait for the
+# active ones -- a payout can sit in its confirmation wait for minutes, and
+# being killed there is what used to leave payouts stuck in PROCESSING
+# (workers/process-guards.ts). Long enough for that, not forever.
+TimeoutStopSec=420
 NoNewPrivileges=true
 PrivateTmp=true
 

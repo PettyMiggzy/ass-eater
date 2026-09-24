@@ -14,6 +14,27 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
   exit 1
 fi
 
+echo "==> checking this is the git checkout you think it is"
+# The box must build from a git checkout (APP_DIR normally a symlink to
+# /opt/onlyone/app/server). A box set up by the older runbook has a REAL
+# directory here holding copied code, and `ln -sfn` into an existing
+# directory does not replace it -- it creates $APP_DIR/server inside it --
+# so this script would rebuild and restart the OLD copy, print "Done", and
+# the new code would never run. Refuse instead; DEPLOY.md, "Migrating an
+# existing box", is the fix.
+if [[ -L "$APP_DIR/server" ]]; then
+  echo "ERROR: $APP_DIR/server is a symlink inside $APP_DIR -- an 'ln -sfn' nested into the old copied directory." >&2
+  echo "       Follow DEPLOY.md 'Migrating an existing box to the git checkout' before redeploying." >&2
+  exit 1
+fi
+if ! git -c safe.directory='*' -C "$APP_DIR/" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "ERROR: $APP_DIR is not inside a git checkout, so a 'git pull' never reaches it." >&2
+  echo "       Follow DEPLOY.md 'Migrating an existing box to the git checkout'." >&2
+  exit 1
+fi
+DEPLOYED_COMMIT="$(git -c safe.directory='*' -C "$APP_DIR/" rev-parse --short HEAD)"
+echo "    building commit $DEPLOYED_COMMIT from $(git -c safe.directory='*' -C "$APP_DIR/" rev-parse --show-toplevel)"
+
 echo "==> ffmpeg (every media upload is transcoded with it)"
 command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || apt-get install -y ffmpeg
 
@@ -100,6 +121,8 @@ else
   ln -sf /etc/nginx/sites-available/onlyone /etc/nginx/sites-enabled/onlyone
 fi
 nginx -t && systemctl reload nginx
+
+echo "==> Deployed commit: $DEPLOYED_COMMIT"
 
 cat <<'EOF'
 

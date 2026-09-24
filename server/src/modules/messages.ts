@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { charge, money, isVip, FEES } from '../core/ledger.js';
-import { canViewMessage, isSubscribed } from '../core/access.js';
+import { canViewMessage, isSubscribed, creatorMayOperate } from '../core/access.js';
 import { publish, broadcastQueue } from '../lib/redis.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { notifyDmReceived } from '../core/notify.js';
+import { page } from '../plugins/pagination.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
@@ -76,7 +77,7 @@ export const messages: FastifyPluginAsync = async (app) => {
   app.get('/with/:userId', { preHandler: app.auth }, async (req: any) => {
     const conv = await prisma.conversation.findUnique({ where: { aId_bId: pair(req.user.id, req.params.userId) } });
     if (!conv) return [];
-    const rows = await prisma.message.findMany({ where: { conversationId: conv.id }, include: { media: true, conversation: true }, orderBy: { createdAt: 'desc' }, take: 50, skip: Number(req.query.offset ?? 0) });
+    const rows = await prisma.message.findMany({ where: { conversationId: conv.id }, include: { media: true, conversation: true }, orderBy: { createdAt: 'desc' }, take: 50, skip: page(req.query).offset });
     return Promise.all(rows.map(async (m) => {
       const ok = await canViewMessage(req.user.id, m);
       const { conversation, text, ...rest } = m;
@@ -89,11 +90,19 @@ export const messages: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/to/:userId', { preHandler: app.auth }, async (req: any, reply) => {
-    const b = z.object({ text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).default(0) }).parse(req.body);
+    const b = z.object({
+      text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).default(0),
+      // What a fan was shown as the price of sending this (the creator's
+      // published dmPriceCents, floored). Required for fan senders: the
+      // creator can change their price, and an admin the floor, between the
+      // fan reading it and pressing send -- a click must never buy at a
+      // price nobody saw. Ignored for creator senders, who pay nothing.
+      expectedPriceCents: z.number().int().min(0).max(50_000).optional(),
+    }).parse(req.body);
     const to = req.params.userId as string;
     if (to === req.user.id) return reply.code(400).send({ error: 'self' });
-    const me = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { role: true, kycStatus: true } });
-    const isCreator = me.role === 'CREATOR' && me.kycStatus === 'APPROVED';
+    const me = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true } });
+    const isCreator = me.role === 'CREATOR' && creatorMayOperate(me);
     // Any message can be priced -- plain text included, not just media
     // attachments -- as long as the sender is a KYC'd creator.
     if (b.priceCents > 0 && !isCreator) return reply.code(400).send({ error: 'only_creators_can_price_messages' });
@@ -114,16 +123,8 @@ export const messages: FastifyPluginAsync = async (app) => {
     // The floor is read live from PlatformConfig rather than baked into each
     // creator's row, so changing it re-prices everyone sitting on the
     // minimum without a migration.
-    let sendFeeCents = 0;
-    if (!isCreator) {
-      const [cfg, target] = await Promise.all([
-        prisma.platformConfig.findUnique({ where: { id: 1 }, select: { minDmPriceCents: true } }),
-        prisma.creatorProfile.findUnique({ where: { userId: to }, select: { inboundDmPriceCents: true } }),
-      ]);
-      const floor = cfg?.minDmPriceCents ?? FEES.MIN_DM_PRICE_CENTS;
-      // max(), not ??: a creator who set a price BELOW a floor that has since
-      // risen must not keep the old one, and null means "just use the floor".
-      sendFeeCents = Math.max(floor, target?.inboundDmPriceCents ?? 0);
+    if (!isCreator && b.expectedPriceCents === undefined) {
+      return reply.code(400).send({ error: 'expected_price_required' });
     }
 
     // money(), not a plain $transaction: this now moves money, and every
@@ -131,6 +132,23 @@ export const messages: FastifyPluginAsync = async (app) => {
     // serialization failure. Leaving this one at the default isolation would
     // make the balance check weaker here than anywhere else that spends it.
     const msg = await money(prisma, async (tx) => {
+      // The price is read INSIDE this transaction and compared with the one
+      // the fan confirmed, so nothing that moves it between their click and
+      // this charge can make them pay a price they didn't see.
+      let sendFeeCents = 0;
+      if (!isCreator) {
+        const [cfg, target] = await Promise.all([
+          tx.platformConfig.findUnique({ where: { id: 1 }, select: { minDmPriceCents: true } }),
+          tx.creatorProfile.findUnique({ where: { userId: to }, select: { inboundDmPriceCents: true } }),
+        ]);
+        const floor = cfg?.minDmPriceCents ?? FEES.MIN_DM_PRICE_CENTS;
+        // max(), not ??: a creator who set a price BELOW a floor that has since
+        // risen must not keep the old one, and null means "just use the floor".
+        sendFeeCents = Math.max(floor, target?.inboundDmPriceCents ?? 0);
+        if (sendFeeCents !== b.expectedPriceCents) {
+          throw Object.assign(new Error('price_changed'), { statusCode: 409, priceCents: sendFeeCents });
+        }
+      }
       // Charged inside the same transaction that writes the message, so a
       // failure anywhere below cannot leave a fan paying for a message that
       // was never delivered.
@@ -187,8 +205,21 @@ export const messages: FastifyPluginAsync = async (app) => {
   });
 
   // Mass DM to all active subscribers (huge OF revenue feature: paid mass PPV drops)
-  app.post('/broadcast', { preHandler: app.creatorOk }, async (req) => {
+  app.post('/broadcast', { preHandler: app.creatorOk }, async (req, reply) => {
     const b = z.object({ text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).default(0) }).parse(req.body);
+    // Every requested attachment must exist, belong to this creator, be an
+    // original (not someone's broadcast copy) and be READY. The worker used
+    // to filter silently to what was ready and send the priced message
+    // anyway, so a creator broadcasting straight after an upload (transcodes
+    // take minutes) sold every subscriber an empty message at full price.
+    const ids = [...new Set(b.mediaIds)];
+    if (ids.length !== b.mediaIds.length) return reply.code(400).send({ error: 'bad_media' });
+    if (ids.length) {
+      const found = await prisma.media.findMany({ where: { id: { in: ids }, ownerId: req.user.id, sourceMediaId: null }, select: { status: true } });
+      if (found.length !== ids.length) return reply.code(400).send({ error: 'bad_media' });
+      if (found.some((m) => m.status !== 'READY')) return reply.code(400).send({ error: 'media_not_ready' });
+    }
+    if (b.priceCents > 0 && !ids.length && !b.text.trim()) return reply.code(400).send({ error: 'empty_message' });
     // broadcastId makes the job resumable: workers/broadcast.ts writes it on
     // every message it sends and a retry skips fans that already have it, so
     // attempts > 1 can never double-send (or double-charge) a PPV drop.

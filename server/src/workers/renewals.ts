@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { charge, money, InsufficientFunds } from '../core/ledger.js';
 import { renewalQueue, publish, connection, redis } from '../lib/redis.js';
 import { PERIOD_MS } from '../modules/subscriptions.js';
+import { registerWorker } from './process-guards.js';
 
 await renewalQueue.add('tick', {}, { repeat: { every: 5 * 60_000 }, jobId: 'renewals-tick', removeOnComplete: true });
 
@@ -18,7 +19,7 @@ const TICK_LOCK_MS = 15 * 60_000;
 // delete the lock a later tick has since taken.
 const RELEASE_LOCK = 'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
 
-new Worker('renewals', async () => {
+registerWorker(new Worker('renewals', async () => {
   // Only one tick runs at a time across every worker instance. BullMQ hands a
   // stalled job to a second worker, and nothing stops a second worker process
   // existing at all, so without this two runs can pick up the same due rows.
@@ -94,4 +95,4 @@ new Worker('renewals', async () => {
   } finally {
     await redis.eval(RELEASE_LOCK, 1, TICK_LOCK, held);
   }
-}, { ...connection, concurrency: 1 });
+}, { ...connection, concurrency: 1 }));

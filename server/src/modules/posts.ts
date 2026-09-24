@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { charge, money, isVip } from '../core/ledger.js';
 import { canViewPost, creatorIsActive, inVipWindow, type ViewMemo } from '../core/access.js';
+import { page } from '../plugins/pagination.js';
 
 // strip locked media down to preview thumbnails, and locked text down to a
 // teaser that can never be the whole thing
@@ -115,7 +116,7 @@ export const posts: FastifyPluginAsync = async (app) => {
     const rows = await prisma.post.findMany({
       where: { creatorId: req.params.creatorId, removed: false, ...(await earlyAccessFilter(userId)) },
       include: { media: true, _count: { select: { unlocks: true } } },
-      orderBy: { createdAt: 'desc' }, take: 20, skip: Number(req.query.offset ?? 0),
+      orderBy: { createdAt: 'desc' }, take: 20, skip: page(req.query).offset,
     });
     return redact(userId, rows);
   });
@@ -125,7 +126,7 @@ export const posts: FastifyPluginAsync = async (app) => {
     const rows = await prisma.post.findMany({
       where: { creatorId: { in: subs.map(s => s.creatorId) }, removed: false, creator: { user: { status: 'ACTIVE' } }, ...(await earlyAccessFilter(req.user.id)) },
       include: { media: true, creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } } },
-      orderBy: { createdAt: 'desc' }, take: 30, skip: Number(req.query.offset ?? 0),
+      orderBy: { createdAt: 'desc' }, take: 30, skip: page(req.query).offset,
     });
     return redact(req.user.id, rows);
   });

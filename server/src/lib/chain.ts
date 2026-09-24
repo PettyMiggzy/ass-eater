@@ -1,7 +1,7 @@
 import { createPublicClient, createWalletClient, http, toHex, erc20Abi, parseAbiItem, type Address, type PrivateKeyAccount, type WalletClient, type Chain, type Transport } from 'viem';
-import { HDKey, mnemonicToAccount, privateKeyToAccount, publicKeyToAddress } from 'viem/accounts';
+import { HDKey, mnemonicToAccount, privateKeyToAccount, publicKeyToAddress, english } from 'viem/accounts';
 import { robinhood, robinhoodTestnet } from 'viem/chains';
-import { ECDH } from 'crypto';
+import { ECDH, createHash } from 'crypto';
 
 /**
  * A numeric env var, or `fallback` when it is unset, blank, not a finite
@@ -44,6 +44,17 @@ export function treasuryAccount(): PrivateKeyAccount {
     _treasury = privateKeyToAccount(key as `0x${string}`);
   }
   return _treasury;
+}
+/**
+ * The treasury's PUBLIC address, for processes that must recognise a
+ * treasury transfer without holding the key (the API, which never signs):
+ * TREASURY_ADDRESS when set, else derived from the key when this process has
+ * it (the workers), else null.
+ */
+export function treasuryAddress(): Address | null {
+  const a = process.env.TREASURY_ADDRESS?.trim();
+  if (a && /^0x[0-9a-fA-F]{40}$/.test(a)) return a as Address;
+  try { return treasuryAccount().address; } catch { return null; }
 }
 export function treasuryWallet(): WalletClient<Transport, Chain, PrivateKeyAccount> {
   if (!_treasuryClient) _treasuryClient = createWalletClient({ account: treasuryAccount(), chain, transport: http(process.env.RPC_URL) });
@@ -206,15 +217,49 @@ export function depositAddressAt(index: number): Address {
   return depositAccount(index).address;
 }
 
+/**
+ * Full BIP-39 check: every word on the English list AND the checksum right.
+ *
+ * viem's mnemonicToAccount only checks the word count, so one typo in one of
+ * the two separately-typed copies (the one fed to derive-deposit-xpub for
+ * DEPOSIT_XPUB, the one in DEPOSIT_MNEMONIC) was accepted silently and
+ * derived a different, perfectly valid wallet: fans deposited to addresses
+ * whose key nobody held, and every sweep "succeeded" against an empty
+ * address. A typo almost always breaks the checksum, so it is refused here.
+ */
+export function isValidMnemonic(mnemonic: string): boolean {
+  const words = mnemonic.trim().normalize('NFKD').split(/\s+/);
+  if (![12, 15, 18, 21, 24].includes(words.length)) return false;
+  const index = new Map(english.map((w, i) => [w, i]));
+  let bits = '';
+  for (const w of words) {
+    const i = index.get(w);
+    if (i === undefined) return false;
+    bits += i.toString(2).padStart(11, '0');
+  }
+  const csLen = words.length / 3;                 // checksum bits = entropy bits / 32
+  const entropyBits = bits.slice(0, bits.length - csLen);
+  const entropy = Buffer.from(entropyBits.match(/.{8}/g)!.map((b) => parseInt(b, 2)));
+  const hash = createHash('sha256').update(entropy).digest();
+  const expected = [...hash].map((b) => b.toString(2).padStart(8, '0')).join('').slice(0, csLen);
+  return expected === bits.slice(bits.length - csLen);
+}
+
+function checkedMnemonic(mnemonic: string, what: string): string {
+  const m = mnemonic.trim().normalize('NFKD').split(/\s+/).join(' ');
+  if (!isValidMnemonic(m)) throw new Error(`${what} is not a valid BIP-39 mnemonic (a word is misspelled or the checksum is wrong) -- refusing to derive deposit keys from it`);
+  return m;
+}
+
 /** The DEPOSIT_XPUB for a mnemonic (used by scripts/derive-deposit-xpub). */
 export function xpubFromMnemonic(mnemonic: string): string {
-  return mnemonicToAccount(mnemonic.trim(), { path: DEPOSIT_XPUB_PATH as `m/44'/60'/${string}` }).getHdKey().publicExtendedKey;
+  return mnemonicToAccount(checkedMnemonic(mnemonic, 'the mnemonic'), { path: DEPOSIT_XPUB_PATH as `m/44'/60'/${string}` }).getHdKey().publicExtendedKey;
 }
 
 /** The signing account for a deposit address. Workers only (needs DEPOSIT_MNEMONIC). */
 export const depositAccount = (index: number) => {
   if (!process.env.DEPOSIT_MNEMONIC) throw new Error('DEPOSIT_MNEMONIC is not set in this process (it belongs in the workers-only env file)');
-  return mnemonicToAccount(process.env.DEPOSIT_MNEMONIC, { addressIndex: index });
+  return mnemonicToAccount(checkedMnemonic(process.env.DEPOSIT_MNEMONIC, 'DEPOSIT_MNEMONIC'), { addressIndex: index });
 };
 
 export const depositWalletClient = (index: number) =>
