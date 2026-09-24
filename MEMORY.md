@@ -3278,7 +3278,7 @@ the site from Indiana, which is on the block list.
 ## Owner key made typeable, and why it is not exactly what was asked (2026-09-19)
 
 Founder: *"Legal name fine don't want my address public"* and *"The key to get
-in ... I have to type it each time make it Ahria12"*.
+in ... I have to type it each time make it [REDACTED]"*.
 
 **Custodian name is set**, to his legal name — he explicitly cleared that.
 `NEXT_PUBLIC_RECORDS_CUSTODIAN_NAME` is live. It changes nothing on `/2257`
@@ -3286,7 +3286,7 @@ yet, because that block renders only when the address is set too, and the
 address question is closed (see the section above — do not reopen it). The
 variable is set so it is ready if a commercial address ever appears.
 
-**`OWNER_ACCESS_KEY` is `Ahria12-quartzmoth-5941`, not the bare `Ahria12` he
+**`OWNER_ACCESS_KEY` is `[REDACTED: the longer passphrase]`, not the bare [REDACTED: his short passphrase] he
 named.** This was a judgment call made in the open, not silently: that key
 skips the age verification 27 states require by law, and a first name plus
 two digits is the exact shape every cracking dictionary enumerates first.
@@ -3608,11 +3608,11 @@ sees) rather than the inbox itself.
 **Not built. Flagged for a decision**, since it is his call and he was asking
 rather than instructing.
 
-## Owner key set to exactly `Ahria12`, as asked (2026-09-20)
+## Owner key set to exactly [REDACTED: his short passphrase], as asked (2026-09-20)
 
-Founder: *"Ahria12-quartzmoth-5941 bro im not gonna rember that."* He asked
+Founder: *"[REDACTED: the longer passphrase] bro im not gonna rember that."* He asked
 a second time for the bare passphrase, having been told the tradeoff the
-first time, so it is now exactly `Ahria12` — per the standing note above,
+first time, so it is now exactly [REDACTED: his short passphrase] — per the standing note above,
 that is his call. Verified live: 302 to /home with a signed cookie; the old
 key now 404s.
 
@@ -4849,7 +4849,7 @@ the founder, needed a way in.
 **Generated the key myself: `REVIEWER_ACCESS_KEY` = 32 random bytes,
 base64url** (`node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`),
 handed to the founder in chat, never committed to the repo. Deliberately NOT
-a memorable passphrase like the owner's `Ahria12` -- this one is typed once
+a memorable passphrase like the owner's [REDACTED: his short passphrase] -- this one is typed once
 by a third party off a link, not recalled from memory, so there's no reason
 to trade entropy for memorability the way the owner-key conversation did.
 
