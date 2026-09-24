@@ -5,7 +5,7 @@ import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getListings } from '../lib/listings-store';
 import { getCreators } from '../lib/creators-store';
-import { isPubliclyVisible, toPublicListing, LISTING_LIMITS } from '../lib/creator-status';
+import { isPubliclyVisible, toPublicListing, listingHasDeliverable, LISTING_LIMITS } from '../lib/creator-status';
 import { isFoundingCreator } from '../lib/founding';
 import { Icons, SolidIcons, Tagline } from '../components/Brand';
 import { useCart } from '../lib/cart';
@@ -36,8 +36,12 @@ export async function getServerSideProps({ req }) {
   const visible = new Map(
     creators.filter(isPubliclyVisible).map((c) => [String(c.id), c]),
   );
+  // listingHasDeliverable: a digital listing with no files has nothing to
+  // deliver, and checkout refuses it -- showing it with an Add-to-cart button
+  // only led to a 409 at checkout. Checked on the stored record, BEFORE
+  // toPublicListing strips the media srcs it looks at.
   const active = listings
-    .filter((l) => l.status === 'active' && visible.has(String(l.creatorId)))
+    .filter((l) => l.status === 'active' && visible.has(String(l.creatorId)) && listingHasDeliverable(l))
     .map((l) => {
       const creator = visible.get(String(l.creatorId));
       // toPublicListing: a tiny blurred preview per media item and NEVER a

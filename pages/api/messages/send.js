@@ -29,6 +29,7 @@ const STATUS_FOR = {
   [DM_ERRORS.NOT_ALLOWED]: 403,
   [DM_ERRORS.SENDER_RESTRICTED]: 403,
   [DM_ERRORS.INSUFFICIENT_BALANCE]: 402,
+  [DM_ERRORS.PRICE_CHANGED]: 409,
   // Thrown by transferWithFee itself when standing changes between the
   // pre-check above and the locked transfer (the creator is suspended or
   // banned in that window, or the sender's own credits are frozen). Their
@@ -44,7 +45,13 @@ const MESSAGE_FOR = {
 };
 
 /**
- * POST { toUserId, text, clientMessageId? }
+ * POST { toUserId, text, clientMessageId?, expectedPriceCents? }
+ *
+ * `expectedPriceCents` is the price the sender was shown (from
+ * GET /api/messages/with/<id>'s dmPriceCents). It is required for a paid
+ * send: if it is missing or differs from the creator's price now, the answer
+ * is 409 { code: 'dm_price_changed', currentPriceCents } and nothing is
+ * charged -- show the new price and ask again. Free sends ignore it.
  *
  * Messaging a creator costs credits (see lib/messages-store.js for the full
  * rule set); the charge and the message commit together. Answers
@@ -66,6 +73,12 @@ export default async function handler(req, res) {
   const uid = user.id;
 
   const { toUserId, text, clientMessageId } = req.body || {};
+  // A number, or a numeric string from a form; anything else is "not
+  // stated", which a paid send treats as a mismatch.
+  const rawExpected = req.body?.expectedPriceCents;
+  const expectedPriceCents = typeof rawExpected === 'number' && Number.isInteger(rawExpected)
+    ? rawExpected
+    : typeof rawExpected === 'string' && /^\d{1,7}$/.test(rawExpected.trim()) ? Number(rawExpected.trim()) : undefined;
   if ((typeof toUserId !== 'string' && typeof toUserId !== 'number') || String(toUserId).trim() === ''
     || typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ error: 'Missing toUserId or text' });
@@ -96,9 +109,12 @@ export default async function handler(req, res) {
 
   let result;
   try {
-    result = await sendDirectMessage({ sender: user, recipientId: String(toUserId), text, clientMessageId });
+    result = await sendDirectMessage({ sender: user, recipientId: String(toUserId), text, clientMessageId, expectedPriceCents });
   } catch (err) {
     const status = STATUS_FOR[err.code];
+    if (err.code === DM_ERRORS.PRICE_CHANGED) {
+      return res.status(409).json({ error: err.message, code: err.code, currentPriceCents: err.currentPriceCents });
+    }
     if (status) {
       return res.status(status).json({ error: MESSAGE_FOR[err.code] || err.message, code: err.code });
     }

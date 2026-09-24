@@ -1,7 +1,13 @@
 import { getVerifiedSessionUserId } from '../../../../lib/session';
 import { getListings, findListing } from '../../../../lib/listings-store';
 import { findUserByCreatorId } from '../../../../lib/users-store';
-import { getCreators, effectiveCreatorStatus, isPubliclyVisible } from '../../../../lib/creators-store';
+import {
+  getCreators,
+  effectiveCreatorStatus,
+  isPubliclyVisible,
+  isDemoListing,
+  listingHasDeliverable,
+} from '../../../../lib/creators-store';
 import { createOrdersFromCredits } from '../../../../lib/orders-store';
 import {
   getBalanceCents,
@@ -94,10 +100,18 @@ export default async function handler(req, res) {
     // The browse pages hide a listing whose seller is pending, suspended,
     // banned or a demo profile; checkout used to sell it anyway to anyone
     // holding its id (a stale cart, or a direct POST). Only an active, real
-    // creator can sell.
+    // creator can sell, and never a listing the site labels "Demo — not for
+    // sale" -- isDemoListing (seed OR demo, on the listing or its creator) is
+    // the same predicate that label is drawn from.
     const seller = creators.find((c) => String(c.id) === String(listing.creatorId));
-    if (!seller || !isPubliclyVisible(seller) || effectiveCreatorStatus(seller) !== 'active' || seller.seed === true) {
+    if (!seller || !isPubliclyVisible(seller) || effectiveCreatorStatus(seller) !== 'active' || isDemoListing(listing, seller)) {
       return res.status(404).json({ error: `A listing in your cart is no longer available (#${listingId})`, listingId: String(listingId) });
+    }
+    // A digital listing with no files has nothing to deliver: the fan would
+    // pay non-refundable credits for an empty order. Re-checked on the locked
+    // row inside createOrdersFromCredits.
+    if (!listingHasDeliverable(listing)) {
+      return res.status(409).json({ error: `"${listing.title}" isn't available yet -- the creator hasn't attached its files.`, listingId: String(listingId) });
     }
     // A creator's login account is separate from their public creator
     // profile -- credits move between USER accounts, so a listing whose

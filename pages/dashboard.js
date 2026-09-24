@@ -10,7 +10,6 @@ import { holderVerificationLive } from '../lib/holder-access';
 import { signupsOpen } from '../lib/signups';
 import { sanitizeGateTokens, MAX_GATE_TOKENS } from '../lib/token-gate';
 import {
-  creatorShareText,
   feeWaiverActive,
   feeWaiverEndsAt,
   feeWaiverPending,
@@ -126,6 +125,13 @@ export default function Dashboard({
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
+  // §2257: every gallery upload carries the creator's answer to "does anyone
+  // besides you appear in this?" (lib/performer-attestation.js). Only "just
+  // me" can be sent from here -- content with anyone else in it needs an
+  // admin to attach that person's age/ID record first -- so the Upload
+  // control stays disabled until it is ticked, and it resets after each
+  // successful upload so every file gets its own answer.
+  const [nextUploadOnlyMe, setNextUploadOnlyMe] = useState(false);
   const creatorStatus = creator ? effectiveCreatorStatus(creator) : null;
   const isRestricted = creatorStatus === 'suspended' || creatorStatus === 'banned';
   const isDemo = !!creator && (creator.seed === true || creator.demo === true);
@@ -193,8 +199,16 @@ export default function Dashboard({
     }
   };
 
-  const uploadContent = async (file, aiGenerated) => {
-    if (!file) return;
+  // Resolves true only once the finalize call has recorded the file, so the
+  // caller can clear the per-upload answers (AI label, only-me attestation)
+  // on success and KEEP them after a failure -- clearing them when the upload
+  // merely started meant a retry of a failed AI upload went up unlabelled.
+  const uploadContent = async (file, { aiGenerated, onlyMe }) => {
+    if (!file) return false;
+    if (!onlyMe) {
+      setStatus('Error: Confirm that only you appear in this file before uploading.');
+      return false;
+    }
     setBusy(true);
     setStatus('Uploading content...');
     try {
@@ -202,13 +216,15 @@ export default function Dashboard({
         file,
         purpose: 'gallery',
         finalizeUrl: '/api/me/upload',
-        finalizeBody: { aiGenerated: !!aiGenerated },
+        finalizeBody: { aiGenerated: !!aiGenerated, othersAppear: false },
         onProgress: progress('Uploading content...'),
       });
       if (data.creator) setCreator(data.creator);
       setStatus('Content added.');
+      return true;
     } catch (err) {
       setStatus(`Error: ${err.message}`);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -254,8 +270,10 @@ export default function Dashboard({
     }
   };
 
+  // `othersAppear: false` is the creator's own attestation, collected by the
+  // "only I appear" checkbox in MarketplaceSection before the file is picked.
   const uploadListingMedia = async (listingId, file) => {
-    if (!file) return;
+    if (!file) return false;
     setBusy(true);
     setStatus('Preparing preview...');
     try {
@@ -268,11 +286,57 @@ export default function Dashboard({
         purpose: 'listing',
         listingId,
         finalizeUrl: '/api/marketplace/upload',
-        finalizeBody: { listingId, preview },
+        finalizeBody: { listingId, preview, othersAppear: false },
         onProgress: progress('Uploading...'),
       });
       if (data.listing) setListings((list) => list.map((l) => (l.id === listingId ? data.listing : l)));
       setStatus(preview ? 'Media added.' : 'Media added. Your browser could not make a blurred preview of it, so shoppers see a placeholder instead.');
+      return true;
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Edits title, price, description, tags (and shipping for a physical item)
+  // through /api/marketplace/update, which re-validates and re-screens
+  // everything. Resolves true when saved.
+  const editListing = async (listingId, fields) => {
+    setBusy(true);
+    setStatus('Saving listing...');
+    try {
+      const { res, data } = await postJson('/api/marketplace/update', { listingId, fields });
+      if (!res.ok || !data?.listing) throw new Error(responseErrorMessage(res.status, data, 'Update failed'));
+      setListings((list) => list.map((l) => (l.id === listingId ? data.listing : l)));
+      setStatus('Listing saved.');
+      return true;
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // One photo/video off a listing, addressed by its src. If someone has
+  // already bought the listing the file is kept for them (retained) but it
+  // comes off sale and out of the preview.
+  const removeListingMedia = async (listingId, item) => {
+    if (!item?.src) return;
+    if (typeof window !== 'undefined' && !window.confirm('Remove this photo/video from the listing?')) return;
+    setBusy(true);
+    setStatus('Removing...');
+    try {
+      const { res, data } = await postJson('/api/marketplace/media-delete', { listingId, src: item.src });
+      if (!res.ok || !data?.listing) throw new Error(responseErrorMessage(res.status, data, 'Could not remove that item'));
+      setListings((list) => list.map((l) => (l.id === listingId ? data.listing : l)));
+      setStatus(
+        data.retained
+          ? 'Removed from the listing. The file is kept for buyers who already paid for it, but no one new can buy or preview it.'
+          : 'Removed.',
+      );
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -416,7 +480,7 @@ export default function Dashboard({
                     Change PFP
                     <input
                       type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/heic,image/heif"
+                      accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
                       className="hidden"
                       disabled={busy || isRestricted}
                       onChange={(e) => {
@@ -586,7 +650,7 @@ export default function Dashboard({
                       </p>
                     ) : (
                       <p className="text-xs text-gray-500 mt-2">
-                        Anyone who hasn&apos;t proven they hold at least {sanitizeGateTokens(draft.gateTokens).toLocaleString()} $ONLYONE
+                        Anyone who hasn&apos;t proven they hold at least {sanitizeGateTokens(draft.gateTokens).toLocaleString('en-US')} $ONLYONE
                         sees locked tiles instead of your photos and videos.
                       </p>
                     )}
@@ -707,36 +771,58 @@ export default function Dashboard({
                             {isRestricted ? 'Uploads disabled' : 'Slots full'}
                           </span>
                         ) : (
-                          <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                          <label
+                            title={nextUploadOnlyMe ? undefined : 'Confirm below that only you appear in this file first'}
+                            className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy || !nextUploadOnlyMe ? 'opacity-50 pointer-events-none' : ''}`}
+                          >
                             {busy ? 'Working...' : 'Upload'}
                             <input
                               type="file"
-                              accept="image/*,video/mp4,video/quicktime,video/webm"
+                              accept="image/jpeg,image/png,image/webp,image/gif,image/avif,video/mp4,video/quicktime,video/webm"
                               className="hidden"
-                              disabled={busy}
-                              onChange={(e) => {
+                              disabled={busy || !nextUploadOnlyMe}
+                              onChange={async (e) => {
                                 const file = e.target.files?.[0];
                                 e.target.value = '';
                                 if (!file) return;
-                                uploadContent(file, nextUploadIsAi);
-                                setNextUploadIsAi(false);
+                                // Cleared only after a successful finalize: a
+                                // failed upload keeps both answers for the retry.
+                                const ok = await uploadContent(file, { aiGenerated: nextUploadIsAi, onlyMe: nextUploadOnlyMe });
+                                if (ok) {
+                                  setNextUploadIsAi(false);
+                                  setNextUploadOnlyMe(false);
+                                }
                               }}
                             />
                           </label>
                         )}
                       </div>
                       {!atLimit && (
-                        <label className="flex items-center gap-2 text-xs text-gray-400 mb-2 cursor-pointer">
-                          <input type="checkbox" checked={nextUploadIsAi} onChange={(e) => setNextUploadIsAi(e.target.checked)} />
-                          This upload is AI-generated or synthetic content (will be labeled &quot;AI&quot; on your profile)
-                        </label>
+                        <>
+                          <label className="flex items-start gap-2 text-xs text-gray-300 mb-2 cursor-pointer">
+                            <input type="checkbox" className="mt-0.5" checked={nextUploadOnlyMe} onChange={(e) => setNextUploadOnlyMe(e.target.checked)} />
+                            <span>
+                              Only I appear in this file (required). Content showing anyone else can&apos;t be uploaded here —
+                              OnlyOne must hold an age/ID record for every person in it first. Email{' '}
+                              <a href="mailto:team@onlyone1.fun" className="text-brand-pink hover:underline">team@onlyone1.fun</a>{' '}
+                              and an admin can publish it for you.
+                            </span>
+                          </label>
+                          <label className="flex items-center gap-2 text-xs text-gray-400 mb-2 cursor-pointer">
+                            <input type="checkbox" checked={nextUploadIsAi} onChange={(e) => setNextUploadIsAi(e.target.checked)} />
+                            This upload is AI-generated or synthetic content (will be labeled &quot;AI&quot; on your profile)
+                          </label>
+                        </>
                       )}
                       {!creator.premium && (
                         <p className="text-xs text-gray-500 mb-3">
                           Free accounts get 50 content slots. Premium creators get 200 and a gold check — contact us to upgrade.
                         </p>
                       )}
-                      <p className="text-xs text-gray-500 mb-3">Photos up to 25MB, videos (MP4, MOV, WebM) up to 50MB.</p>
+                      <p className="text-xs text-gray-500 mb-3">
+                        Photos (JPEG, PNG, WebP, GIF, AVIF) up to 25MB, videos (MP4, MOV, WebM) up to 50MB. iPhone HEIC photos
+                        aren&apos;t accepted because most browsers can&apos;t show them — upload a JPEG instead.
+                      </p>
                     </>
                   );
                 })()}
@@ -778,6 +864,8 @@ export default function Dashboard({
                 paymentsLive={paymentsLive}
                 onCreate={createListing}
                 onUploadMedia={uploadListingMedia}
+                onRemoveMedia={removeListingMedia}
+                onEdit={editListing}
                 onToggleStatus={toggleListingStatus}
               />
             </div>
@@ -795,15 +883,19 @@ export default function Dashboard({
  * This is the actual mechanic behind "creator referral rewards" -- a
  * creator's audience is the platform's distribution, so the link and the
  * words have to be one copy-paste away, not something they compose
- * themselves. The text lives in lib/founding.js so every surface offers
- * the same one.
+ * themselves.
  *
- * The link goes to "/" (the public landing page), NOT to the creator's own
- * profile: the profile is behind the age gate, so a fan following it from a
- * blocked state hits /blocked-region as their first impression of both the
- * creator and the site. "/" is the one page everyone can open, it carries
- * the ?ref through to signup via the cookie in lib/referral.js, and the
- * creator's profile is one click past it.
+ * The referral link goes to "/" (the public landing page), NOT to the
+ * creator's own profile: the profile is behind the age gate, so a fan
+ * following it from a blocked state hits /blocked-region as their first
+ * impression of both the creator and the site. "/" is the one page everyone
+ * can open and it carries the ?ref through to signup via the cookie in
+ * lib/referral.js -- but it says nothing about the creator and has no link
+ * to them. So the ready-to-post text does NOT say "follow me here" over that
+ * link (the old text did, and the fan landed on a generic page with no way
+ * to the creator): it names the handle and gives the profile link as well.
+ * A fan in a blocked state who opens the profile link verifies once and is
+ * returned to it (/blocked-region carries it through /verify-age as ?next=).
  *
  * What the link actually does, stated plainly because the old copy promised
  * more: signup (pages/api/auth/signup.js) records a referral only when the
@@ -815,7 +907,16 @@ function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, si
 
   const handle = String(creator?.handle || '').replace(/^@/, '');
   const link = handle && origin ? `${origin}/?ref=${encodeURIComponent(handle)}` : '';
-  const post = link ? creatorShareText(creator, link) : '';
+  const profileLink = creator?.id != null && origin ? `${origin}/creator/${encodeURIComponent(creator.id)}` : '';
+  const post = link && profileLink
+    ? [
+        `I'm now on ONLYONE as @${handle}.`,
+        'Exclusive content. Marketplace. Direct messages.',
+        '',
+        `Join here: ${link}`,
+        `My page: ${profileLink}`,
+      ].join('\n')
+    : '';
 
   const copy = async (field, value) => {
     try {
@@ -867,7 +968,9 @@ function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, si
           <p className="font-black tracking-wide text-brand-gold inline-flex items-center gap-1.5"><SolidIcons.star className="h-4 w-4" />FOUNDING CREATOR</p>
           <p className="text-gray-300 mt-1">
             {founding.pending
-              ? `Your ${FEE_WAIVER_DAYS} fee-free days start once your founding date is recorded — ask us if this doesn't update after approval.`
+              ? creator?.status !== 'active' && creator?.status !== 'suspended'
+                ? `Your spot is reserved. Your ${FEE_WAIVER_DAYS} fee-free days start the day your profile is approved.`
+                : `Your ${FEE_WAIVER_DAYS} fee-free days start once your founding date is recorded — email team@onlyone1.fun if this doesn't update.`
               : founding.active && founding.endsAt
                 ? `You pay 0% — no platform fee and no listing fee — on your marketplace sales and paid messages until ${formatDate(founding.endsAt)}. You keep 100% of what fans spend on you until then.`
                 : founding.endsAt && Date.parse(founding.endsAt) > Date.now()
@@ -938,10 +1041,135 @@ function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, si
 
 const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false, tags: '' };
 
-function MarketplaceSection({ listings, busy, disabled, creatorStatus, isDemo, founding, paymentsLive, onCreate, onUploadMedia, onToggleStatus }) {
+/**
+ * Inline edit form for one listing: title, price, description, tags, and for
+ * a physical item its shipping fee. Posts only the fields that changed to
+ * /api/marketplace/update, which re-validates and re-screens them (the same
+ * rules as creation). Client checks mirror LISTING_LIMITS so an obvious
+ * mistake is caught before the round trip; the server's error is shown as-is
+ * otherwise.
+ */
+function ListingEditor({ listing, busy, onSave, onCancel }) {
+  const [f, setF] = useState(() => ({
+    title: listing.title || '',
+    price: Number.isFinite(listing.priceCents) ? (listing.priceCents / 100).toFixed(2) : '',
+    description: listing.description || '',
+    tags: Array.isArray(listing.tags) ? listing.tags.join(', ') : '',
+    shipping: listing.kind === 'physical' && Number.isFinite(listing.shippingCents) ? (listing.shippingCents / 100).toFixed(2) : '',
+  }));
+  const [err, setErr] = useState('');
+
+  const save = async (e) => {
+    e.preventDefault();
+    const fields = {};
+    const title = f.title.trim();
+    if (!title) return setErr('Give the listing a title.');
+    if (title !== (listing.title || '')) fields.title = title;
+    const priceCents = dollarsToCents(f.price);
+    if (priceCents === null || priceCents < LISTING_LIMITS.minPriceCents) {
+      return setErr(`Set a price of at least $${(LISTING_LIMITS.minPriceCents / 100).toFixed(2)}.`);
+    }
+    if (priceCents > LISTING_LIMITS.maxPriceCents) {
+      return setErr(`Price can be at most $${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString('en-US')}.`);
+    }
+    if (priceCents !== listing.priceCents) fields.priceCents = priceCents;
+    if (f.description !== (listing.description || '')) fields.description = f.description;
+    const tagsBefore = Array.isArray(listing.tags) ? listing.tags.join(', ') : '';
+    if (f.tags.trim() !== tagsBefore) fields.tags = f.tags;
+    if (listing.kind === 'physical') {
+      const shippingCents = String(f.shipping).trim() === '' ? 0 : dollarsToCents(f.shipping);
+      if (shippingCents === null || shippingCents > LISTING_LIMITS.maxShippingCents) {
+        return setErr(`Set a shipping fee from $0 to $${(LISTING_LIMITS.maxShippingCents / 100).toLocaleString('en-US')}.`);
+      }
+      if (shippingCents !== (listing.shippingCents || 0)) fields.shippingCents = shippingCents;
+    }
+    if (Object.keys(fields).length === 0) {
+      onCancel();
+      return undefined;
+    }
+    setErr('');
+    if (await onSave(listing.id, fields)) onCancel();
+    return undefined;
+  };
+
+  return (
+    <form onSubmit={save} className="grid sm:grid-cols-2 gap-2 mb-3">
+      <input
+        value={f.title}
+        maxLength={140}
+        onChange={(e) => setF({ ...f, title: e.target.value })}
+        placeholder="Title"
+        className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+      />
+      <input
+        value={f.price}
+        onChange={(e) => setF({ ...f, price: e.target.value })}
+        placeholder="Price (USD)"
+        type="number"
+        min={LISTING_LIMITS.minPriceCents / 100}
+        max={LISTING_LIMITS.maxPriceCents / 100}
+        step="0.01"
+        className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+      />
+      <textarea
+        value={f.description}
+        maxLength={4000}
+        onChange={(e) => setF({ ...f, description: e.target.value })}
+        placeholder="Description"
+        rows={2}
+        className="sm:col-span-2 w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+      />
+      <input
+        value={f.tags}
+        onChange={(e) => setF({ ...f, tags: e.target.value })}
+        placeholder="Tags (comma-separated, up to 8)"
+        className="sm:col-span-2 w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+      />
+      {listing.kind === 'physical' && (
+        <input
+          value={f.shipping}
+          onChange={(e) => setF({ ...f, shipping: e.target.value })}
+          placeholder="Shipping fee (USD, 0 for free shipping)"
+          type="number"
+          min="0"
+          max={LISTING_LIMITS.maxShippingCents / 100}
+          step="0.01"
+          className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+        />
+      )}
+      {err && <p className="sm:col-span-2 text-xs text-red-400">{err}</p>}
+      <div className="sm:col-span-2 flex gap-2">
+        <button type="submit" disabled={busy} className="premium-button text-xs py-2 px-4 disabled:opacity-50">Save changes</button>
+        <button type="button" onClick={onCancel} disabled={busy} className="text-xs px-4 py-2 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function MarketplaceSection({
+  listings,
+  busy,
+  disabled,
+  creatorStatus,
+  isDemo,
+  founding,
+  paymentsLive,
+  onCreate,
+  onUploadMedia,
+  onRemoveMedia,
+  onEdit,
+  onToggleStatus,
+}) {
   const [form, setForm] = useState(BLANK_LISTING_FORM);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  // §2257 attestation for listing media, per listing: "+ Add" stays disabled
+  // until the creator confirms only they appear in the file, and the answer
+  // resets after each successful upload (see the gallery's equivalent).
+  const [onlyMeFor, setOnlyMeFor] = useState({});
 
   const submit = async (e) => {
     e.preventDefault();
@@ -958,14 +1186,14 @@ function MarketplaceSection({ listings, busy, disabled, creatorStatus, isDemo, f
       return;
     }
     if (priceCents > LISTING_LIMITS.maxPriceCents) {
-      setFormError(`Price can be at most $${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString()}.`);
+      setFormError(`Price can be at most $${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString('en-US')}.`);
       return;
     }
     let shippingCents;
     if (form.physical) {
       shippingCents = String(form.shipping).trim() === '' ? 0 : dollarsToCents(form.shipping);
       if (shippingCents === null || shippingCents > LISTING_LIMITS.maxShippingCents) {
-        setFormError(`Set a shipping fee from $0 to $${(LISTING_LIMITS.maxShippingCents / 100).toLocaleString()}.`);
+        setFormError(`Set a shipping fee from $0 to $${(LISTING_LIMITS.maxShippingCents / 100).toLocaleString('en-US')}.`);
         return;
       }
     }
@@ -989,7 +1217,7 @@ function MarketplaceSection({ listings, busy, disabled, creatorStatus, isDemo, f
       <h3 className="font-bold text-brand-gold mb-3">Sell on the Marketplace (shoponeonly.com)</h3>
       <p className="text-xs text-gray-500 mb-4">
         List images, videos, or anything else at whatever price you want (${(LISTING_LIMITS.minPriceCents / 100).toFixed(2)}
-        {' '}to ${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString()}). When it sells the platform keeps
+        {' '}to ${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString('en-US')}). When it sells the platform keeps
         {` ${MARKETPLACE_FEE_PCT}%`} — a {PLATFORM_FEE_PCT}% platform fee plus a {LISTING_FEE_PCT}% listing fee — and the rest is
         credited to your balance.
         {founding?.isFounding && ' During your Founding Creator fee-free window neither fee is charged.'}{' '}
@@ -1141,7 +1369,8 @@ function MarketplaceSection({ listings, busy, disabled, creatorStatus, isDemo, f
 
       <p className="text-xs text-gray-500 mb-3">
         Shoppers who haven&apos;t bought a listing only ever see a small blurred preview of its photos and videos;
-        buyers of a digital listing get the full files from their Orders page.
+        buyers of a digital listing get the full files from their Orders page. Photos must be JPEG, PNG, WebP, GIF or
+        AVIF (iPhone HEIC photos can&apos;t be shown in most browsers — upload a JPEG).
       </p>
 
       <div className="space-y-4">
@@ -1151,6 +1380,10 @@ function MarketplaceSection({ listings, busy, disabled, creatorStatus, isDemo, f
           listings.map((l) => {
             const editable = l.status !== 'sold' && !l.moderationRemoved;
             const mediaCount = (l.media || []).length;
+            // Same rule checkout applies (listingHasDeliverable): a digital
+            // listing with no files is never offered for sale.
+            const needsFiles = l.kind !== 'physical' && !(l.media || []).some((m) => m && m.src);
+            const onlyMe = !!onlyMeFor[l.id];
             return (
               <div key={l.id} className="premium-card border border-brand-purple/20 p-4">
                 <div className="flex items-center justify-between mb-2 gap-3">
@@ -1172,17 +1405,35 @@ function MarketplaceSection({ listings, busy, disabled, creatorStatus, isDemo, f
                       undone by the creator -- the server refuses both, so no
                       button that can only fail. */}
                   {editable && (
-                    <button
-                      onClick={() => onToggleStatus(l.id, l.status === 'active' ? 'removed' : 'active')}
-                      disabled={busy || disabled}
-                      className="shrink-0 text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
-                    >
-                      {l.status === 'active' ? 'Remove' : 'Reactivate'}
-                    </button>
+                    <div className="shrink-0 flex gap-2">
+                      <button
+                        onClick={() => setEditingId(editingId === l.id ? null : l.id)}
+                        disabled={busy || disabled}
+                        className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+                      >
+                        {editingId === l.id ? 'Close' : 'Edit'}
+                      </button>
+                      <button
+                        onClick={() => onToggleStatus(l.id, l.status === 'active' ? 'removed' : 'active')}
+                        disabled={busy || disabled}
+                        className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+                      >
+                        {l.status === 'active' ? 'Remove' : 'Reactivate'}
+                      </button>
+                    </div>
                   )}
                 </div>
                 {l.moderationRemoved && (
                   <p className="text-xs text-red-400 mb-2">This listing was taken down by moderation and can&apos;t be relisted.</p>
+                )}
+                {editable && needsFiles && (
+                  <p className="text-xs text-yellow-400 mb-2">
+                    Add at least one photo or video before this can sell — a digital listing with no files isn&apos;t shown
+                    for sale and can&apos;t be bought.
+                  </p>
+                )}
+                {editable && editingId === l.id && !disabled && (
+                  <ListingEditor listing={l} busy={busy} onSave={onEdit} onCancel={() => setEditingId(null)} />
                 )}
                 <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                   {(l.media || []).map((item, i) => (
@@ -1197,25 +1448,57 @@ function MarketplaceSection({ listings, busy, disabled, creatorStatus, isDemo, f
                           no preview
                         </span>
                       )}
+                      {/* One item off the listing. If a buyer has already paid,
+                          the server keeps the file for them (the status line
+                          says so) but no one new can buy or preview it. */}
+                      {editable && !disabled && (
+                        <button
+                          onClick={() => onRemoveMedia(l.id, item)}
+                          disabled={busy}
+                          aria-label="Remove this item from the listing"
+                          className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white disabled:opacity-30"
+                        >
+                          <Icons.close className="h-3 w-3 mx-auto" />
+                        </button>
+                      )}
                     </div>
                   ))}
                   {editable && mediaCount < LISTING_LIMITS.maxMedia && (
-                    <label className={`aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition ${busy || disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <label
+                      title={onlyMe ? undefined : 'Confirm below that only you appear in this file first'}
+                      className={`aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition ${busy || disabled || !onlyMe ? 'opacity-50 pointer-events-none' : ''}`}
+                    >
                       + Add
                       <input
                         type="file"
-                        accept="image/*,video/mp4,video/quicktime,video/webm"
+                        accept="image/jpeg,image/png,image/webp,image/gif,image/avif,video/mp4,video/quicktime,video/webm"
                         className="hidden"
-                        disabled={busy || disabled}
-                        onChange={(e) => {
+                        disabled={busy || disabled || !onlyMe}
+                        onChange={async (e) => {
                           const file = e.target.files?.[0];
                           e.target.value = '';
-                          onUploadMedia(l.id, file);
+                          if (!file) return;
+                          // The answer is kept after a failed upload, for the retry.
+                          if (await onUploadMedia(l.id, file)) setOnlyMeFor((m) => ({ ...m, [l.id]: false }));
                         }}
                       />
                     </label>
                   )}
                 </div>
+                {editable && !disabled && mediaCount < LISTING_LIMITS.maxMedia && (
+                  <label className="flex items-start gap-2 text-[11px] text-gray-400 mt-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={onlyMe}
+                      onChange={(e) => setOnlyMeFor((m) => ({ ...m, [l.id]: e.target.checked }))}
+                    />
+                    <span>
+                      Only I appear in the file I&apos;m adding (required). Content showing anyone else needs an age/ID record
+                      for them first — email <a href="mailto:team@onlyone1.fun" className="text-brand-pink hover:underline">team@onlyone1.fun</a>.
+                    </span>
+                  </label>
+                )}
               </div>
             );
           })

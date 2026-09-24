@@ -11,6 +11,7 @@ import {
 import { ageVerificationSecret } from '../../../lib/age-verification';
 import { readWalletNonce, depositProofMessage, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
 import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
+import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
 
 /**
  * The ONLY place a fan ever needs a wallet: converting a real on-chain USDG
@@ -62,6 +63,18 @@ export default async function handler(req, res) {
 
   const { txHash, signature } = req.body || {};
   if (typeof txHash !== 'string' || !txHash) return res.status(400).json({ error: 'Missing transaction hash' });
+
+  // A suspended or banned creator's balance is frozen, so crediting it would
+  // put real money where it can never be spent or withdrawn. Refused WITHOUT
+  // claiming the hash: if USDG was already sent (the earlier steps refuse
+  // first, so only a hand-sent transfer or a ban landing mid-purchase gets
+  // here), support can still credit or return it from the admin panel.
+  if (isFrozenStanding(await accountStanding(uid))) {
+    return res.status(403).json({
+      code: 'ACCOUNT_FROZEN',
+      error: 'This account is suspended or banned, so credits can’t be added to it. If you already sent USDG, contact support with this transaction hash -- it has not been used.',
+    });
+  }
 
   // The sender proof. Preferred: the oa_deposit_wallet cookie from POST
   // /api/credits/verify-wallet, established BEFORE the fan sent anything

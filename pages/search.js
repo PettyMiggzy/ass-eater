@@ -5,7 +5,8 @@ import SiteNav from '../components/SiteNav';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getCreators } from '../lib/creators-store';
-import { toPublicCreator, toPublicListing, isPubliclyVisible } from '../lib/creator-status';
+import { toPublicCreator, toPublicListing, isPubliclyVisible, listingHasDeliverable } from '../lib/creator-status';
+import { byPlacement, isFoundingCreator } from '../lib/founding';
 import { getListings } from '../lib/listings-store';
 import { SolidIcons } from '../components/Brand';
 import ListingPreview from '../components/public/ListingPreview';
@@ -22,28 +23,48 @@ export async function getServerSideProps({ query, req }) {
   const [allCreators, allListings] = await Promise.all([getCreators(), getListings()]);
   const visibleCreators = allCreators.filter(isPubliclyVisible);
 
-  const creators = tag
+  // byPlacement: Founding Creators first, the same "priority placement" sort
+  // /creators, /home and /marketplace apply. Every landing-page category and
+  // every #tag chip lands HERE, so without it the founding promise ("lead
+  // every browse page") was false on the page fans reach most.
+  const creators = (tag
     ? visibleCreators.filter((c) => Array.isArray(c.tags) && c.tags.includes(tag))
     : q
     ? visibleCreators.filter((c) =>
         str(c.name).toLowerCase().includes(q) || str(c.handle).toLowerCase().includes(q) || str(c.bio).toLowerCase().includes(q)
       )
-    : [];
+    : []
+  ).sort(byPlacement);
 
   const listings = !tag && q
     ? allListings
-        .filter((l) => l.status === 'active' && (str(l.title).toLowerCase().includes(q) || str(l.description).toLowerCase().includes(q)))
+        // listingHasDeliverable: a digital listing with no files can't be
+        // bought (checkout refuses it), so it isn't offered here either.
+        // Checked on the stored record, before toPublicListing strips srcs.
+        .filter((l) => l.status === 'active' && listingHasDeliverable(l) && (str(l.title).toLowerCase().includes(q) || str(l.description).toLowerCase().includes(q)))
         .map((l) => {
           const creator = visibleCreators.find((c) => String(c.id) === String(l.creatorId));
           // toPublicListing: blurred previews only, never a media src.
           return creator
-            ? { ...toPublicListing(l), creatorName: creator.name, demo: isDemoListing(l, creator) }
+            ? {
+                ...toPublicListing(l),
+                creatorName: creator.name,
+                creatorFounding: isFoundingCreator(creator),
+                demo: isDemoListing(l, creator),
+              }
             : null;
         })
         // Dropped outright, not shown as "Unknown": hiding a suspended or
         // banned creator has to hide what they are selling too, the same way
         // /marketplace and /api/marketplace/list now do.
         .filter(Boolean)
+        // Founding Creators' listings first, newest first within each group --
+        // the same order /marketplace uses.
+        .sort((a, b) => {
+          const founding = (b.creatorFounding ? 1 : 0) - (a.creatorFounding ? 1 : 0);
+          if (founding !== 0) return founding;
+          return new Date(b.createdAt) - new Date(a.createdAt);
+        })
     : [];
 
   // Every distinct tag any creator has set, for the browse-by-tag cloud shown

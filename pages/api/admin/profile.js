@@ -1,7 +1,8 @@
 import {
-  getCreators,
   getCreatorById,
   updateCreatorProfile,
+  setCreatorAvatar,
+  FOUNDING_SLOTS_FULL,
   effectiveCreatorStatus,
   sanitizeSocials,
   sanitizeTags,
@@ -9,9 +10,8 @@ import {
   sanitizeLocation,
   UnderageProfile,
 } from '../../../lib/creators-store';
-import { findCircumventionInTags } from '../../../lib/listings-store';
-import { deleteMediaQuietly } from '../../../lib/blob-cleanup';
-import { FOUNDING_LIMIT, foundingSlotsLeft, isFoundingCreator, profileQualifiesForFounding } from '../../../lib/founding';
+import { findCircumventionInTags, removeListingsForCreator } from '../../../lib/listings-store';
+import { FOUNDING_LIMIT, isFoundingCreator, profileQualifiesForFounding } from '../../../lib/founding';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { screenPublicText, publicProfileTextEntries, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
@@ -22,9 +22,11 @@ import {
   isAllowedAvatarSrc,
   sanitizeDmPriceCents,
   sanitizePayoutFields,
+  looksLikePhoneNumber,
+  PHONE_NAME_MESSAGE,
 } from '../../../lib/field-validation';
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
-import { query } from '../../../lib/db';
+import { performerRecordStatusForCreator } from '../../../lib/performer-records-store';
 import { getAddress } from 'viem';
 
 const FIELD_LABELS = {
@@ -44,22 +46,11 @@ const STATUSES = new Set(['pending', 'active', 'suspended', 'banned']);
 // than a second, different meaning of "suspended".
 const SUSPENSION_MS = 30 * 24 * 60 * 60 * 1000;
 
-/**
- * §2257: the platform's public statement (/2257) says it keeps its own record
- * for every performer. That is only true if a creator cannot go live without
- * one, so approval checks for a non-archived performer record linked to this
- * creator (performer_records.data.creatorId), read straight from the table.
- */
-async function hasPerformerRecord(creatorId) {
-  const { rows } = await query(
-    `select 1 from performer_records
-      where data->>'creatorId' = $1
-        and coalesce(data->>'status', 'active') <> 'archived'
-      limit 1`,
-    [String(creatorId)],
-  );
-  return rows.length > 0;
-}
+// §2257: the platform's public statement (/2257) says it keeps its own record
+// for every creator account holder. That is only true if a creator cannot go
+// live without one, so approval requires a non-archived performer record
+// linked to this creator that carries an ID copy (attached, or marked as held
+// offline) -- see performerRecordStatusForCreator.
 
 // Whether a tags write is just the panel echoing the stored tags back.
 function sameTags(next, stored) {
@@ -83,7 +74,11 @@ export default async function handler(req, res) {
   const existing = await getCreatorById(creatorId);
   if (!existing) return res.status(404).json({ error: 'Creator not found' });
 
-  const allowed = ['name', 'handle', 'bio', 'price', 'subs', 'posts', 'likes', 'locked', 'trending', 'status', 'suspendedUntil', 'payoutMethod', 'walletAddress', 'img', 'premium', 'founding'];
+  // No 'subs', 'posts' or 'likes': the site has no follow/like/subscription
+  // counters, so those were numbers an admin typed and the public profile
+  // printed as real engagement. Posts is derived from the gallery on the way
+  // out (toPublicCreator); the other two are not published at all.
+  const allowed = ['name', 'handle', 'bio', 'price', 'locked', 'trending', 'status', 'suspendedUntil', 'payoutMethod', 'walletAddress', 'img', 'premium', 'founding'];
   const safeFields = {};
   for (const key of allowed) {
     if (key in fields) safeFields[key] = fields[key];
@@ -110,6 +105,14 @@ export default async function handler(req, res) {
     const { handle, error } = normalizeHandle(safeFields.handle, { allowBlank: true });
     if (error) return res.status(400).json({ error });
     safeFields.handle = handle;
+  }
+
+  // The display name is published beside the handle, so it gets the same
+  // "not a phone number" rule normalizeHandle applies to the handle. Only when
+  // it changes, like the handle. (Reserved staff/brand names are NOT refused
+  // here: this is the one path where an official account can be set up.)
+  if ('name' in safeFields && safeFields.name !== existing.name && looksLikePhoneNumber(safeFields.name)) {
+    return res.status(400).json({ error: PHONE_NAME_MESSAGE });
   }
 
   // Avatar: our own media route for THIS creator, or a local /images/ file.
@@ -225,9 +228,15 @@ export default async function handler(req, res) {
     if (!String(merged.handle || '').replace(/^@+/, '').trim()) {
       return res.status(409).json({ error: 'Set a handle before making this creator live.' });
     }
-    if (!(await hasPerformerRecord(existing.id))) {
+    const recordStatus = await performerRecordStatusForCreator(existing.id);
+    if (recordStatus === 'no_record') {
       return res.status(409).json({
         error: 'Nothing was saved -- this creator has no §2257 performer record. Add one in the Records tab (linked to this creator) before making them live.',
+      });
+    }
+    if (recordStatus !== 'ok') {
+      return res.status(409).json({
+        error: "Nothing was saved -- this creator's §2257 record has no ID document on file. Attach a copy of their photo ID to the record in the Records tab, or mark it as held offline, before making them live.",
       });
     }
   }
@@ -294,24 +303,42 @@ export default async function handler(req, res) {
   // set by hand, and so re-saving an existing founding creator's profile
   // doesn't silently restart their clock.
   //
-  // The 100-slot cap is enforced here rather than trusted to the admin
-  // panel's counter -- that counter is a display, this is the rule.
+  // The window is promised to start "the day you're approved" (pages/
+  // founding-creator.js), and only an ACTIVE creator can earn anything
+  // (lib/credits-store.js canReceiveStanding). So foundingSince is stamped
+  // only when the creator is, or in this same save becomes, active: a hand
+  // grant to a pending applicant reserves the slot (founding: true) with no
+  // start date, and the clock starts at approval -- where an older stamp
+  // left by a grant made before this rule is also moved to the approval
+  // time. Stamped from then on it is never restarted.
+  //
+  // The 100-slot cap is enforced inside the write (updateCreatorProfile's
+  // foundingSlot: an advisory lock plus a count of non-banned founders), not
+  // against a list read earlier -- two approvals at 99 used to both pass.
   //
   // Unticking the badge on a creator who has it is an explicit revocation
   // and is remembered (foundingRevokedAt), so no later status change can
   // silently hand it back. Ticking it by hand clears that marker: a
-  // deliberate re-grant is the admin's call to make.
-  if ('founding' in safeFields) {
+  // deliberate re-grant is the admin's call to make. A BAN always revokes it
+  // (and frees the slot), whatever the panel echoed for the checkbox -- the
+  // same rule the content-violation ladder applies.
+  const resultingStatus = effectiveCreatorStatus(merged) ?? 'active';
+  const willBeActive = resultingStatus === 'active';
+  let foundingSlot = null;
+  if (safeFields.status === 'banned') {
+    safeFields.founding = false;
+    safeFields.foundingSince = null;
+    if (isFoundingCreator(existing)) safeFields.foundingRevokedAt = new Date().toISOString();
+  } else if ('founding' in safeFields) {
     if (safeFields.founding) {
       safeFields.founding = true;
       if (!isFoundingCreator(existing)) {
-        if (foundingSlotsLeft(await getCreators()) <= 0) {
-          return res.status(409).json({ error: `All ${FOUNDING_LIMIT} Founding Creator slots are taken.` });
-        }
-        safeFields.foundingSince = new Date().toISOString();
+        foundingSlot = 'require';
+        safeFields.foundingSince = willBeActive ? new Date().toISOString() : null;
         safeFields.foundingRevokedAt = null;
       }
-      // Already founding: leave foundingSince exactly as it was.
+      // Already founding: leave foundingSince exactly as it was (the approval
+      // restamp below is the one exception).
     } else {
       safeFields.founding = false;
       safeFields.foundingSince = null;
@@ -330,7 +357,8 @@ export default async function handler(req, res) {
   // suspension had lapsed (the panel posts the effective status, 'active'),
   // reinstating a banned creator, and every save of a seed creator with no
   // status at all. Never for a creator with a confirmed content violation,
-  // and never after an admin explicitly revoked it.
+  // and never after an admin explicitly revoked it. When all 100 slots are
+  // taken the approval still saves, just without the badge ('try').
   //
   // The known cost: the admin panel posts every field on every save, so an
   // explicit `founding: false` in the same request that approves someone is
@@ -347,17 +375,45 @@ export default async function handler(req, res) {
     !(Number(existing.contentViolationCount) > 0)
   ) {
     if (profileQualifiesForFounding({ ...existing, ...safeFields })) {
-      if (foundingSlotsLeft(await getCreators()) > 0) {
-        safeFields.founding = true;
-        safeFields.foundingSince = new Date().toISOString();
-      }
+      safeFields.founding = true;
+      safeFields.foundingSince = new Date().toISOString();
+      foundingSlot = 'try';
     }
+  }
+
+  // Approval (or any move to active) of a creator who already holds the
+  // badge: their window starts now. A pending grant has no stamp yet; an
+  // older stamp from before approval is moved up so the pre-approval days,
+  // when they could not earn, are not counted against them.
+  if (
+    safeFields.status === 'active' &&
+    willBeActive &&
+    previousStatus !== 'active' &&
+    isFoundingCreator(existing) &&
+    safeFields.founding !== false &&
+    (approving || !existing.foundingSince)
+  ) {
+    safeFields.foundingSince = new Date().toISOString();
+  }
+
+  // The avatar goes through setCreatorAvatar (after the rest is saved), which
+  // locks the row and deletes the file it replaced. Writing img here through
+  // updateCreatorProfile left the previous uploaded photo in storage -- so
+  // resetting a reported avatar to a placeholder "removed" it only on paper.
+  let nextImg = null;
+  if ('img' in safeFields) {
+    if (safeFields.img !== existing.img) nextImg = safeFields.img;
+    delete safeFields.img;
   }
 
   let creator;
   try {
-    creator = await updateCreatorProfile(existing.id, safeFields);
+    creator = await updateCreatorProfile(existing.id, safeFields, { foundingSlot });
+    if (nextImg !== null) creator = await setCreatorAvatar(existing.id, nextImg);
   } catch (err) {
+    if (err.code === FOUNDING_SLOTS_FULL) {
+      return res.status(409).json({ error: `Nothing was saved -- all ${FOUNDING_LIMIT} Founding Creator slots are taken.` });
+    }
     // Only the handle-uniqueness indexes mean "handle taken" -- any other
     // duplicate key is a server problem, not a naming one.
     if (isHandleConflict(err)) {
@@ -367,43 +423,29 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 
-  // A ban set by hand takes the creator's listings off sale: every UNSOLD
-  // listing -- including ones the creator had pulled themselves, which could
-  // otherwise be reactivated if the ban were later lifted by hand -- is marked
-  // removed by moderation and its media deleted. Otherwise a banned creator's
-  // merch stayed live with a working Buy button on every surface that
-  // resolves a listing's seller separately. Not done for a suspension: that
-  // lifts itself and 'removed' would not un-mark.
+  // A ban set by hand takes the creator's listings off sale: every listing --
+  // including ones the creator had pulled themselves, which could otherwise
+  // be reactivated if the ban were later lifted by hand -- is marked removed
+  // by moderation. Otherwise a banned creator's merch stayed live with a
+  // working Buy button on every surface that resolves a listing's seller
+  // separately. Not done for a suspension: that lifts itself and 'removed'
+  // would not un-mark.
   //
-  // SOLD listings are deliberately left alone here, unlike the NCII path
-  // (lib/ncii-reports-store.js -> removeListingsForCreator), which takes
-  // everything down because the content itself was found unlawful. A manual
-  // ban can be for anything, and a buyer who already paid for a digital item
-  // keeps it; if the content itself has to go, that is a takedown of that
-  // listing, not a side effect of banning its seller.
+  // Files are deleted ONLY for listings nobody has paid for. A manual ban can
+  // be for anything, and a buyer who already paid for a digital item keeps it
+  // -- unlimited listings included (they never become 'sold', and the old
+  // "skip sold rows" rule deleted their files out from under every buyer).
+  // removeListingsForCreator's keepPaid leaves a paid listing's files and
+  // gives it no mediaDeletedAt, so delivery and /api/media keep serving its
+  // buyers. If the content itself has to go, that is a takedown of that
+  // listing (reports / TAKE IT DOWN), which deletes everything.
   //
-  // The UPDATE only matches listings not already taken down, so it runs on
-  // every save of a banned creator (the panel posts status every time) at the
-  // cost of one no-op query, and a takedown that failed part-way is retried by
-  // simply saving again.
+  // Runs on every save of a banned creator (the panel posts status every
+  // time); already-deleted files are not deleted again, and a takedown that
+  // failed part-way is retried by simply saving again.
   if (safeFields.status === 'banned') {
     try {
-      const { rows } = await query(
-        `update listings
-            set data = data || jsonb_build_object(
-                  'status', 'removed',
-                  'moderationRemoved', true,
-                  'mediaDeletedAt', $2::text
-                ),
-                updated_at = now()
-          where data->>'creatorId' = $1
-            and coalesce(data->>'status', '') <> 'sold'
-            and not coalesce((data->>'moderationRemoved')::boolean, false)
-          returning data`,
-        [String(existing.id), new Date().toISOString()],
-      );
-      const media = rows.flatMap((r) => (Array.isArray(r.data?.media) ? r.data.media : []));
-      if (media.length) await deleteMediaQuietly(media);
+      await removeListingsForCreator(String(existing.id), { moderation: true, keepPaid: true });
     } catch (err) {
       // The ban itself is saved; say plainly that the takedown didn't finish
       // so the admin can re-save rather than assume it did.

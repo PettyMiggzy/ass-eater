@@ -1,4 +1,5 @@
 import { isTokenGated, formatGate } from '../../lib/token-gate';
+import { isDemoCreator, isDemoListing } from '../../lib/creator-status';
 
 /**
  * Pure helpers shared by the public browse pages (/home, /creators, /search,
@@ -11,15 +12,12 @@ import { isTokenGated, formatGate } from '../../lib/token-gate';
  * an admin marked `demo`). They exist to show what a page looks like; nothing
  * of theirs can be bought -- checkout refuses them -- so every surface that
  * shows one labels it, and no surface offers a buy button for it.
+ *
+ * Re-exported from lib/creator-status.js rather than defined here: checkout,
+ * transferWithFee and payouts use that one predicate, so the label on the page
+ * and what the server refuses can never drift apart.
  */
-export function isDemoCreator(creator) {
-  return !!creator && (creator.seed === true || creator.demo === true);
-}
-
-/** A listing is demo if it says so itself, or belongs to a demo creator. */
-export function isDemoListing(listing, creator = null) {
-  return !!listing && (listing.demo === true || listing.seed === true || isDemoCreator(creator));
-}
+export { isDemoCreator, isDemoListing };
 
 export const DEMO_LABEL = 'Demo — not for sale';
 
@@ -45,11 +43,9 @@ export function toCreatorCard(pub) {
     // toPublicCreator already nulls this for a gated creator the viewer has
     // not unlocked; never send it on a card for a gated creator at all.
     video: !gated && typeof pub.video === 'string' ? pub.video : null,
-    price: typeof pub.price === 'string' ? pub.price : null,
     founding: !!pub.founding,
     trending: !!pub.trending,
     premium: !!pub.premium,
-    subs: pub.subs ?? null,
     tags: Array.isArray(pub.tags) ? pub.tags.filter((t) => typeof t === 'string') : [],
     galleryCount: gallery.length,
     gated,

@@ -1,4 +1,3 @@
-import { isAddress } from 'viem';
 import {
   IMAGE_TYPES,
   VIDEO_TYPES,
@@ -8,8 +7,14 @@ import {
   uploadSizeMessage,
   UPLOAD_TYPE_MESSAGE,
   AVATAR_TYPE_MESSAGE,
+  HEIC_TYPE_MESSAGE,
+  isHeicType,
 } from '../../lib/upload-guard';
-import { DM_PRICE_MIN_CENTS, DM_PRICE_MAX_CENTS } from '../../lib/field-validation';
+import {
+  DM_PRICE_MIN_CENTS,
+  DM_PRICE_MAX_CENTS,
+  payoutWalletError as serverPayoutWalletError,
+} from '../../lib/field-validation';
 import { gateTokensOf } from '../../lib/token-gate';
 
 /**
@@ -21,7 +26,9 @@ import { gateTokensOf } from '../../lib/token-gate';
 // Browsers leave File.type empty for some formats (HEIC on most desktop
 // browsers, some .mov files), and the upload-token route refuses a missing
 // type. The server allowlist is still the authority -- this only recovers the
-// type the file obviously is, from an extension on that same allowlist.
+// type the file obviously is. HEIC/HEIF are recognised here only so that
+// preflightUpload can refuse them with a message that says what to do (they
+// are not on the allowlist: see lib/upload-guard.js).
 const EXTENSION_TYPES = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -52,6 +59,7 @@ export function inferContentType(file) {
  * Returns an error string, or null when the file may be uploaded.
  */
 export function preflightUpload(purpose, contentType, size) {
+  if (isHeicType(contentType)) return HEIC_TYPE_MESSAGE;
   if (!mediaKindFor(purpose, contentType)) {
     return purpose === 'avatar' ? AVATAR_TYPE_MESSAGE : UPLOAD_TYPE_MESSAGE;
   }
@@ -107,13 +115,18 @@ export function dmPriceCentsFromInput(input) {
   return { value: cents };
 }
 
-/** Null when the wallet may be saved (blank clears it), otherwise the reason. */
+/**
+ * Null when the wallet may be saved (blank clears it), otherwise the reason.
+ * Exactly the server's rule (lib/field-validation.js payoutWalletError, used
+ * by both profile editors and by requestPayout): all-lowercase or
+ * all-uppercase hex is accepted, mixed case must pass the EIP-55 checksum
+ * (a mistyped character in a checksummed address is caught, with the
+ * "re-copy it" message), and the zero address is refused.
+ */
 export function payoutWalletError(input) {
-  const wallet = String(input ?? '').trim();
+  const wallet = typeof input === 'string' ? input.trim() : String(input ?? '').trim();
   if (!wallet) return null;
-  return isAddress(wallet, { strict: false })
-    ? null
-    : 'Payout wallet must be a valid wallet address (0x followed by 40 hex characters).';
+  return serverPayoutWalletError(wallet);
 }
 
 /**

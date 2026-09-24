@@ -21,11 +21,17 @@ const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
  * Body: { id, txHash, override?, skipChainCheck? }
  *
  *  - The hash is checked ON-CHAIN before anything is recorded: it must be a
- *    confirmed transfer of the payout token, of at least the requested
- *    amount, to the request's own payout wallet. A typo or a hash pasted
- *    into the wrong row is refused instead of telling a creator they were
- *    paid when they weren't. `skipChainCheck: true` records without that
- *    check (e.g. the server's RPC is down) -- an explicit admin decision.
+ *    confirmed transfer of the payout token, of EXACTLY the requested
+ *    amount, to the request's own payout wallet, in a block no older than
+ *    the request itself. A typo or a hash pasted into the wrong row is
+ *    refused instead of telling a creator they were paid when they weren't
+ *    -- "at least the amount" let a $100 transfer close a $40 request to the
+ *    same wallet (and the unique hash index then stopped it closing the $100
+ *    one), let an overpayment pass unnoticed, and accepted any older
+ *    transfer into that wallet from anyone. (The sender is not checked: no
+ *    payout treasury address is configured to check it against.)
+ *    `skipChainCheck: true` records without that check (e.g. the server's
+ *    RPC is down) -- an explicit admin decision.
  *  - One hash closes one request (unique index; 409 if reused).
  *  - A request from an account that is no longer an active creator
  *    (banned/suspended/...) is frozen: 409 unless `override: true`.
@@ -60,18 +66,20 @@ export default async function handler(req, res) {
     try {
       await assertTokenDecimals({ rpcUrl: config.rpcUrl, tokenAddress: config.usdcAddress, expectedDecimals: config.usdcDecimals });
       if (config.usdcDecimals < 2) throw new Error('Configured stablecoin decimals must be at least 2');
-      const minAmount = BigInt(request.amount_cents) * 10n ** BigInt(config.usdcDecimals - 2);
+      const exactAmount = BigInt(request.amount_cents) * 10n ** BigInt(config.usdcDecimals - 2);
+      const created = new Date(request.created_at).getTime();
       await verifyUsdcPayment({
         rpcUrl: config.rpcUrl,
         txHash: hash,
         tokenAddress: config.usdcAddress,
         payoutAddress: request.payout_wallet,
-        minAmount,
+        exactAmount,
+        notBefore: Number.isFinite(created) ? created : undefined,
       });
     } catch (err) {
-      if (['BAD_HASH', 'NOT_CONFIRMED', 'TX_REVERTED', 'NO_MATCHING_TRANSFER'].includes(err.code)) {
+      if (['BAD_HASH', 'NOT_CONFIRMED', 'TX_REVERTED', 'NO_MATCHING_TRANSFER', 'TX_TOO_OLD'].includes(err.code)) {
         return res.status(400).json({
-          error: `That transaction doesn't show a transfer of at least $${(Number(request.amount_cents) / 100).toFixed(2)} ${config.stableSymbol} to ${request.payout_wallet}: ${err.message}`,
+          error: `That transaction doesn't show a transfer of exactly $${(Number(request.amount_cents) / 100).toFixed(2)} ${config.stableSymbol} to ${request.payout_wallet}, made after this request: ${err.message}`,
           code: err.code,
         });
       }

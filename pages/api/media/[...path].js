@@ -7,7 +7,7 @@ import {
   mediaSrc,
   sendMedia,
   hasAdminMediaSession,
-  buyerHasDigitalOrder,
+  buyerFirstDigitalOrderAt,
   canViewGatedCreatorMedia,
 } from '../../../lib/media';
 
@@ -27,7 +27,14 @@ import {
  *                                  pass canViewGatedCreatorMedia
  *   listings/<cid>/<lid>/...       owner, admin, or a buyer holding a paid DIGITAL
  *                                  order for that listing -- never anyone else,
- *                                  and never once moderation removed it
+ *                                  and never once its files were deleted
+ *                                  (mediaDeletedAt: a content takedown). A
+ *                                  listing merely taken OFF SALE (the seller
+ *                                  banned by hand, or deleted) still serves its
+ *                                  buyers, even with no seller record left.
+ *                                  An item the creator removed after a sale
+ *                                  (retainedMedia) is served only to buyers
+ *                                  whose order predates its removal.
  *
  * Everything unentitled answers 404, not 403: "does this file exist" is not
  * something to confirm to someone who may not see it. proxy.js already puts
@@ -53,13 +60,40 @@ export default async function handler(req, res) {
   if (!parsed) return notFound(res);
 
   try {
+    const admin = hasAdminMediaSession(req);
+    const src = mediaSrc(parsed.pathname);
+
+    if (parsed.purpose === 'listing') {
+      // Resolved from the LISTING, not the creator: a buyer keeps what they
+      // paid for even after the seller's record is deleted (their paid
+      // listings keep their files -- lib/listings-store.js
+      // removeListingsForCreator keepPaid), so a missing creator must not
+      // turn a paid file into a 404.
+      const listing = await getListingById(parsed.listingId);
+      if (!listing || String(listing.creatorId) !== String(parsed.creatorId)) return notFound(res);
+      if (admin) return await sendMedia(req, res, parsed.pathname);
+      const user = await getSessionUser(req);
+      const creator = await getCreatorById(parsed.creatorId);
+      const owner = !!creator && !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id);
+      if (owner) return await sendMedia(req, res, parsed.pathname);
+      if (listing.mediaDeletedAt || !user) return notFound(res);
+      const firstOrderAt = await buyerFirstDigitalOrderAt(user.id, listing.id);
+      if (firstOrderAt === null) return notFound(res);
+      const live = (Array.isArray(listing.media) ? listing.media : []).some((m) => m && m.src === src);
+      const retained = (Array.isArray(listing.retainedMedia) ? listing.retainedMedia : []).some((m) => {
+        if (!m || m.src !== src) return false;
+        const gone = Date.parse(m.removedAt || '');
+        return !Number.isNaN(gone) && firstOrderAt <= gone;
+      });
+      if (!live && !retained) return notFound(res);
+      return await sendMedia(req, res, parsed.pathname);
+    }
+
     const creator = await getCreatorById(parsed.creatorId);
     if (!creator) return notFound(res);
 
-    const admin = hasAdminMediaSession(req);
     const user = admin ? null : await getSessionUser(req);
     const owner = !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id);
-    const src = mediaSrc(parsed.pathname);
 
     let allowed = admin || owner;
     if (!allowed) {
@@ -71,14 +105,6 @@ export default async function handler(req, res) {
           inGallery &&
           isPubliclyVisible(creator) &&
           (!isTokenGated(creator) || (await canViewGatedCreatorMedia(req, creator)));
-      } else if (parsed.purpose === 'listing') {
-        const listing = await getListingById(parsed.listingId);
-        const inListing =
-          !!listing &&
-          String(listing.creatorId) === String(creator.id) &&
-          !listing.moderationRemoved &&
-          (Array.isArray(listing.media) ? listing.media : []).some((m) => m && m.src === src);
-        allowed = inListing && !!user && (await buyerHasDigitalOrder(user.id, listing.id));
       }
     }
     if (!allowed) return notFound(res);

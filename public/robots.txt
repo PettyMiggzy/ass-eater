@@ -16,7 +16,6 @@ Disallow: /favorites
 Disallow: /messages
 Disallow: /verify-age
 Disallow: /blocked-region
-Disallow: /owner
 Allow: /
 
 Sitemap: https://www.joinonlyone.com/sitemap.xml

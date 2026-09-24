@@ -26,12 +26,12 @@ const DELIVERABLE = new Set(['fulfilled', 'delivered']);
  * request, by the same order. Nothing about a purchase is in page props.
  */
 function DigitalDelivery({ orderId, mark }) {
-  const [state, setState] = useState({ status: 'idle', items: [], removed: false, error: '' });
+  const [state, setState] = useState({ status: 'idle', items: [], removed: false, removedReason: null, error: '' });
   const [viewing, setViewing] = useState(null);
   const close = useCallback(() => setViewing(null), []);
 
   const load = async () => {
-    setState({ status: 'loading', items: [], removed: false, error: '' });
+    setState({ status: 'loading', items: [], removed: false, removedReason: null, error: '' });
     try {
       const res = await fetch(`/api/marketplace/orders/delivery?orderId=${encodeURIComponent(orderId)}`);
       const data = await res.json().catch(() => ({}));
@@ -40,10 +40,11 @@ function DigitalDelivery({ orderId, mark }) {
         status: 'ready',
         items: Array.isArray(data.items) ? data.items.filter((i) => i && typeof i.src === 'string') : [],
         removed: !!data.removed,
+        removedReason: typeof data.removedReason === 'string' ? data.removedReason : null,
         error: '',
       });
     } catch (err) {
-      setState({ status: 'error', items: [], removed: false, error: err.message || 'Could not load this purchase.' });
+      setState({ status: 'error', items: [], removed: false, removedReason: null, error: err.message || 'Could not load this purchase.' });
     }
   };
 
@@ -61,9 +62,18 @@ function DigitalDelivery({ orderId, mark }) {
     return <p className="mt-3 pt-3 border-t border-white/10 text-xs text-gray-500">Loading…</p>;
   }
   if (state.removed) {
+    // Says what actually happened (removedReason from the delivery route):
+    // this always blamed moderation, even when the creator's account was
+    // deleted or the listing no longer exists.
+    const why =
+      state.removedReason === 'creator_deleted'
+        ? "The creator's account was deleted, and this item's files went with it."
+        : state.removedReason === 'deleted'
+          ? 'This listing no longer exists.'
+          : 'This item was removed by moderation, and its files were deleted with it.';
     return (
       <p className="mt-3 pt-3 border-t border-white/10 text-xs text-gray-400">
-        This item was removed by moderation, and its files were deleted with it. Contact{' '}
+        {why} Contact{' '}
         <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> if you need help.
       </p>
     );

@@ -178,10 +178,12 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
 
   const filtered = useMemo(() => {
     return creators.filter((c) => {
+      // No FREE/PREMIUM split: it was driven by the free-text "price" on
+      // the profile, which defaulted to a platform-set '$9.99 / month' for a
+      // subscription nobody can buy. Filters here only use real attributes.
       const matchesFilter =
         activeFilter === 'all' ||
-        (activeFilter === 'free' && c.price === 'Free') ||
-        (activeFilter === 'premium' && c.price !== 'Free') ||
+        (activeFilter === 'founding' && c.founding) ||
         (activeFilter === 'trending' && c.trending);
       const matchesSearch =
         search === '' ||
@@ -314,7 +316,7 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
         {/* Filter Bar */}
         <div id="creators" className="sticky top-[73px] z-40 bg-brand-dark/90 backdrop-blur border-b border-brand-gold/10 py-4">
           <div className="max-w-7xl mx-auto px-6 flex gap-3 overflow-x-auto">
-            {['all', 'trending', 'free', 'premium'].map((f) => (
+            {['all', 'founding', 'trending'].map((f) => (
               <button
                 key={f}
                 onClick={() => setActiveFilter(f)}
@@ -379,11 +381,9 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
                         </div>
                       ) : null}
 
-                      {c.price && (
-                        <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur text-brand-gold text-xs font-bold">
-                          {c.price}
-                        </div>
-                      )}
+                      {/* No subscription price chip: subscriptions are not
+                          sold, and the value was the platform's own default
+                          ('$9.99 / month') for most creators, not theirs. */}
 
                       {c.gated && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
@@ -403,7 +403,10 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
                         {c.premium && <SolidIcons.verified className="h-4 w-4 text-brand-pink" title="Premium" />}
                       </p>
                       <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
-                      <p className="text-gray-400 text-xs mb-4">{c.subs} subscribers</p>
+                      {/* Real count only -- there are no subscribers. */}
+                      <p className="text-gray-400 text-xs mb-4">
+                        {c.galleryCount} {c.galleryCount === 1 ? 'post' : 'posts'}
+                      </p>
                       <div className="flex gap-2">
                         {/* A gated creator gets an honest label while the token
                             isn't configured; once it is, "Hold to Unlock"

@@ -1,10 +1,15 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { addGalleryItem, GALLERY_CAP_EXCEEDED } from '../../../lib/creators-store';
+import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { galleryLimitFor, mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
 
 /**
  * POST /api/me/upload -- finalize a gallery upload.
- * JSON { pathname, aiGenerated? } -> 200 { ok: true, creator, item }
+ * JSON { pathname, othersAppear, aiGenerated? } -> 200 { ok: true, creator, item }
+ *
+ * `othersAppear` (required, boolean): does anyone besides the account holder
+ * appear in this file? `true` is refused (403) and the file deleted -- see
+ * lib/performer-attestation.js for the §2257 rule.
  *
  * The file itself was uploaded by the browser straight to the private Blob
  * store with a token from POST /api/media/upload-token (see lib/media.js).
@@ -28,9 +33,14 @@ export default async function handler(req, res) {
   }
 
   try {
+    const attested = await resolvePerformerAttestation(req.body);
+    if (attested.error) {
+      await deleteBlobQuietly(pathname);
+      return res.status(attested.status).json({ error: attested.error });
+    }
     const { kind } = await verifyUploadedBlob(pathname, 'gallery');
     const limit = galleryLimitFor(ctx.creator);
-    const item = { type: kind, src: mediaSrc(pathname), aiGenerated: aiGenerated === true };
+    const item = { type: kind, src: mediaSrc(pathname), aiGenerated: aiGenerated === true, performers: attested.attestation };
     let creator;
     try {
       creator = await addGalleryItem(ctx.creator.id, item, undefined, limit);

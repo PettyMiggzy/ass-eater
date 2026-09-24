@@ -1,11 +1,17 @@
 import { addGalleryItem, getCreatorById, GALLERY_CAP_EXCEEDED } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
+import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { PREMIUM_GALLERY_SLOTS, mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
 
 /**
  * POST /api/admin/upload -- admin finalize of a gallery upload for a creator.
- * Header x-admin-key. JSON { creatorId, pathname, aiGenerated? }
+ * Header x-admin-key. JSON { creatorId, pathname, othersAppear, coPerformerRecordIds?, aiGenerated? }
  *   -> 200 { ok: true, creator, item }
+ *
+ * `othersAppear` is required. When true, `coPerformerRecordIds` must list the
+ * §2257 record (non-archived, ID on file) of every other person in the file
+ * (lib/performer-attestation.js); the admin path is the only one that can
+ * publish co-performer content.
  *
  * The token comes from POST /api/media/upload-token with the admin key and
  * { purpose: 'gallery', creatorId, ... }. Same checks as the creator's own
@@ -33,8 +39,14 @@ export default async function handler(req, res) {
       await deleteBlobQuietly(pathname);
       return res.status(404).json({ error: 'Creator not found' });
     }
+    const attested = await resolvePerformerAttestation(req.body, { admin: true });
+    if (attested.error) {
+      // Not deleted: the admin can correct the record ids and finalize the
+      // same upload again (an abandoned one is swept as an orphan).
+      return res.status(attested.status).json({ error: attested.error });
+    }
     const { kind } = await verifyUploadedBlob(pathname, 'gallery');
-    const item = { type: kind, src: mediaSrc(pathname), aiGenerated: aiGenerated === true };
+    const item = { type: kind, src: mediaSrc(pathname), aiGenerated: aiGenerated === true, performers: attested.attestation };
     let creator;
     try {
       creator = await addGalleryItem(String(creatorId), item, undefined, PREMIUM_GALLERY_SLOTS);

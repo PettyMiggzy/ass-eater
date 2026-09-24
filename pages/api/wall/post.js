@@ -1,11 +1,11 @@
 import { getSessionUser } from '../../../lib/session';
 import { displayNameFor, findUserByCreatorId } from '../../../lib/users-store';
-import { addWallPost, toPublicWallPost, MAX_TEXT_LENGTH } from '../../../lib/wall-store';
+import { addWallPost, toPublicWallPost, MAX_TEXT_LENGTH, WALL_DAILY_CAP_MESSAGE } from '../../../lib/wall-store';
 import { getCreatorById } from '../../../lib/creators-store';
 import { isPubliclyVisible, effectiveCreatorStatus } from '../../../lib/creator-status';
 import { restrictionMessageFor } from '../../../lib/messages-store';
 import { createNotification } from '../../../lib/notifications-store';
-import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
+import { screenPublicText } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
@@ -61,14 +61,19 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Creator not found' });
     }
 
-    const check = detectPaymentCircumvention(text);
-    if (check.flagged) {
-      await addViolation({ userId: uid, context: 'wall_post', reasons: check.reasons, snippet: text });
-      return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+    // A wall comment is public text on the creator's profile, so it gets the
+    // same screen as every other public field (bio, name, tags, listing
+    // copy): payment circumvention AND the prohibited-terms list. It used to
+    // run only the payment check, so "new teen set dropping tonight" was
+    // refused in a bio and published on a wall.
+    const hit = screenPublicText(text);
+    if (hit) {
+      await addViolation({ userId: uid, context: 'wall_post', reasons: hit.reasons, snippet: text });
+      return res.status(400).json({ error: hit.message });
     }
 
     const authorName = await displayNameFor(user);
-    const post = await addWallPost({ creatorId: String(wallCreator.id), authorId: uid, authorName, text });
+    const post = await addWallPost({ creatorId: String(wallCreator.id), authorId: uid, authorName, text, isWallOwner: !!isOwner });
 
     // Let the wall's creator know -- unless they wrote it themselves. A
     // burst of comments folds into one unread notification per wall.
@@ -92,6 +97,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, post: toPublicWallPost(post, uid) });
   } catch (err) {
     if (err.message === 'Comment cannot be empty') return res.status(400).json({ error: err.message });
+    if (err.code === 'WALL_DAILY_CAP') return res.status(429).json({ error: WALL_DAILY_CAP_MESSAGE });
     console.error('[wall/post] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

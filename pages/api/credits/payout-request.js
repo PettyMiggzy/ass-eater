@@ -1,5 +1,5 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
-import { effectiveCreatorStatus } from '../../../lib/creators-store';
+import { effectiveCreatorStatus, isDemoCreator } from '../../../lib/creators-store';
 import {
   requestPayout,
   getBalanceSummary,
@@ -50,7 +50,7 @@ export default async function handler(req, res) {
 
   // requireCreatorOwner lets a PENDING (unreviewed) creator through so they
   // can finish their profile; cashing out is not part of that.
-  if (effectiveCreatorStatus(ctx.creator) !== 'active' || ctx.creator.seed === true) {
+  if (effectiveCreatorStatus(ctx.creator) !== 'active' || isDemoCreator(ctx.creator)) {
     return res.status(403).json({ error: 'Cash-outs open once your creator account is approved.' });
   }
 

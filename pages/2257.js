@@ -57,12 +57,20 @@ export default function Statement2257() {
               produce them on request.
             </p>
             <p>
-              In addition, and regardless of how that obligation is allocated, OnlyOne maintains its
-              own records for performers appearing in sexually explicit content on the Platform —
-              legal name, date of birth, every name the performer has worked under, a copy of a
-              government-issued photo identification, the date of production, and where the content
-              appears. Those records are kept for seven years, indexed so that a record can be found
-              from any name the performer uses or any URL on which the content appears, and are held
+              In addition, and regardless of how that obligation is allocated, OnlyOne keeps its own
+              record for each creator — legal name, date of birth, every name they have worked under,
+              a copy of a government-issued photo identification (stored with the record, or held by
+              the custodian outside the Platform), and where their content appears. A creator account
+              cannot be approved until that record exists with the ID copy on file.
+            </p>
+            <p>
+              Every upload asks whether anyone besides the creator appears in it. Creators cannot
+              publish content showing another person themselves: such content is added only by our
+              team, and only after a record of the same kind exists for every other person shown.
+            </p>
+            <p>
+              These records are kept for seven years, indexed so that a record can be found from any
+              name the performer uses or any URL on which the content appears, and are held
               encrypted and accessible only to the records custodian.
             </p>
 

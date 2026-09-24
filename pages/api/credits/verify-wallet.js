@@ -5,6 +5,7 @@ import { readWalletNonce, depositProofMessage, sameAddress, DEPOSIT_NONCE_COOKIE
 import { createDepositWalletToken, DEPOSIT_WALLET_COOKIE_NAME, DEPOSIT_WALLET_TTL_SECONDS } from '../../../lib/deposit';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import { consumeAttempt } from '../../../lib/rate-limit';
+import { accountStanding, isFrozenStanding, FROZEN_BUY_MESSAGE } from '../../../lib/credits-store';
 
 /**
  * Step two of buying credits, BEFORE any money moves: prove the connected
@@ -35,6 +36,13 @@ export default async function handler(req, res) {
 
   const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in first' });
+
+  // Refused BEFORE the fan sends anything: a suspended or banned creator's
+  // credits are frozen (lib/credits-store.js), so a deposit could never be
+  // spent or withdrawn. See also wallet-nonce.js and buy.js.
+  if (isFrozenStanding(await accountStanding(uid))) {
+    return res.status(403).json({ code: 'ACCOUNT_FROZEN', error: FROZEN_BUY_MESSAGE });
+  }
 
   const { limited, retryAfterSeconds } = consumeAttempt(`credits-verify-wallet:user:${uid}`, { limit: MAX_PER_USER, windowMs: WINDOW_MS });
   if (limited) {

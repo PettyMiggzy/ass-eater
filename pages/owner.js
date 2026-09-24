@@ -8,10 +8,14 @@ import { safeRedirectPath } from '../lib/safe-redirect';
  * Owner sign-in by wallet.
  *
  * Exists because the owner lives in one of the 27 states this site blocks,
- * so every fresh browser, private window and domain otherwise needs the
- * typed key. The key still works and is still the way his partner gets in --
- * this is an alternative door for the person who holds the wallet, not a
- * replacement.
+ * so every fresh browser, private window and domain otherwise needs another
+ * way in. This is a door for the person who holds the owner wallet.
+ *
+ * The page must not advertise any OTHER way past the gate. The bypass
+ * endpoints answer 404 to every failure precisely so they don't confirm a
+ * bypass exists, and this page is public -- so it never mentions one, and
+ * when no owner wallet is configured it is a 404 itself rather than a page
+ * saying what to use instead.
  *
  * MUST stay exempt from the age gate in proxy.js and from the 18+ notice in
  * _app.js, together. Gating the page that exists to get past the gate is the
@@ -23,9 +27,12 @@ import { safeRedirectPath } from '../lib/safe-redirect';
  * a signature from one specific private key it does nothing at all.
  */
 export async function getServerSideProps() {
-  // Whether a wallet login exists at all is decided server-side, so the page
-  // never renders a button that cannot work.
-  return { props: { configured: !!ownerWalletAddress() } };
+  // Whether a wallet login exists at all is decided server-side. With none
+  // configured there is nothing here for anyone, so the page does not exist
+  // (it used to render "not set up yet -- use your key link instead" to every
+  // visitor, which told the world a key-link bypass exists).
+  if (!ownerWalletAddress()) return { notFound: true };
+  return { props: { configured: true } };
 }
 
 const STATUS_IDLE = '';
@@ -40,7 +47,7 @@ export default function Owner({ configured }) {
     const eth = typeof window !== 'undefined' ? window.ethereum : null;
     if (!eth) {
       setError(
-        'No wallet found in this browser. Open this page inside your wallet app’s browser, or install a wallet extension — or just use your key link instead.',
+        'No wallet found in this browser. Open this page inside your wallet app’s browser, or install a wallet extension.',
       );
       return;
     }
@@ -111,13 +118,11 @@ export default function Owner({ configured }) {
 
               <p className="text-xs text-gray-600 mt-10 leading-relaxed">
                 Cookies are per-domain, so this is once per site you use — and it lasts
-                180 days. Your key link still works too.
+                180 days.
               </p>
             </>
           ) : (
-            <p className="text-sm text-gray-400 leading-relaxed">
-              Wallet sign-in is not set up on this site yet. Use your key link instead.
-            </p>
+            <p className="text-sm text-gray-400 leading-relaxed">Not available.</p>
           )}
         </div>
       </div>

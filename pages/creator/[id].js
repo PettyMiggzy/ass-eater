@@ -3,11 +3,11 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import ProtectedMedia, { GUEST_MARK } from '../../components/ProtectedMedia';
 import { getCreators } from '../../lib/creators-store';
-import { toPublicCreator, toPublicListing, isPubliclyVisible, effectiveCreatorStatus } from '../../lib/creator-status';
+import { toPublicCreator, toPublicListing, isPubliclyVisible, effectiveCreatorStatus, listingHasDeliverable } from '../../lib/creator-status';
 import { getSessionUser } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
-import { getWallPostsForCreator, toPublicWallPost } from '../../lib/wall-store';
+import { getWallPageForCreator, toPublicWallPost } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
 import { viewerMarkFor } from '../../lib/viewer-mark';
 import { holderGateState } from '../../lib/holder-access';
@@ -52,15 +52,20 @@ export async function getServerSideProps({ req, params }) {
   // /api/marketplace/orders/delivery.
   const allListings = creator ? await getListings() : [];
   const listings = allListings
-    .filter((l) => String(l.creatorId) === String(creator?.id) && l.status === 'active')
+    // listingHasDeliverable: a digital listing with no files can't be bought
+    // (checkout refuses it), so it isn't shown for sale. Checked on the stored
+    // record, before toPublicListing strips the srcs it looks at.
+    .filter((l) => String(l.creatorId) === String(creator?.id) && l.status === 'active' && listingHasDeliverable(l))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .map((l) => ({ ...toPublicListing(l), demo: isDemoListing(l, creator) }));
 
   // Wall comments in their public shape: `mine` instead of every
-  // commenter's account id.
-  const wallPosts = creator
-    ? (await getWallPostsForCreator(creator.id)).map((p) => toPublicWallPost(p, viewerId))
-    : [];
+  // commenter's account id. Only the newest page is server-rendered; the
+  // Wall's "Show older" button pages back with nextBefore.
+  const wallPage = creator
+    ? await getWallPageForCreator(creator.id)
+    : { posts: [], hasMore: false, nextBefore: null };
+  const wallPosts = wallPage.posts.map((p) => toPublicWallPost(p, viewerId));
   const initialFavorited = creator && viewerId ? await isFavorite(viewerId, creator.id) : false;
   // Computed server-side: the mark is an HMAC and the key never leaves the
   // server. See lib/viewer-mark.js. '' for a signed-out visitor -- the page
@@ -100,11 +105,25 @@ export async function getServerSideProps({ req, params }) {
       tokenLive: tokenGateLive(),
       demo: isDemoCreator(creator),
       dmPriceCents,
+      // Formatted HERE, once, with fixed locale rules: the same number
+      // formatted by the server and again by the browser (whose locale may
+      // differ) was a hydration mismatch on every page view.
+      dmPriceLabel: dmPriceCents > 0 ? formatCredits(dmPriceCents) : '',
+      gateLabel: creator ? formatGate(creator) : '',
       listings,
       wallPosts,
+      wallNextBefore: wallPage.hasMore ? wallPage.nextBefore : null,
       initialFavorited,
     },
   };
+}
+
+// Fixed locale and time zone: the server (UTC, en-US) and the viewer's
+// browser must print the same date, or React reports a hydration mismatch.
+function formatWallDate(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export default function CreatorProfile({
@@ -116,8 +135,11 @@ export default function CreatorProfile({
   tokenLive,
   demo,
   dmPriceCents,
+  dmPriceLabel,
+  gateLabel,
   listings,
   wallPosts,
+  wallNextBefore,
   initialFavorited,
 }) {
   const router = useRouter();
@@ -204,7 +226,6 @@ export default function CreatorProfile({
   // "is this creator gated": the owner and a verified holder see the real,
   // watermarked media; everyone else gets items with no src at all.
   const locked = !gate?.allowed;
-  const gateLabel = formatGate(creator);
   const unlockedByWallet = gate?.reason === 'holds_enough';
   // A signed-in viewer's overlay carries their account code; a signed-out
   // visitor's carries only the site name, and the page says so.
@@ -439,10 +460,11 @@ export default function CreatorProfile({
           <div className="grid lg:grid-cols-[300px_1fr] gap-6 mt-8 px-1 sm:px-4">
             {/* Sidebar */}
             <aside className="space-y-5">
+              {/* Real counts only. Followers and Likes used to show here from
+                  hand-typed numbers; there are no followers or likes to count,
+                  so they are not shown at all. */}
               <div className="flex gap-6">
                 <div><p className="text-xl font-black">{creator.posts}</p><p className="text-xs text-gray-500">Posts</p></div>
-                <div><p className="text-xl font-black">{creator.subs}</p><p className="text-xs text-gray-500">Followers</p></div>
-                <div><p className="text-xl font-black">{creator.likes}</p><p className="text-xs text-gray-500">Likes</p></div>
               </div>
 
               {creator.bio && <p className="text-sm text-gray-300 whitespace-pre-wrap">{creator.bio}</p>}
@@ -497,7 +519,7 @@ export default function CreatorProfile({
                         <Icons.check className="h-4 w-4 mt-0.5 shrink-0 text-brand-pink" />
                         <span>
                           {dmPriceCents > 0
-                            ? `Send a message — ${formatCredits(dmPriceCents)} each, paid to them.`
+                            ? `Send a message — ${dmPriceLabel} each, paid to them.`
                             : 'Send a message — free for you as a creator.'}
                         </span>
                       </li>
@@ -537,13 +559,23 @@ export default function CreatorProfile({
               {activeTab === 'posts' && (
                 <div className="space-y-8">
                   <div className="grid md:grid-cols-[1.6fr_1fr] gap-4">
-                    <div className="relative rounded-xl overflow-hidden bg-white/5 border border-white/5 aspect-video">
+                    {/* Locked: the tile grows with the unlock panel instead of
+                        being a fixed 16:9 box with overflow hidden -- on a
+                        phone that box is ~185px tall and clipped the button
+                        and the "no wallet found" error, so an unlock attempt
+                        looked like it did nothing. */}
+                    <div
+                      className={`relative rounded-xl overflow-hidden bg-white/5 border border-white/5 ${
+                        locked ? 'min-h-[240px] flex items-center justify-center py-6' : 'aspect-video'
+                      }`}
+                    >
                       {locked ? (
                         <>
                           {creator.img && (
                             <img src={creator.img} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-50" />
                           )}
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                          <div className="absolute inset-0 bg-black/40" />
+                          <div className="relative">
                             <TokenUnlockPanel gate={gate} gateLabel={gateLabel} tokenLive={tokenLive} />
                           </div>
                         </>
@@ -622,7 +654,7 @@ export default function CreatorProfile({
                         <h2 className="font-bold">Fan Messages</h2>
                         <button onClick={() => setActiveTab('about')} className="text-xs text-brand-pink hover:underline">About</button>
                       </div>
-                      <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} isWallOwner={isOwner} />
+                      <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} initialNextBefore={wallNextBefore} isWallOwner={isOwner} />
                     </div>
 
                     <div className="rounded-xl border border-white/10 bg-brand-card p-4">
@@ -631,8 +663,6 @@ export default function CreatorProfile({
                         {creator.age && <li className="flex items-center gap-2"><Icons.cake className="h-4 w-4 shrink-0" />{creator.age}</li>}
                         {creator.location && <li className="flex items-center gap-2"><Icons.pin className="h-4 w-4 shrink-0" />{creator.location}</li>}
                         <li className="flex items-center gap-2"><Icons.film className="h-4 w-4 shrink-0" />{creator.media} media items</li>
-                        <li className="flex items-center gap-2"><SolidIcons.heart className="h-4 w-4 shrink-0" />{creator.likes} likes</li>
-                        <li className="flex items-center gap-2"><Icons.people className="h-4 w-4 shrink-0" />{creator.subs} followers</li>
                         {Array.isArray(creator.tags) && creator.tags.length > 0 && <li className="flex items-center gap-2"><Icons.tag className="h-4 w-4 shrink-0" />{creator.tags.join(', ')}</li>}
                       </ul>
                     </div>
@@ -723,8 +753,6 @@ export default function CreatorProfile({
                     {creator.location && <li className="flex items-center gap-2"><Icons.pin className="h-4 w-4 shrink-0" />{creator.location}</li>}
                     <li className="flex items-center gap-2"><Icons.memo className="h-4 w-4 shrink-0" />{creator.posts} posts</li>
                     <li className="flex items-center gap-2"><Icons.film className="h-4 w-4 shrink-0" />{creator.media} media items</li>
-                    <li className="flex items-center gap-2"><Icons.people className="h-4 w-4 shrink-0" />{creator.subs} followers</li>
-                    <li className="flex items-center gap-2"><SolidIcons.heart className="h-4 w-4 shrink-0" />{creator.likes} likes</li>
                   </ul>
                   {Object.values(socials).some(Boolean) && (
                     <div className="flex flex-wrap gap-2 pt-2">
@@ -783,7 +811,13 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [needsCredits, setNeedsCredits] = useState(false);
+  // The price the SERVER quotes for this viewer (GET /api/messages/with),
+  // sent back as expectedPriceCents. Seeded with the page's display price
+  // until the thread loads.
   const [priceCents, setPriceCents] = useState(initialPriceCents || 0);
+  const [canSend, setCanSend] = useState(true);
+  const [cannotSendReason, setCannotSendReason] = useState('');
+  const [notice, setNotice] = useState('');
   // Reused across retries of the SAME text, replaced once a send lands.
   const attemptId = useRef(null);
 
@@ -796,7 +830,14 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
         if (cancelled) return;
         if (res.ok) {
           setMessages(Array.isArray(data.conversation?.messages) ? data.conversation.messages : []);
-          if (Number.isInteger(data.dmPriceCents)) setPriceCents((p) => Math.max(p, data.dmPriceCents));
+          // Exactly the quoted price -- not max(page price, quote): the value
+          // shown is the value sent as expectedPriceCents, and the server
+          // refuses a paid send whose expected price is not the real one.
+          if (Number.isInteger(data.dmPriceCents)) setPriceCents(data.dmPriceCents);
+          if (data.canSend === false) {
+            setCanSend(false);
+            setCannotSendReason(typeof data.cannotSendReason === 'string' ? data.cannotSendReason : '');
+          }
         } else {
           setError(data.error || 'Could not load messages.');
         }
@@ -822,21 +863,46 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
     if (!attemptId.current) attemptId.current = newClientMessageId();
     setSending(true);
     setError('');
+    setNotice('');
     setNeedsCredits(false);
     try {
       const res = await fetch('/api/messages/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ toUserId: otherUserId, text: body, clientMessageId: attemptId.current }),
+        body: JSON.stringify({
+          toUserId: otherUserId,
+          text: body,
+          clientMessageId: attemptId.current,
+          // The price shown above the box. A paid send with a missing or
+          // out-of-date price is refused (409) and nothing is charged.
+          expectedPriceCents: priceCents,
+        }),
       });
       const data = await readJson(res);
+      if (res.status === 409 && data.code === 'dm_price_changed' && Number.isInteger(data.currentPriceCents)) {
+        // Nothing was charged. Show the new price; the next Send confirms it.
+        setPriceCents(data.currentPriceCents);
+        setNotice(
+          data.currentPriceCents > 0
+            ? `${otherName}'s message price is now ${formatCredits(data.currentPriceCents)}. Nothing was charged — press Send again to send at the new price.`
+            : 'This message is now free to send. Nothing was charged — press Send again.',
+        );
+        return;
+      }
       if (!res.ok) {
         if (res.status === 402) setNeedsCredits(true);
         // 402 not enough credits, 403 not allowed / restricted, 409 the
         // creator is not taking messages -- the server's text says which.
         throw new Error(data.error || (res.status === 409 ? "This creator isn't accepting messages right now." : 'Failed to send'));
       }
-      if (Array.isArray(data.conversation?.messages)) setMessages(data.conversation.messages);
+      // Merged by id, not replaced: the send answers with the latest page.
+      if (Array.isArray(data.conversation?.messages)) {
+        const page = data.conversation.messages;
+        setMessages((prev) => {
+          const ids = new Set(page.map((m) => String(m.id)));
+          return [...prev.filter((m) => !ids.has(String(m.id))), ...page];
+        });
+      }
       setText('');
       attemptId.current = null;
     } catch (err) {
@@ -876,11 +942,17 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
           )}
         </div>
 
-        {priceCents > 0 && (
+        {!canSend && (
+          <p className="text-[11px] text-gray-400 px-4 pt-2">
+            {cannotSendReason || `You can't message ${otherName} right now.`}
+          </p>
+        )}
+        {canSend && priceCents > 0 && (
           <p className="text-[11px] text-gray-400 px-4 pt-2">
             Each message costs {formatCredits(priceCents)}, paid to {otherName}.
           </p>
         )}
+        {notice && <p className="text-yellow-300 text-xs px-4 pt-1">{notice}</p>}
         {error && (
           <p className="text-red-400 text-xs px-4 pt-1">
             {error}
@@ -904,8 +976,8 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
             placeholder="Type a message..."
             className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm"
           />
-          <button type="submit" disabled={sending || !text.trim()} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
-            {sending ? 'Sending…' : priceCents > 0 ? `Send · ${(priceCents / 100).toFixed(2)}` : 'Send'}
+          <button type="submit" disabled={sending || loading || !canSend || !text.trim()} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
+            {sending ? 'Sending…' : priceCents > 0 ? `Send · $${(priceCents / 100).toFixed(2)}` : 'Send'}
           </button>
         </form>
       </div>
@@ -913,9 +985,21 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
   );
 }
 
-function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
+// Newest first, no id twice. Wall post ids come from a sequence, so a larger
+// id is a newer post.
+function mergeWallPosts(...lists) {
+  const byId = new Map();
+  for (const list of lists) for (const p of list || []) if (p && p.id != null) byId.set(String(p.id), p);
+  return [...byId.values()].sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwner }) {
   const router = useRouter();
   const [posts, setPosts] = useState(initialPosts);
+  // Cursor for the next OLDER page (null = nothing older). Only the newest
+  // page is server-rendered.
+  const [nextBefore, setNextBefore] = useState(initialNextBefore || null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
@@ -944,13 +1028,31 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
     }
   };
 
+  // Re-reads the NEWEST page and merges it in, so older pages the viewer
+  // already opened stay on screen.
   const refresh = async () => {
     try {
       const res = await fetch(`/api/wall/list?creatorId=${encodeURIComponent(creatorId)}`);
       const data = await readJson(res);
-      if (res.ok && Array.isArray(data.posts)) setPosts(data.posts);
+      if (res.ok && Array.isArray(data.posts)) setPosts((prev) => mergeWallPosts(prev, data.posts));
     } catch {
       // keep what is on screen
+    }
+  };
+
+  const loadOlder = async () => {
+    if (!nextBefore || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const res = await fetch(`/api/wall/list?creatorId=${encodeURIComponent(creatorId)}&before=${encodeURIComponent(nextBefore)}`);
+      const data = await readJson(res);
+      if (!res.ok || !Array.isArray(data.posts)) throw new Error(data.error || 'Could not load older comments.');
+      setPosts((prev) => mergeWallPosts(prev, data.posts));
+      setNextBefore(data.hasMore && typeof data.nextBefore === 'string' ? data.nextBefore : null);
+    } catch (err) {
+      setError(err.message || 'Could not load older comments.');
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -1065,9 +1167,19 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
                   )}
                 </div>
               </div>
-              <p className="text-[10px] text-gray-600 mt-2">{new Date(p.createdAt).toLocaleDateString()}</p>
+              <p className="text-[10px] text-gray-600 mt-2">{formatWallDate(p.createdAt)}</p>
             </div>
           ))}
+          {nextBefore && (
+            <button
+              type="button"
+              onClick={loadOlder}
+              disabled={loadingOlder}
+              className="block mx-auto text-xs text-brand-pink hover:underline disabled:opacity-50"
+            >
+              {loadingOlder ? 'Loading…' : 'Show older comments'}
+            </button>
+          )}
         </div>
       )}
     </div>

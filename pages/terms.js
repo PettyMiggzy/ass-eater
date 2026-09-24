@@ -252,9 +252,33 @@ export default function Terms() {
 
             <Section title="8. Content Removal, DMCA & Non-Consensual Content" id="content-removal">
               <p>
-                If you believe content on the Platform infringes your copyright, contact us with the
-                details of the material and your ownership claim, and we will investigate and remove
-                infringing content where warranted.
+                <strong>Copyright (DMCA) notices.</strong> If you believe content on the Platform infringes
+                your copyright, send a written notice to{' '}
+                <a href="mailto:team@onlyone1.fun" className="text-brand-gold underline">team@onlyone1.fun</a>{' '}
+                with the subject line &quot;DMCA Notice&quot;. Under 17 U.S.C. §512(c)(3) the notice must include:
+              </p>
+              <ul className="list-disc pl-5 space-y-1 mt-2">
+                <li>your physical or electronic signature (as the owner or someone authorized to act for the owner);</li>
+                <li>identification of the copyrighted work you claim is infringed;</li>
+                <li>
+                  identification of the infringing material and where it is on the Platform (the link to the
+                  creator profile or listing is enough);
+                </li>
+                <li>your name, address, telephone number and email address;</li>
+                <li>
+                  a statement that you have a good-faith belief the use is not authorized by the copyright owner,
+                  its agent, or the law; and
+                </li>
+                <li>
+                  a statement that the information in the notice is accurate and, under penalty of perjury, that
+                  you are the owner or authorized to act on the owner&apos;s behalf.
+                </li>
+              </ul>
+              <p className="mt-3">
+                We review valid notices, remove or disable access to the material where warranted, and notify the
+                person who posted it, who may send a counter-notice to the same address. Accounts that repeatedly
+                infringe are terminated. If the content shows <em>you</em> and you did not consent to it, use the
+                faster process below instead -- it does not require a copyright claim.
               </p>
               <p className="mt-3">
                 <strong>If you appear in content on the Platform that you did not consent to</strong> —

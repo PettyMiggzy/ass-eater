@@ -3,7 +3,16 @@ import { updateCreatorProfile, sanitizeSocials, sanitizeTags, sanitizeAge, sanit
 import { screenPublicText, publicProfileTextEntries, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { sanitizeGateTokens } from '../../../lib/token-gate';
-import { validateTextFields, normalizeHandle, sanitizeDmPriceCents, sanitizePayoutFields } from '../../../lib/field-validation';
+import {
+  validateTextFields,
+  normalizeHandle,
+  sanitizeDmPriceCents,
+  sanitizePayoutFields,
+  looksLikePhoneNumber,
+  PHONE_NAME_MESSAGE,
+  isReservedName,
+  RESERVED_NAME_MESSAGE,
+} from '../../../lib/field-validation';
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
 import { findCircumventionInTags } from '../../../lib/listings-store';
 import { PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
@@ -60,10 +69,32 @@ export default async function handler(req, res) {
   // One canonical stored form for handles ("@" + body), so "alice" and
   // "@alice" can't be two creators and ?ref=alice can't resolve to the wrong
   // one. See normalizeHandle.
+  // The dashboard echoes the handle on every save: an unchanged echo of the
+  // stored (already canonical) value is left alone, so a legacy handle that
+  // predates a newer rule (the phone-number one) can't block a bio edit.
+  if ('handle' in safeFields && safeFields.handle === ctx.creator.handle) {
+    delete safeFields.handle;
+  }
   if ('handle' in safeFields) {
     const { handle, error } = normalizeHandle(safeFields.handle);
     if (error) return res.status(400).json({ error });
     safeFields.handle = handle;
+  }
+  // The display name is published beside the handle, so it gets the same
+  // "not a phone number" rule normalizeHandle applies. Both are refused if
+  // they read as the platform's own staff or brand ("OnlyOne Support",
+  // "@onlyone_team") -- only an admin can set such a name. An unchanged echo
+  // of the stored value is left alone, so a legacy name can't block an
+  // unrelated edit.
+  for (const key of ['name', 'handle']) {
+    if (!(key in safeFields) || typeof safeFields[key] !== 'string') continue;
+    if (String(safeFields[key]).trim() === String(ctx.creator[key] ?? '').trim()) continue;
+    if (key === 'name' && looksLikePhoneNumber(safeFields.name)) {
+      return res.status(400).json({ error: PHONE_NAME_MESSAGE });
+    }
+    if (isReservedName(safeFields[key])) {
+      return res.status(400).json({ error: RESERVED_NAME_MESSAGE });
+    }
   }
 
   if ('dmPriceCents' in fields) {

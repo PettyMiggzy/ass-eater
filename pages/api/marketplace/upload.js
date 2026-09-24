@@ -1,13 +1,18 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { addListingMediaForOwner, MEDIA_CAP_EXCEEDED, LISTING_NOT_EDITABLE } from '../../../lib/listings-store';
 import { LISTING_LIMITS, isValidListingPreview } from '../../../lib/creator-status';
+import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
 
 const MEDIA_CAP_MESSAGE = `Listings can have up to ${LISTING_LIMITS.maxMedia} items.`;
 
 /**
  * POST /api/marketplace/upload -- finalize one listing media upload.
- * JSON { listingId, pathname, preview?, aiGenerated? } -> 200 { ok: true, listing, item }
+ * JSON { listingId, pathname, othersAppear, preview?, aiGenerated? } -> 200 { ok: true, listing, item }
+ *
+ * `othersAppear` (required, boolean): does anyone besides the account holder
+ * appear in this file? `true` is refused (403) and the file deleted -- see
+ * lib/performer-attestation.js for the §2257 rule.
  *
  * Token from POST /api/media/upload-token { purpose: 'listing', listingId, ... }.
  * `preview` is the tiny blurred JPEG/WebP data URL (<= 16KB) the creator's
@@ -42,12 +47,18 @@ export default async function handler(req, res) {
   }
 
   try {
+    const attested = await resolvePerformerAttestation(req.body);
+    if (attested.error) {
+      await deleteBlobQuietly(pathname);
+      return res.status(attested.status).json({ error: attested.error });
+    }
     const { kind } = await verifyUploadedBlob(pathname, 'listing');
     const item = {
       type: kind,
       src: mediaSrc(pathname),
       preview: preview ?? null,
       aiGenerated: aiGenerated === true,
+      performers: attested.attestation,
     };
     try {
       const listing = await addListingMediaForOwner(parsed.listingId, ctx.creator.id, item, undefined, LISTING_LIMITS.maxMedia);

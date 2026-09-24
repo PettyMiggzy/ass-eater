@@ -2,12 +2,31 @@ import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { Lockup } from '../components/Brand';
+import { safeRedirectPath } from '../lib/safe-redirect';
 
 // AgeChecker.Net's client widget is documented for a checkout button, not a
 // site-entry gate -- adapted here by pointing it at this page's own button.
 // See lib/age-verification.js + pages/api/age-verify/confirm.js for why the
 // client-side "accepted" callback alone isn't trusted to unlock the gate.
 const API_KEY = process.env.NEXT_PUBLIC_AGECHECKER_KEY;
+
+// Where to go once verified: back to the page the visitor was trying to open
+// (/blocked-region passes it as ?next=), through safeRedirectPath so only a
+// same-origin path is ever followed. Never back to a gate page (a loop).
+// Falls back to /home, the browse page -- '/' is the ungated landing page,
+// which a just-verified visitor has no reason to be sent to.
+function afterVerifyPath(search) {
+  let next = null;
+  try {
+    next = new URLSearchParams(typeof search === 'string' ? search : '').get('next');
+  } catch {
+    next = null;
+  }
+  const path = safeRedirectPath(next, '/home');
+  const pathname = path.split(/[?#]/)[0];
+  if (pathname === '/blocked-region' || pathname === '/verify-age') return '/home';
+  return path;
+}
 
 export default function VerifyAge() {
   const router = useRouter();
@@ -46,7 +65,7 @@ export default function VerifyAge() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Verification could not be confirmed');
-            router.push('/');
+            router.push(afterVerifyPath(window.location.search));
           } catch (err) {
             setStatus('error');
             setError(err.message);

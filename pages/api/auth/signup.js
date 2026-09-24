@@ -12,10 +12,15 @@ import {
   isEmailIdentifier,
   USERNAME_RE,
   EMAIL_IDENTIFIER_MAX,
+  looksLikePhoneNumber,
+  PHONE_NAME_MESSAGE,
+  isReservedName,
+  RESERVED_NAME_MESSAGE,
 } from '../../../lib/field-validation';
 import { screenPublicText, publicProfileTextEntries } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
+import { CURRENT_TOS_VERSION } from '../../../lib/orders-store';
 
 // Signup unavoidably tells the caller whether an identifier is already
 // taken: there is no email-confirmation channel on this site (nothing here
@@ -66,12 +71,24 @@ export default async function handler(req, res) {
     }
   } else if (!USERNAME_RE.test(email)) {
     return res.status(400).json({ error: 'Usernames are 3-40 characters: letters, numbers, ".", "_" or "-".' });
-  } else if (/^[\d.\-_]{7,}$/.test(email)) {
-    // A username is published; a phone number as one would be too.
+  } else if (looksLikePhoneNumber(email)) {
+    // A username is published; a phone number as one would be too. Same
+    // helper as creator handles and display names (lib/field-validation.js).
     return res.status(400).json({ error: "A username can't be a phone number -- it's shown publicly on your comments and messages." });
+  } else if (isReservedName(email)) {
+    // Shown as the author of every comment and DM this account writes.
+    return res.status(400).json({ error: RESERVED_NAME_MESSAGE });
   }
   if (!['fan', 'creator'].includes(role)) {
     return res.status(400).json({ error: 'Role must be fan or creator' });
+  }
+  // Terms §1 has every account holder represent that they are 18+ and accept
+  // the Terms. The checkbox on /signup is a courtesy; this is the control,
+  // and the acceptance (version + time) is stored on the account below so
+  // there is a record of it. Must be exactly `true` -- a direct POST that
+  // leaves it out creates nothing.
+  if (req.body?.acceptedTerms !== true) {
+    return res.status(400).json({ error: 'You must confirm you are 18 or older and agree to the Terms of Service and Privacy Policy.' });
   }
   if (role === 'creator' && (!displayName || !handle)) {
     return res.status(400).json({ error: 'Display name and handle are required for creator accounts' });
@@ -91,6 +108,10 @@ export default async function handler(req, res) {
     const normalized = normalizeHandle(handle);
     if (normalized.error) return res.status(400).json({ error: normalized.error });
     handle = normalized.handle;
+    if (looksLikePhoneNumber(displayName)) return res.status(400).json({ error: PHONE_NAME_MESSAGE });
+    if (isReservedName(displayName) || isReservedName(handle)) {
+      return res.status(400).json({ error: RESERVED_NAME_MESSAGE });
+    }
   }
 
   // Counted after the shape checks, so somebody fumbling the form doesn't
@@ -186,8 +207,16 @@ export default async function handler(req, res) {
       const finalReferredBy =
         referredByCreatorId && String(referredByCreatorId) === String(newCreatorId) ? null : referredByCreatorId;
 
+      const acceptedAt = new Date().toISOString();
       const createdUser = await createUser(
-        { email, password, role, creatorId: newCreatorId, referredByCreatorId: finalReferredBy },
+        {
+          email,
+          password,
+          role,
+          creatorId: newCreatorId,
+          referredByCreatorId: finalReferredBy,
+          acceptance: { tosAcceptedAt: acceptedAt, tosVersion: CURRENT_TOS_VERSION, ageAttestedAt: acceptedAt },
+        },
         client,
       );
       return { user: createdUser, creatorId: newCreatorId };

@@ -1,10 +1,13 @@
 import { getListings } from '../../../lib/listings-store';
 import { getCreators } from '../../../lib/creators-store';
-import { isPubliclyVisible, toPublicListing } from '../../../lib/creator-status';
+import { isPubliclyVisible, toPublicListing, isDemoListing, listingHasDeliverable } from '../../../lib/creator-status';
 
 /**
  * GET /api/marketplace/list?q= -> { listings: PublicListing[] }
- * PublicListing = toPublicListing(listing) + { creatorName, creatorHandle }.
+ * PublicListing = toPublicListing(listing) + { creatorName, creatorHandle, demo }.
+ * A digital listing with no files yet is left out: checkout refuses it
+ * (nothing to deliver), so it must not be offered. `demo` marks a listing the
+ * site shows as "Demo — not for sale" (checkout refuses those too).
  * Unauthenticated, so it NEVER carries a media src -- only { type, preview,
  * aiGenerated } per item. It used to return every listing's full-resolution
  * file URLs to anyone, with a CSS blur as the only "lock".
@@ -30,11 +33,12 @@ export default async function handler(req, res) {
   const active = listings
     .filter((l) => l.status === 'active')
     .filter((l) => visible.has(String(l.creatorId)))
+    .filter(listingHasDeliverable)
     .filter((l) => !q || String(l.title || '').toLowerCase().includes(q) || String(l.description || '').toLowerCase().includes(q))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .map((l) => {
       const creator = visible.get(String(l.creatorId));
-      return { ...toPublicListing(l), creatorName: creator.name, creatorHandle: creator.handle || '' };
+      return { ...toPublicListing(l), creatorName: creator.name, creatorHandle: creator.handle || '', demo: isDemoListing(l, creator) };
     });
 
   return res.status(200).json({ listings: active });

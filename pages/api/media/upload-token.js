@@ -13,7 +13,14 @@ import {
   AVATAR_TYPE_MESSAGE,
   uploadSizeMessage,
 } from '../../../lib/upload-guard';
-import { blobConfigured, galleryLimitFor, issueUploadToken, newMediaPathname } from '../../../lib/media';
+import {
+  blobConfigured,
+  galleryLimitFor,
+  issueUploadToken,
+  newMediaPathname,
+  recordPendingMediaPath,
+  sweepOrphanedMedia,
+} from '../../../lib/media';
 
 /**
  * POST /api/media/upload-token
@@ -31,7 +38,14 @@ import { blobConfigured, galleryLimitFor, issueUploadToken, newMediaPathname } f
  * Caps are checked here as a cheap early refusal so nothing gets uploaded that
  * would be refused anyway; the authoritative checks run again at finalize,
  * against fresh state, inside the write.
+ *
+ * The pathname is recorded (media_uploads) BEFORE the token is returned, so a
+ * file that is uploaded and never finalized can be found and reaped; each
+ * request also reaps a small batch of such files older than an hour (lib/
+ * media.js sweepOrphanedMedia; POST /api/admin/media-sweep runs a full one).
+ * If the pathname cannot be recorded, no token is issued.
  */
+const OPPORTUNISTIC_SWEEP = 5;
 
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_PER_CREATOR = 60;
@@ -121,6 +135,17 @@ export default async function handler(req, res) {
 
   const pathname = newMediaPathname({ purpose, creatorId: creator.id, listingId, contentType });
   if (!pathname) return res.status(400).json({ error: 'Could not prepare that upload.' });
+
+  // Bounded, and never allowed to fail the upload it rides along with.
+  try {
+    await sweepOrphanedMedia({ limit: OPPORTUNISTIC_SWEEP });
+  } catch (err) {
+    console.error('[media/upload-token] orphan sweep failed:', err);
+  }
+
+  if (!(await recordPendingMediaPath(pathname, 'token'))) {
+    return res.status(503).json({ error: 'Uploads are temporarily unavailable.' });
+  }
 
   try {
     const { clientToken, validUntil } = await issueUploadToken({ pathname, contentType, maxBytes });

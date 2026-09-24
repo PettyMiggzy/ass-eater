@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import { effectiveCreatorStatus } from '../../lib/creator-status';
 import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
@@ -14,7 +14,7 @@ import {
   dollars,
   describeObligation,
 } from '../../components/admin/adminApi';
-import { draftFrom, fieldsFromDraft } from '../../components/admin/creatorDraft';
+import { draftFrom, fieldsFromDraft, rebaseDraft, fieldName } from '../../components/admin/creatorDraft';
 
 // The oa_admin_media cookie (POST /api/admin/media-session) lasts 2 hours;
 // refreshed well inside that so a panel left open keeps loading private media.
@@ -31,6 +31,14 @@ export default function AdminPanel() {
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState({});
+  // What the open draft was built from (draftFrom of the server's record at
+  // the time). Saves send only the fields that differ from it, after rebasing
+  // onto a fresh read -- see saveProfile.
+  const [baseline, setBaseline] = useState(null);
+  const [othersAppear, setOthersAppear] = useState(null);
+  const [coPerformerIds, setCoPerformerIds] = useState([]);
+  const [recordOptions, setRecordOptions] = useState(null);
+  const selectSeq = useRef(0);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState('creators');
@@ -105,6 +113,7 @@ export default function AdminPanel() {
     setCreators([]);
     setSelectedId(null);
     setDraft({});
+    setBaseline(null);
     setStatus('');
   };
 
@@ -129,29 +138,83 @@ export default function AdminPanel() {
   // was never approved), so the option isn't offered for one.
   const selectedIsPending = !!selected && (selected.status === 'pending' || selectedStatus === 'pending');
 
-  useEffect(() => {
-    if (selected) setDraft(draftFrom(selected));
-  }, [selectedId]);
+  /** The roster as the server has it now, or null (status already set). */
+  const fetchRoster = async () => {
+    const { res, data } = await adminGet(adminKey, '/api/admin/creators');
+    if (!res.ok || !Array.isArray(data.creators)) {
+      setStatus(`Error: ${errorFrom(res, data, 'Could not load creators')}`);
+      return null;
+    }
+    setCreators(data.creators);
+    return data.creators;
+  };
+
+  // Selecting a creator re-reads them, rather than editing the roster
+  // snapshot loaded at unlock: the creator may have changed their wallet, bio
+  // or handle from their dashboard since, and a draft built from the old copy
+  // is exactly what used to write those values back.
+  const selectCreator = async (id) => {
+    const seq = ++selectSeq.current;
+    setSelectedId(id);
+    const snap = creators.find((c) => String(c.id) === String(id));
+    if (snap) { setDraft(draftFrom(snap)); setBaseline(draftFrom(snap)); }
+    setOthersAppear(null);
+    setCoPerformerIds([]);
+    try {
+      const roster = await fetchRoster();
+      if (!roster || seq !== selectSeq.current) return;
+      const fresh = roster.find((c) => String(c.id) === String(id));
+      if (!fresh) { setSelectedId(null); setStatus('That creator no longer exists.'); return; }
+      setDraft(draftFrom(fresh));
+      setBaseline(draftFrom(fresh));
+    } catch {
+      if (seq === selectSeq.current) setStatus('Error: could not refresh this creator. Reload before saving.');
+    }
+  };
 
   /** Puts the server's copy of a creator into the roster (and the draft, if it's the one open). */
   const applyCreator = (creator, { resyncDraft = false } = {}) => {
     if (!creator || creator.id === undefined) return;
     setCreators((prev) => prev.map((c) => (String(c.id) === String(creator.id) ? creator : c)));
-    if (resyncDraft && String(creator.id) === String(selectedId)) setDraft(draftFrom(creator));
+    if (resyncDraft && String(creator.id) === String(selectedId)) {
+      setDraft(draftFrom(creator));
+      setBaseline(draftFrom(creator));
+    }
   };
 
   const saveProfile = async () => {
-    const built = fieldsFromDraft(draft);
-    if (built.error) { setStatus(`Error: ${built.error}`); return; }
+    if (!baseline) { setStatus('Error: this creator is still loading. Try again in a moment.'); return; }
+    if (fieldsFromDraft(draft, baseline).error) { setStatus(`Error: ${fieldsFromDraft(draft, baseline).error}`); return; }
     setBusy(true);
     setStatus('Saving...');
     try {
+      // Rebase onto the record as it is right now, so a change the creator
+      // (or another admin tab) made since this draft was opened is never
+      // overwritten by a value the admin didn't touch -- and one the admin
+      // DID touch is stopped and shown instead of silently replaced.
+      const roster = await fetchRoster();
+      if (!roster) return;
+      const current = roster.find((c) => String(c.id) === String(selectedId));
+      if (!current) { setSelectedId(null); setStatus('Error: that creator no longer exists. Nothing was saved.'); return; }
+      const rebased = rebaseDraft(draft, baseline, current);
+      setBaseline(rebased.baseline);
+      setDraft(rebased.draft);
+      if (rebased.conflicts.length) {
+        setStatus(
+          `Nothing was saved -- the ${rebased.conflicts.map(fieldName).join(', ')} changed since you opened this creator `
+          + '(they may have edited it themselves). The editor now shows the current value; check it and save again.',
+        );
+        return;
+      }
+      const built = fieldsFromDraft(rebased.draft, rebased.baseline);
+      if (built.error) throw new Error(built.error);
+      if (!Object.keys(built.fields).length) { setStatus('Nothing to save -- no field was changed.'); return; }
       const { res, data } = await adminPost(adminKey, '/api/admin/profile', { creatorId: selectedId, fields: built.fields });
       // A ban whose listing takedown failed comes back 500 WITH the saved
       // creator: the ban stands, so the roster and draft must show it.
       if (data.creator) applyCreator(data.creator, { resyncDraft: true });
       if (!res.ok) throw new Error(errorFrom(res, data, 'Save failed'));
-      const was = selected;
+      const was = current;
       const now = data.creator;
       const notes = [];
       if (now && !isFoundingCreator(was) && isFoundingCreator(now)) notes.push('Founding Creator granted.');
@@ -188,9 +251,53 @@ export default function AdminPanel() {
     }
   };
 
+  // Takes a reported or unwanted profile photo down: resets it to the
+  // placeholder and deletes the file (pages/api/admin/avatar.js remove:true).
+  const removeAvatar = async () => {
+    if (!confirm("Remove this creator's profile photo? It is replaced with the neutral placeholder and the file is deleted from storage.")) return;
+    setBusy(true);
+    setStatus('Removing photo...');
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/avatar', { creatorId: String(selectedId), remove: true });
+      if (!res.ok || !data.creator) throw new Error(errorFrom(res, data, 'Could not remove the photo'));
+      applyCreator(data.creator);
+      setStatus(data.removed ? 'Photo removed and the file deleted.' : 'Photo reset to the placeholder (there was no uploaded file to delete).');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The §2257 records a co-performer can be picked from: non-archived, with an
+  // ID attached or held offline (the same rule lib/performer-attestation.js
+  // enforces on the finalize). Loaded when the admin says someone else appears.
+  const loadRecordOptions = async () => {
+    try {
+      const { res, data } = await adminGet(adminKey, '/api/admin/performer-records');
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not load §2257 records'));
+      const usable = (Array.isArray(data.records) ? data.records : [])
+        .filter((r) => r.status !== 'archived' && (r.document || r.documentLocation === 'offline'));
+      setRecordOptions(usable);
+    } catch (err) {
+      setRecordOptions([]);
+      setStatus(`Error: ${err.message}`);
+    }
+  };
+
   const uploadGalleryItem = async (file, aiGenerated) => {
     if (!file) return;
     const creatorId = selectedId;
+    // §2257: every upload says whether anyone besides the creator appears,
+    // and co-performer content names each other person's record.
+    if (othersAppear === null) {
+      setStatus('Error: answer "Does anyone besides this creator appear in it?" before uploading.');
+      return;
+    }
+    if (othersAppear && !coPerformerIds.length) {
+      setStatus('Error: pick the §2257 record of every other person who appears, or add their record in the Records tab first.');
+      return;
+    }
     setBusy(true);
     setStatus('Uploading content...');
     try {
@@ -200,9 +307,13 @@ export default function AdminPanel() {
         purpose: 'gallery',
         file,
         aiGenerated,
+        othersAppear,
+        coPerformerRecordIds: othersAppear ? coPerformerIds : undefined,
         onProgress: (p) => setStatus(`Uploading content... ${Math.round(p)}%`),
       });
       applyCreator(data.creator);
+      setOthersAppear(null);
+      setCoPerformerIds([]);
       setStatus('Content added.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -247,8 +358,11 @@ export default function AdminPanel() {
       const { res, data } = await adminPost(adminKey, '/api/admin/create', {});
       if (!res.ok || !data.creator) throw new Error(errorFrom(res, data, 'Create failed'));
       setCreators((prev) => [...prev, data.creator]);
+      selectSeq.current += 1;
       setSelectedId(data.creator.id);
-      setStatus('Model created as a hidden, pending draft. Fill in the details and a handle, add a §2257 record for them in the Records tab, then set Status to Active.');
+      setDraft(draftFrom(data.creator));
+      setBaseline(draftFrom(data.creator));
+      setStatus('Model created as a hidden, pending draft. Fill in the details and a handle, add a §2257 record for them in the Records tab (ID attached or marked held offline), then set Status to Active.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -327,6 +441,24 @@ export default function AdminPanel() {
     }
   };
 
+  // Reaps uploads that were never finalized and retries failed deletions
+  // (lib/media.js sweepOrphanedMedia). Runs in small batches on every upload
+  // anyway; this runs it in full. Never touches a file a record references.
+  const sweepMedia = async () => {
+    setBusy(true);
+    setStatus('Sweeping orphaned uploads...');
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/media-sweep', {});
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Sweep failed'));
+      const n = (v) => Number(v) || 0;
+      setStatus(`Sweep done: ${n(data.checked)} checked, ${n(data.deleted)} deleted, ${n(data.kept)} still in use, ${n(data.failed)} failed (retried next sweep).`);
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!unlocked) {
     return (
       <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6">
@@ -393,6 +525,16 @@ export default function AdminPanel() {
                     Delete All (incl. seed)
                   </button>
                 </>
+              )}
+              {page === 'creators' && (
+                <button
+                  onClick={sweepMedia}
+                  disabled={busy}
+                  title="Delete uploaded files that no profile or listing uses"
+                  className="text-sm px-4 py-2 rounded-md border border-white/15 text-gray-400 hover:text-white transition disabled:opacity-50"
+                >
+                  Sweep orphaned uploads
+                </button>
               )}
               {page === 'creators' && (
                 <button onClick={addCreator} disabled={busy} className="premium-button disabled:opacity-50">
@@ -480,7 +622,7 @@ export default function AdminPanel() {
                 return (
                   <button
                     key={c.id}
-                    onClick={() => setSelectedId(c.id)}
+                    onClick={() => selectCreator(c.id)}
                     // Switching creators mid-save would resync the wrong
                     // draft; the list waits for the request to finish.
                     disabled={busy}
@@ -532,7 +674,7 @@ export default function AdminPanel() {
                         Change PFP
                         <input
                           type="file"
-                          accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/heic,image/heif"
+                          accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
                           className="hidden"
                           disabled={busy}
                           onChange={(e) => {
@@ -542,7 +684,16 @@ export default function AdminPanel() {
                           }}
                         />
                       </label>
-                      <p className="text-[10px] text-gray-500 mt-1">Image only, up to 10MB. The old photo is deleted.</p>
+                      <p className="text-[10px] text-gray-500 mt-1">JPEG, PNG, WebP, GIF or AVIF, up to 10MB. The old photo is deleted.</p>
+                      {typeof selected.img === 'string' && !selected.img.endsWith('/avatar-placeholder.png') && (
+                        <button
+                          onClick={removeAvatar}
+                          disabled={busy}
+                          className="mt-2 text-[11px] px-3 py-1 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                        >
+                          Remove photo
+                        </button>
+                      )}
                     </div>
                     <button
                       onClick={() => removeCreator(selected.id)}
@@ -557,10 +708,10 @@ export default function AdminPanel() {
                     <Field label="Name" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} />
                     <Field label="Handle (required to go live)" value={draft.handle} onChange={(v) => setDraft({ ...draft, handle: v })} />
                     <Field label="Price" value={draft.price} onChange={(v) => setDraft({ ...draft, price: v })} />
-                    <Field label="Subscribers" value={draft.subs} onChange={(v) => setDraft({ ...draft, subs: v })} />
-                    <Field label="Posts" value={draft.posts} onChange={(v) => setDraft({ ...draft, posts: v })} />
-                    <Field label="Likes" value={draft.likes} onChange={(v) => setDraft({ ...draft, likes: v })} />
                   </div>
+                  {/* No Subscribers / Posts / Likes: the site has no such
+                      counters. Posts shown publicly is the real gallery size;
+                      the other two are not published. */}
 
                   <div>
                     <label className="block text-sm text-gray-400 mb-2">Bio</label>
@@ -610,7 +761,8 @@ export default function AdminPanel() {
                   {selectedStatus === 'pending' && (
                     <div className="px-4 py-3 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
                       This profile is pending review and hidden from the public platform. To publish it: give it a handle,
-                      add a §2257 performer record linked to this creator in the Records tab, then set Status to Active.
+                      add a §2257 performer record linked to this creator in the Records tab (with the photo ID attached, or
+                      marked as held offline), then set Status to Active.
                       Every public field is screened again when it goes live.
                     </div>
                   )}
@@ -707,6 +859,13 @@ export default function AdminPanel() {
                         auto-granted again. Tick it to re-grant by hand.
                       </p>
                     )}
+                    {draft.founding && !selected.foundingSince && (
+                      <p className="basis-full text-xs text-gray-500 -mt-3">
+                        {selectedStatus === 'active'
+                          ? 'Slot held, but the fee-free window has not started yet -- it starts the next time they are approved or reinstated to Active.'
+                          : 'Slot reserved; the 30-day fee-free window starts the day they are approved (set to Active).'}
+                      </p>
+                    )}
                     {selectedIsPending && !draft.founding && !selected.foundingRevokedAt && (
                       <p className="basis-full text-xs text-gray-500 -mt-3">
                         Approving (Pending → Active) grants Founding automatically if their profile is finished and a slot
@@ -740,7 +899,8 @@ export default function AdminPanel() {
                   )}
                   {draft.status === 'active' && selectedStatus && selectedStatus !== 'active' && (
                     <p className="text-xs text-gray-400">
-                      Making this creator live needs a handle and a non-archived §2257 record linked to them, and re-screens
+                      Making this creator live needs a handle and a non-archived §2257 record linked to them with the ID
+                      attached or marked held offline, and re-screens
                       every public field. If any check fails nothing is saved and the reason is shown above.
                     </p>
                   )}
@@ -768,13 +928,16 @@ export default function AdminPanel() {
                       <h3 className="font-bold text-brand-gold">
                         Gallery ({selected.gallery?.length || 0}/200)
                       </h3>
-                      <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <label
+                        className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy || othersAppear === null || (othersAppear && !coPerformerIds.length) ? 'opacity-50 pointer-events-none' : ''}`}
+                        title={othersAppear === null ? 'Answer the question below first' : undefined}
+                      >
                         {busy ? 'Working...' : 'Upload Content'}
                         <input
                           type="file"
-                          accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/heic,image/heif,video/mp4,video/quicktime,video/webm"
+                          accept="image/jpeg,image/png,image/webp,image/gif,image/avif,video/mp4,video/quicktime,video/webm"
                           className="hidden"
-                          disabled={busy}
+                          disabled={busy || othersAppear === null || (othersAppear && !coPerformerIds.length)}
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             e.target.value = '';
@@ -786,7 +949,7 @@ export default function AdminPanel() {
                       </label>
                     </div>
                     <p className="text-[10px] text-gray-500 mb-2">
-                      Images up to 25MB, videos (MP4, MOV, WebM) up to 50MB. Admin uploads may use up to 200 slots; the
+                      Images (JPEG, PNG, WebP, GIF, AVIF -- not HEIC) up to 25MB, videos (MP4, MOV, WebM) up to 50MB. Admin uploads may use up to 200 slots; the
                       creator's own limit is {selected.premium ? 200 : 50}. Removing an item also deletes the file.
                     </p>
                     {/* Same self-reported AI label creators get on their own uploads
@@ -797,6 +960,56 @@ export default function AdminPanel() {
                       <input type="checkbox" checked={nextUploadIsAi} onChange={(e) => setNextUploadIsAi(e.target.checked)} />
                       This upload is AI-generated or synthetic content (will be labeled "AI" on the profile)
                     </label>
+                    {/* §2257 attestation, required on every finalize
+                        (lib/performer-attestation.js). Asked per upload and
+                        reset after each one, never remembered. */}
+                    <div className="mb-3 text-xs text-gray-300">
+                      <p className="mb-1">Does anyone besides this creator appear in the next upload?</p>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input type="radio" name="othersAppear" checked={othersAppear === false} onChange={() => { setOthersAppear(false); setCoPerformerIds([]); }} />
+                          No, only them
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="othersAppear"
+                            checked={othersAppear === true}
+                            onChange={() => { setOthersAppear(true); if (recordOptions === null) loadRecordOptions(); }}
+                          />
+                          Yes, someone else too
+                        </label>
+                      </div>
+                      {othersAppear === true && (
+                        <div className="mt-2">
+                          <p className="text-[11px] text-gray-500 mb-1">
+                            Tick the §2257 record of EVERY other person in the file. Only records with an ID attached or
+                            held offline are listed; add a missing one in the Records tab first.
+                          </p>
+                          {recordOptions === null ? (
+                            <p className="text-[11px] text-gray-500">Loading records…</p>
+                          ) : recordOptions.length === 0 ? (
+                            <p className="text-[11px] text-yellow-400/90">No usable §2257 records yet.</p>
+                          ) : (
+                            <div className="max-h-40 overflow-y-auto space-y-1">
+                              {recordOptions.map((r) => (
+                                <label key={r.id} className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={coPerformerIds.includes(String(r.id))}
+                                    onChange={(e) => setCoPerformerIds((prev) => (e.target.checked
+                                      ? [...new Set([...prev, String(r.id)])]
+                                      : prev.filter((x) => x !== String(r.id))))}
+                                  />
+                                  #{String(r.id)} {r.unreadable ? '(unreadable record)' : String(r.legalName || '')}
+                                  {Array.isArray(r.aliases) && r.aliases.length > 0 && <span className="text-gray-500">— {r.aliases.join(', ')}</span>}
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                       {(selected.gallery || []).map((item, i) => (
                         <div key={`${item.src}-${i}`} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
@@ -980,6 +1193,31 @@ function ReportTarget({ report }) {
           {Number.isFinite(Number(t.priceCents)) ? ` · ${dollars(t.priceCents)}` : ''} · {Number(t.mediaCount) || 0} media item(s)
         </p>
         {t.description && <p className="whitespace-pre-wrap break-words">{String(t.description)}</p>}
+        {/* The reported files themselves, so "Remove Content" is decided on
+            what was actually uploaded, not the title. Private /api/media
+            srcs load through the oa_admin_media cookie. Retained items are
+            off the listing but still delivered to earlier buyers. */}
+        {t.filesDeleted ? (
+          <p className="mt-2 text-red-400">Files deleted (taken down).</p>
+        ) : Array.isArray(t.media) && t.media.length > 0 ? (
+          <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 gap-2">
+            {t.media.map((m, i) => (
+              <div key={`${String(m?.src)}-${i}`} className="relative aspect-square rounded overflow-hidden border border-white/10 bg-black/40">
+                {m?.type === 'video' ? (
+                  <video src={String(m.src)} className="w-full h-full object-cover" controls preload="metadata" />
+                ) : (
+                  <img src={String(m?.src || '')} alt="" className="w-full h-full object-cover" />
+                )}
+                {m?.retained && (
+                  <span className="absolute top-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-yellow-300 font-bold">kept for buyers</span>
+                )}
+                {m?.aiGenerated && (
+                  <span className="absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1302,7 +1540,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
 const BLANK_RECORD = {
   legalName: '', dateOfBirth: '', aliases: '', idType: 'Driver’s licence',
   idIssuer: '', idNumber: '', idExpiry: '', creatorId: '', producedAt: '',
-  contentUrls: '', notes: '',
+  contentUrls: '', notes: '', documentLocation: '',
 };
 
 /**
@@ -1651,8 +1889,8 @@ function PayoutsPanel({ adminKey }) {
       <p className="text-sm text-gray-400 mb-2">
         Only credits a creator EARNED can be requested, and the amount is reserved from their balance the moment they
         ask. Send the real USDG to the wallet shown -- one transaction per request, since one hash can only close one
-        payout -- THEN paste the transaction hash here. It is checked on-chain (at least the requested amount, to that
-        wallet) before it is recorded.
+        payout -- THEN paste the transaction hash here. It is checked on-chain before it is recorded: the EXACT
+        requested amount, to that wallet, sent after the request was made (an older transaction is refused).
       </p>
       <p className="text-xs text-gray-500 mb-4">
         FROZEN means the account is no longer an active creator (suspended, banned, pending or deleted). Don't pay those:
@@ -1796,6 +2034,8 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  // Per-record edit: { id, creatorId, aliases, contentUrls, notes } while open.
+  const [editing, setEditing] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -1854,6 +2094,60 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   };
 
   const update = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  const startEdit = (r) => {
+    setError('');
+    setNotice('');
+    setEditing({
+      id: r.id,
+      creatorId: r.creatorId ? String(r.creatorId) : '',
+      aliases: (r.aliases || []).join(', '),
+      contentUrls: (r.contentUrls || []).join('\n'),
+      notes: r.notes || '',
+    });
+  };
+
+  // POST { action:'update', id, fields } -- the only fields the API edits are
+  // the link to a creator, aliases, content URLs, notes and documentLocation.
+  // Identity (legal name, DOB, ID number) is never editable: a wrong one is
+  // archived with a reason and re-entered, so the history shows it.
+  const updateRecord = async (id, fields, doneMessage) => {
+    setBusyId(id);
+    setError('');
+    setNotice('');
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/performer-records', { action: 'update', id, fields });
+      if (!res.ok || !data.record) throw new Error(errorFrom(res, data, 'Could not update that record'));
+      setNotice(doneMessage);
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const saveEdit = () => {
+    if (!editing) return;
+    updateRecord(editing.id, {
+      creatorId: editing.creatorId || null,
+      aliases: editing.aliases,
+      contentUrls: editing.contentUrls,
+      notes: editing.notes,
+    }, `Record #${editing.id} updated.`);
+  };
+
+  // The go-live gate accepts a record whose ID copy is kept outside this app,
+  // but only when that is recorded explicitly -- a blank "no document" does
+  // not count (lib/performer-records-store.js performerRecordStatusForCreator).
+  const markHeldOffline = (r) => {
+    if (!confirm(
+      `Record that the photo ID for record #${r.id} is kept OFFLINE (a physical or scanned copy stored outside this app)?\n\n`
+      + 'Only do this if you actually hold that copy and can produce it for an inspection. This lets the linked creator go live.',
+    )) return;
+    updateRecord(r.id, { documentLocation: 'offline' }, `Record #${r.id} marked as ID held offline.`);
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -2040,6 +2334,20 @@ function PerformerRecordsPanel({ adminKey, creators }) {
             className="w-full text-sm text-gray-300 file:mr-3 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-brand-pink file:text-white file:text-sm file:font-semibold" />
         </label>
 
+        <label className="flex items-start gap-2 text-xs text-gray-300 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={form.documentLocation === 'offline'}
+            onChange={(e) => setForm({ ...form, documentLocation: e.target.checked ? 'offline' : '' })}
+          />
+          <span>
+            ID held offline -- I keep a physical or scanned copy of this person's photo ID outside this app and can
+            produce it for an inspection. (Leave unticked if you are uploading the ID above; an uploaded ID replaces
+            this.) A record with neither does not let a creator go live.
+          </span>
+        </label>
+
         <label className="block">
           <span className="block text-xs text-gray-400 mb-1">Notes</span>
           <textarea value={form.notes} onChange={update('notes')} rows={2}
@@ -2068,6 +2376,10 @@ function PerformerRecordsPanel({ adminKey, creators }) {
           </label>
           <span className="text-xs text-gray-500">{visible.length} record{visible.length === 1 ? '' : 's'}</span>
         </div>
+        {/* Shown here too: record actions (attach, edit, archive) happen down
+            in the list, far below the form's own message line. */}
+        {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
+        {notice && <p className="text-sm text-green-400 mb-3">{notice}</p>}
 
         {loading ? (
           <p className="text-gray-500 text-sm">Loading…</p>
@@ -2119,6 +2431,18 @@ function PerformerRecordsPanel({ adminKey, creators }) {
                         />
                       </label>
                     )}
+                    {r.status !== 'archived' && !r.document && r.documentLocation !== 'offline' && (
+                      <button onClick={() => markHeldOffline(r)} disabled={busyId === r.id}
+                        className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-300 hover:text-white transition disabled:opacity-50">
+                        ID held offline
+                      </button>
+                    )}
+                    {r.status !== 'archived' && (
+                      <button onClick={() => (editing?.id === r.id ? setEditing(null) : startEdit(r))} disabled={busyId === r.id}
+                        className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-300 hover:text-white transition disabled:opacity-50">
+                        {editing?.id === r.id ? 'Cancel edit' : 'Edit / Link'}
+                      </button>
+                    )}
                     {r.status !== 'archived' && (
                       <button onClick={() => archive(r.id)} disabled={busyId === r.id}
                         className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-400 hover:text-white transition disabled:opacity-50">
@@ -2158,6 +2482,42 @@ function PerformerRecordsPanel({ adminKey, creators }) {
                   </p>
                 )}
                 {r.notes && <p className="text-xs text-gray-400 mt-2">{r.notes}</p>}
+                {editing?.id === r.id && (
+                  <div className="mt-3 p-3 rounded-md bg-black/30 border border-white/10 space-y-3">
+                    <p className="text-[11px] text-gray-500">
+                      Legal name, date of birth and ID number cannot be edited. If one is wrong, archive this record with
+                      the reason and add a corrected one.
+                    </p>
+                    <label className="block">
+                      <span className="block text-xs text-gray-400 mb-1">Linked creator account</span>
+                      <select value={editing.creatorId} onChange={(e) => setEditing({ ...editing, creatorId: e.target.value })}
+                        className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm">
+                        <option value="">— not linked —</option>
+                        {creators.map((c) => (
+                          <option key={c.id} value={String(c.id)}>{c.name} ({c.handle || `#${c.id}`})</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="block text-xs text-gray-400 mb-1">Names they work under, comma separated</span>
+                      <input value={editing.aliases} onChange={(e) => setEditing({ ...editing, aliases: e.target.value })}
+                        className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+                    </label>
+                    <label className="block">
+                      <span className="block text-xs text-gray-400 mb-1">Where the content appears — URLs</span>
+                      <textarea value={editing.contentUrls} onChange={(e) => setEditing({ ...editing, contentUrls: e.target.value })} rows={2}
+                        className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+                    </label>
+                    <label className="block">
+                      <span className="block text-xs text-gray-400 mb-1">Notes</span>
+                      <textarea value={editing.notes} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} rows={2}
+                        className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm" />
+                    </label>
+                    <button onClick={saveEdit} disabled={busyId === r.id} className="premium-button text-xs px-4 py-1.5 disabled:opacity-50">
+                      {busyId === r.id ? 'Saving…' : 'Save changes'}
+                    </button>
+                  </div>
+                )}
                 {r.status === 'archived' && (
                   <p className="text-xs text-yellow-400/80 mt-2">
                     Archived {String(r.archivedAt).slice(0, 10)}

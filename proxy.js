@@ -314,10 +314,16 @@ export async function proxy(request) {
     // same gate as a blocked one; /blocked-region sends them to /verify-age,
     // so this costs a real adult one verification, not access.
     //
-    // A MISSING COUNTRY is deliberately not treated the same way: no geo
-    // headers at all means the request did not come through Vercel's edge
-    // (local dev, tests), and gating those would gate everything.
-    if (country === 'US' && (!region || BLOCKED_STATE_CODES.has(region))) {
+    // A MISSING (or empty) COUNTRY fails closed too -- but only on Vercel.
+    // Every production request comes through Vercel's edge, and there a
+    // missing country means Vercel could not geolocate the IP (some carrier,
+    // satellite, VPN and IPv6 ranges): a visitor who may well be in Texas.
+    // Off Vercel (local dev, tests) no geo headers is the normal case, and
+    // gating those would gate everything. process.env.VERCEL / VERCEL_ENV are
+    // set by the platform and read the same way lib/rate-limit.js does.
+    const onVercel = !!(process.env.VERCEL || process.env.VERCEL_ENV);
+    const unknownCountry = !country && onVercel;
+    if (unknownCountry || (country === 'US' && (!region || BLOCKED_STATE_CODES.has(region)))) {
       const token = request.cookies.get(AGE_VERIFIED_COOKIE_NAME)?.value;
       const verified = await verifyAgeVerificationToken(ageVerificationSecret(), token);
       if (!verified) {

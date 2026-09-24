@@ -175,21 +175,27 @@ export default function Privacy() {
                 </li>
                 <li>
                   <strong>Wallet sign-in challenges</strong> (<code>oa_wallet_nonce</code>,{' '}
-                  <code>oa_deposit_nonce</code>) — a one-time value you sign to prove you control a wallet;
-                  about 5 minutes.
+                  <code>oa_deposit_nonce</code>, <code>oa_holder_nonce</code>) — a one-time value you sign to
+                  prove you control a wallet; about 5 minutes.
                 </li>
                 <li>
-                  <strong>Token holding</strong> — if you prove you hold $ONLYONE to see a token-gated creator,
-                  a cookie records that proof for a limited time so you don&apos;t have to sign again on every
-                  page.
+                  <strong>Verified deposit wallet</strong> (<code>oa_deposit_wallet</code>) — after you prove you
+                  control a wallet on the Credits page, records which wallet address that was for your account,
+                  so a payment is only credited when it comes from that wallet; 2 hours.
+                </li>
+                <li>
+                  <strong>Token holding</strong> (<code>oa_holder</code>) — if you prove you hold $ONLYONE to see
+                  a token-gated creator, records that proof and the wallet address it was for, so you don&apos;t
+                  have to sign again on every page; 1 hour. Your balance is re-read on-chain, not taken from the
+                  cookie.
                 </li>
                 <li>
                   <strong>Preview invite</strong> (<code>oa_preview</code>) — only when the site is in
                   invite-only preview mode and you followed an invite link.
                 </li>
                 <li>
-                  <strong>Administrator access</strong> — used only by Platform administrators, to view
-                  media in the admin panel.
+                  <strong>Administrator access</strong> (<code>oa_admin_media</code>) — used only by Platform
+                  administrators, to view media in the admin panel; 2 hours.
                 </li>
               </ul>
               <p className="mt-3">

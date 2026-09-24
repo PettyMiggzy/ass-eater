@@ -69,7 +69,7 @@ const ROADMAP = [
     subtitle: 'What\'s next',
     items: [
       { label: 'A dedicated merch store, separate from the peer-to-peer marketplace', status: 'planned' },
-      { label: 'Forensic/invisible watermarking for video (images already get a traceable per-viewer mark)', status: 'planned' },
+      { label: 'Forensic watermarking burned into the files themselves (today, images shown to signed-in viewers carry an on-screen per-viewer mark that is not in the file)', status: 'planned' },
       { label: 'Public read-only API for $ONLYONE price/stats', status: 'planned' },
     ],
   },

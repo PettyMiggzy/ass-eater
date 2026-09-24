@@ -107,9 +107,11 @@ export default function TokenUnlockPanel({ gate, gateLabel, tokenLive, compact =
     detail = 'Unlocking is temporarily unavailable. Please check back soon.';
     canTry = false;
   } else if (reason === 'holds_too_few') {
-    const held = gate?.held != null ? Number(gate.held).toLocaleString() : '0';
+    // Fixed 'en-US' so the server render and the browser print the same
+    // digits (a viewer's own locale here was a hydration mismatch).
+    const held = gate?.held != null ? Number(gate.held).toLocaleString('en-US') : '0';
     headline = `You hold ${held} $ONLYONE`;
-    detail = `This creator requires ${required.toLocaleString()} $ONLYONE. Top up that wallet, or verify a different one.`;
+    detail = `This creator requires ${required.toLocaleString('en-US')} $ONLYONE. Top up that wallet, or verify a different one.`;
     showDisconnect = true;
   }
 

@@ -50,12 +50,27 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
   const [recoverHash, setRecoverHash] = useState('');
   const [recovering, setRecovering] = useState(false);
   const [recoverError, setRecoverError] = useState(null);
+  // A suspended or banned creator account's credits are frozen: the server
+  // refuses the nonce, the wallet proof and the buy (403 ACCOUNT_FROZEN), so
+  // the page says so up front instead of offering a Pay button that can only
+  // fail -- or, worse, fail AFTER the wallet has been asked to sign.
+  const [frozen, setFrozen] = useState(false);
 
   const loadBalance = () => {
     fetch('/api/credits/balance')
       .then((r) => r.json())
-      .then((d) => setBalanceCents(d.balanceCents ?? 0))
+      .then((d) => {
+        setBalanceCents(d.balanceCents ?? 0);
+        setFrozen(d.frozen === true);
+      })
       .catch(() => {});
+  };
+
+  // Every credits endpoint answers a frozen account with 403 code
+  // ACCOUNT_FROZEN; latch the page into the frozen state when one does.
+  const frozenError = (res, data, fallback) => {
+    if (res.status === 403 && data?.code === 'ACCOUNT_FROZEN') setFrozen(true);
+    return new Error(data?.error || fallback);
   };
   useEffect(loadBalance, []);
 
@@ -98,16 +113,16 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
       if (!acct) throw new Error(wallet.error === 'no_wallet' ? 'No wallet extension detected' : 'Could not connect wallet');
     }
     const nonceRes = await fetch('/api/credits/wallet-nonce');
-    const nonceData = await nonceRes.json();
-    if (!nonceRes.ok) throw new Error(nonceData.error || 'Could not start wallet verification');
+    const nonceData = await nonceRes.json().catch(() => ({}));
+    if (!nonceRes.ok) throw frozenError(nonceRes, nonceData, 'Could not start wallet verification');
     const { address, signature } = await wallet.signMessageWithAddress(nonceData.message);
     const res = await fetch('/api/credits/verify-wallet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address, signature }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not verify your wallet');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw frozenError(res, data, 'Could not verify your wallet');
     return data.address;
   };
 
@@ -117,13 +132,14 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ txHash }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not confirm payment');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw frozenError(res, data, 'Could not confirm payment');
     return data;
   };
 
   const buy = async () => {
     setError(null);
+    if (frozen) return;
     if (belowMinimum) {
       setError(`The minimum is $${(MIN_DEPOSIT_CENTS / 100).toFixed(2)}.`);
       return;
@@ -203,6 +219,14 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
             <span className="text-sm text-gray-400">Your balance</span>
             <span className="font-bold">{balanceCents === null ? '…' : formatCredits(balanceCents)}</span>
           </div>
+
+          {frozen && (
+            <div className="mb-6 px-4 py-3 rounded-xl border border-red-500/30 bg-red-500/10 text-xs text-red-300">
+              This account is suspended or banned, so its credits are frozen and buying credits is closed for it. Don&apos;t
+              send a payment — it can&apos;t be credited. Email{' '}
+              <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> if you think this is a mistake.
+            </div>
+          )}
 
           {!paymentsLive && (
             <div className="mb-6 px-4 py-3 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300">
@@ -315,7 +339,7 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
 
               <button
                 onClick={buy}
-                disabled={buying || !paymentsLive || belowMinimum || (simResult?.available && simResult.safe === false)}
+                disabled={buying || frozen || !paymentsLive || belowMinimum || (simResult?.available && simResult.safe === false)}
                 className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <Icons.wallet className="h-4 w-4" />
@@ -341,7 +365,7 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                     {recoverError && <p className="text-xs text-red-400 mb-2">{recoverError}</p>}
                     <button
                       onClick={recover}
-                      disabled={recovering || !recoverHash.trim() || !paymentsLive}
+                      disabled={recovering || frozen || !recoverHash.trim() || !paymentsLive}
                       className="w-full py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 text-xs font-semibold transition disabled:opacity-50"
                     >
                       {recovering ? 'Checking…' : 'Verify this transaction'}

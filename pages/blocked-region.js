@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import { Lockup } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
@@ -9,7 +10,29 @@ import WaitlistForm from '../components/WaitlistForm';
 // /verify-age -- so this page says so plainly. It used to say verification
 // "isn't live yet" directly above the button that is the verification,
 // which sent verifiable adults away.
+
+// Pages the "come back here afterwards" link must never point at: the gate
+// pages themselves (a loop) -- verify-age.js refuses them too.
+const GATE_PATHS = ['/blocked-region', '/verify-age'];
+
+function verifyHrefFor(pathWithQuery) {
+  if (typeof pathWithQuery !== 'string' || !pathWithQuery.startsWith('/')) return '/verify-age';
+  const pathname = pathWithQuery.split(/[?#]/)[0];
+  if (pathname === '/' || GATE_PATHS.includes(pathname)) return '/verify-age';
+  return `/verify-age?next=${encodeURIComponent(pathWithQuery)}`;
+}
+
 export default function BlockedRegion() {
+  // proxy.js serves this page as a REWRITE, so the address bar still holds
+  // the page the visitor asked for (a creator, a listing...). Carried through
+  // verification as ?next= so they land back there instead of on the home
+  // page. Read after mount: the server render and the first client render
+  // must match, and only the browser knows the original URL for certain.
+  const [verifyHref, setVerifyHref] = useState('/verify-age');
+  useEffect(() => {
+    setVerifyHref(verifyHrefFor(`${window.location.pathname}${window.location.search}`));
+  }, []);
+
   return (
     <>
       <Head>
@@ -30,7 +53,7 @@ export default function BlockedRegion() {
           <p className="text-gray-400 text-sm mb-6">
             Verify once — it takes about a minute — and you&apos;re in on this browser.
           </p>
-          <a href="/verify-age" className="premium-button inline-block w-full mb-3">
+          <a href={verifyHref} className="premium-button inline-block w-full mb-3">
             Verify Your Age
           </a>
 
