@@ -108,6 +108,10 @@ contract OnlyOnePayments is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Pay a creator in $ONLYONE to unlock `contentId`. Caller must have
     /// approved this contract for at least `amount` beforehand.
+    /// @dev Contradicts the platform rule that $ONLYONE is never a payment
+    /// method (settlement is USDG credits). This contract is NOT deployable to
+    /// production until reworked or archived -- scripts/lib/deploy-guards.js
+    /// refuses it.
     function payWithOnlyOne(uint256 creatorId, uint256 contentId, address creatorWallet, uint256 amount)
         external
         nonReentrant

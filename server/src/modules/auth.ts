@@ -3,10 +3,42 @@ import { z } from 'zod';
 import argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
 import { prisma } from '../lib/prisma.js';
-import { verifyBridgeToken } from '../lib/bridge.js';
+import { verifyBridgeToken, resolveBridgedUser } from '../lib/bridge.js';
+import { redis } from '../lib/redis.js';
+import { PLATFORM_ID, BURNED_ID } from '../core/ledger.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const age = (dob: Date) => Math.floor((Date.now() - dob.getTime()) / 31_557_600_000);
+
+/**
+ * Direct (native) sign-up and password login are OFF unless explicitly
+ * enabled. The Next.js site is the identity source: accounts are created
+ * there -- behind its SIGNUPS_OPEN switch, the 27-state geoblock and
+ * AgeChecker -- and reach this API only through POST /auth/bridge. Leaving
+ * /register open here made api.joinonlyone.com a second, ungated way to
+ * open an account (self-typed DOB, any state, while the site's signups were
+ * deliberately closed). Set DIRECT_AUTH_ENABLED=true only if native accounts
+ * are ever wanted again -- and then the site's gates have to be rebuilt here.
+ */
+export const directAuthEnabled = () => process.env.DIRECT_AUTH_ENABLED === 'true';
+
+/**
+ * Password login is still how an ADMIN gets a session: the bridge never
+ * issues ADMIN (lib/bridge.ts) and every non-anonymous route needs a JWT
+ * (index.ts), so closing /login outright would have locked the owner out of
+ * /admin -- manual token-burn recording, report resolution, freezes, KYC
+ * overrides, payout review -- unless he reopened public /register with it.
+ *
+ * So /login and /refresh stay reachable, but with direct auth off they only
+ * ever succeed for an operator account: role ADMIN, no siteUid (never a
+ * bridged row), not a system row, and a real argon2 hash -- which only
+ * scripts/create-admin.ts writes. Anything else answers exactly like a wrong
+ * password. /register stays closed; there is no way to make an ADMIN row over
+ * HTTP.
+ */
+const SYSTEM_IDS = new Set([PLATFORM_ID, BURNED_ID]);
+export const passwordLoginAllowed = (u: { id: string; role: string; siteUid: string | null }) =>
+  !u.siteUid && !SYSTEM_IDS.has(u.id) && (directAuthEnabled() || u.role === 'ADMIN');
 
 export const auth: FastifyPluginAsync = async (app) => {
   const issue = async (user: { id: string; role: any }) => {
@@ -17,6 +49,8 @@ export const auth: FastifyPluginAsync = async (app) => {
   };
 
   app.post('/register', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    // 404, not 403: a closed door should not advertise itself.
+    if (!directAuthEnabled()) return reply.code(404).send({ error: 'not_found' });
     const b = z.object({
       email: z.string().email(), username: z.string().regex(/^[a-z0-9_]{3,24}$/),
       password: z.string().min(10), dob: z.coerce.date(),
@@ -37,59 +71,80 @@ export const auth: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {
-    const { email, password } = z.object({ email: z.string(), password: z.string() }).parse(req.body);
+    const { email, password } = z.object({ email: z.string().max(320), password: z.string().max(1024) }).parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-    if (!user || !(await argon2.verify(user.passwordHash, password))) return reply.code(401).send({ error: 'bad_credentials' });
-    if (user.status === 'BANNED') return reply.code(403).send({ error: 'banned' });
+    // Bridged rows (siteUid set) and system rows never log in by password,
+    // and with direct auth off neither does anyone but an operator (see
+    // passwordLoginAllowed). Bridged/system hashes are deliberately not valid
+    // argon2 encodings, on which argon2.verify throws -- caught here as a
+    // plain mismatch rather than surfacing as a 500 that would also reveal
+    // which identifiers exist.
+    let good = false;
+    if (user && passwordLoginAllowed(user)) {
+      try { good = await argon2.verify(user.passwordHash, password); } catch { good = false; }
+    }
+    if (!user || !good) return reply.code(401).send({ error: 'bad_credentials' });
+    if (user.status !== 'ACTIVE') return reply.code(403).send({ error: user.status === 'BANNED' ? 'banned' : 'account_' + user.status.toLowerCase() });
     return issue(user);
   });
 
   // Exchanges a short-lived signed assertion from the Next.js site
   // (joinonlyone.com) for a real server/ session, auto-provisioning a
   // matching User row on first use. See lib/bridge.ts for why this uses its
-  // own secret rather than sharing either system's login secret.
+  // own secret, and resolveBridgedUser() there for why the account is found
+  // by the site's user id and never by email.
   //
-  // Joined on email, which for a Next.js FAN account is not necessarily a
-  // real email address -- that site deliberately lets fans sign up with a
-  // bare username instead (see MEMORY.md), and this join just carries
-  // whatever string it stored, same as server/'s own /register does for a
-  // real address. Nothing here validates its shape.
-  app.post('/bridge', { config: { rateLimit: { max: 30, timeWindow: '10 minutes' } } }, async (req, reply) => {
-    const { token } = z.object({ token: z.string() }).parse(req.body);
+  // Returns only an access token: the site keeps it server-side and mints a
+  // fresh exchange when it expires, so a refresh token here would just be a
+  // row nobody ever used or cleaned up.
+  //
+  // Rate limited per SITE USER once the token verifies (every exchange
+  // arrives from a handful of shared Vercel egress IPs, so an IP key would
+  // throttle the whole site together), and per IP for anything that does
+  // not verify. Counted in preHandler, after the body is parsed.
+  app.post('/bridge', {
+    config: {
+      rateLimit: {
+        hook: 'preHandler',
+        max: (_req: any, key: string) => (key.startsWith('bridge:') ? 60 : 30),
+        timeWindow: '10 minutes',
+        keyGenerator: (req: any) => {
+          const c = verifyBridgeToken(req.body?.token);
+          return c ? `bridge:${c.uid}` : `ip:${req.ip}`;
+        },
+      },
+    },
+  }, async (req, reply) => {
+    const { token } = z.object({ token: z.string().max(4096) }).parse(req.body);
     const claims = verifyBridgeToken(token);
     if (!claims) return reply.code(401).send({ error: 'invalid_bridge_token' });
 
-    let user = await prisma.user.findUnique({ where: { email: claims.email } });
-    if (!user) {
-      // The Next.js site's username and this system's are separate
-      // namespaces that can collide by coincidence (two different people).
-      // Disambiguate deterministically rather than fail the whole bridge
-      // over a username clash.
-      let username = claims.username;
-      if (await prisma.user.findUnique({ where: { username } })) {
-        username = `${claims.username}-${claims.uid.slice(0, 8)}`;
-      }
-      user = await prisma.user.create({
-        data: {
-          email: claims.email, username, role: claims.role,
-          // Bridged accounts never log in directly with a password -- this
-          // hash is unusable (nobody knows it, and /login only accepts a
-          // password matching argon2.verify, never bypassed for these rows).
-          passwordHash: await argon2.hash(randomBytes(32).toString('hex')),
-          account: { create: {} },
-          creator: claims.role === 'CREATOR' ? { create: { displayName: claims.username } } : undefined,
-        },
-      });
+    // Single use: the first exchange of a given jti wins for the token's
+    // remaining lifetime (plus slack for clock skew between the two hosts).
+    // A replayed token -- lifted from a log, or resent by anything between
+    // the site and here -- is refused rather than minting a second session.
+    const ttlMs = Math.max(1_000, claims.exp - Date.now() + 60_000);
+    const fresh = await redis.set(`bridge:jti:${claims.jti}`, '1', 'PX', ttlMs, 'NX');
+    if (fresh !== 'OK') return reply.code(401).send({ error: 'bridge_token_replayed' });
+
+    const r = await resolveBridgedUser(claims);
+    if (!r.ok) {
+      if (r.error === 'forbidden') app.log.warn({ siteUid: claims.uid }, 'bridge: refused exchange into a non-bridge account');
+      return reply.code(r.status).send({ error: r.error });
     }
-    if (user.status === 'BANNED') return reply.code(403).send({ error: 'banned' });
-    return issue(user);
+    return { access: app.jwt.sign({ id: r.user.id, role: r.user.role }) };
   });
 
   app.post('/refresh', { config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req, reply) => {
-    const { refresh } = z.object({ refresh: z.string() }).parse(req.body);
+    // Refresh tokens are only ever issued by /register and /login (the
+    // bridge issues access tokens alone), and are held to the same rule as
+    // /login: with direct auth off, only an operator account may refresh --
+    // a token minted while DIRECT_AUTH_ENABLED was on dies with the flag.
+    const { refresh } = z.object({ refresh: z.string().max(256) }).parse(req.body);
     const row = await prisma.refreshToken.findUnique({ where: { tokenHash: sha(refresh) }, include: { user: true } });
-    if (!row || row.expiresAt < new Date()) return reply.code(401).send({ error: 'invalid_refresh' });
+    if (!row || row.expiresAt < new Date() || !passwordLoginAllowed(row.user)) return reply.code(401).send({ error: 'invalid_refresh' });
     await prisma.refreshToken.delete({ where: { id: row.id } });   // rotate
+    if (row.user.status !== 'ACTIVE') return reply.code(403).send({ error: 'account_' + row.user.status.toLowerCase() });
     return issue(row.user);
   });
 

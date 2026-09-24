@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { configureSes } from './lib/mail-ses.js';
+import { warnLegacyEnv } from './lib/chain.js';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
@@ -8,11 +9,96 @@ import { Prisma } from '@prisma/client';
 import { authPlugin } from './plugins/auth.js';
 import * as m from './modules/index.js';
 
-const app = Fastify({ logger: true, bodyLimit: 1_000_000 });
+// Never log a credential that arrives in a URL. The realtime sockets used to
+// take the access JWT as ?token= (they now authenticate with their first
+// message, see plugins/realtime.ts), and the default request serializer logs
+// req.url verbatim -- so every connect wrote a live bearer token to journald.
+// Redacted here too in case any client still sends one.
+const SECRET_QUERY_PARAMS = /([?&](?:token|access|refresh|key)=)[^&#]*/gi;
+const redactUrl = (url: string) => url.replace(SECRET_QUERY_PARAMS, '$1[redacted]');
+
+const app = Fastify({
+  logger: {
+    serializers: {
+      req: (req: any) => ({
+        method: req.method,
+        url: redactUrl(String(req.url ?? '')),
+        hostname: req.hostname,
+        remoteAddress: req.ip,
+      }),
+    },
+  },
+  bodyLimit: 1_000_000,
+  // The API is only reachable through nginx on the same host (ufw allows
+  // 22/80/443; Fastify listens on 4000 behind `proxy_pass http://127.0.0.1`).
+  // Without trustProxy req.ip was the socket peer -- always 127.0.0.1 -- so
+  // every rate limit was ONE bucket shared by the whole internet: ten bad
+  // logins locked everyone out, 200 requests a minute 429'd every client.
+  // Trust exactly the loopback hop, never `true`: nginx APPENDS the real peer
+  // to X-Forwarded-For ($proxy_add_x_forwarded_for), and `true` would take
+  // the left-most entry, which the client writes itself.
+  trustProxy: 'loopback',
+});
 await app.register(cors, { origin: process.env.WEB_ORIGIN, credentials: true });
 await app.register(websocket);
-await app.register(rateLimit, { max: 200, timeWindow: '1 minute' });
 await app.register(authPlugin);
+await app.register(rateLimit, {
+  max: 200,
+  timeWindow: '1 minute',
+  // Authenticated calls are counted per ACCOUNT, anonymous ones per client
+  // IP. Every call the Next.js site makes on a user's behalf arrives from a
+  // few shared Vercel egress IPs, so an IP key alone would throttle all of
+  // the site's users together. The JWT is verified (HMAC, no DB) -- a forged
+  // or expired one falls back to the IP key rather than choosing a bucket.
+  keyGenerator: (req: any) => {
+    const h = req.headers.authorization;
+    if (typeof h === 'string' && h.startsWith('Bearer ')) {
+      try { return `u:${(app.jwt.verify(h.slice(7)) as any).id}`; } catch { /* fall through */ }
+    }
+    return `ip:${req.ip}`;
+  },
+});
+
+// Routes that may be called with no access token. Everything else needs a
+// valid JWT before any handler runs -- and a JWT is only obtainable through
+// POST /auth/bridge (direct /register and /login are off by default, see
+// modules/auth.ts), i.e. by a logged-in user of the Next.js site, whose API
+// routes sit behind its SIGNUPS gate, the 27-state geoblock and AgeChecker.
+//
+// Why: api.joinonlyone.com is a separate host that gets no Vercel geo
+// headers and runs no age verification. Creator pages, PUBLIC posts and
+// signed media URLs were served here to anonymous callers from any state --
+// exactly the self-attestation-only exposure the site's geoblock exists to
+// prevent. Until the API has its own geo + age checks, anonymous reads stay
+// closed; API_ANONYMOUS_READS=true reopens them (an owner decision, not a
+// default).
+//
+// Webhooks authenticate by signature; the two websockets authenticate with
+// their first message (plugins/realtime.ts); the auth routes are the way in.
+const ANONYMOUS_ROUTES = new Set([
+  'GET /health',
+  'POST /auth/bridge', 'POST /auth/register', 'POST /auth/login', 'POST /auth/refresh',
+  'POST /webhooks/ses', 'POST /kyc/webhook', 'POST /live/webhook',
+  'GET /messages/ws', 'GET /live/:id/events',
+]);
+const requireJwt = async (req: any, reply: any) => {
+  if (req.method === 'OPTIONS') return;             // CORS preflight
+  const route = req.routeOptions?.url;
+  if (!route) return;                                // unmatched: let it 404
+  if (ANONYMOUS_ROUTES.has(`${req.method} ${route}`)) return;
+  if (process.env.API_ANONYMOUS_READS === 'true' && req.method === 'GET') return;
+  try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'unauthorized' }); }
+};
+// Attached per ROUTE, after @fastify/rate-limit's own onRoute hook (which is
+// registered above and so runs first), so the gate lands AFTER the limiter in
+// each route's onRequest chain. A root-level app.addHook('onRequest') would
+// run before every route-level hook -- the limiter included -- so a flood of
+// anonymous requests would each cost a JWT verify and be answered 401 without
+// ever being counted. Unmatched URLs have no route and simply 404.
+app.addHook('onRoute', (routeOptions: any) => {
+  const cur = routeOptions.onRequest;
+  routeOptions.onRequest = cur == null ? [requireJwt] : Array.isArray(cur) ? [...cur, requireJwt] : [cur, requireJwt];
+});
 
 app.get('/health', async () => ({ ok: true }));
 
@@ -46,12 +132,27 @@ app.setErrorHandler((err: any, _req, reply) => {
   // reported as a 500 server fault.
   if (err instanceof ZodError) return reply.code(400).send({ error: 'bad_request', details: err.issues });
   if (CLIENT_ERRORS.has(err.message)) return reply.code(400).send({ error: err.message });
+  // Prisma rejects a malformed query argument (NaN/negative skip or take from
+  // a junk query string, an unknown enum value in ?status=) before it ever
+  // reaches the database. Nearly always the request's fault, so a 400 -- but
+  // still logged at error level, because a genuine server bug (a handler
+  // passing a field the schema no longer has) raises the same class, and
+  // that must not disappear into client-error noise.
+  if (err instanceof Prisma.PrismaClientValidationError) {
+    app.log.error(err);
+    return reply.code(400).send({ error: 'bad_request' });
+  }
   if (err instanceof Prisma.PrismaClientKnownRequestError && PRISMA_STATUS[err.code]) {
     const [code, error] = PRISMA_STATUS[err.code];
     // A unique violation is normally a double-submit racing itself, which is
     // worth seeing in the logs even though the caller gets a 4xx for it.
     if (err.code === 'P2002') app.log.warn(err);
     return reply.code(code).send({ error });
+  }
+  // core/ledger.ts money() ran out of serialization retries under load. The
+  // transaction rolled back, so repeating the request is safe -- say so.
+  if (err.message === 'busy_retry' && err.statusCode === 503) {
+    return reply.code(503).header('Retry-After', '1').send({ error: 'busy_retry' });
   }
   const status = err.statusCode ?? 500;
   if (status < 500) return reply.code(status).send({ error: err.message ?? 'bad_request' });
@@ -66,6 +167,8 @@ app.setErrorHandler((err: any, _req, reply) => {
 // when it is off -- notifications are recorded either way (core/notify.ts),
 // so the in-app inbox is complete on its own and email is a second channel.
 configureSes(app.log);
+// Values set under the pre-rename ONLYASS_*/USDC_ADDRESS names do nothing.
+warnLegacyEnv((msg) => app.log.warn(msg));
 
 for (const [prefix, routes] of Object.entries({
   '/auth': m.auth, '/creators': m.creators, '/subscriptions': m.subscriptions,
@@ -74,7 +177,8 @@ for (const [prefix, routes] of Object.entries({
   '/marketplace': m.marketplace, '/vip': m.vip, '/notifications': m.notifications,
   // No auth prefix guard applies here on purpose -- SNS cannot carry a
   // bearer token, so this route is unauthenticated by necessity and relies
-  // entirely on verifySnsMessage() (lib/sns-verify.ts) for authenticity.
+  // on the topic allowlist + signature + freshness checks in
+  // modules/ses-webhook.ts (lib/sns-verify.ts) for authenticity.
   '/webhooks': m.sesWebhook,
 })) await app.register(routes, { prefix });
 

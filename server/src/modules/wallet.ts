@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { prisma } from '../lib/prisma.js';
-import { CHAIN_ID, depositAccount, TOKENS } from '../lib/chain.js';
+import { CHAIN_ID, depositAddressAt, TOKENS } from '../lib/chain.js';
 import { getUsdPrice } from '../lib/price.js';
 
 // Namespace for the Postgres advisory lock that serialises deposit-address
@@ -41,7 +41,7 @@ export const wallet: FastifyPluginAsync = async (app) => {
       const mine = await tx.depositAddress.findUnique({ where: { userId_chainId: { userId: req.user.id, chainId: CHAIN_ID } } });
       if (mine) return mine;
       const [{ next }] = await tx.$queryRaw<{ next: number }[]>`SELECT COALESCE(MAX("derivationIndex"),0)+1 AS next FROM "DepositAddress" WHERE "chainId"=${CHAIN_ID}`;
-      const address = depositAccount(Number(next)).address;
+      const address = depositAddressAt(Number(next));
       return tx.depositAddress.create({ data: { userId: req.user.id, chainId: CHAIN_ID, address, derivationIndex: Number(next) } });
     });
   });
@@ -51,9 +51,20 @@ export const wallet: FastifyPluginAsync = async (app) => {
     return rows.map(r => ({ ...r, usdCents: Number(r.usdCents) }));
   });
 
-  app.get('/rates', async () => ({
-    chainId: CHAIN_ID, tokens: TOKENS,
-    STABLE: 1, ETH: await getUsdPrice('ETH'), ONLYONE: await getUsdPrice('ONLYONE'),
-    assDepositBonusBps: Number(process.env.ONLYONE_DEPOSIT_BONUS_BPS ?? 0),
-  }));
+  // Each price resolves on its own and is null when its oracle isn't
+  // configured or fails -- an unset CHAINLINK_ETH_USD used to 500 the whole
+  // response, taking the stablecoin rate (always 1) down with it.
+  app.get('/rates', async (req) => {
+    const [eth, onlyOne] = await Promise.allSettled([getUsdPrice('ETH'), getUsdPrice('ONLYONE')]);
+    const val = (r: PromiseSettledResult<number>, name: string) => {
+      if (r.status === 'fulfilled' && Number.isFinite(r.value)) return r.value;
+      if (r.status === 'rejected') req.log.warn({ err: r.reason }, `rates: ${name} price unavailable`);
+      return null;
+    };
+    return {
+      chainId: CHAIN_ID, tokens: TOKENS,
+      STABLE: 1, ETH: val(eth, 'ETH'), ONLYONE: val(onlyOne, 'ONLYONE'),
+      assDepositBonusBps: Number(process.env.ONLYONE_DEPOSIT_BONUS_BPS ?? 0),
+    };
+  });
 };

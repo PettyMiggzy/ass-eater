@@ -14,8 +14,11 @@ APP_DIR="/opt/onlyone"
 
 echo "==> apt update + base packages"
 apt-get update -y
+# ffmpeg/ffprobe: the transcode worker shells out to them for every media
+# upload (HLS ladder for video, blurred preview for images). Without them
+# every upload ends REJECTED.
 apt-get install -y curl git nginx postgresql postgresql-contrib redis-server ufw ca-certificates gnupg \
-  fail2ban unattended-upgrades
+  fail2ban unattended-upgrades ffmpeg
 
 echo "==> unattended security updates + fail2ban (SSH brute-force protection)"
 dpkg-reconfigure -f noninteractive unattended-upgrades
@@ -56,13 +59,15 @@ ufw --force enable
 cat <<'EOF'
 
 ==> Done. Next steps (see DEPLOY.md):
-  1. Get the server/ code onto this box at /opt/onlyone/server
-     (git clone, or scp/rsync a tarball from your machine).
-  2. Create /opt/onlyone/server/.env with real values -- do this by
-     editing the file directly on this box (nano/vim), never by
-     pasting secrets through a chat session. Use .env.example as the
-     template. Set the Postgres password you actually used above
-     (replace CHANGE_ME_SEE_ENV) in both the DB and DATABASE_URL.
-  3. Run deploy/app-setup.sh as the onlyone user (or root) to install
-     deps, build, migrate, and install the systemd services.
+  1. Clone the repo to /opt/onlyone/app and link its server/ folder:
+       git clone <repo url> /opt/onlyone/app
+       ln -sfn /opt/onlyone/app/server /opt/onlyone/server
+  2. Create /opt/onlyone/server/.env (API + shared settings) and
+     /opt/onlyone/server/.env.workers (TREASURY_PRIVATE_KEY and
+     DEPOSIT_MNEMONIC only) with real values -- edit them directly on this
+     box (nano/vim), never by pasting secrets through a chat session. Use
+     .env.example as the template. Set the Postgres password you actually
+     used above (replace CHANGE_ME_SEE_ENV) in both the DB and DATABASE_URL.
+  3. Run deploy/app-setup.sh as root to install deps, build, migrate, and
+     install the systemd services.
 EOF

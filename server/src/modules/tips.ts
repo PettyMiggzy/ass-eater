@@ -31,7 +31,10 @@ export const tips: FastifyPluginAsync = async (app) => {
 
     const r = await money(prisma, (tx) => charge(tx, { fanId: req.user.id, creatorId: b.creatorId, grossCents: b.amountCents, type, refId: tipId }));
     const from = await prisma.user.findUnique({ where: { id: req.user.id }, select: { username: true } });
-    const streamId = liveNow?.id ?? b.streamId;
+    // Only ever the tipped creator's OWN live stream. Falling back to the
+    // client's streamId let anyone tip a sock-puppet creator $1 and push the
+    // note onto a different creator's live overlay, as often as they liked.
+    const streamId = liveNow?.id;
     const evt = { type: 'tip', tipId, from: from?.username, amountCents: b.amountCents, note: b.note, postId: b.postId, streamId };
     await publish(b.creatorId, evt);
     if (streamId) await publish(`stream:${streamId}`, evt);   // live overlay channel

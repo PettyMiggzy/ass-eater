@@ -104,3 +104,29 @@ describe('verifySnsMessage', () => {
     expect(await verifySnsMessage(msg, realCert)).toBe(true);
   });
 });
+
+describe('topic allowlist + freshness (a valid signature is not enough)', () => {
+  it('fails closed when SES_SNS_TOPIC_ARNS is unset', async () => {
+    const { allowedSnsTopics, isAllowedSnsTopic } = await import('./sns-verify');
+    expect(allowedSnsTopics(undefined).size).toBe(0);
+    expect(isAllowedSnsTopic('arn:aws:sns:us-east-1:111111111111:ses-events', allowedSnsTopics(''))).toBe(false);
+  });
+  it("accepts only our listed topics, not an attacker's topic in another account", async () => {
+    const { allowedSnsTopics, isAllowedSnsTopic } = await import('./sns-verify');
+    const ours = allowedSnsTopics(' arn:aws:sns:us-east-1:111111111111:ses-events , arn:aws:sns:us-west-2:111111111111:b ');
+    expect(isAllowedSnsTopic('arn:aws:sns:us-east-1:111111111111:ses-events', ours)).toBe(true);
+    expect(isAllowedSnsTopic('arn:aws:sns:us-west-2:111111111111:b', ours)).toBe(true);
+    expect(isAllowedSnsTopic('arn:aws:sns:us-east-1:999999999999:ses-events', ours)).toBe(false);
+    expect(isAllowedSnsTopic(undefined, ours)).toBe(false);
+    expect(isAllowedSnsTopic({}, ours)).toBe(false);
+  });
+  it('rejects stale, far-future and malformed timestamps', async () => {
+    const { isFreshSnsTimestamp } = await import('./sns-verify');
+    const now = Date.parse('2026-09-24T12:00:00.000Z');
+    expect(isFreshSnsTimestamp('2026-09-24T11:30:00.000Z', now)).toBe(true);
+    expect(isFreshSnsTimestamp('2026-09-24T10:59:00.000Z', now)).toBe(false);
+    expect(isFreshSnsTimestamp('2026-09-24T12:30:00.000Z', now)).toBe(false);
+    expect(isFreshSnsTimestamp('not a date', now)).toBe(false);
+    expect(isFreshSnsTimestamp(undefined, now)).toBe(false);
+  });
+});

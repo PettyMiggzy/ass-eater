@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { money, post, PLATFORM_ID } from './ledger';
-import { placeBid, closeAuction, minIncrement } from './auctions';
+import { placeBid, closeAuction, cancelAuction, minIncrement } from './auctions';
 
 const prisma = new PrismaClient();
 
@@ -254,11 +254,58 @@ describe('auctions closeAuction', () => {
     await prisma.listing.update({ where: { id: listing.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
     await money(prisma, (tx) => closeAuction(tx, listing.id));
 
+    // The winner pays shipping too: bid + shipping is held at bid time.
+    expect(await balanceOf(bidderId)).toBe(7500n);
     // creator gets (2000 - 10% - 5%) + 500 shipping = 1700 + 500 = 2200; platform fee still only off the 2000 item price
     expect(await balanceOf(creatorId)).toBe(2200n);
+    // Nothing minted: every posting for this auction nets to zero.
+    const order0 = await prisma.listingOrder.findFirstOrThrow({ where: { listingId: listing.id } });
+    const legs = await prisma.ledgerEntry.aggregate({ _sum: { amountCents: true }, where: { refId: { in: [listing.id, order0.id] } } });
+    expect(legs._sum.amountCents).toBe(0n);
     const order = await prisma.listingOrder.findFirstOrThrow({ where: { listingId: listing.id } });
     expect(order.shippingCents).toBe(500);
     expect(order.shipStatus).toBe('AWAITING_SHIPMENT');
+  });
+
+  it('never releases a hold twice: cancelling an auction already closed without a sale is a no-op', async () => {
+    // The admin ban loop reads the seller's ACTIVE auctions outside any
+    // transaction; the sweep can close one (seller now inactive -> no sale,
+    // full release) before its cancelAuction runs.
+    const creatorId = await makeCreator();
+    const bidderId = await makeUser();
+    await fund(bidderId, 10_000);
+    const listing = await makeAuctionListing(creatorId, { startingBidCents: 1000, endsInMs: 1000 });
+    await money(prisma, (tx) => placeBid(tx, listing.id, bidderId, 2000));
+    await prisma.user.update({ where: { id: creatorId }, data: { status: 'BANNED' } });
+    await prisma.listing.update({ where: { id: listing.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
+
+    const closed = await money(prisma, (tx) => closeAuction(tx, listing.id));
+    expect(closed.sold).toBe(false);
+    expect(await balanceOf(bidderId)).toBe(10_000n);
+    const after = await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } });
+    expect(after.currentBidderId).toBeNull();
+    expect(after.currentHoldCents).toBeNull();
+
+    const r = await money(prisma, (tx) => cancelAuction(tx, listing.id, 'seller_banned'));
+    expect(r.released).toBe(0);
+    expect(await balanceOf(bidderId)).toBe(10_000n);
+    const legs = await prisma.ledgerEntry.aggregate({ _sum: { amountCents: true }, where: { refId: listing.id } });
+    expect(legs._sum.amountCents).toBe(0n);
+  });
+
+  it('cancelling an auction the sweep already SOLD is a no-op, not an error', async () => {
+    const creatorId = await makeCreator();
+    const bidderId = await makeUser();
+    await fund(bidderId, 10_000);
+    const listing = await makeAuctionListing(creatorId, { startingBidCents: 1000, endsInMs: 1000 });
+    await money(prisma, (tx) => placeBid(tx, listing.id, bidderId, 2000));
+    await prisma.listing.update({ where: { id: listing.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
+    expect((await money(prisma, (tx) => closeAuction(tx, listing.id))).sold).toBe(true);
+
+    const r = await money(prisma, (tx) => cancelAuction(tx, listing.id, 'seller_banned'));
+    expect(r.released).toBe(0);
+    expect(await balanceOf(bidderId)).toBe(8000n);
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } })).status).toBe('SOLD');
   });
 
   it('refuses to close an auction that is not ACTIVE', async () => {

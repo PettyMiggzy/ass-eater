@@ -1,9 +1,9 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { money, lockBalance, post, PLATFORM_ID, InsufficientFunds, isVip, FEES , postPlatformRevenue} from '../core/ledger.js';
-import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION } from '../core/marketplace-fees.js';
-import { placeBid } from '../core/auctions.js';
+import { money, lockBalance, post, InsufficientFunds, isVip, postPlatformRevenue } from '../core/ledger.js';
+import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION, PHYSICAL_SALES_ENABLED } from '../core/marketplace-fees.js';
+import { placeBid, cancelAuction, statusCode } from '../core/auctions.js';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 // Physical orders pay the creator at purchase time, same as digital -- no
@@ -33,6 +33,45 @@ export async function vipFirstLookFilter(viewerId: string | null) {
   };
 }
 
+/**
+ * The Listing columns anyone may see. An explicit allowlist, never
+ * `include`: that returned every scalar, including reserveCents (the
+ * creator's HIDDEN minimum -- knowing it defeats it) and currentBidderId (the
+ * leading bidder's user id). Both are selected here only so publicListing()
+ * can derive the safe booleans from them, and are stripped before returning.
+ */
+const LISTING_SELECT = {
+  id: true, creatorId: true, title: true, description: true, vipEarlyUntil: true, priceCents: true,
+  unlimited: true, kind: true, shippingCents: true, signatureRequired: true, images: true, status: true,
+  createdAt: true, saleType: true, auctionEndsAt: true, minBidIncrementCents: true, currentBidCents: true,
+  reserveCents: true, currentBidderId: true,
+  creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } },
+} as const;
+
+function publicListing<T extends { creatorId: string; reserveCents: number | null; currentBidderId: string | null; currentBidCents: number | null }>(l: T, viewerId: string | null) {
+  const { reserveCents, currentBidderId, ...rest } = l;
+  const own = viewerId === l.creatorId;
+  return {
+    ...rest,
+    hasReserve: reserveCents != null,
+    reserveMet: reserveCents == null || (l.currentBidCents != null && l.currentBidCents >= reserveCents),
+    isLeading: !!viewerId && currentBidderId === viewerId,
+    // The creator is the one person who set the reserve; nobody else sees it.
+    ...(own ? { reserveCents } : {}),
+  };
+}
+
+/** A listing is only sellable/visible while its seller's account is ACTIVE (not suspended or banned). */
+const activeSeller = { creator: { user: { status: 'ACTIVE' as const } } };
+
+async function optionalViewer(req: any): Promise<string | null> {
+  try { await req.jwtVerify(); return req.user.id; } catch { return null; }
+}
+
+function physicalDisabled() {
+  return statusCode('physical_sales_disabled', 400);
+}
+
 export const marketplace: FastifyPluginAsync = async (app) => {
   // unlimited: true for digital goods (images/videos) sellable to many buyers
   // at whatever price the creator sets; false (default) for a one-of-a-kind
@@ -54,6 +93,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       reserveCents: z.number().int().min(100).max(100_000_00).optional(),
     }).parse(req.body);
     const { mediaIds, auctionDurationHours, earlyAccessHours, ...fields } = b;
+    if (fields.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
     if (earlyAccessHours) (fields as any).vipEarlyUntil = new Date(Date.now() + earlyAccessHours * 3_600_000);
     // Physical items ship one-at-a-time -- no inventory tracking yet, so "unlimited" doesn't mean anything for them.
     // An auction is one-of-a-kind by nature (bidding on "one of infinite copies" doesn't mean anything either).
@@ -83,9 +123,37 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       kind: z.enum(['DIGITAL', 'PHYSICAL']).optional(), shippingCents: z.number().int().min(0).max(100_000_00).optional(),
       signatureRequired: z.boolean().optional(),
     }).parse(req.body);
+    if (b.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
     if (b.kind === 'PHYSICAL') b.unlimited = false;
-    const r = await prisma.listing.updateMany({ where: { id: req.params.id, creatorId: req.user.id, status: { not: 'SOLD' } }, data: b });
-    return r.count ? { ok: true } : reply.code(404).send({ error: 'not_found' });
+
+    const r = await money(prisma, async (tx) => {
+      const l = await tx.listing.findFirst({ where: { id: req.params.id, creatorId: req.user.id, status: { not: 'SOLD' } } });
+      if (!l) return null;
+      if (l.saleType === 'AUCTION') {
+        // The money terms of an auction are fixed once anyone has bid: the
+        // leader's hold was sized from them (bid + shipping), and letting
+        // them move afterwards is how a creator used to set shipping to
+        // $100k on an auction with a $1 bid and be paid it at close.
+        const moneyTerms = b.priceCents !== undefined || b.kind !== undefined || b.shippingCents !== undefined || b.unlimited !== undefined;
+        if (moneyTerms && l.currentBidderId) throw statusCode('auction_has_bids', 409);
+        if (b.unlimited) throw statusCode('auction_is_one_of_a_kind', 400);
+        if (b.status === 'ACTIVE' && l.status !== 'ACTIVE' && (!l.auctionEndsAt || l.auctionEndsAt <= new Date())) {
+          // Reactivating an ended auction would let the close sweep sell it
+          // against whatever bid state it was left in.
+          throw statusCode('auction_ended', 400);
+        }
+        if (b.status === 'REMOVED' && l.status === 'ACTIVE') {
+          // Same transaction as the removal: the leader gets their hold back.
+          const { status: _s, ...rest } = b;
+          if (Object.keys(rest).length) await tx.listing.update({ where: { id: l.id }, data: rest });
+          await cancelAuction(tx, l.id, 'removed_by_creator');
+          return l.id;
+        }
+      }
+      await tx.listing.update({ where: { id: l.id }, data: b });
+      return l.id;
+    });
+    return r ? { ok: true } : reply.code(404).send({ error: 'not_found' });
   });
 
   // Age-gated: the platform account itself is already 18+ only (dob check at
@@ -96,40 +164,53 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     const take = Math.min(Number(req.query.limit ?? 30), 100);
     // Optional auth: browsing works signed out, but a VIP has to be
     // recognised or their first-look window is worthless.
-    let viewerId: string | null = null;
-    try { await req.jwtVerify(); viewerId = req.user.id; } catch {}
+    const viewerId = await optionalViewer(req);
     // AND, not a second OR key -- spreading another `OR` would silently
     // replace the search one and return everything.
-    const conditions: any[] = [await vipFirstLookFilter(viewerId)].filter((c) => Object.keys(c).length);
+    const conditions: any[] = [await vipFirstLookFilter(viewerId), activeSeller].filter((c) => Object.keys(c).length);
     if (q) conditions.push({ OR: [{ title: { contains: q, mode: 'insensitive' } }, { description: { contains: q, mode: 'insensitive' } }] });
-    return prisma.listing.findMany({
+    const rows = await prisma.listing.findMany({
       where: {
         status: 'ACTIVE',
         ...(conditions.length ? { AND: conditions } : {}),
       },
       orderBy: { createdAt: 'desc' }, take, skip: Number(req.query.offset ?? 0),
-      include: { creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } } },
+      select: LISTING_SELECT,
     });
+    return rows.map((l) => publicListing(l, viewerId));
   });
 
   // Media never exposes its raw key here -- full access (once purchased) goes
   // through GET /media/:id/url, which re-checks ownership via canViewListing.
+  //
+  // Same visibility as the list: a listing inside its VIP first-look window,
+  // or one whose seller is suspended/banned, is not found for anyone but its
+  // creator -- an id is shareable, so filtering only the list is not a gate.
   app.get('/listings/:id', async (req: any, reply) => {
-    const l = await prisma.listing.findUnique({
-      where: { id: req.params.id },
-      include: {
-        creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } },
-        media: { select: { id: true, mime: true, previewKey: true } },
+    const viewerId = await optionalViewer(req);
+    const vip = await vipFirstLookFilter(viewerId);
+    const l = await prisma.listing.findFirst({
+      where: {
+        id: req.params.id,
+        ...(viewerId ? { OR: [{ creatorId: viewerId }, { AND: [vip, activeSeller] }] } : { AND: [vip, activeSeller] }),
       },
+      select: { ...LISTING_SELECT, media: { select: { id: true, mime: true, previewKey: true } } },
     });
-    return l ?? reply.code(404).send({ error: 'not_found' });
+    return l ? publicListing(l, viewerId) : reply.code(404).send({ error: 'not_found' });
   });
 
   app.get('/listings/mine', { preHandler: app.creatorOk }, async (req) =>
     prisma.listing.findMany({ where: { creatorId: req.user.id }, orderBy: { createdAt: 'desc' } }));
 
   app.post('/listings/:id/buy', { preHandler: app.auth }, async (req: any) => {
-    z.object({ ageConfirmed: z.literal(true), tosAccepted: z.literal(true) }).parse(req.body);
+    const { expectedTotalCents } = z.object({
+      ageConfirmed: z.literal(true), tosAccepted: z.literal(true),
+      // The total (price + shipping) the buyer saw and agreed to. Charged
+      // only if it still matches -- otherwise a creator editing the price or
+      // shipping between the fan opening the listing and clicking Buy was
+      // charged in full, with no refunds.
+      expectedTotalCents: z.number().int().min(0),
+    }).parse(req.body);
 
     return money(prisma, async (tx) => {
       const l = await tx.listing.findUniqueOrThrow({ where: { id: req.params.id } });
@@ -142,6 +223,11 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       }
       if (l.saleType === 'AUCTION') throw Object.assign(new Error('auction_listing_use_bid'), { statusCode: 400 });
       if (l.creatorId === req.user.id) throw Object.assign(new Error('self_purchase'), { statusCode: 400 });
+      if (l.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
+      // A suspended or banned seller's listings are hidden from browsing;
+      // this is the gate for anyone still holding the id.
+      const seller = await tx.user.findUnique({ where: { id: l.creatorId }, select: { status: true } });
+      if (seller?.status !== 'ACTIVE') throw Object.assign(new Error('not_available'), { statusCode: 400 });
 
       if (l.unlimited) {
         const already = await tx.listingOrder.findFirst({ where: { listingId: l.id, buyerId: req.user.id } });
@@ -153,6 +239,9 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       const chargeCents = l.priceCents;
       const shippingCents = l.kind === 'PHYSICAL' ? l.shippingCents : 0;
       const totalCharge = chargeCents + shippingCents;
+      if (totalCharge !== expectedTotalCents) {
+        throw Object.assign(new Error('price_changed'), { statusCode: 409 });
+      }
 
       const bal = await lockBalance(tx, req.user.id);
       if (bal < BigInt(totalCharge)) throw new InsufficientFunds();
@@ -178,7 +267,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
 
       await post(tx, req.user.id, -totalCharge, 'MARKETPLACE_SALE', order.id);
       // Paid immediately -- shipping it is the creator's job from here, not the platform's to hold money over.
-      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents });
+      await post(tx, l.creatorId, net + shippingCents, 'MARKETPLACE_SALE', order.id, { gross: chargeCents, platformFee, listingFee, shippingCents, originalPriceCents: l.priceCents, fanId: req.user.id });
       await postPlatformRevenue(tx, platformFee + listingFee, order.id, { source: 'marketplace', platformFee, listingFee });
 
       return { ok: true, order };
@@ -189,17 +278,46 @@ export const marketplace: FastifyPluginAsync = async (app) => {
 
   app.post('/listings/:id/bid', { preHandler: app.auth }, async (req: any) => {
     const { amountCents } = z.object({ amountCents: z.number().int().min(1) }).parse(req.body);
+    if (!PHYSICAL_SALES_ENABLED) {
+      const l = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { kind: true } });
+      if (l?.kind === 'PHYSICAL') throw physicalDisabled();
+    }
     const bid = await money(prisma, (tx) => placeBid(tx, req.params.id, req.user.id, amountCents));
     return { ok: true, bid };
   });
 
-  app.get('/listings/:id/bids', async (req: any) =>
-    prisma.bid.findMany({
-      where: { listingId: req.params.id },
-      orderBy: { amountCents: 'desc' },
-      take: 20,
-      include: { bidder: { select: { username: true } } },
+  // Bid history, without outing bidders. Tying a username to a bid on an
+  // adult-marketplace item publicly is the same exposure getTopSupporters()
+  // refuses to create, so the public sees stable per-listing labels
+  // ("Bidder 1" = the first distinct person to bid), the requester sees
+  // which bids are theirs, and only the listing's creator sees usernames.
+  app.get('/listings/:id/bids', async (req: any, reply) => {
+    const viewerId = await optionalViewer(req);
+    // Same visibility as GET /listings/:id: the bid history must not confirm
+    // a listing still inside its VIP first-look window, or one whose seller
+    // is suspended or banned, to anyone but its creator.
+    const vip = await vipFirstLookFilter(viewerId);
+    const l = await prisma.listing.findFirst({
+      where: {
+        id: req.params.id,
+        ...(viewerId ? { OR: [{ creatorId: viewerId }, { AND: [vip, activeSeller] }] } : { AND: [vip, activeSeller] }),
+      },
+      select: { creatorId: true },
+    });
+    if (!l) return reply.code(404).send({ error: 'not_found' });
+    const all = await prisma.bid.findMany({
+      where: { listingId: req.params.id }, orderBy: { createdAt: 'asc' },
+      select: { id: true, bidderId: true, amountCents: true, createdAt: true, bidder: { select: { username: true } } },
+    });
+    const label = new Map<string, number>();
+    for (const b of all) if (!label.has(b.bidderId)) label.set(b.bidderId, label.size + 1);
+    const isCreator = viewerId === l.creatorId;
+    return [...all].sort((a, b) => b.amountCents - a.amountCents).slice(0, 20).map((b) => ({
+      id: b.id, amountCents: b.amountCents, createdAt: b.createdAt,
+      bidder: isCreator ? b.bidder.username : `Bidder ${label.get(b.bidderId)}`,
+      isYou: !!viewerId && b.bidderId === viewerId,
     }));
+  });
 
   // --- Physical-order shipping status (visibility only -- see comment above) ---
 

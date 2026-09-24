@@ -2,8 +2,11 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { money, post, PLATFORM_ID } from '../core/ledger.js';
-import { deleteObject } from '../lib/s3.js';
+import { deleteObject, deletePrefix, purgeCdnPrefix } from '../lib/s3.js';
+import { wmPrefix } from '../lib/watermark.js';
 import { recordManualBurn } from '../core/vip.js';
+import { cancelAuction } from '../core/auctions.js';
+import { storageKeyOf } from '../core/media-key.js';
 
 export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));
@@ -21,7 +24,7 @@ export const admin: FastifyPluginAsync = async (app) => {
   // like `{ id: 1, ...body }` carrying an unknown property, which is why
   // this stayed broken silently.
   app.get('/vip-config', async () =>
-    (await prisma.platformConfig.findUnique({ where: { id: 1 } })) ?? { id: 1, vipPriceCents: 2000, burnBps: 2500 });
+    (await prisma.platformConfig.findUnique({ where: { id: 1 } })) ?? { id: 1, vipPriceCents: 2000, minDmPriceCents: 99, burnBps: 2500 });
 
   app.patch('/vip-config', async (req: any) => {
     const body = z.object({
@@ -29,6 +32,9 @@ export const admin: FastifyPluginAsync = async (app) => {
       // Capped at 100%: the platform cannot commit to burning more than the
       // revenue it took in, which would be spending money it does not have.
       burnBps: z.number().int().min(0).max(10_000).optional(),
+      // The floor on paid inbound DMs (modules/messages.ts). min(1): messaging
+      // a creator is never free (decided 2026-09-20).
+      minDmPriceCents: z.number().int().min(1).max(50_000).optional(),
     }).parse(req.body);
     return prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, ...body }, update: body });
   });
@@ -48,7 +54,10 @@ export const admin: FastifyPluginAsync = async (app) => {
       note: z.string().max(200).optional(),
     }).parse(req.body);
     try {
-      return await money(prisma, (tx) => recordManualBurn(tx, b));
+      // usdCents is a BigInt, which JSON.stringify refuses: returned raw, the
+      // burn was recorded and the admin got a 500 saying it failed.
+      const r = await money(prisma, (tx) => recordManualBurn(tx, b));
+      return { ...r, usdCents: r.usdCents.toString() };
     } catch (e: any) {
       if (e.message === 'invalid_tx_hash') {
         throw Object.assign(new Error('txHash must be a 0x-prefixed 32-byte transaction hash'), { statusCode: 400 });
@@ -64,7 +73,9 @@ export const admin: FastifyPluginAsync = async (app) => {
       prisma.tokenBurn.findMany({ where: { executedAt: null }, orderBy: { createdAt: 'asc' }, take: 100 }),
     ]);
     const sum = (rows: { usdCents: bigint }[]) => rows.reduce((a, r) => a + r.usdCents, 0n).toString();
-    return { executed, pending, executedCents: sum(executed), pendingCents: sum(pending) };
+    // Row usdCents are BigInt too -- stringified, or the whole report 500s.
+    const out = <T extends { usdCents: bigint }>(rows: T[]) => rows.map((r) => ({ ...r, usdCents: r.usdCents.toString() }));
+    return { executed: out(executed), pending: out(pending), executedCents: sum(executed), pendingCents: sum(pending) };
   });
 
   app.get('/reports', async (req: any) =>
@@ -86,13 +97,40 @@ export const admin: FastifyPluginAsync = async (app) => {
     return prisma.report.update({ where: { id: r.id }, data: { status: action === 'dismiss' ? 'DISMISSED' : 'ACTIONED', resolvedBy: req.user.id } });
   });
 
+  // Suspending or banning freezes payouts; reactivating does NOT unfreeze
+  // them. payoutsFrozen is also set by hand through POST
+  // /creators/:id/freeze (e.g. a chargeback or fraud review), and the flag
+  // can't tell the two reasons apart -- so writing `status !== 'ACTIVE'`
+  // here silently lifted a deliberate manual freeze the moment an admin
+  // reinstated the account. Lifting a freeze is always its own explicit step.
   async function setStatus(userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'BANNED') {
     await prisma.$transaction([
       prisma.user.update({ where: { id: userId }, data: { status } }),
       prisma.refreshToken.deleteMany({ where: { userId } }),
-      prisma.creatorProfile.updateMany({ where: { userId }, data: { payoutsFrozen: status !== 'ACTIVE' } }),
+      ...(status !== 'ACTIVE' ? [prisma.creatorProfile.updateMany({ where: { userId }, data: { payoutsFrozen: true } })] : []),
       ...(status === 'BANNED' ? [prisma.subscription.updateMany({ where: { creatorId: userId }, data: { autoRenew: false, status: 'CANCELLED' } })] : []),
     ]);
+    // A ban takes the creator's marketplace down: fixed-price listings are
+    // removed, and every live auction is cancelled with the leader's hold
+    // returned in the same transaction (a removed auction is never closed by
+    // the sweep, so a hold left on one was stranded). Suspension needs none
+    // of this -- browsing, buying and bidding already refuse a non-ACTIVE
+    // seller, and an auction ending during a suspension closes with no sale
+    // and a full release (core/auctions.ts closeAuction).
+    if (status === 'BANNED') {
+      const auctions = await prisma.listing.findMany({ where: { creatorId: userId, saleType: 'AUCTION', status: 'ACTIVE' }, select: { id: true } });
+      // One auction failing to cancel (the sweep can close it between this
+      // read and its transaction; cancelAuction then no-ops) must never skip
+      // the fixed-price removal below for a creator who is already BANNED.
+      for (const a of auctions) {
+        try {
+          await money(prisma, (tx) => cancelAuction(tx, a.id, 'seller_banned'));
+        } catch (err) {
+          app.log.error({ err, listingId: a.id, userId }, 'ban: failed to cancel auction');
+        }
+      }
+      await prisma.listing.updateMany({ where: { creatorId: userId, saleType: 'FIXED', status: 'ACTIVE' }, data: { status: 'REMOVED' } });
+    }
   }
   app.post('/users/:id/status', async (req: any) => {
     const { status } = z.object({ status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']) }).parse(req.body);
@@ -109,10 +147,53 @@ export const admin: FastifyPluginAsync = async (app) => {
     return prisma.creatorProfile.update({ where: { userId: req.params.id }, data: { payoutsFrozen: frozen } });
   });
 
+  /**
+   * Takedown (NCII / TAKE IT DOWN). The content has to actually be gone, not
+   * just hidden on one row:
+   *
+   *  - A mass-DM copy (sourceMediaId set) is the same content as its source,
+   *    so a takedown aimed at a copy takes down the source and every copy.
+   *  - Every affected row goes REJECTED with hlsKey AND previewKey nulled.
+   *    Nulling only the targeted row left every broadcast copy READY with the
+   *    source's hlsKey, still streaming to everyone who had unlocked it.
+   *  - Storage: the raw object, the whole transcode output prefix
+   *    (media/<owner>/<id>/ -- HLS playlists, segments, preview.jpg) and every
+   *    per-viewer watermarked copy (wm/<mediaId>/) of the source and of each
+   *    copy. Previously only the raw object went.
+   *  - The CDN edge is purged for the same paths (needs BUNNY_API_KEY); the
+   *    response says whether that happened.
+   *
+   * Rows are rejected first, so nothing is served while storage is cleaned.
+   * Storage failures are reported, not swallowed: a takedown that silently
+   * left files behind is the failure this exists to prevent.
+   */
   app.delete('/media/:id', async (req: any) => {
-    const m = await prisma.media.findUniqueOrThrow({ where: { id: req.params.id } });
-    await deleteObject(m.key).catch(() => {});
-    return prisma.media.update({ where: { id: m.id }, data: { status: 'REJECTED', hlsKey: null } });
+    const target = await prisma.media.findUniqueOrThrow({ where: { id: req.params.id } });
+    const root = target.sourceMediaId
+      ? (await prisma.media.findUnique({ where: { id: target.sourceMediaId } })) ?? target
+      : target;
+    const copies = await prisma.media.findMany({ where: { sourceMediaId: root.id }, select: { id: true } });
+    const ids = [root.id, target.id, ...copies.map((c) => c.id)];
+    const rejected = await prisma.media.updateMany({
+      where: { id: { in: [...new Set(ids)] } },
+      data: { status: 'REJECTED', hlsKey: null, previewKey: null },
+    });
+
+    const errors: string[] = [];
+    const attempt = async (label: string, fn: () => Promise<unknown>) => {
+      try { await fn(); } catch (e) { req.log.error({ err: e, mediaId: root.id }, `takedown: ${label} failed`); errors.push(label); }
+    };
+    const outputPrefix = `media/${root.ownerId}/${root.id}/`;
+    await attempt('raw object', () => deleteObject(storageKeyOf(root.key)));
+    await attempt('transcode output', () => deletePrefix(outputPrefix));
+    for (const id of new Set(ids)) await attempt(`watermarked copies of ${id}`, () => deletePrefix(wmPrefix(id)));
+
+    const purged: boolean[] = [];
+    purged.push(await purgeCdnPrefix(`/${storageKeyOf(root.key)}`));
+    purged.push(await purgeCdnPrefix(`/${outputPrefix}`));
+    for (const id of new Set(ids)) purged.push(await purgeCdnPrefix(`/${wmPrefix(id)}`));
+
+    return { ok: errors.length === 0, rootMediaId: root.id, rejected: rejected.count, storageErrors: errors, cdnPurged: purged.every(Boolean) };
   });
 
   /** Manual credit/debit (refunds, goodwill, corrections). Counter-posted against treasury. */
@@ -131,7 +212,7 @@ export const admin: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/revenue', async (req: any) => {
-    const days = Number(req.query.days ?? 30);
+    const { days } = z.object({ days: z.coerce.number().int().min(1).max(3650).default(30) }).parse(req.query ?? {});
     const rows = await prisma.$queryRaw<{ day: Date; source: string; cents: bigint }[]>`
       SELECT date_trunc('day',"createdAt") AS day, meta->>'source' AS source, SUM("amountCents") AS cents
       FROM "LedgerEntry" WHERE "userId"=${PLATFORM_ID} AND type='PLATFORM_FEE' AND "createdAt" > now() - (${days} || ' days')::interval

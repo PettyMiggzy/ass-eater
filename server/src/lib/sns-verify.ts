@@ -129,3 +129,31 @@ export async function verifySnsMessage(msg: SnsMessage, fetchCert: (url: string)
     return false;
   }
 }
+
+/**
+ * A valid SNS signature proves only that SOME SNS topic signed the message --
+ * any AWS account can create a topic, subscribe this webhook's URL to it and
+ * publish genuinely signed JSON. So a message is accepted only when its
+ * TopicArn is one of OURS (SES_SNS_TOPIC_ARNS, comma-separated). Fails closed:
+ * with the variable unset, no topic is ours and every message is ignored,
+ * which is the right default for an endpoint whose whole effect is to stop
+ * mailing people.
+ */
+export function allowedSnsTopics(env: string | undefined = process.env.SES_SNS_TOPIC_ARNS): Set<string> {
+  return new Set((env ?? '').split(',').map((t) => t.trim()).filter(Boolean));
+}
+
+export function isAllowedSnsTopic(topicArn: unknown, allowed: Set<string> = allowedSnsTopics()): boolean {
+  return typeof topicArn === 'string' && allowed.has(topicArn);
+}
+
+// SNS delivers within seconds and retries for at most about an hour;
+// anything older is a replay of a message captured earlier, not a delivery.
+export const SNS_MAX_AGE_MS = 60 * 60 * 1000;
+
+export function isFreshSnsTimestamp(ts: unknown, now = Date.now(), maxAgeMs = SNS_MAX_AGE_MS): boolean {
+  if (typeof ts !== 'string') return false;
+  const t = Date.parse(ts);
+  if (!Number.isFinite(t)) return false;
+  return now - t <= maxAgeMs && t - now <= 5 * 60 * 1000; // tolerate small clock skew into the future
+}

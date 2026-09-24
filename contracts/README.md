@@ -78,23 +78,32 @@ pre-existing intentional low-level `.call` pattern for ETH (see above).
 
 ## Deploying
 
+**Not deployable to production as it stands.** `payWithOnlyOne` pays
+creators in $ONLYONE, and the platform's standing rule is that the token is
+never a payment method -- fans pay with credits that settle in USDG. There is
+no USDG path in this contract. `scripts/deploy.js` (and
+`scripts/deploy-creator-nft.js` for `OnlyOneCreatorNFT`, which has the same
+problem) therefore refuse Robinhood Chain mainnet and Ethereum mainnet
+outright, with no override flag: reworking the contract to settle in the
+allowlisted stablecoin, or archiving it, is an owner decision. Testnets only
+until then.
+
 Set these in your environment before running a deploy script:
 
 - `PLATFORM_WALLET_ADDRESS` — wallet that receives the 10% platform fee
-- `ONLYONE_TOKEN_ADDRESS` — the deployed $ONLYONE ERC-20 contract address
-  (this is the same address already shown on the site as
-  `NEXT_PUBLIC_CONTRACT_ADDRESS`)
+- `ONLYONE_TOKEN_ADDRESS` — the token address the constructor requires
+- `OWNER_ADDRESS` — the (cold/multisig) contract owner. Required, and must
+  not be the deploying key: the constructor takes an explicit owner precisely
+  so the hot key that broadcasts the deploy does not end up owning it.
 - `PLATFORM_FEE_BPS` — optional, defaults to `1000` (10%)
 - `SEPOLIA_RPC_URL` / `MAINNET_RPC_URL` and `DEPLOYER_PRIVATE_KEY` — for
   `hardhat.config.js` to pick up the network
 
 ```
-npm run contracts:deploy:sepolia   # test on Sepolia first
-npm run contracts:deploy:mainnet   # only after the audit
+npm run contracts:deploy:sepolia   # testnet only
 ```
 
-After deploying, set `NEXT_PUBLIC_PAYMENTS_CONTRACT_ADDRESS` in Vercel to the
-printed address so the frontend can find it.
+Nothing in the site or `server/` reads a deployed contract's address yet.
 
 **Do not deploy to mainnet before the audit comes back.** Sepolia is free and
 lets the whole flow (frontend → contract → backend verification) get tested

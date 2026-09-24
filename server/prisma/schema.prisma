@@ -145,6 +145,14 @@ model User {
   // address was never invented). Nothing outside modules/auth.ts's own
   // /register route reads this field.
   dob          DateTime?
+  // The Next.js site's own user id for an account provisioned through
+  // POST /auth/bridge -- the ONLY key the bridge ever joins on. Email is not
+  // an identity here: neither system verifies that anyone owns an address,
+  // so joining on it let whoever created a row for an email first own every
+  // later bridged session for it (and 'treasury@internal' bridged straight
+  // into the platform ADMIN account). Null for native (/register) rows and
+  // system accounts, which the bridge therefore can never reach.
+  siteUid      String?    @unique
   kycStatus    KycStatus  @default(NONE)
   kycRef       String? // provider applicant id (2257-adjacent record pointer)
   referredById String?
@@ -295,6 +303,13 @@ model Listing {
   reserveCents         Int? // hidden minimum; if unmet at close, the auction ends with no sale
   currentBidCents      Int?
   currentBidderId      String? // no FK -- transient/denormalized; Bid rows are the source of truth
+  // What is actually held out of the leading bidder's balance right now: the
+  // bid plus, for a PHYSICAL item, the shipping fee. Every release and the
+  // settlement at close use THIS number, never one recomputed from the
+  // listing, so a later edit to shipping/kind can never make the release or
+  // the payout differ from what was taken. Null on rows from before it
+  // existed, which held exactly currentBidCents.
+  currentHoldCents     Int?
   bids                 Bid[]
 
   @@index([status, createdAt])
@@ -313,6 +328,7 @@ model Bid {
   bidderId    String
   bidder      User     @relation(fields: [bidderId], references: [id])
   amountCents Int
+  heldCents   Int? // bid + shipping actually held when this bid was placed (audit trail)
   createdAt   DateTime @default(now())
 
   @@index([listingId, amountCents])
@@ -374,21 +390,27 @@ model PostUnlock {
 }
 
 model Media {
-  id         String      @id @default(uuid())
-  ownerId    String
-  key        String      @unique // raw upload key
-  hlsKey     String? // transcoded playlist key
-  previewKey String? // blurred thumbnail (public)
-  mime       String
-  bytes      Int         @default(0)
-  status     MediaStatus @default(UPLOADING)
-  postId     String?
-  post       Post?       @relation(fields: [postId], references: [id], onDelete: SetNull)
-  messageId  String?
-  message    Message?    @relation(fields: [messageId], references: [id], onDelete: SetNull)
-  listingId  String?
-  listing    Listing?    @relation(fields: [listingId], references: [id], onDelete: SetNull)
-  createdAt  DateTime    @default(now())
+  id            String      @id @default(uuid())
+  ownerId       String
+  key           String      @unique // raw upload key
+  hlsKey        String? // transcoded playlist key
+  previewKey    String? // blurred thumbnail (public)
+  mime          String
+  bytes         Int         @default(0)
+  status        MediaStatus @default(UPLOADING)
+  postId        String?
+  post          Post?       @relation(fields: [postId], references: [id], onDelete: SetNull)
+  messageId     String?
+  message       Message?    @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  listingId     String?
+  listing       Listing?    @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  // Set on the per-recipient copies a mass DM makes (workers/broadcast.ts).
+  // A copy's own `key` is `<source key>#<messageId>` so the unique index
+  // holds; the real storage object is the source's -- see core/media-key.ts.
+  sourceMediaId String?
+  createdAt     DateTime    @default(now())
+
+  @@index([sourceMediaId])
 }
 
 model Conversation {
@@ -408,10 +430,15 @@ model Message {
   senderId       String
   text           String          @default("")
   priceCents     Int             @default(0) // >0 = locked media
+  // Which mass DM this message came from (workers/broadcast.ts). Unique per
+  // conversation so a retried broadcast job skips fans it already reached
+  // instead of sending (and charging for) the same drop twice.
+  broadcastId    String?
   media          Media[]
   unlocks        MessageUnlock[]
   createdAt      DateTime        @default(now())
 
+  @@unique([conversationId, broadcastId])
   @@index([conversationId, createdAt])
 }
 
@@ -535,8 +562,14 @@ model Deposit {
   priceUsed    Float
   createdAt    DateTime  @default(now())
   hedgedAt     DateTime? // set once the treasury-hedge worker has converted this $ONLYONE deposit's share; null = pending. Unused for non-ONLYONE assets.
+  // An ETH / $ONLYONE deposit that could not be priced when it was indexed.
+  // Recorded (usdCents 0, nothing posted, not swept, hedgedAt set so the
+  // hedge never sells it) so the indexer's cursor can move on; the deposit
+  // indexer's reprice loop credits it once a price exists and clears this.
+  pricePending Boolean   @default(false)
 
   @@unique([chainId, txHash, logIndex])
+  @@index([pricePending])
 }
 
 // One row per auto-hedge swap the treasury worker executes: converts a slice of
@@ -619,6 +652,11 @@ model LiveMinute {
   minuteIndex Int
   stream      LiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
   paidCents   Int
+  // The moment this viewer's paid time runs out after buying this minute:
+  // max(now, previous paidThrough) + 60s. The latest row's value is what the
+  // live sweep (core/live-sweep.ts) compares against to remove a viewer who
+  // stopped paying. Null on rows from before it existed (read as createdAt+60s).
+  paidThrough DateTime?
   createdAt   DateTime   @default(now())
 
   @@id([fanId, streamId, minuteIndex])

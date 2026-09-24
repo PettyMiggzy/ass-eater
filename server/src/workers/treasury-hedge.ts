@@ -1,6 +1,6 @@
 import { parseAbi, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, treasury, treasuryClient, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi } from '../lib/chain.js';
+import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi, envInt } from '../lib/chain.js';
 import { impactBpsOf, selectHedgedDeposits } from './treasury-hedge-math.js';
 
 // Fans can deposit $ONLYONE to burn for VIP (core/vip.ts). That balance is
@@ -14,10 +14,10 @@ import { impactBpsOf, selectHedgedDeposits } from './treasury-hedge-math.js';
 // No-ops entirely until UNISWAP_V3_ROUTER_ADDRESS / UNISWAP_V3_QUOTER_ADDRESS /
 // ONLYONE_POOL are set -- i.e. until $ONLYONE actually has a live market.
 
-const HEDGE_BPS = Number(process.env.TREASURY_HEDGE_BPS ?? 7500); // % of new $ONLYONE converted to stablecoin; rest stays as treasury exposure
-const MAX_IMPACT_BPS = Number(process.env.TREASURY_HEDGE_MAX_IMPACT_BPS ?? 300); // max acceptable price impact per swap
-const INTERVAL_MS = Number(process.env.TREASURY_HEDGE_INTERVAL_MS ?? 300_000);
-const POOL_FEE = Number(process.env.ONLYONE_POOL_FEE ?? 3000); // Uniswap V3 fee tier (hundredths of a bip)
+const HEDGE_BPS = envInt('TREASURY_HEDGE_BPS', 7500, 0, 10_000); // % of new $ONLYONE converted to stablecoin; rest stays as treasury exposure
+const MAX_IMPACT_BPS = envInt('TREASURY_HEDGE_MAX_IMPACT_BPS', 300, 0, 10_000); // max acceptable price impact per swap
+const INTERVAL_MS = envInt('TREASURY_HEDGE_INTERVAL_MS', 300_000, 10_000);
+const POOL_FEE = envInt('ONLYONE_POOL_FEE', 3000, 1, 1_000_000); // Uniswap V3 fee tier (hundredths of a bip)
 const ROUTER = process.env.UNISWAP_V3_ROUTER_ADDRESS as Address | undefined;
 const QUOTER = process.env.UNISWAP_V3_QUOTER_ADDRESS as Address | undefined;
 
@@ -66,16 +66,17 @@ async function sweep() {
   const sized = await sizeSwap(desiredRaw, spot);
   if (!sized) { console.warn('treasury-hedge: pool too thin for even a small slice, retrying next cycle'); return; }
 
-  const allowance = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'allowance', args: [treasury.address, ROUTER] });
+  const allowance = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'allowance', args: [treasuryAccount().address, ROUTER] });
   if (allowance < sized.amountIn) {
-    const h = await treasuryClient.writeContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'approve', args: [ROUTER, sized.amountIn * 10n] });
+    const h = await withTreasuryLock(() => treasuryWallet().writeContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'approve', args: [ROUTER, sized.amountIn * 10n] }));
     await publicClient.waitForTransactionReceipt({ hash: h });
   }
 
-  const hash = await treasuryClient.writeContract({
+  const recipient = treasuryAccount().address;
+  const hash = await withTreasuryLock(() => treasuryWallet().writeContract({
     address: ROUTER, abi: routerAbi, functionName: 'exactInputSingle',
-    args: [{ tokenIn: TOKENS.ONLYONE.address, tokenOut: HEDGE_STABLE.address, fee: POOL_FEE, recipient: treasury.address, amountIn: sized.amountIn, amountOutMinimum: sized.amountOutMin, sqrtPriceLimitX96: 0n }],
-  });
+    args: [{ tokenIn: TOKENS.ONLYONE.address, tokenOut: HEDGE_STABLE.address, fee: POOL_FEE, recipient, amountIn: sized.amountIn, amountOutMinimum: sized.amountOutMin, sqrtPriceLimitX96: 0n }],
+  }));
   const rcpt = await publicClient.waitForTransactionReceipt({ hash });
   if (rcpt.status !== 'success') { console.error('treasury-hedge: swap reverted', hash); return; }
 
@@ -94,4 +95,4 @@ async function sweep() {
     try { await sweep(); } catch (e) { console.error('treasury-hedge', e); }
     await new Promise(r => setTimeout(r, INTERVAL_MS));
   }
-})();
+})().catch((e) => console.error('treasury-hedge: loop crashed', e));

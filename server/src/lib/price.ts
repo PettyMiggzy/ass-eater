@@ -1,4 +1,4 @@
-import { publicClient } from './chain.js';
+import { publicClient, envInt } from './chain.js';
 import { redis } from './redis.js';
 import { parseAbi, type Address } from 'viem';
 import { computePoolId, poolStateSlot, decodeSlot0 } from './v4-pool-state.js';
@@ -38,8 +38,8 @@ async function assUsdV3(): Promise<number> {
 async function assUsdV4(): Promise<number> {
   const currency0 = process.env.ONLYONE_V4_CURRENCY0 as Address;
   const currency1 = process.env.ONLYONE_V4_CURRENCY1 as Address;
-  const fee = Number(process.env.ONLYONE_POOL_FEE ?? 3000);
-  const tickSpacing = Number(process.env.ONLYONE_V4_TICK_SPACING ?? 60);
+  const fee = envInt('ONLYONE_POOL_FEE', 3000, 1, 1_000_000);
+  const tickSpacing = envInt('ONLYONE_V4_TICK_SPACING', 60, 1, 32_767);
   const hooks = (process.env.ONLYONE_V4_HOOKS as Address) ?? '0x0000000000000000000000000000000000000000';
 
   const poolId = computePoolId(currency0, currency1, fee, tickSpacing, hooks);
@@ -57,7 +57,14 @@ async function assUsdV4(): Promise<number> {
 
 /** Your token's spot price. Pre-launch: set ONLYONE_PRICE_OVERRIDE. Defaults to V4 -- confirmed as Kekfun.xyz's (and every other Robinhood Chain launch platform's) actual pool type. Set ONLYONE_POOL_VERSION=v3 only if you know for certain the real pool isn't V4. */
 async function assUsd(): Promise<number> {
-  if (process.env.ONLYONE_PRICE_OVERRIDE) return Number(process.env.ONLYONE_PRICE_OVERRIDE);
+  const override = process.env.ONLYONE_PRICE_OVERRIDE?.trim();
+  if (override) {
+    const px = Number(override);
+    // A junk override (e.g. a trailing '# comment' systemd kept) must fail
+    // the price, not price every token at NaN.
+    if (!Number.isFinite(px) || px <= 0) throw new Error('bad_price_override');
+    return px;
+  }
   return process.env.ONLYONE_POOL_VERSION === 'v3' ? assUsdV3() : assUsdV4();
 }
 

@@ -1,9 +1,11 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { charge, money, isVip, FEES } from '../core/ledger.js';
 import { canViewMessage, isSubscribed } from '../core/access.js';
-import { publish, sub, broadcastQueue } from '../lib/redis.js';
+import { publish, broadcastQueue } from '../lib/redis.js';
+import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { notifyDmReceived } from '../core/notify.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
@@ -187,17 +189,20 @@ export const messages: FastifyPluginAsync = async (app) => {
   // Mass DM to all active subscribers (huge OF revenue feature: paid mass PPV drops)
   app.post('/broadcast', { preHandler: app.creatorOk }, async (req) => {
     const b = z.object({ text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).default(0) }).parse(req.body);
-    await broadcastQueue.add('broadcast', { creatorId: req.user.id, ...b }, { removeOnComplete: true });
-    return { queued: true };
+    // broadcastId makes the job resumable: workers/broadcast.ts writes it on
+    // every message it sends and a retry skips fans that already have it, so
+    // attempts > 1 can never double-send (or double-charge) a PPV drop.
+    const broadcastId = randomUUID();
+    await broadcastQueue.add('broadcast', { creatorId: req.user.id, broadcastId, ...b }, {
+      jobId: `broadcast-${broadcastId}`, attempts: 5, backoff: { type: 'exponential', delay: 10_000 },
+      removeOnComplete: true, removeOnFail: 100,
+    });
+    return { queued: true, broadcastId };
   });
 
-  // realtime: ws://host/messages/ws?token=<access jwt>
-  app.get('/ws', { websocket: true }, async (socket: any, req: any) => {
-    let userId: string;
-    try { userId = (app.jwt.verify(req.query.token) as any).id; } catch { return socket.close(4001, 'unauthorized'); }
-    const ch = `u:${userId}`;
-    const listener = (channel: string, msg: string) => { if (channel === ch) socket.send(msg); };
-    await sub.subscribe(ch); sub.on('message', listener);
-    socket.on('close', async () => { sub.off('message', listener); await sub.unsubscribe(ch); });
+  // realtime: wss://host/messages/ws, then send {"type":"auth","token":"<access jwt>"}
+  // as the first message -- never the token in the URL (see plugins/realtime.ts).
+  app.get('/ws', { websocket: true }, (socket: any) => {
+    serveRealtimeChannel(app, socket, (user) => `u:${user.id}`);
   });
 };

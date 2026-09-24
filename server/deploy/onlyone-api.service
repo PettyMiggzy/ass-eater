@@ -7,6 +7,9 @@ Wants=postgresql.service redis-server.service
 Type=simple
 User=onlyone
 WorkingDirectory=/opt/onlyone/server
+# Deliberately NOT .env.workers: the internet-facing process never holds the
+# treasury key or the deposit mnemonic (lib/chain.ts builds them lazily and
+# only the workers use them).
 EnvironmentFile=/opt/onlyone/server/.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure

@@ -1,9 +1,15 @@
 const { ethers } = require('hardhat');
 const { sqrtPriceX96FromPrice, sortTokens, fullRangeTicks, TICK_SPACING_BY_FEE } = require('./lib/v3-pool-math');
+const { refuseLiveTokenRelaunch } = require('./lib/deploy-guards');
 
-// Creates $ONLYONE's first Uniswap V3 market and seeds it with the initial
-// liquidity you choose. This is the transaction that sets $ONLYONE's opening
-// price -- there's no way to "fix a typo" after real trading starts, so every
+// Creates a Uniswap V3 pool for a token and seeds it with liquidity you
+// choose. The live $ONLYONE (0x2c34ED86552076715272056D021cEab6080F1Ab5) was
+// launched from the founder's own launchpad and already has its market (a V4
+// pool); this script does NOT create "the" $ONLYONE market. Run against the
+// live token it would open a SECOND pool at a price you type in, from your
+// own wallet, which arbitrage bots drain if that price is off. On a
+// production chain it refuses unless I_UNDERSTAND_ONLYONE_IS_ALREADY_LIVE is
+// set to the live address. The initial price is final -- there's no way to "fix a typo" after real trading starts, so every
 // input below is required with no silent defaults, and the script sanity-checks
 // your two liquidity amounts against your stated price before sending anything.
 //
@@ -12,10 +18,10 @@ const { sqrtPriceX96FromPrice, sortTokens, fullRangeTicks, TICK_SPACING_BY_FEE }
 // preview when using the real app.uniswap.org on this chain), not copied from
 // a doc page or a third-party "contract addresses" site. Web research for this
 // project could not independently confirm Robinhood Chain's Uniswap contract
-// addresses from more than one source -- see contracts/ONLYONE_LAUNCH.md.
+// addresses from more than one source.
 //
 // Required env vars:
-//   ONLYONE_TOKEN_ADDRESS              - your deployed $ONLYONE contract (run deploy-onlyone-token.js first)
+//   ONLYONE_TOKEN_ADDRESS              - the token to pool (a testnet deployment from deploy-onlyone-token.js)
 //   ONLYONE_POOL_QUOTE_ADDRESS         - the token to pair against (WETH or USDG address on the target chain)
 //   UNISWAP_V3_POSITION_MANAGER_ADDRESS - NonfungiblePositionManager on the target chain (verify yourself, see above)
 //   ONLYONE_INITIAL_PRICE              - quote-token amount per 1 $ONLYONE, e.g. "0.002"
@@ -63,6 +69,7 @@ async function main() {
     );
   }
 
+  await refuseLiveTokenRelaunch(ethers, 'seed a new $ONLYONE pool');
   const [deployer] = await ethers.getSigners();
   const onlyOne = new ethers.Contract(onlyOneAddress, erc20Abi, deployer);
   const quote = new ethers.Contract(quoteAddress, erc20Abi, deployer);
@@ -111,7 +118,7 @@ async function main() {
   });
   const receipt = await tx.wait();
 
-  console.log('\n$ONLYONE pool is live.');
+  console.log('\nPool is live.');
   console.log('tx:', receipt.hash);
   console.log('\nSet these in server/.env (they feed price.ts and the treasury-hedge worker):');
   console.log('  ONLYONE_POOL =', poolAddress);
@@ -119,7 +126,8 @@ async function main() {
   console.log('  ONLYONE_POOL_TOKEN0_DECIMALS =', decimals0);
   console.log('  ONLYONE_POOL_TOKEN1_DECIMALS =', decimals1);
   console.log('  ONLYONE_POOL_FEE =', fee);
-  console.log('  ONLYONE_POOL_QUOTE = "WETH" if', quoteAddress, 'is WETH, otherwise "USDC" (price.ts only checks for the literal string "WETH")');
+  console.log('  ONLYONE_POOL_QUOTE = "WETH" if', quoteAddress, 'is WETH, otherwise "USDG" (price.ts only checks for the literal string "WETH")');
+  console.log('  ONLYONE_POOL_VERSION = v3');
 }
 
 main().catch((err) => {

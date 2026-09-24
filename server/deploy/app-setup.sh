@@ -7,16 +7,49 @@
 set -euo pipefail
 
 APP_USER="onlyone"
-APP_DIR="/opt/onlyone/server"
+APP_DIR="${APP_DIR:-/opt/onlyone/server}"
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
   echo "Missing $APP_DIR/.env -- create it from .env.example first, with real values, directly on this box." >&2
   exit 1
 fi
 
-echo "==> locking down .env permissions (holds the treasury key + deposit mnemonic)"
-chown "$APP_USER":"$APP_USER" "$APP_DIR/.env"
+echo "==> ffmpeg (every media upload is transcoded with it)"
+command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || apt-get install -y ffmpeg
+
+echo "==> ownership: the app user must own the code it builds"
+# Code copied or cloned as root (both documented ways of getting it here)
+# left npm ci failing with EACCES on node_modules, and a later git pull by
+# the app user failing the same way. Own the whole checkout when this is one
+# (APP_DIR is normally a symlink to <checkout>/server), else just APP_DIR.
+REPO_ROOT="$(git -c safe.directory='*' -C "$APP_DIR/" rev-parse --show-toplevel 2>/dev/null || echo "$APP_DIR")"
+chown -R "$APP_USER":"$APP_USER" "$REPO_ROOT/"
+chown -R "$APP_USER":"$APP_USER" "$APP_DIR/"
+
+echo "==> locking down env files"
 chmod 600 "$APP_DIR/.env"
+# Signing secrets live ONLY in .env.workers, which only onlyone-workers
+# loads: the internet-facing API process never needs the treasury key or the
+# deposit mnemonic (it derives deposit addresses from DEPOSIT_XPUB).
+if [[ -f "$APP_DIR/.env.workers" ]]; then
+  chmod 600 "$APP_DIR/.env.workers"
+fi
+if grep -Eq '^(TREASURY_PRIVATE_KEY|DEPOSIT_MNEMONIC)=.+' "$APP_DIR/.env"; then
+  echo "WARNING: TREASURY_PRIVATE_KEY / DEPOSIT_MNEMONIC are set in .env, which the API process loads." >&2
+  echo "         Move them to $APP_DIR/.env.workers and set DEPOSIT_XPUB in .env (see DEPLOY.md)." >&2
+fi
+if grep -Eq '^(ONLYASS_[A-Z0-9_]+|USDC_ADDRESS)=' "$APP_DIR/.env"; then
+  echo "WARNING: .env still uses pre-rename names (ONLYASS_*, USDC_ADDRESS) that nothing reads." >&2
+  echo "         Rename them to ONLYONE_* / USDG_ADDRESS (see .env.example)." >&2
+fi
+# systemd's EnvironmentFile= keeps a trailing '# comment' as part of the value.
+# Names only -- never print values, some of them are secrets.
+COMMENTED=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=[^#]*[[:space:]]#' "$APP_DIR/.env" | cut -d= -f1 || true)
+if [ -n "$COMMENTED" ]; then
+  echo "WARNING: these .env lines end in an inline '# comment', which systemd keeps as part of the value:" >&2
+  echo "$COMMENTED" | sed 's/^/           /' >&2
+  echo "         Move each comment onto its own line." >&2
+fi
 
 cd "$APP_DIR"
 

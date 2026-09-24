@@ -50,7 +50,7 @@ contract OnlyOneCreatorNFT is ERC1155, Ownable, ReentrancyGuard, Pausable {
 
     struct Drop {
         address creator;
-        address payToken; // address(0) = ETH, else must be $ONLYONE or a token this creator launched
+        address payToken; // address(0) = ETH, else must be onlyOneToken (the creator-launched-token path was removed with the launchpad). NOTE: pricing in $ONLYONE contradicts the platform rule that the token is never a payment method -- this contract must be reworked or archived before any production deploy (scripts/lib/deploy-guards.js)
         uint256 price; // per-copy price, in wei (ETH) or the token's smallest unit
         uint256 editionSize;
         uint256 minted;

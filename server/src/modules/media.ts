@@ -2,10 +2,11 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { prisma } from '../lib/prisma.js';
-import { presignPut, headObject, cdnSignedUrl, cdnPublicUrl } from '../lib/s3.js';
+import { presignPut, headObject, cdnSignedUrl, cdnPublicUrlOrNull } from '../lib/s3.js';
 import { transcodeQueue } from '../lib/redis.js';
 import { canViewMedia } from '../core/access.js';
 import { getOrCreateWatermarkedUrl, traceCode } from '../lib/watermark.js';
+import { storageKeyOf } from '../core/media-key.js';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm']);
 const MAX_BYTES = 4 * 1024 ** 3;
@@ -60,7 +61,7 @@ export const media: FastifyPluginAsync = async (app) => {
     let userId: string | null = null;
     try { await req.jwtVerify(); userId = req.user.id; } catch {}
     const { ok, m } = await canViewMedia(userId, req.params.id);
-    if (!ok || !m) return reply.code(403).send({ error: 'locked', preview: m?.previewKey ? cdnPublicUrl(`/${m.previewKey}`) : null });
+    if (!ok || !m) return reply.code(403).send({ error: 'locked', preview: m?.previewKey ? cdnPublicUrlOrNull(`/${m.previewKey}`) : null });
 
     const viewer = userId && userId !== m.ownerId
       ? await prisma.user.findUnique({ where: { id: userId }, select: { username: true } })
@@ -77,11 +78,14 @@ export const media: FastifyPluginAsync = async (app) => {
       };
     }
 
+    // A mass-DM copy's key carries a '#<messageId>' suffix; the object is
+    // the source's (core/media-key.ts).
+    const objectKey = storageKeyOf(m.key);
     if (viewer) {
-      const key = await getOrCreateWatermarkedUrl(m.id, m.key, userId!, viewer.username);
+      const key = await getOrCreateWatermarkedUrl(m.id, objectKey, userId!, viewer.username);
       return { type: 'image', url: cdnSignedUrl(`/${key}`, 900), expiresIn: 900 };
     }
-    return { type: 'image', url: cdnSignedUrl(`/${m.key}`, 900), expiresIn: 900 };
+    return { type: 'image', url: cdnSignedUrl(`/${objectKey}`, 900), expiresIn: 900 };
   });
 
   app.get('/mine', { preHandler: app.auth }, async (req: any) =>

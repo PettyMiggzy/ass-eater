@@ -37,7 +37,8 @@ export const FEES = {
   MIN_PAYOUT_CENTS: 2000,
   MIN_TIP_CENTS: 100,
   // Fallback floor on paid inbound DMs when PlatformConfig has no row yet.
-  // Admin can raise or lower the live value; it can never be zero.
+  // Admin moves the live value with PATCH /admin/vip-config
+  // (minDmPriceCents, 1..50000 -- it can never be zero).
   MIN_DM_PRICE_CENTS: 99,
 };
 
@@ -350,17 +351,47 @@ export async function charge(
   return { gross: chargeCents, fee, net, referral };
 }
 
-/** Wrap a money operation in a serializable transaction, retrying on serialization conflicts. */
+/**
+ * True for a transaction that lost a serialization race and is safe to retry.
+ * Prisma surfaces it as P2034 on its own queries; a $queryRaw (lockBalance's
+ * SELECT ... FOR UPDATE) that loses one reports the raw SQLSTATE through
+ * P2010 instead, and a deadlock is the same "try again" signal.
+ */
+function isRetryableConflict(e: unknown): boolean {
+  const err = e as { code?: string; meta?: { code?: string }; message?: string };
+  if (err?.code === 'P2034') return true;
+  if (err?.code === 'P2010' && (err.meta?.code === '40001' || err.meta?.code === '40P01')) return true;
+  return /\b(40001|40P01)\b|could not serialize access|deadlock detected/.test(String(err?.message ?? ''));
+}
+
+const MONEY_ATTEMPTS = 8;
+
+/**
+ * Wrap a money operation in a serializable transaction, retrying on
+ * serialization conflicts.
+ *
+ * Every charge writes the same hot rows (the platform's Account, a popular
+ * creator's), and Postgres serializes SERIALIZABLE writers to one row by
+ * failing all but one with 40001. Retrying immediately just re-collides with
+ * the same neighbours, so the retries back off with jitter (roughly
+ * 15ms -> 1s). Once the attempts are exhausted the caller gets a 503
+ * `busy_retry` -- the request did nothing and is safe to repeat -- rather than
+ * an opaque 500.
+ */
 export async function money<T>(
   prisma: Pick<PrismaClient, '$transaction'>,
   fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < MONEY_ATTEMPTS; i++) {
     try {
       return await prisma.$transaction(fn as never, { isolationLevel: 'Serializable', timeout: 15000 });
     } catch (e) {
-      const code = (e as { code?: string }).code;
-      if (code !== 'P2034' || i === 3) throw e;
+      if (!isRetryableConflict(e)) throw e;
+      if (i === MONEY_ATTEMPTS - 1) {
+        throw Object.assign(new Error('busy_retry'), { statusCode: 503, cause: e });
+      }
+      const base = Math.min(1000, 15 * 2 ** i);
+      await new Promise((r) => setTimeout(r, base / 2 + Math.random() * base));
     }
   }
   throw new Error('unreachable');

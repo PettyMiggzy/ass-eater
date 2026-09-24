@@ -1,8 +1,16 @@
 const { ethers } = require('hardhat');
+const { LIVE_ONLYONE, refuseLiveTokenRelaunch } = require('./lib/deploy-guards');
 
-// Deploys the real $ONLYONE token. Fixed supply, minted entirely to the
-// deployer (your treasury key) in the constructor -- there is no mint
-// function, so this is the one and only chance to set total supply.
+// NOT the live token. $ONLYONE is already live on Robinhood Chain at
+// 0x2c34ED86552076715272056D021cEab6080F1Ab5, deployed from the founder's own
+// launchpad -- not from this repo. This script deploys a SEPARATE fixed-supply
+// ERC-20 (OnlyOneToken.sol) and is only for testnets / local experiments. On
+// a production chain it refuses unless I_UNDERSTAND_ONLYONE_IS_ALREADY_LIVE
+// is set to the live address, because a second "OnlyOne"/"ONLYONE" is an
+// impostor that the deployer holds 100% of.
+//
+// Fixed supply, minted entirely to the deployer in the constructor -- there
+// is no mint function.
 //
 // Reads everything from the environment so nothing is hardcoded:
 //   ONLYONE_TOKEN_NAME     - defaults to "OnlyOne"
@@ -14,6 +22,7 @@ async function main() {
   const totalSupplyHuman = process.env.ONLYONE_TOTAL_SUPPLY;
   if (!totalSupplyHuman) throw new Error('Set ONLYONE_TOTAL_SUPPLY (whole tokens, e.g. "1000000000") in the environment before deploying.');
 
+  await refuseLiveTokenRelaunch(ethers, 'deploy another $ONLYONE token');
   const [deployer] = await ethers.getSigners();
   const totalSupply = ethers.parseEther(totalSupplyHuman);
 
@@ -27,9 +36,8 @@ async function main() {
   console.log('totalSupply:', totalSupplyHuman, symbol);
   console.log('entire supply minted to deployer:', deployer.address);
   console.log('\nThis is the one and only mint -- there is no mint function on the contract.');
-  console.log('Next: set ONLYONE_TOKEN_ADDRESS to the address above everywhere it is read');
-  console.log('(server/.env ONLYONE_TOKEN_ADDRESS, NEXT_PUBLIC_ONLYONE_TOKEN_ADDRESS in Vercel),');
-  console.log('then run scripts/seed-onlyone-pool.js to give it an initial market before anyone can trade it.');
+  console.log(`This is NOT the platform token. Do not point ONLYONE_TOKEN_ADDRESS or`);
+  console.log(`NEXT_PUBLIC_ONLYONE_TOKEN_ADDRESS at it -- the live $ONLYONE is ${LIVE_ONLYONE}.`);
 }
 
 main().catch((err) => {

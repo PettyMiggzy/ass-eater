@@ -2,15 +2,16 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { charge, money, isVip } from '../core/ledger.js';
-import { canViewPost } from '../core/access.js';
+import { canViewPost, creatorIsActive, inVipWindow, type ViewMemo } from '../core/access.js';
 
 // strip locked media down to preview thumbnails, and locked text down to a
 // teaser that can never be the whole thing
 const TEASER_CHARS = 80;
 
-const redact = async (userId: string | null, posts: any[]) =>
-  Promise.all(posts.map(async (p) => {
-    const ok = await canViewPost(userId, p);
+const redact = async (userId: string | null, posts: any[]) => {
+  const memo: ViewMemo = new Map();
+  return Promise.all(posts.map(async (p) => {
+    const ok = await canViewPost(userId, p, memo);
     // A PPV post's own text is a paywalled good in its own right, exactly
     // like a priced DM's (see modules/messages.ts) -- blank it outright, not
     // tease it. And truncating only redacts when there's genuinely more text
@@ -20,6 +21,7 @@ const redact = async (userId: string | null, posts: any[]) =>
     return { ...p, locked: !ok, text: ok ? p.text : teaser,
       media: p.media.map((m: any) => ok ? { id: m.id, mime: m.mime, status: m.status, previewKey: m.previewKey } : { id: m.id, mime: m.mime, previewKey: m.previewKey, locked: true }) };
   }));
+};
 
 /**
  * Keeps a post inside its VIP early-access window out of a non-VIP's list
@@ -108,6 +110,8 @@ export const posts: FastifyPluginAsync = async (app) => {
   app.get('/creator/:creatorId', async (req: any) => {
     let userId: string | null = null;
     try { await req.jwtVerify(); userId = req.user.id; } catch {}
+    // A suspended or banned creator's posts are gone for everyone but them.
+    if (req.params.creatorId !== userId && !(await creatorIsActive(String(req.params.creatorId ?? '')))) return [];
     const rows = await prisma.post.findMany({
       where: { creatorId: req.params.creatorId, removed: false, ...(await earlyAccessFilter(userId)) },
       include: { media: true, _count: { select: { unlocks: true } } },
@@ -119,7 +123,7 @@ export const posts: FastifyPluginAsync = async (app) => {
   app.get('/feed', { preHandler: app.auth }, async (req: any) => {
     const subs = await prisma.subscription.findMany({ where: { fanId: req.user.id, currentPeriodEnd: { gt: new Date() } }, select: { creatorId: true } });
     const rows = await prisma.post.findMany({
-      where: { creatorId: { in: subs.map(s => s.creatorId) }, removed: false, ...(await earlyAccessFilter(req.user.id)) },
+      where: { creatorId: { in: subs.map(s => s.creatorId) }, removed: false, creator: { user: { status: 'ACTIVE' } }, ...(await earlyAccessFilter(req.user.id)) },
       include: { media: true, creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } } },
       orderBy: { createdAt: 'desc' }, take: 30, skip: Number(req.query.offset ?? 0),
     });
@@ -129,6 +133,9 @@ export const posts: FastifyPluginAsync = async (app) => {
   app.post('/:id/unlock', { preHandler: app.auth }, async (req: any, reply) => {
     const p = await prisma.post.findUniqueOrThrow({ where: { id: req.params.id } });
     if (p.visibility !== 'PPV' || p.removed) return reply.code(400).send({ error: 'not_ppv' });
+    // The list hides a post inside its VIP window; this is the gate for a
+    // non-VIP who was handed the id.
+    if (await inVipWindow(p, req.user.id)) return reply.code(403).send({ error: 'vip_early_access' });
     if (await prisma.postUnlock.findUnique({ where: { fanId_postId: { fanId: req.user.id, postId: p.id } } })) return { ok: true, already: true };
     return unlockPost(req.user.id, p);
   });

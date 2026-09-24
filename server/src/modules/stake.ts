@@ -39,14 +39,32 @@ export const stake: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:creatorId/lock', { preHandler: app.auth }, async (req: any, reply) => {
+    // The perk price the fan saw -- see POST /subscriptions for why.
+    const { expectedUsdCents } = z.object({ expectedUsdCents: z.number().int().min(0) }).parse(req.body ?? {});
     const c = await prisma.creatorProfile.findUnique({ where: { userId: req.params.creatorId } });
     if (!c?.stakePerkEnabled || !c.stakeUsdCents) return reply.code(400).send({ error: 'no_perk' });
-    const creatorId = c.userId, usdCents = c.stakeUsdCents;
+    const creatorId = c.userId;
 
-    const px = await getUsdPrice('ONLYONE');
-    const tokenAmountAtLock = parseUnits((usdCents / 100 / px).toFixed(DECIMALS.ONLYONE), DECIMALS.ONLYONE).toString();
+    // tokenAmountAtLock is display only; the charge is plain credits. An
+    // unconfigured or failing $ONLYONE oracle must never block the purchase
+    // (it made every lock a 500 on a box with no price feed), so it is
+    // best-effort and '0' means "not known at lock time".
+    let tokenAmountAtLock = '0';
+    try {
+      const px = await getUsdPrice('ONLYONE');
+      if (Number.isFinite(px) && px > 0) {
+        tokenAmountAtLock = parseUnits((c.stakeUsdCents / 100 / px).toFixed(DECIMALS.ONLYONE), DECIMALS.ONLYONE).toString();
+      }
+    } catch (e) {
+      req.log.warn({ err: e }, 'stake lock: $ONLYONE price unavailable, recording 0');
+    }
 
     return money(prisma, async (tx) => {
+      // Re-read inside the transaction: the price charged is the one checked.
+      const cur = await tx.creatorProfile.findUniqueOrThrow({ where: { userId: creatorId } });
+      if (!cur.stakePerkEnabled || !cur.stakeUsdCents) throw Object.assign(new Error('no_perk'), { statusCode: 400 });
+      if (cur.stakeUsdCents !== expectedUsdCents) throw Object.assign(new Error('price_changed'), { statusCode: 409 });
+      const usdCents = cur.stakeUsdCents;
       const existing = await tx.tokenLock.findUnique({ where: { fanId_creatorId: { fanId: req.user.id, creatorId } } });
       if (existing?.status === 'ACTIVE' && existing.currentPeriodEnd > new Date()) {
         return tx.tokenLock.update({ where: { id: existing.id }, data: { autoRenew: true } });
@@ -61,9 +79,11 @@ export const stake: FastifyPluginAsync = async (app) => {
     });
   });
 
-  // Cancel = stop renewing; perk stays active until the current period ends (same as subscriptions)
+  // Cancel = stop renewing; perk stays active until the current period ends
+  // (same as subscriptions -- only autoRenew changes, status stays ACTIVE and
+  // workers/renewals.ts expires it at period end).
   app.delete('/:creatorId', { preHandler: app.auth }, async (req: any) => {
-    await prisma.tokenLock.updateMany({ where: { fanId: req.user.id, creatorId: req.params.creatorId }, data: { autoRenew: false, status: 'CANCELLED' } });
+    await prisma.tokenLock.updateMany({ where: { fanId: req.user.id, creatorId: req.params.creatorId, status: 'ACTIVE' }, data: { autoRenew: false } });
     return { ok: true };
   });
 

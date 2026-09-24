@@ -13,7 +13,12 @@ import { mailConfigured } from '../lib/mailer.js';
  */
 export const notifications: FastifyPluginAsync = async (app) => {
   app.get('/', { preHandler: app.auth }, async (req: any) => {
-    const q = z.object({ unreadOnly: z.coerce.boolean().default(false) }).parse(req.query);
+    // Not z.coerce.boolean(): that is Boolean(value), so the query strings
+    // 'false' and '0' both came out true and ?unreadOnly=false returned only
+    // unread items.
+    const q = z.object({
+      unreadOnly: z.enum(['true', 'false', '1', '0']).optional().transform((v) => v === 'true' || v === '1'),
+    }).parse(req.query ?? {});
     const [items, unread] = await Promise.all([
       prisma.notification.findMany({
         where: { userId: req.user.id, ...(q.unreadOnly ? { readAt: null } : {}) },

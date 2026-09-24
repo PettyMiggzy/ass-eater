@@ -1,6 +1,6 @@
-import { parseAbi, parseUnits, type Address } from 'viem';
+import { parseAbi, parseEventLogs, parseUnits, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, treasuryClient, treasury, TOKENS, HEDGE_STABLE, erc20Abi } from '../lib/chain.js';
+import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, HEDGE_STABLE, erc20Abi, envInt } from '../lib/chain.js';
 import { getUsdPrice } from '../lib/price.js';
 
 /**
@@ -38,25 +38,31 @@ import { getUsdPrice } from '../lib/price.js';
 // if that trade is deliberately being made.
 const AUTOMATIC = process.env.TOKEN_BURN_AUTOMATIC === 'true';
 const ROUTER = process.env.UNISWAP_V3_ROUTER_ADDRESS as Address | undefined;
-const POOL_FEE = Number(process.env.ONLYONE_POOL_FEE ?? 3000);
-const INTERVAL_MS = Number(process.env.TOKEN_BURN_INTERVAL_MS ?? 15 * 60_000);
+const POOL_FEE = envInt('ONLYONE_POOL_FEE', 3000, 1, 1_000_000);
+const INTERVAL_MS = envInt('TOKEN_BURN_INTERVAL_MS', 15 * 60_000, 60_000);
 // Don't trade dust: below this the gas and the spread cost more than the burn
 // is worth. Obligations simply accumulate until they clear it.
-const MIN_BATCH_CENTS = BigInt(process.env.TOKEN_BURN_MIN_CENTS ?? 5000);
+const MIN_BATCH_CENTS = BigInt(envInt('TOKEN_BURN_MIN_CENTS', 5000, 0));
 // Accepting any amount out would hand a sandwich bot the whole batch.
-const MAX_SLIPPAGE_BPS = BigInt(process.env.TOKEN_BURN_MAX_SLIPPAGE_BPS ?? 300);
+const MAX_SLIPPAGE_BPS = BigInt(envInt('TOKEN_BURN_MAX_SLIPPAGE_BPS', 300, 0, 10_000));
 
 // Not address(0): many ERC-20s reject transfers to it, which would revert the
 // burn rather than perform it. 0x…dEaD is the conventional sink and is
 // visible as a holder on any explorer, so the burn is legible to holders.
 const DEAD = '0x000000000000000000000000000000000000dEaD' as Address;
 
+// Only a Uniswap V3 SwapRouter02 single-pool route is implemented. The live
+// $ONLYONE pool is V4 (lib/price.ts), so with the default pool version this
+// worker refuses to start rather than sitting there deferring forever with a
+// vague warning. Porting it to a V4 router is its own piece of work.
+const V3_ONLY = process.env.ONLYONE_POOL_VERSION === 'v3';
+
 const routerAbi = parseAbi([
   'function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut)',
 ]);
 
 export async function runBurnBatch() {
-  if (!ROUTER || !TOKENS.ONLYONE.address) return; // nothing to swap through yet
+  if (!ROUTER || !TOKENS.ONLYONE.address || !V3_ONLY) return; // nothing to swap through yet
 
   const pending = await prisma.tokenBurn.findMany({ where: { executedAt: null }, orderBy: { createdAt: 'asc' }, take: 500 });
   if (!pending.length) return;
@@ -77,7 +83,7 @@ export async function runBurnBatch() {
     return;
   }
 
-  const treasuryBal = await publicClient.readContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'balanceOf', args: [treasury.address] });
+  const treasuryBal = await publicClient.readContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'balanceOf', args: [treasuryAccount().address] });
   if (treasuryBal < amountIn) {
     // The ledger says this is owed but the wallet cannot cover it. Leaving the
     // rows pending is right: a partial burn recorded as complete would quietly
@@ -86,16 +92,16 @@ export async function runBurnBatch() {
     return;
   }
 
-  const allowance = await publicClient.readContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'allowance', args: [treasury.address, ROUTER] });
+  const allowance = await publicClient.readContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'allowance', args: [treasuryAccount().address, ROUTER] });
   if (allowance < amountIn) {
-    const approval = await treasuryClient.writeContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'approve', args: [ROUTER, amountIn * 10n] });
+    const approval = await withTreasuryLock(() => treasuryWallet().writeContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'approve', args: [ROUTER, amountIn * 10n] }));
     await publicClient.waitForTransactionReceipt({ hash: approval });
   }
 
   // Straight to the dead address as the swap's recipient: the tokens are
   // destroyed in the same transaction that buys them, so there is no window in
   // which the treasury is holding tokens it has already promised to burn.
-  const hash = await treasuryClient.writeContract({
+  const hash = await withTreasuryLock(() => treasuryWallet().writeContract({
     address: ROUTER,
     abi: routerAbi,
     functionName: 'exactInputSingle',
@@ -108,7 +114,7 @@ export async function runBurnBatch() {
       amountOutMinimum,
       sqrtPriceLimitX96: 0n,
     }],
-  });
+  }));
 
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') {
@@ -116,11 +122,29 @@ export async function runBurnBatch() {
     return;
   }
 
+  // What was actually destroyed is the $ONLYONE that arrived at the dead
+  // address in this transaction -- read off the receipt, not assumed. The
+  // stablecoin spent (amountIn) is a different token in different units;
+  // recording it here made the on-chain-checkable burn figure wrong by
+  // construction.
+  const burned = tokensSentToDead(receipt.logs);
   await prisma.tokenBurn.updateMany({
     where: { id: { in: pending.map((r) => r.id) } },
-    data: { executedAt: new Date(), txHash: hash, tokensBurned: amountIn.toString() },
+    data: { executedAt: new Date(), txHash: hash, tokensBurned: burned.toString() },
   });
   console.log(`token-burn: burned ${totalCents} cents' worth across ${pending.length} obligations (${hash})`);
+}
+
+/** Sum of $ONLYONE Transfer amounts to the dead address in a receipt's logs. */
+export function tokensSentToDead(logs: { address: string; topics: readonly `0x${string}`[] | `0x${string}`[]; data: `0x${string}` }[]): bigint {
+  const transfers = parseEventLogs({ abi: erc20Abi, eventName: 'Transfer', logs: logs as any, strict: false });
+  let total = 0n;
+  for (const t of transfers) {
+    if (t.address.toLowerCase() !== TOKENS.ONLYONE.address?.toLowerCase()) continue;
+    if ((t.args as any).to?.toLowerCase() !== DEAD.toLowerCase()) continue;
+    total += BigInt((t.args as any).value ?? 0n);
+  }
+  return total;
 }
 
 /**
@@ -150,11 +174,13 @@ async function minimumOut(amountIn: bigint): Promise<bigint> {
   return (expected * (10_000n - MAX_SLIPPAGE_BPS)) / 10_000n;
 }
 
-if (AUTOMATIC && process.env.NODE_ENV !== 'test') {
+if (AUTOMATIC && process.env.NODE_ENV !== 'test' && !V3_ONLY) {
+  console.error('token-burn: TOKEN_BURN_AUTOMATIC=true but only a Uniswap V3 route is implemented and ONLYONE_POOL_VERSION is not "v3". Automatic burns are OFF; burn manually (POST /admin/token-burns/record).');
+} else if (AUTOMATIC && process.env.NODE_ENV !== 'test') {
   (async function loop() {
     for (;;) {
       try { await runBurnBatch(); } catch (e) { console.error('token-burn', e); }
       await new Promise((r) => setTimeout(r, INTERVAL_MS));
     }
-  })();
+  })().catch((e) => console.error('token-burn: loop crashed', e));
 }

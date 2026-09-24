@@ -2,14 +2,25 @@ import { Worker } from 'bullmq';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'fs/promises';
+import { hasAudio, hlsArgs, sanitizeImage } from './transcode-steps.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { prisma } from '../lib/prisma.js';
-import { s3, BUCKET } from '../lib/s3.js';
+import { s3, BUCKET, deletePrefix, deleteObject } from '../lib/s3.js';
 import { connection } from '../lib/redis.js';
 
 const run = promisify(execFile);
+
+// ffmpeg/ffprobe are system packages (deploy/provision.sh, app-setup.sh), not
+// npm dependencies. Without them every upload -- images included, for their
+// blurred preview -- failed with ENOENT and ended REJECTED with nothing in
+// the logs saying why. Say it once, loudly, at startup.
+if (process.env.NODE_ENV !== 'test') {
+  run('ffmpeg', ['-version']).catch(() =>
+    console.error('transcode: ffmpeg is NOT installed on this host -- every media upload will be REJECTED. apt-get install -y ffmpeg'));
+}
+
 const ct = (f: string) => f.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : f.endsWith('.ts') ? 'video/mp2t' : 'image/jpeg';
 
 async function download(key: string, dest: string) {
@@ -21,36 +32,73 @@ async function uploadDir(dir: string, prefix: string) {
     await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${prefix}/${f}`, Body: await readFile(join(dir, f)), ContentType: ct(f) }));
 }
 
+/**
+ * Media still PROCESSING? An admin takedown (DELETE /admin/media/:id) sets
+ * REJECTED and deletes the objects while a job may be mid-flight. Every write
+ * that could put content back re-checks this first, and the final READY flip
+ * is guarded on it -- otherwise the job re-uploaded the derivatives (and, for
+ * an image, the raw key) after the takedown and marked the media READY again.
+ */
+async function stillProcessing(id: string) {
+  const row = await prisma.media.findUnique({ where: { id }, select: { status: true } });
+  return row?.status === 'PROCESSING';
+}
+
+/** Remove what this job wrote after a takedown raced it. */
+async function undoAfterTakedown(m: { id: string; key: string }, outPrefix: string, wroteRaw: boolean) {
+  console.warn(`transcode: media ${m.id} was taken down mid-job; deleting what this job wrote`);
+  await deletePrefix(`${outPrefix}/`);
+  if (wroteRaw) await deleteObject(m.key);
+}
+
 new Worker('transcode', async (job) => {
-  const m = await prisma.media.findUniqueOrThrow({ where: { id: job.data.mediaId } });
+  const m = await prisma.media.findUnique({ where: { id: job.data.mediaId } });
+  // Deleted, or taken down before the job started: nothing to do.
+  if (!m || m.status !== 'PROCESSING') return;
   const work = await mkdtemp(join(tmpdir(), 'tc-'));
+  const outPrefix = `media/${m.ownerId}/${m.id}`;
+  let wroteRaw = false;
   try {
     const src = join(work, 'src'); await download(m.key, src);
-    const outPrefix = `media/${m.ownerId}/${m.id}`;
     const preview = join(work, 'preview.jpg');
 
     if (m.mime.startsWith('video/')) {
       const hls = join(work, 'hls'); await run('mkdir', ['-p', hls]);
       // 720p + 480p ladder, 6s segments, master playlist
-      await run('ffmpeg', ['-y', '-i', src,
-        '-filter_complex', '[0:v]split=2[v1][v2];[v1]scale=-2:720[v720];[v2]scale=-2:480[v480]',
-        '-map', '[v720]', '-map', '0:a?', '-c:v:0', 'libx264', '-b:v:0', '2800k', '-preset', 'veryfast', '-c:a', 'aac', '-b:a', '128k',
-        '-map', '[v480]', '-map', '0:a?', '-c:v:1', 'libx264', '-b:v:1', '1200k',
-        '-var_stream_map', 'v:0,a:0 v:1,a:1', '-master_pl_name', 'master.m3u8',
-        '-f', 'hls', '-hls_time', '6', '-hls_playlist_type', 'vod', '-hls_segment_filename', join(hls, 's%v_%03d.ts'), join(hls, 'p%v.m3u8')], { timeout: 3_600_000 });
+      await run('ffmpeg', hlsArgs(src, hls, await hasAudio(src)), { timeout: 3_600_000 });
       await run('ffmpeg', ['-y', '-ss', '00:00:01', '-i', src, '-frames:v', '1', '-vf', 'scale=480:-2,boxblur=20:5', preview]);
+      if (!(await stillProcessing(m.id))) return;
       await uploadDir(hls, outPrefix + '/hls');
       await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${outPrefix}/preview.jpg`, Body: await readFile(preview), ContentType: 'image/jpeg' }));
-      await prisma.media.update({ where: { id: m.id }, data: { status: 'READY', hlsKey: `${outPrefix}/hls/master.m3u8`, previewKey: `${outPrefix}/preview.jpg` } });
+      const done = await prisma.media.updateMany({ where: { id: m.id, status: 'PROCESSING' }, data: { status: 'READY', hlsKey: `${outPrefix}/hls/master.m3u8`, previewKey: `${outPrefix}/preview.jpg` } });
+      if (done.count === 0) await undoAfterTakedown(m, outPrefix, false);
     } else {
-      // Images are served directly from their raw key (see media.ts /:id/url) — this branch only
-      // needs to produce the blurred preview shown to fans who haven't unlocked the content yet.
+      // Images are served from their raw key (see media.ts /:id/url), so the
+      // raw object is replaced in place with a metadata-stripped re-encode
+      // before the media can become READY -- the unsanitized original is
+      // never served to anyone. (If the bucket keeps object versions, the
+      // prior version still exists there; this bucket is not versioned.)
+      const clean = await sanitizeImage(await readFile(src), m.mime);
+      await writeFile(src, clean);
+      // Then the blurred preview shown to fans who haven't unlocked it yet.
       await run('ffmpeg', ['-y', '-i', src, '-vf', 'scale=480:-2,boxblur=20:5', preview]);
+      // Re-checked right before the in-place overwrite: after a takedown the
+      // raw key is gone, and writing it back would resurrect the content.
+      if (!(await stillProcessing(m.id))) return;
+      wroteRaw = true;
+      await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: m.key, Body: clean, ContentType: m.mime }));
       await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${outPrefix}/preview.jpg`, Body: await readFile(preview), ContentType: 'image/jpeg' }));
-      await prisma.media.update({ where: { id: m.id }, data: { status: 'READY', previewKey: `${outPrefix}/preview.jpg` } });
+      const done = await prisma.media.updateMany({ where: { id: m.id, status: 'PROCESSING' }, data: { status: 'READY', previewKey: `${outPrefix}/preview.jpg`, bytes: clean.length } });
+      if (done.count === 0) await undoAfterTakedown(m, outPrefix, true);
     }
   } catch (e) {
-    await prisma.media.update({ where: { id: m.id }, data: { status: 'REJECTED' } });
+    // Only the LAST attempt rejects the media. Rejecting on an earlier one
+    // left it REJECTED while BullMQ retried, and a retry can no longer flip a
+    // REJECTED row to READY (the flip is guarded on PROCESSING above).
+    const attempts = job.opts.attempts ?? 1;
+    if (job.attemptsMade + 1 >= attempts) {
+      await prisma.media.updateMany({ where: { id: m.id, status: 'PROCESSING' }, data: { status: 'REJECTED' } });
+    }
     throw e;
   } finally {
     await rm(work, { recursive: true, force: true });

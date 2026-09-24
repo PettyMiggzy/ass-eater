@@ -115,6 +115,14 @@ already-accepted pattern: `low-level-calls` on the ETH payout `.call{value:
 
 ## What still needs a human before mainnet
 
+- **Payment asset.** Drops are priced in ETH or $ONLYONE only, and the
+  platform's standing rule is that $ONLYONE is never a payment method
+  (settlement is USDG credits). `scripts/deploy-creator-nft.js` refuses
+  production chains until the contract is reworked to settle in the
+  allowlisted stablecoin, or archived -- an owner decision. It also requires
+  `OWNER_ADDRESS` (not the deploying key) and an explicit
+  `NFT_CONTRACT_METADATA_URI`, since no route serves contract metadata yet.
+
 - **The metadata/image-serving API isn't built.** This contract handles
   minting, payment, and on-chain ownership correctly and is tested, but
   there is currently nothing that actually serves a blurred-vs-real image
@@ -123,8 +131,8 @@ already-accepted pattern: `low-level-calls` on the ETH payout `.call{value:
 - **No deploy to mainnet from this session** -- same boundary as every
   other contract here: a real deployer private key never gets generated,
   accepted, or transmitted in this chat. Use `npm run
-  creator-nft:deploy:robinhood-testnet` / `creator-nft:deploy:robinhood`
-  from your own machine with your own key.
+  creator-nft:deploy:robinhood-testnet` from your own machine with your own
+  key (the mainnet script refuses, see above).
 
 ## Local dev
 

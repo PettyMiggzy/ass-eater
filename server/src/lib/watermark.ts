@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import { createHash } from 'crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { s3, BUCKET } from './s3.js';
+import { s3, BUCKET, objectExists } from './s3.js';
 
 // Leak-deterrent watermark: a tiled, semi-transparent mark burned into the
 // pixels themselves, showing the viewer's username and a short code that
@@ -60,12 +60,17 @@ export async function watermarkImage(original: Buffer, label: string): Promise<B
 }
 
 const wmKey = (mediaId: string, viewerId: string) => `wm/${mediaId}/${viewerId}.jpg`;
+/** Every cached watermarked copy of one media row lives under this prefix (takedowns delete it whole). */
+export const wmPrefix = (mediaId: string) => `wm/${mediaId}/`;
 
 /** Cached per (media, viewer) pair -- generated once, reused on subsequent views. */
 export async function getOrCreateWatermarkedUrl(mediaId: string, sourceKey: string, viewerId: string, viewerLabel: string) {
   const key = wmKey(mediaId, viewerId);
-  const exists = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key })).then(() => true, () => false);
-  if (!exists) {
+  // HEAD, not GET: an unread GetObject body pins one of the SDK's 50 pooled
+  // sockets per cache hit, and every repeat view is a cache hit. objectExists
+  // also only treats a real not-found as "missing" -- a 403 or throttle used
+  // to trigger a pointless regeneration.
+  if (!(await objectExists(key))) {
     const src = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: sourceKey }));
     const original = Buffer.from(await src.Body!.transformToByteArray());
     const label = `${viewerLabel} · ${traceCode(mediaId, viewerId)}`;

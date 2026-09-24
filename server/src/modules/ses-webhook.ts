@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { prisma } from '../lib/prisma.js';
-import { verifySnsMessage, SnsMessage } from '../lib/sns-verify.js';
+import { verifySnsMessage, SnsMessage, isAllowedSnsTopic, isFreshSnsTimestamp } from '../lib/sns-verify.js';
 
 /**
  * Where SES's bounce and complaint notifications actually land.
@@ -13,8 +13,12 @@ import { verifySnsMessage, SnsMessage } from '../lib/sns-verify.js';
  * POST /webhooks/ses) once the server has a public URL.
  *
  * Deliberately unauthenticated -- SNS cannot carry a bearer token -- so
- * every message is cryptographically verified instead (see sns-verify.ts).
- * That verification is the actual access control here, not obscurity.
+ * every message must (1) name a topic listed in SES_SNS_TOPIC_ARNS, (2) carry
+ * a valid SNS signature and (3) be recent (see sns-verify.ts). All three are
+ * the access control here, not obscurity; the signature alone is not enough,
+ * because every AWS account can get SNS to sign messages for its own topic.
+ * Set SES_SNS_TOPIC_ARNS to the ARN of the Bounce/Complaint topic BEFORE
+ * subscribing this URL, or the subscription handshake itself is ignored.
  *
  * SNS delivers as Content-Type: text/plain, not application/json, so this
  * plugin registers its own parser for that -- scoped to this plugin only via
@@ -35,12 +39,33 @@ export const sesWebhook: FastifyPluginAsync = async (app) => {
 
     if (!msg || typeof msg.Type !== 'string') return reply.code(400).send();
 
+    // Our topic(s) only, checked before anything else -- including the
+    // SubscriptionConfirmation handshake. A valid signature proves SNS sent
+    // it, not that it came from our topic: without this, anyone with an AWS
+    // account could subscribe this URL to their own topic (we used to confirm
+    // it for them) and publish signed "Complaint" JSON naming any creator,
+    // permanently suppressing their notification email. See
+    // isAllowedSnsTopic() in lib/sns-verify.ts; unset SES_SNS_TOPIC_ARNS =
+    // nothing is accepted.
+    if (!isAllowedSnsTopic(msg.TopicArn)) {
+      app.log.warn({ type: msg.Type, topic: typeof msg.TopicArn === 'string' ? msg.TopicArn : null }, 'ses-webhook: ignored message from a topic not in SES_SNS_TOPIC_ARNS');
+      return reply.code(200).send();
+    }
+
     const ok = await verifySnsMessage(msg);
     if (!ok) {
       // Logged, not thrown -- SNS retries a non-2xx, and retrying a forged
       // message changes nothing. A 200 here just means "handled", not
       // "trusted"; nothing below this line runs when ok is false.
       app.log.warn({ type: msg.Type }, 'ses-webhook: rejected message with invalid SNS signature');
+      return reply.code(200).send();
+    }
+
+    // Timestamp is inside the signed string, so it cannot be edited -- but a
+    // genuinely signed message captured once could otherwise be replayed
+    // forever.
+    if (!isFreshSnsTimestamp(msg.Timestamp)) {
+      app.log.warn({ type: msg.Type }, 'ses-webhook: ignored stale SNS message');
       return reply.code(200).send();
     }
 

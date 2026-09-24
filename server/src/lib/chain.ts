@@ -1,15 +1,71 @@
-import { createPublicClient, createWalletClient, http, erc20Abi, parseAbiItem, type Address } from 'viem';
-import { mnemonicToAccount, privateKeyToAccount } from 'viem/accounts';
+import { createPublicClient, createWalletClient, http, toHex, erc20Abi, parseAbiItem, type Address, type PrivateKeyAccount, type WalletClient, type Chain, type Transport } from 'viem';
+import { HDKey, mnemonicToAccount, privateKeyToAccount, publicKeyToAddress } from 'viem/accounts';
 import { robinhood, robinhoodTestnet } from 'viem/chains';
+import { ECDH } from 'crypto';
+
+/**
+ * A numeric env var, or `fallback` when it is unset, blank, not a finite
+ * number, or outside [min, max]. A bad value must not become NaN: a NaN
+ * interval makes setTimeout fire after ~1ms, which turns a poll loop into a
+ * busy loop against the RPC.
+ */
+export function envInt(name: string, fallback: number, min = 0, max = Number.MAX_SAFE_INTEGER): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    console.warn(`env ${name}=${JSON.stringify(raw)} is not a number in [${min}, ${max}]; using ${fallback}`);
+    return fallback;
+  }
+  return n;
+}
 
 export const chain = process.env.CHAIN === 'robinhood-testnet' ? robinhoodTestnet : robinhood;
 export const CHAIN_ID = chain.id;
-export const CONFIRMATIONS = Number(process.env.CONFIRMATIONS ?? 12);
+export const CONFIRMATIONS = envInt('CONFIRMATIONS', 12, 1, 1000);
 
 export const publicClient = createPublicClient({ chain, transport: http(process.env.RPC_URL) });
 
-export const treasury = privateKeyToAccount(process.env.TREASURY_PRIVATE_KEY as `0x${string}`);
-export const treasuryClient = createWalletClient({ account: treasury, chain, transport: http(process.env.RPC_URL) });
+/**
+ * The treasury signer, built on first use rather than at import.
+ *
+ * The API process imports this file (wallet.ts, stake.ts, price.ts) but never
+ * signs anything with the treasury key, so it must not hold it: building the
+ * account at module load put the hot wallet's key in the memory of the one
+ * process that faces the internet. Only the workers call these. The API unit's
+ * EnvironmentFile no longer carries TREASURY_PRIVATE_KEY at all (deploy/).
+ */
+let _treasury: PrivateKeyAccount | undefined;
+let _treasuryClient: WalletClient<Transport, Chain, PrivateKeyAccount> | undefined;
+export function treasuryAccount(): PrivateKeyAccount {
+  if (!_treasury) {
+    const key = process.env.TREASURY_PRIVATE_KEY;
+    if (!key) throw new Error('TREASURY_PRIVATE_KEY is not set in this process (it belongs in the workers-only env file)');
+    _treasury = privateKeyToAccount(key as `0x${string}`);
+  }
+  return _treasury;
+}
+export function treasuryWallet(): WalletClient<Transport, Chain, PrivateKeyAccount> {
+  if (!_treasuryClient) _treasuryClient = createWalletClient({ account: treasuryAccount(), chain, transport: http(process.env.RPC_URL) });
+  return _treasuryClient;
+}
+
+/**
+ * Every transaction the treasury key signs goes through here, one at a time.
+ *
+ * Payouts, deposit-sweep gas top-ups, the hedge and the burn all send from the
+ * same key inside the one workers process. Letting them interleave means two
+ * of them can be handed the same nonce, and the loser's failure is exactly the
+ * ambiguous "did it go out or not" error the payout worker must not guess
+ * about. A process-local queue is enough because only one workers process
+ * exists (deploy/onlyone-workers.service).
+ */
+let treasuryQueue: Promise<unknown> = Promise.resolve();
+export function withTreasuryLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = treasuryQueue.then(fn, fn);
+  treasuryQueue = run.catch(() => undefined);
+  return run;
+}
 
 /**
  * Every dollar stablecoin this platform will accept as payment.
@@ -44,7 +100,10 @@ function parseStableEnv(raw: string | undefined): StableToken[] {
 
 export const STABLECOINS: StableToken[] = parseStableEnv(process.env.STABLECOINS).length
   ? parseStableEnv(process.env.STABLECOINS)
-  : [{ symbol: 'USDG', address: (process.env.USDG_ADDRESS as Address) ?? USDG_ADDRESS_MAINNET, decimals: Number(process.env.USDG_DECIMALS ?? 6) }];
+  // `||`, not `??`: a template line left as `USDG_ADDRESS=` is an empty
+  // string, which must fall back to the canonical address rather than become
+  // a contract address of "".
+  : [{ symbol: 'USDG', address: ((process.env.USDG_ADDRESS || USDG_ADDRESS_MAINNET) as Address), decimals: envInt('USDG_DECIMALS', 6, 0, 36) }];
 
 /**
  * The stablecoin the treasury swaps into when it hedges token deposits.
@@ -58,26 +117,37 @@ export const ACCEPTED_STABLES = new Map<string, StableToken>(
   STABLECOINS.map((s) => [s.address.toLowerCase(), s]));
 
 export const TOKENS: Record<'ONLYONE', { address: Address; decimals: number }> = {
-  ONLYONE:  { address: process.env.ONLYONE_TOKEN_ADDRESS as Address, decimals: Number(process.env.ONLYONE_DECIMALS ?? 18) },
+  ONLYONE:  { address: (process.env.ONLYONE_TOKEN_ADDRESS || undefined) as Address, decimals: envInt('ONLYONE_DECIMALS', 18, 0, 36) },
 };
 export const DECIMALS = { ETH: 18, ONLYONE: TOKENS.ONLYONE.decimals } as const;
 
 /**
- * Every ERC-20 this platform watches: the accepted stablecoins plus the
- * token -- but only once ONLYONE_TOKEN_ADDRESS is actually set. Pre-launch,
- * $ONLYONE doesn't exist on-chain yet (see MEMORY.md: the founder launches it
- * himself, later). Including an unconfigured token here would make
- * assertTokenDecimals() throw at every worker boot, which -- since this file
- * has no per-worker isolation, all workers share one process
- * (workers/index.ts) -- would crash deposit tracking for the stablecoins too,
- * along with every other worker bundled into that same process. Stablecoin
- * deposits (real money, live today) must keep working whether or not the
- * token has launched yet.
+ * Whether the deposit indexer credits $ONLYONE transfers at all.
+ *
+ * Off unless INDEX_ONLYONE_DEPOSITS=true, independently of whether
+ * ONLYONE_TOKEN_ADDRESS is set. The address is needed for other things (the
+ * price oracle, the hedge, the burn), but a token deposit has to be priced
+ * before it can be credited, and nothing in the ledger spends an $ONLYONE
+ * balance (MEMORY.md, "the $ONLYONE deposit balance now has no consumer").
+ * Watching it merely because the address got filled in handed anyone with
+ * 1 wei of the live token a way to exercise the unpriced-deposit path.
+ */
+export const INDEX_ONLYONE_DEPOSITS = process.env.INDEX_ONLYONE_DEPOSITS === 'true' && !!TOKENS.ONLYONE.address;
+
+/**
+ * Every ERC-20 the deposit indexer watches: the accepted stablecoins, plus the
+ * token only when INDEX_ONLYONE_DEPOSITS is on. Pre-launch the token address
+ * was unset and including it made assertTokenDecimals() throw at every worker
+ * boot; the flag keeps stablecoin deposits (real money, live today) working
+ * whatever the token's configuration is.
  */
 export const WATCHED_TOKENS: { symbol: string; address: Address; decimals: number }[] = [
   ...STABLECOINS,
-  ...(TOKENS.ONLYONE.address ? [{ symbol: 'ONLYONE', address: TOKENS.ONLYONE.address, decimals: TOKENS.ONLYONE.decimals }] : []),
+  ...(INDEX_ONLYONE_DEPOSITS ? [{ symbol: 'ONLYONE', address: TOKENS.ONLYONE.address, decimals: TOKENS.ONLYONE.decimals }] : []),
 ];
+
+/** A configured token whose on-chain decimals disagree with the config. Not transient: retrying will not fix it. */
+export class TokenDecimalsMismatchError extends Error {}
 
 /**
  * Confirms every configured token's decimals against the contract itself.
@@ -92,25 +162,79 @@ export const WATCHED_TOKENS: { symbol: string; address: Address; decimals: numbe
 export async function assertTokenDecimals() {
   for (const token of WATCHED_TOKENS) {
     const symbol = token.symbol;
-    if (!token.address) throw new Error(`${symbol}: no contract address configured`);
+    if (!token.address) throw new TokenDecimalsMismatchError(`${symbol}: no contract address configured`);
     const onChain = await publicClient.readContract({ address: token.address, abi: erc20Abi, functionName: 'decimals' });
     if (Number(onChain) !== token.decimals) {
-      throw new Error(`${symbol} at ${token.address} reports ${onChain} decimals, configured as ${token.decimals}. Refusing to price deposits against a wrong scale.`);
+      throw new TokenDecimalsMismatchError(`${symbol} at ${token.address} reports ${onChain} decimals, configured as ${token.decimals}. Refusing to price deposits against a wrong scale.`);
     }
   }
 }
 /** address -> ledger asset. Every accepted stablecoin maps to STABLE; the token to ONLYONE. */
 export const ADDR_TO_ASSET = new Map<string, 'STABLE' | 'ONLYONE'>([
   ...STABLECOINS.map((s) => [s.address.toLowerCase(), 'STABLE' as const] as [string, 'STABLE']),
-  [TOKENS.ONLYONE.address?.toLowerCase(), 'ONLYONE' as const] as [string, 'ONLYONE'],
+  [INDEX_ONLYONE_DEPOSITS ? TOKENS.ONLYONE.address.toLowerCase() : '', 'ONLYONE' as const] as [string, 'ONLYONE'],
 ].filter(([addr]) => !!addr));
 
 export const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
 export { erc20Abi };
 
-/** Per-user deposit addresses derived from one HD mnemonic. Index stored in DepositAddress.derivationIndex. */
-export const depositAccount = (index: number) =>
-  mnemonicToAccount(process.env.DEPOSIT_MNEMONIC!, { addressIndex: index });
+/**
+ * Per-user deposit addresses, one HD tree, index stored in
+ * DepositAddress.derivationIndex. Path m/44'/60'/0'/0/<index>, the same one
+ * viem's mnemonicToAccount uses.
+ *
+ * The API only ever needs the ADDRESS for an index, so it derives it from
+ * DEPOSIT_XPUB (the extended public key of m/44'/60'/0'/0) when that is set
+ * and never has to hold the mnemonic. Only the sweep worker, which signs
+ * with a deposit key, needs DEPOSIT_MNEMONIC. `scripts/derive-deposit-xpub`
+ * prints the xpub for a mnemonic. lib/chain.test.ts pins that both routes
+ * produce identical addresses.
+ */
+export const DEPOSIT_XPUB_PATH = "m/44'/60'/0'/0";
+
+export function depositAddressAt(index: number): Address {
+  const xpub = process.env.DEPOSIT_XPUB;
+  if (xpub) {
+    const child = HDKey.fromExtendedKey(xpub).deriveChild(index);
+    if (!child.publicKey) throw new Error('DEPOSIT_XPUB: could not derive a public key');
+    // HDKey hands back the 33-byte COMPRESSED key; an Ethereum address is the
+    // keccak of the 64-byte uncompressed point, so decompress first (Node's
+    // own secp256k1, no extra dependency).
+    const uncompressed = ECDH.convertKey(Buffer.from(child.publicKey), 'secp256k1', undefined, undefined, 'uncompressed') as Buffer;
+    return publicKeyToAddress(toHex(uncompressed));
+  }
+  return depositAccount(index).address;
+}
+
+/** The DEPOSIT_XPUB for a mnemonic (used by scripts/derive-deposit-xpub). */
+export function xpubFromMnemonic(mnemonic: string): string {
+  return mnemonicToAccount(mnemonic.trim(), { path: DEPOSIT_XPUB_PATH as `m/44'/60'/${string}` }).getHdKey().publicExtendedKey;
+}
+
+/** The signing account for a deposit address. Workers only (needs DEPOSIT_MNEMONIC). */
+export const depositAccount = (index: number) => {
+  if (!process.env.DEPOSIT_MNEMONIC) throw new Error('DEPOSIT_MNEMONIC is not set in this process (it belongs in the workers-only env file)');
+  return mnemonicToAccount(process.env.DEPOSIT_MNEMONIC, { addressIndex: index });
+};
 
 export const depositWalletClient = (index: number) =>
   createWalletClient({ account: depositAccount(index), chain, transport: http(process.env.RPC_URL) });
+
+/**
+ * Names the deploy template used before the $ONLYASS -> $ONLYONE rename and
+ * the USDC -> USDG switch. Nothing reads them, so a value set under one of
+ * them is silently ignored -- say so loudly at boot instead.
+ */
+export function warnLegacyEnv(log: (msg: string) => void = console.warn) {
+  const legacy = Object.keys(process.env).filter((k) => k.startsWith('ONLYASS_') || k === 'USDC_ADDRESS');
+  if (legacy.length) {
+    log(`IGNORED legacy env vars: ${legacy.join(', ')}. Rename ONLYASS_* to ONLYONE_* and USDC_ADDRESS to USDG_ADDRESS (see server/.env.example).`);
+  }
+  // systemd's EnvironmentFile= keeps a trailing '# comment' as part of the
+  // value. Only names this template defines are checked, so a secret that
+  // legitimately contains ' #' is never echoed.
+  const commented = Object.keys(process.env).filter((k) => /^(ONLYONE_|USDG_|STABLECOINS$|CHAIN|RPC_URL$|CONFIRMATIONS$|INDEXER_|SWEEP_|TRACK_NATIVE_ETH$|INDEX_ONLYONE_DEPOSITS$|CHAINLINK_|UNISWAP_|TREASURY_HEDGE_|TOKEN_BURN_|PAYOUT_|AUCTION_|LIVE_SWEEP_)/.test(k) && /\s#/.test(process.env[k] ?? ''));
+  if (commented.length) {
+    log(`env vars with an inline '# comment' in their value (systemd keeps it as part of the value -- move the comment to its own line): ${commented.join(', ')}`);
+  }
+}
