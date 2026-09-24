@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Head from 'next/head';
 import { Lockup } from '../components/Brand';
 import { ownerWalletAddress } from '../lib/wallet-auth';
+import { safeRedirectPath } from '../lib/safe-redirect';
 
 /**
  * Owner sign-in by wallet.
@@ -66,7 +67,7 @@ export default function Owner({ configured }) {
       });
       if (!verify.ok) throw new Error('That wallet is not the owner wallet for this site.');
       const { next } = await verify.json();
-      window.location.href = next || '/home';
+      window.location.href = safeRedirectPath(next, '/home');
     } catch (err) {
       // 4001 is the wallet's own "user rejected" code. Reporting it as a
       // failure would read as a bug when it was a deliberate cancel.

@@ -1,7 +1,10 @@
 # Most of this site sits behind a 27-state legal age-verification geoblock
-# (see proxy.js) and returns 451 to a crawler with no session in those
-# states -- this file can't fix that, only reflects it. sitemap.xml lists
-# only the pages actually exempt from that check.
+# (see proxy.js). A crawler with no session whose IP geolocates to one of
+# those states (or to the US with no resolvable state) gets gated pages
+# rewritten to the /blocked-region page with a 200; only /api and
+# /_next/data requests answer 451. This file, sitemap.xml and the pages
+# sitemap.xml lists are exempt from that check, so they read the same from
+# anywhere.
 User-agent: *
 Disallow: /api/
 Disallow: /admin

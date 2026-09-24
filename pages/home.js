@@ -4,10 +4,12 @@ import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getCreators, toPublicCreator, isPubliclyVisible } from '../lib/creators-store';
 import { byPlacement } from '../lib/founding';
-// `locked` on its own is not a gate -- see lib/token-gate.js. Blurring on the
-// bare flag put a blur and a padlock on creators with no threshold set.
-import { isTokenGated, formatGate } from '../lib/token-gate';
+import { tokenGateLive } from '../lib/token-gate';
 import { Icons, SolidIcons, Tagline } from '../components/Brand';
+import DemoBadge from '../components/public/DemoBadge';
+// `gated` on a card comes from isTokenGated (flag AND threshold) -- `locked`
+// on its own is not a gate, see lib/token-gate.js.
+import { toCreatorCard } from '../components/public/cards';
 
 export async function getServerSideProps({ req }) {
   const sessionUser = publicUser(await getSessionUser(req));
@@ -16,8 +18,9 @@ export async function getServerSideProps({ req }) {
     .filter(isPubliclyVisible)
     .sort(byPlacement) // Founding Creators first -- see lib/founding.js
     .slice(0, 8)
-    .map(toPublicCreator);
-  return { props: { creators, sessionUser } };
+    // Cards only: the strip needs a name and an avatar, never galleries.
+    .map((c) => toCreatorCard(toPublicCreator(c)));
+  return { props: { creators, sessionUser, gatingLive: tokenGateLive() } };
 }
 
 const PROMISES = [
@@ -29,14 +32,14 @@ const PROMISES = [
 
 // Things that are actually built and actually different, not marketing filler.
 // Real category browsing and the Founding Creator programme are both live
-// today; the token is a real, deployed differentiator but its actual perks
-// (gating, the VIP burn) aren't switched on yet -- same live/false pattern as
-// FEATURES below, so this section can't drift into overclaiming either.
-const DIFFERENTIATORS = [
+// today. Token gating (hold $ONLYONE, prove it with a wallet signature) is
+// live exactly when the token is configured -- computed, not typed, so this
+// section can't drift into overclaiming or underclaiming.
+const differentiators = (gatingLive) => [
   { Icon: Icons.tag, title: 'Real Category Browsing', sub: 'Search and browse by tag', live: true },
   { Icon: Icons.crown, title: 'Founding Creators', sub: 'First 100 get permanent priority placement', live: true },
   { Icon: Icons.heart, title: 'Favorites', sub: 'Save the creators you follow', live: true },
-  { Icon: Icons.coin, title: 'Crypto-Native', sub: '$ONLYONE unlocks gated creators', live: false },
+  { Icon: Icons.coin, title: 'Crypto-Native', sub: 'Holding $ONLYONE unlocks gated creators', live: gatingLive },
 ];
 
 const CREATOR_POINTS = [
@@ -68,14 +71,15 @@ const FEATURES = [
   { Icon: Icons.lock, title: 'PPV Content', sub: 'Unlock exclusives', live: false },
 ];
 
-export default function Home({ creators, sessionUser }) {
+export default function Home({ creators, sessionUser, gatingLive }) {
+  const DIFFERENTIATORS = differentiators(!!gatingLive);
   return (
     <>
       <Head>
         <title>OnlyOne — Creators</title>
         <meta
           name="description"
-          content="The next generation platform for creators and fans. Share, connect, subscribe and be part of a community without limits."
+          content="The next generation platform for creators and fans. Share, connect and be part of a community without limits."
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
@@ -93,8 +97,8 @@ export default function Home({ creators, sessionUser }) {
                 <span className="text-brand-pink">IT&apos;S PERSONAL.</span>
               </h1>
               <p className="text-gray-300 max-w-md mb-8">
-                OnlyOne is the next generation platform for creators and fans. Share, connect,
-                subscribe and be part of a community without limits.
+                OnlyOne is the next generation platform for creators and fans. Share, connect
+                and be part of a community without limits.
               </p>
               <div className="flex flex-wrap gap-3">
                 <a
@@ -150,7 +154,7 @@ export default function Home({ creators, sessionUser }) {
 
             <div className="grid md:grid-cols-2 gap-5">
               {[
-                { title: 'For Creators', copy: 'Take control of your content, your income and your freedom.', points: CREATOR_POINTS, cta: 'Start Creating', href: '/become-creator', img: '/images/demo_male_1.jpg', primary: true },
+                { title: 'For Creators', copy: 'Take control of your content, your income and your freedom.', points: CREATOR_POINTS, cta: 'Start Creating', href: '/signup?role=creator', img: '/images/demo_male_1.jpg', primary: true },
                 { title: 'For Fans', copy: 'Discover real creators, exclusive content and genuine connections.', points: FAN_POINTS, cta: 'Start Exploring', href: '/creators', img: '/images/demo_female_2.jpg', primary: false },
               ].map((card) => (
                 <div key={card.title} className="relative rounded-2xl overflow-hidden border border-white/10 bg-brand-card">
@@ -251,20 +255,23 @@ export default function Home({ creators, sessionUser }) {
                     <img
                       src={c.img}
                       alt={c.name}
-                      className={`w-full h-full object-cover object-top transition group-hover:scale-105 ${isTokenGated(c) ? 'blur-sm' : ''}`}
+                      className={`w-full h-full object-cover object-top transition group-hover:scale-105 ${c.gated ? 'blur-sm' : ''}`}
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                     <div className="absolute bottom-0 left-0 right-0 p-3">
                       <p className="font-bold text-sm truncate">{c.name}</p>
                       <p className="text-[11px] text-gray-400 truncate">{c.handle}</p>
                     </div>
-                    {c.founding && (
-                      <span className="absolute top-2 left-2 text-[9px] tracking-wider px-2 py-0.5 rounded-full bg-brand-pink text-white font-black">
-                        FOUNDING
-                      </span>
-                    )}
-                    {isTokenGated(c) && (
-                      <span title={`Hold ${formatGate(c)} to unlock`} className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 text-brand-pink">
+                    <div className="absolute top-2 left-2 flex flex-col items-start gap-1">
+                      {c.founding && (
+                        <span className="text-[9px] tracking-wider px-2 py-0.5 rounded-full bg-brand-pink text-white font-black">
+                          FOUNDING
+                        </span>
+                      )}
+                      {c.demo && <DemoBadge short />}
+                    </div>
+                    {c.gated && (
+                      <span title={`Hold ${c.gateLabel} to unlock`} className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 text-brand-pink">
                         <SolidIcons.lock className="h-3.5 w-3.5" />
                       </span>
                     )}

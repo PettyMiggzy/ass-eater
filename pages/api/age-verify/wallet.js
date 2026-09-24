@@ -2,7 +2,8 @@ import { recoverMessageAddress } from 'viem';
 import {
   AGE_VERIFIED_COOKIE_NAME,
   ageVerificationSecret,
-  createAgeVerificationToken,
+  bypassMaxAgeSeconds,
+  createBypassAgeVerificationToken,
 } from '../../../lib/age-verification';
 import {
   ownerWalletAddress,
@@ -27,10 +28,12 @@ import { checkRateLimit, clearFailures, clientIp, recordFailure } from '../../..
  * The key route is deliberately kept alongside this one. It is how the
  * owner's partner gets in, and she does not have his wallet.
  *
- * The cookie this sets is the ordinary 180-day age-verification cookie, so
- * removing the env var stops NEW logins and revokes no issued ones -- same
- * as rotating the key. `via` records which door was used, so a decoded
- * token can still be told apart from a real AgeChecker pass.
+ * The cookie this sets is a 180-day age-verification cookie bound to the
+ * configured OWNER_WALLET_ADDRESS (see createBypassAgeVerificationToken in
+ * lib/age-verification.js): changing or removing that env var revokes every
+ * cookie issued through this door on the next request. `via` records which
+ * door was used, so a decoded token can be told apart from a real AgeChecker
+ * pass.
  */
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES_PER_IP = 10;
@@ -81,10 +84,10 @@ export default async function handler(req, res) {
 
   clearFailures(bucket);
 
-  const token = await createAgeVerificationToken(ageVerificationSecret(), { via: 'owner-wallet' });
+  const token = await createBypassAgeVerificationToken(ageVerificationSecret(), 'owner-wallet');
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   res.setHeader('Set-Cookie', [
-    `${AGE_VERIFIED_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 180}${secure}`,
+    `${AGE_VERIFIED_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${bypassMaxAgeSeconds('owner-wallet')}${secure}`,
     // Burn the challenge. It is single-use by intent, and leaving it live
     // for the rest of its five minutes serves nothing.
     `${WALLET_NONCE_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,

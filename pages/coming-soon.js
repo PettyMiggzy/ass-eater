@@ -8,6 +8,7 @@ import {
 } from '../lib/social';
 import { Icons, Mark } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
+import { PLATFORM_FEE_PCT, MARKETPLACE_FEE_PCT, LISTING_FEE_PCT } from '../lib/brand';
 
 /**
  * What the public sees before launch, and what anyone without an invite
@@ -27,10 +28,17 @@ import WaitlistForm from '../components/WaitlistForm';
 // Only things that are actually true today. This page exists precisely
 // because the product is not finished, so overstating it here would be the
 // least excusable place to do it.
+//
+// Fee figures come from lib/brand.js, which derives them from lib/fees.js --
+// this card used to promise "a flat 10%, and nothing reduces it" while every
+// marketplace sale was charged 15%.
 const WHATS_COMING = [
-  { title: 'For creators', body: 'Your own page, your own prices, your own tags. Sell in the marketplace. Keep 90% — we take a flat 10%, and nothing reduces it.' },
+  {
+    title: 'For creators',
+    body: `Your own page, your own prices, your own tags. Sell in the marketplace and get paid for messages. We take ${PLATFORM_FEE_PCT}% on messages and ${MARKETPLACE_FEE_PCT}% on marketplace sales (${PLATFORM_FEE_PCT}% plus a ${LISTING_FEE_PCT}% listing fee).`,
+  },
   { title: 'For fans', body: 'Follow the people you actually came for, save them, message them. Sign up with just a username if you would rather not leave an email anywhere.' },
-  { title: 'Paid out in crypto', body: 'Creators are paid in dollars-backed stablecoin, wallet to wallet. No waiting two weeks for a bank.' },
+  { title: 'Paid out in crypto', body: 'Creators cash out what they earn in USDG, a dollar stablecoin, straight to their own wallet. Payout requests are reviewed by hand before they are sent.' },
 ];
 
 export default function ComingSoon() {

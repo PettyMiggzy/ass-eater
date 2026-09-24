@@ -1,5 +1,6 @@
 import { addNciiReport } from '../../lib/ncii-reports-store';
 import { consumeAttempt, clientIp } from '../../lib/rate-limit';
+import { sendNciiAlert } from '../../lib/alerts';
 
 // Deliberately generous. This queue is sorted oldest-first and carries a
 // federal 48-hour clock, so burying it under junk filings is a real way to
@@ -45,12 +46,21 @@ export default async function handler(req, res) {
   if (typeof contentLocation !== 'string' || !contentLocation.trim()) {
     return res.status(400).json({ error: 'Please describe or link the specific content' });
   }
-  if (!consentStatement) {
+  if (description !== undefined && description !== null && typeof description !== 'string') {
+    return res.status(400).json({ error: 'The description must be text' });
+  }
+  if (consentStatement !== true) {
     return res.status(400).json({ error: 'You must confirm the statement below to submit a report' });
   }
 
   try {
     const report = await addNciiReport({ reporterName, reporterContact, contentLocation, description, consentStatement });
+    // After the insert, never before and never instead of it: the filing is
+    // what the law cares about, the alert is how a human finds out about it
+    // before the 48-hour clock runs down. sendNciiAlert never throws and has
+    // its own timeout, and it carries only the report id and time -- no
+    // reporter name or contact goes to a third-party webhook.
+    await sendNciiAlert(report);
     return res.status(200).json({ ok: true, report: { id: report.id } });
   } catch (err) {
     console.error('[report-content] unexpected error:', err);

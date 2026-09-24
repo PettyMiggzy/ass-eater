@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Head from 'next/head';
 import { marketplacePaymentsLive } from '../lib/marketplace-payment-config';
+import { CREDIT_PURCHASE_FEE_PCT } from '../lib/brand';
 
 const ROBINHOOD_CHAIN = {
   chainId: '0x1237', // 4663 in hex
@@ -133,7 +134,7 @@ export default function GetCrypto({ paymentsLive }) {
               </p>
               <p className="text-xs text-gray-500">
                 You do <strong>not</strong> need $ONLYONE to use OnlyOne. That token is a separate, optional thing
-                — access and VIP status, never a way to pay. See the <a href="/token" className="underline">token page</a>.
+                — hold it to unlock token-gated creators, never a way to pay. See the <a href="/token" className="underline">token page</a>.
               </p>
             </div>
 
@@ -145,8 +146,11 @@ export default function GetCrypto({ paymentsLive }) {
               </div>
               <p className="text-gray-300 text-sm">
                 Head to the <a href="/credits" className="text-brand-pink underline">Credits</a> page, connect
-                your wallet, and pay with USDG — it becomes credits, ready to subscribe, tip, and unlock. One
-                credit is one dollar, less a 2% purchase fee, so $100 lands as 98 credits.
+                your wallet, and pay with USDG — it becomes credits you can spend in the Marketplace and on
+                messages to creators. (Tips and subscriptions aren’t available yet — don’t buy credits for
+                them.) One credit is one dollar, less a {CREDIT_PURCHASE_FEE_PCT}% purchase fee, so $100
+                lands as 98 credits. Credits are final: they can’t be refunded or cashed back out, so buy
+                what you plan to spend.
                 {!paymentsLive && ' This step isn’t configured yet.'}
               </p>
               {paymentsLive && (

@@ -2,9 +2,27 @@ import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { effectiveCreatorStatus } from '../../lib/creator-status';
 import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
-import { gateTokensOf, sanitizeGateTokens } from '../../lib/token-gate';
+import { sanitizeGateTokens, tokenGateLive } from '../../lib/token-gate';
 import { Icons, SolidIcons } from '../../components/Brand';
-import { formatCredits } from '../../lib/brand';
+import { formatCredits, DM_PRICE_FLOOR_CENTS } from '../../lib/brand';
+import {
+  readJson,
+  errorFrom,
+  adminPost,
+  adminGet,
+  adminUploadMedia,
+  dollars,
+  describeObligation,
+} from '../../components/admin/adminApi';
+import { draftFrom, fieldsFromDraft } from '../../components/admin/creatorDraft';
+
+// The oa_admin_media cookie (POST /api/admin/media-session) lasts 2 hours;
+// refreshed well inside that so a panel left open keeps loading private media.
+const MEDIA_SESSION_REFRESH_MS = 100 * 60 * 1000;
+// How often the takedown-request badge re-checks while the panel is open.
+const NCII_POLL_MS = 5 * 60 * 1000;
+
+const HEX_WALLET_RE = /^0x[0-9a-fA-F]{40}$/;
 
 export default function AdminPanel() {
   const [adminKey, setAdminKey] = useState('');
@@ -17,8 +35,8 @@ export default function AdminPanel() {
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState('creators');
   const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
-
-  const authHeaders = { 'x-admin-key': adminKey };
+  const [mediaSessionOk, setMediaSessionOk] = useState(true);
+  const [nciiSummary, setNciiSummary] = useState(null);
 
   // Live off the loaded roster, so the counter and the cap agree with what
   // the server will decide on save.
@@ -28,9 +46,10 @@ export default function AdminPanel() {
   const loadCreators = async (key) => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/creators', { headers: { 'x-admin-key': key ?? adminKey } });
-      if (!res.ok) throw new Error('Bad admin key');
-      const data = await res.json();
+      const { res, data } = await adminGet(key ?? adminKey, '/api/admin/creators');
+      if (!res.ok || !Array.isArray(data.creators)) {
+        throw new Error(res.status === 401 || res.status === 403 ? 'Bad admin key' : errorFrom(res, data, 'Could not load creators'));
+      }
       setCreators(data.creators);
       return true;
     } catch (err) {
@@ -41,11 +60,63 @@ export default function AdminPanel() {
     }
   };
 
-  const checkKey = async () => {
-    if (!adminKey.trim()) return;
-    const ok = await loadCreators(adminKey);
-    if (ok) setUnlocked(true);
+  // Private media (/api/media/...) is served to admins by a cookie, because an
+  // <img> or <video> tag cannot send the x-admin-key header. Without it every
+  // uploaded avatar and gallery item in this panel is a broken image.
+  const startMediaSession = async (key) => {
+    try {
+      const res = await fetch('/api/admin/media-session', { method: 'POST', headers: { 'x-admin-key': key } });
+      setMediaSessionOk(res.ok);
+      return res.ok;
+    } catch {
+      setMediaSessionOk(false);
+      return false;
+    }
   };
+
+  const loadNciiSummary = async (key) => {
+    try {
+      const { res, data } = await adminGet(key ?? adminKey, '/api/admin/ncii-reports?status=open');
+      if (res.ok && data.summary) setNciiSummary(data.summary);
+    } catch {
+      // The badge is a convenience; the TAKEDOWN tab itself shows the real list.
+    }
+  };
+
+  const checkKey = async () => {
+    const key = adminKey.trim();
+    if (!key) return;
+    const ok = await loadCreators(key);
+    if (!ok) return;
+    await startMediaSession(key);
+    loadNciiSummary(key);
+    setStatus('');
+    setUnlocked(true);
+  };
+
+  const lockPanel = async () => {
+    try {
+      await fetch('/api/admin/media-session', { method: 'DELETE' });
+    } catch {
+      // Best effort: the cookie also expires on its own within 2 hours.
+    }
+    setUnlocked(false);
+    setAdminKey('');
+    setCreators([]);
+    setSelectedId(null);
+    setDraft({});
+    setStatus('');
+  };
+
+  useEffect(() => {
+    if (!unlocked) return undefined;
+    const media = setInterval(() => { startMediaSession(adminKey); }, MEDIA_SESSION_REFRESH_MS);
+    const ncii = setInterval(() => { loadNciiSummary(adminKey); }, NCII_POLL_MS);
+    return () => {
+      clearInterval(media);
+      clearInterval(ncii);
+    };
+  }, [unlocked, adminKey]);
 
   const selected = creators.find((c) => String(c.id) === String(selectedId));
   // A suspension lifts itself once suspendedUntil passes -- nothing rewrites
@@ -53,55 +124,41 @@ export default function AdminPanel() {
   // through effectiveCreatorStatus() or the panel keeps reporting someone as
   // suspended long after they're publicly visible again.
   const selectedStatus = selected ? effectiveCreatorStatus(selected) : null;
+  // pages/api/admin/profile.js refuses pending -> suspended (a suspension
+  // lapses into 'active' after 30 days, which would publish an applicant who
+  // was never approved), so the option isn't offered for one.
+  const selectedIsPending = !!selected && (selected.status === 'pending' || selectedStatus === 'pending');
 
   useEffect(() => {
-    if (selected) {
-      setDraft({
-        name: selected.name || '',
-        handle: selected.handle || '',
-        bio: selected.bio || '',
-        price: selected.price || '',
-        subs: selected.subs || '',
-        posts: selected.posts ?? 0,
-        likes: selected.likes || '',
-        locked: !!selected.locked,
-        gateTokens: gateTokensOf(selected) || '',
-        trending: !!selected.trending,
-        premium: !!selected.premium,
-        founding: !!selected.founding,
-        status: effectiveCreatorStatus(selected) || 'active',
-        // Rides along with `status` on every save because the two are one
-        // coupled decision -- see the comment in pages/api/admin/profile.js,
-        // which is where the pair is actually settled. Sent verbatim so an
-        // automatic suspension still inside its 30 days keeps its own clock
-        // when the admin saves some unrelated field.
-        suspendedUntil: selected.suspendedUntil || null,
-        payoutMethod: selected.payoutMethod === 'eth' ? 'eth' : 'usdg',
-        walletAddress: selected.walletAddress || '',
-        socials: {
-          twitter: selected.socials?.twitter || '',
-          instagram: selected.socials?.instagram || '',
-          tiktok: selected.socials?.tiktok || '',
-          reddit: selected.socials?.reddit || '',
-          website: selected.socials?.website || '',
-        },
-      });
-    }
+    if (selected) setDraft(draftFrom(selected));
   }, [selectedId]);
 
+  /** Puts the server's copy of a creator into the roster (and the draft, if it's the one open). */
+  const applyCreator = (creator, { resyncDraft = false } = {}) => {
+    if (!creator || creator.id === undefined) return;
+    setCreators((prev) => prev.map((c) => (String(c.id) === String(creator.id) ? creator : c)));
+    if (resyncDraft && String(creator.id) === String(selectedId)) setDraft(draftFrom(creator));
+  };
+
   const saveProfile = async () => {
+    const built = fieldsFromDraft(draft);
+    if (built.error) { setStatus(`Error: ${built.error}`); return; }
     setBusy(true);
     setStatus('Saving...');
     try {
-      const res = await fetch('/api/admin/profile', {
-        method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ creatorId: selectedId, fields: { ...draft, img: selected.img } }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Save failed');
-      setCreators((prev) => prev.map((c) => (String(c.id) === String(selectedId) ? data.creator : c)));
-      setStatus('Saved.');
+      const { res, data } = await adminPost(adminKey, '/api/admin/profile', { creatorId: selectedId, fields: built.fields });
+      // A ban whose listing takedown failed comes back 500 WITH the saved
+      // creator: the ban stands, so the roster and draft must show it.
+      if (data.creator) applyCreator(data.creator, { resyncDraft: true });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Save failed'));
+      const was = selected;
+      const now = data.creator;
+      const notes = [];
+      if (now && !isFoundingCreator(was) && isFoundingCreator(now)) notes.push('Founding Creator granted.');
+      if (now && effectiveCreatorStatus(now) === 'suspended' && now.suspendedUntil) {
+        notes.push(`Suspended until ${new Date(now.suspendedUntil).toLocaleDateString()}.`);
+      }
+      setStatus(['Saved.', ...notes].join(' '));
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -111,22 +168,18 @@ export default function AdminPanel() {
 
   const uploadAvatar = async (file) => {
     if (!file) return;
+    const creatorId = selectedId;
     setBusy(true);
     setStatus('Uploading avatar...');
     try {
-      const res = await fetch('/api/admin/avatar', {
-        method: 'POST',
-        headers: {
-          ...authHeaders,
-          'x-creator-id': String(selectedId),
-          'x-file-name': file.name,
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-        body: file,
+      const data = await adminUploadMedia({
+        adminKey,
+        creatorId,
+        purpose: 'avatar',
+        file,
+        onProgress: (p) => setStatus(`Uploading avatar... ${Math.round(p)}%`),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
-      setCreators((prev) => prev.map((c) => (String(c.id) === String(selectedId) ? data.creator : c)));
+      applyCreator(data.creator);
       setStatus('Avatar updated.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -137,25 +190,19 @@ export default function AdminPanel() {
 
   const uploadGalleryItem = async (file, aiGenerated) => {
     if (!file) return;
+    const creatorId = selectedId;
     setBusy(true);
     setStatus('Uploading content...');
     try {
-      const res = await fetch('/api/admin/upload', {
-        method: 'POST',
-        headers: {
-          ...authHeaders,
-          'x-creator-id': String(selectedId),
-          'x-file-name': file.name,
-          'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
-          'x-current-gallery': JSON.stringify(selected.gallery || []),
-          'x-ai-generated': aiGenerated ? 'true' : 'false',
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-        body: file,
+      const data = await adminUploadMedia({
+        adminKey,
+        creatorId,
+        purpose: 'gallery',
+        file,
+        aiGenerated,
+        onProgress: (p) => setStatus(`Uploading content... ${Math.round(p)}%`),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
-      setCreators((prev) => prev.map((c) => (String(c.id) === String(selectedId) ? data.creator : c)));
+      applyCreator(data.creator);
       setStatus('Content added.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -164,19 +211,28 @@ export default function AdminPanel() {
     }
   };
 
-  const deleteGalleryItem = async (index) => {
+  // Deletes by src, with the index only as a hint: the roster here is loaded
+  // once and goes stale while the creator keeps editing, and this is the path
+  // used to take a reported photo down -- it must remove the item that was
+  // clicked or nothing at all (409), never whatever now sits at that index.
+  const deleteGalleryItem = async (item, index) => {
+    if (!item || typeof item.src !== 'string') return;
     setBusy(true);
     setStatus('Removing...');
     try {
-      const res = await fetch('/api/admin/gallery-delete', {
-        method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ creatorId: selectedId, index, knownGallery: selected.gallery || [] }),
+      const { res, data } = await adminPost(adminKey, '/api/admin/gallery-delete', {
+        creatorId: selectedId,
+        src: item.src,
+        index,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Delete failed');
-      setCreators((prev) => prev.map((c) => (String(c.id) === String(selectedId) ? data.creator : c)));
-      setStatus('Removed.');
+      if (res.status === 409) {
+        await loadCreators();
+        setStatus('That item had already changed or been removed -- the gallery has been refreshed. Check it and try again if needed.');
+        return;
+      }
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Delete failed'));
+      applyCreator(data.creator);
+      setStatus('Removed (the file is deleted from storage too).');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -188,16 +244,11 @@ export default function AdminPanel() {
     setBusy(true);
     setStatus('Creating model...');
     try {
-      const res = await fetch('/api/admin/create', {
-        method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Create failed');
+      const { res, data } = await adminPost(adminKey, '/api/admin/create', {});
+      if (!res.ok || !data.creator) throw new Error(errorFrom(res, data, 'Create failed'));
       setCreators((prev) => [...prev, data.creator]);
       setSelectedId(data.creator.id);
-      setStatus('Model created — edit their details below.');
+      setStatus('Model created as a hidden, pending draft. Fill in the details and a handle, add a §2257 record for them in the Records tab, then set Status to Active.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -205,21 +256,42 @@ export default function AdminPanel() {
     }
   };
 
+  // A creator with money or unshipped paid orders attached is refused (409)
+  // with the exact obligations; deleting anyway needs a second, explicit
+  // confirmation and is sent with force:true. Deleting removes their login,
+  // so that balance / those orders become unreachable -- banning keeps them.
   const removeCreator = async (id) => {
-    if (!confirm('Delete this model entirely? This cannot be undone.')) return;
+    if (!confirm('Delete this model entirely, including their login? This cannot be undone.')) return;
     setBusy(true);
     setStatus('Deleting model...');
     try {
-      const res = await fetch('/api/admin/delete', {
-        method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ creatorId: id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Delete failed');
-      setCreators(data.creators);
-      if (String(selectedId) === String(id)) setSelectedId(null);
-      setStatus('Model deleted.');
+      let force = false;
+      for (;;) {
+        const { res, data } = await adminPost(adminKey, '/api/admin/delete', { creatorId: id, force });
+        if (res.status === 409 && data.code === 'creator_has_obligations' && !force) {
+          const lines = (Array.isArray(data.obligations) ? data.obligations : [])
+            .map((o) => `• ${describeObligation(o, creators)}`)
+            .join('\n');
+          const ok = confirm(
+            `${data.error || 'This creator still has money or orders attached.'}\n\n${lines}\n\n`
+            + 'Deleting anyway removes their login and leaves all of this unreachable. Banning them instead keeps it '
+            + 'recoverable.\n\nDelete anyway?',
+          );
+          if (!ok) { setStatus('Nothing was deleted.'); return; }
+          force = true;
+          continue;
+        }
+        if (!res.ok || !Array.isArray(data.creators)) throw new Error(errorFrom(res, data, 'Delete failed'));
+        setCreators(data.creators);
+        if (String(selectedId) === String(id)) setSelectedId(null);
+        const stranded = Array.isArray(data.stranded) ? data.stranded : [];
+        setStatus(
+          stranded.length
+            ? `Model deleted. Left behind: ${stranded.map((o) => describeObligation(o, creators)).join('; ')}.`
+            : 'Model deleted.',
+        );
+        return;
+      }
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -227,21 +299,27 @@ export default function AdminPanel() {
     }
   };
 
+  // Creators with money or unshipped orders attached are SKIPPED, not
+  // deleted, and listed -- delete them one at a time (with the explicit
+  // override) or ban them.
   const removeAllCreators = async (includeSeed) => {
     const label = includeSeed ? 'ALL models, including the seed/demo ones,' : 'all REAL (non-seed) models';
-    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    if (!confirm(`Delete ${label} and their logins? Creators who still have a credit balance, a pending payout or an unshipped order are skipped. This cannot be undone.`)) return;
     setBusy(true);
     setStatus('Deleting...');
     try {
-      const res = await fetch(`/api/admin/delete-all${includeSeed ? '?includeSeed=true' : ''}`, {
-        method: 'POST',
-        headers: authHeaders,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Delete failed');
+      const { res, data } = await adminPost(adminKey, '/api/admin/delete-all', { includeSeed: includeSeed === true });
+      if (!res.ok || !Array.isArray(data.creators)) throw new Error(errorFrom(res, data, 'Delete failed'));
       setCreators(data.creators);
       setSelectedId(null);
-      setStatus(includeSeed ? 'All models deleted, seed rows included.' : 'Real models deleted, seed/demo rows kept.');
+      const skipped = Array.isArray(data.skipped) ? data.skipped : [];
+      const stranded = Array.isArray(data.stranded) ? data.stranded : [];
+      const parts = [includeSeed ? 'Models deleted, seed rows included.' : 'Real models deleted, seed/demo rows kept.'];
+      if (skipped.length) {
+        parts.push(`Skipped ${skipped.length} with money or orders attached (delete individually or ban): ${skipped.map((o) => describeObligation(o, creators)).join('; ')}.`);
+      }
+      if (stranded.length) parts.push(`Left behind: ${stranded.map((o) => describeObligation(o, creators)).join('; ')}.`);
+      setStatus(parts.join(' '));
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -252,6 +330,7 @@ export default function AdminPanel() {
   if (!unlocked) {
     return (
       <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6">
+        <Head><title>Admin Panel - OnlyOne</title></Head>
         <div className="premium-card p-8 max-w-sm w-full">
           <h1 className="text-2xl font-black text-brand-gold mb-4">Admin Access</h1>
           <input
@@ -271,14 +350,32 @@ export default function AdminPanel() {
     );
   }
 
+  const nciiOpen = Number(nciiSummary?.open) || 0;
+  const nciiOldestHours = nciiSummary?.oldestOpenCreatedAt
+    ? Math.floor((Date.now() - new Date(nciiSummary.oldestOpenCreatedAt).getTime()) / (1000 * 60 * 60))
+    : null;
+  const nciiUrgent = nciiOpen > 0 && nciiOldestHours !== null && nciiOldestHours >= 36;
+
+  const tabs = [
+    { key: 'creators', label: 'CREATORS' },
+    { key: 'reports', label: 'REPORTS' },
+    { key: 'violations', label: 'VIOLATIONS' },
+    { key: 'takedowns', label: 'TAKEDOWN REQUESTS', badge: nciiOpen },
+    { key: 'records', label: '§2257 RECORDS' },
+    { key: 'waitlist', label: 'WAITLIST' },
+    { key: 'payouts', label: 'PAYOUTS' },
+  ];
+
+  const gateLive = tokenGateLive();
+
   return (
     <>
       <Head><title>Admin Panel - OnlyOne</title></Head>
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
         <div className="max-w-6xl mx-auto">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h1 className="text-3xl font-black premium-title">Model Admin Panel</h1>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               {page === 'creators' && creators.length > 0 && (
                 <>
                   <button
@@ -302,56 +399,54 @@ export default function AdminPanel() {
                   + Add Model
                 </button>
               )}
+              <button
+                onClick={lockPanel}
+                className="text-sm px-4 py-2 rounded-md border border-white/15 text-gray-400 hover:text-white transition"
+              >
+                Lock
+              </button>
             </div>
           </div>
 
-          <div className="flex gap-6 border-b border-brand-gold/20 mb-6">
-            <button
-              onClick={() => setPage('creators')}
-              className={`pb-3 font-bold text-sm ${page === 'creators' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
-            >
-              CREATORS
-            </button>
-            <button
-              onClick={() => setPage('reports')}
-              className={`pb-3 font-bold text-sm ${page === 'reports' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
-            >
-              REPORTS
-            </button>
-            <button
-              onClick={() => setPage('violations')}
-              className={`pb-3 font-bold text-sm ${page === 'violations' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
-            >
-              VIOLATIONS
-            </button>
+          {nciiOpen > 0 && (
             <button
               onClick={() => setPage('takedowns')}
-              className={`pb-3 font-bold text-sm ${page === 'takedowns' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+              className={`w-full text-left mb-4 px-4 py-3 rounded-md border text-sm ${
+                nciiUrgent ? 'bg-red-900/40 border-red-500 text-red-200' : 'bg-yellow-900/20 border-yellow-500/50 text-yellow-200'
+              }`}
             >
-              TAKEDOWN REQUESTS
+              {nciiOpen} open TAKE IT DOWN request{nciiOpen === 1 ? '' : 's'}
+              {nciiOldestHours !== null && ` -- oldest filed ${nciiOldestHours}h ago`}. Each must be reviewed and, if valid,
+              removed within 48 hours of filing.{nciiOldestHours !== null && nciiOldestHours >= 48 ? ' OVERDUE.' : ''}
             </button>
-            <button
-              onClick={() => setPage('records')}
-              className={`pb-3 font-bold text-sm ${page === 'records' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
-            >
-              §2257 RECORDS
-            </button>
-            <button
-              onClick={() => setPage('waitlist')}
-              className={`pb-3 font-bold text-sm ${page === 'waitlist' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
-            >
-              WAITLIST
-            </button>
-            <button
-              onClick={() => setPage('payouts')}
-              className={`pb-3 font-bold text-sm ${page === 'payouts' ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
-            >
-              PAYOUTS
-            </button>
+          )}
+
+          {!mediaSessionOk && (
+            <div className="mb-4 px-4 py-3 rounded-md bg-yellow-900/20 border border-yellow-500/40 text-yellow-200 text-sm">
+              Uploaded photos and videos may not display in this panel (the private-media session could not be started).
+              <button onClick={() => startMediaSession(adminKey)} className="ml-2 underline">Retry</button>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-x-6 gap-y-2 border-b border-brand-gold/20 mb-6">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setPage(t.key)}
+                className={`pb-3 font-bold text-sm ${page === t.key ? 'text-brand-gold border-b-2 border-brand-gold' : 'text-gray-500'}`}
+              >
+                {t.label}
+                {t.badge > 0 && (
+                  <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-full text-white ${nciiUrgent ? 'bg-red-600' : 'bg-yellow-600'}`}>
+                    {t.badge}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
 
           {status && (
-            <div className="mb-6 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-brand-secondary text-sm">
+            <div className="mb-6 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-brand-secondary text-sm whitespace-pre-line">
               {status}
             </div>
           )}
@@ -361,7 +456,12 @@ export default function AdminPanel() {
           ) : page === 'violations' ? (
             <ViolationsPanel adminKey={adminKey} />
           ) : page === 'takedowns' ? (
-            <NciiReportsPanel adminKey={adminKey} creators={creators} />
+            <NciiReportsPanel
+              adminKey={adminKey}
+              creators={creators}
+              onSummary={setNciiSummary}
+              onCreatorChanged={(c) => applyCreator(c, { resyncDraft: true })}
+            />
           ) : page === 'records' ? (
             <PerformerRecordsPanel adminKey={adminKey} creators={creators} />
           ) : page === 'waitlist' ? (
@@ -381,7 +481,10 @@ export default function AdminPanel() {
                   <button
                     key={c.id}
                     onClick={() => setSelectedId(c.id)}
-                    className={`w-full text-left premium-card p-4 flex items-center gap-3 transition ${
+                    // Switching creators mid-save would resync the wrong
+                    // draft; the list waits for the request to finish.
+                    disabled={busy}
+                    className={`w-full text-left premium-card p-4 flex items-center gap-3 transition disabled:opacity-70 ${
                       String(selectedId) === String(c.id) ? 'border-brand-gold' : ''
                     }`}
                   >
@@ -391,7 +494,8 @@ export default function AdminPanel() {
                         {c.name}
                         {c.premium && <SolidIcons.verified className="h-4 w-4 shrink-0 text-brand-pink" title="Premium" />}
                       </p>
-                      <p className="text-xs text-gray-400 truncate">{c.handle}</p>
+                      <p className="text-xs text-gray-400 truncate">{c.handle || '(no handle yet)'}</p>
+                      {(c.seed || c.demo) && <p className="text-[10px] text-gray-500">Demo — not for sale</p>}
                     </div>
                     {cStatus === 'pending' && (
                       <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-bold">PENDING</span>
@@ -428,16 +532,22 @@ export default function AdminPanel() {
                         Change PFP
                         <input
                           type="file"
-                          accept="image/*"
+                          accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/heic,image/heif"
                           className="hidden"
                           disabled={busy}
-                          onChange={(e) => uploadAvatar(e.target.files[0])}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
+                            uploadAvatar(file);
+                          }}
                         />
                       </label>
+                      <p className="text-[10px] text-gray-500 mt-1">Image only, up to 10MB. The old photo is deleted.</p>
                     </div>
                     <button
                       onClick={() => removeCreator(selected.id)}
-                      className="ml-auto text-xs px-3 py-2 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition"
+                      disabled={busy}
+                      className="ml-auto text-xs px-3 py-2 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
                     >
                       Delete Model
                     </button>
@@ -445,7 +555,7 @@ export default function AdminPanel() {
 
                   <div className="grid sm:grid-cols-2 gap-4">
                     <Field label="Name" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} />
-                    <Field label="Handle" value={draft.handle} onChange={(v) => setDraft({ ...draft, handle: v })} />
+                    <Field label="Handle (required to go live)" value={draft.handle} onChange={(v) => setDraft({ ...draft, handle: v })} />
                     <Field label="Price" value={draft.price} onChange={(v) => setDraft({ ...draft, price: v })} />
                     <Field label="Subscribers" value={draft.subs} onChange={(v) => setDraft({ ...draft, subs: v })} />
                     <Field label="Posts" value={draft.posts} onChange={(v) => setDraft({ ...draft, posts: v })} />
@@ -477,22 +587,31 @@ export default function AdminPanel() {
 
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm text-gray-400 mb-2">Get Paid In</label>
-                      <select
-                        value={draft.payoutMethod}
-                        onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
-                        className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
-                      >
-                        <option value="usdg">USDG (dollars)</option>
-                        <option value="eth">ETH</option>
-                      </select>
+                      <Field label="Payout Wallet Address (paid in USDG)" value={draft.walletAddress} onChange={(v) => setDraft({ ...draft, walletAddress: v })} />
+                      {draft.walletAddress && !HEX_WALLET_RE.test(String(draft.walletAddress).trim()) && (
+                        <p className="text-xs text-yellow-400/80 mt-1">Must be 0x followed by 40 hex characters, or blank.</p>
+                      )}
+                      <p className="text-[10px] text-gray-500 mt-1">
+                        Payouts are USDG only, of earned credits only, and are sent by hand from the Payouts tab.
+                      </p>
                     </div>
-                    <Field label="Payout Wallet Address" value={draft.walletAddress} onChange={(v) => setDraft({ ...draft, walletAddress: v })} />
+                    <div>
+                      <Field
+                        label={`Price for a fan to message them (USD, blank = $${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)} default)`}
+                        value={draft.dmPrice}
+                        onChange={(v) => setDraft({ ...draft, dmPrice: v })}
+                      />
+                      <p className="text-[10px] text-gray-500 mt-1">
+                        Never less than ${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)}. Creators reply for free.
+                      </p>
+                    </div>
                   </div>
 
                   {selectedStatus === 'pending' && (
                     <div className="px-4 py-3 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
-                      This profile is pending review and hidden from the public platform. Set status to Active below to publish it.
+                      This profile is pending review and hidden from the public platform. To publish it: give it a handle,
+                      add a §2257 performer record linked to this creator in the Records tab, then set Status to Active.
+                      Every public field is screened again when it goes live.
                     </div>
                   )}
 
@@ -500,10 +619,10 @@ export default function AdminPanel() {
                     <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={draft.locked}
+                        checked={!!draft.locked}
                         onChange={(e) => setDraft({ ...draft, locked: e.target.checked })}
                       />
-                      Token-gated (must hold $ONLYONE)
+                      Token-gated (fans must hold $ONLYONE)
                     </label>
                     {/* The threshold has to be editable wherever the flag is.
                         Without it this panel could only produce the flag-with-
@@ -527,10 +646,17 @@ export default function AdminPanel() {
                         )}
                       </label>
                     )}
+                    {draft.locked && (
+                      <p className="basis-full text-xs text-gray-500 -mt-3">
+                        {gateLive
+                          ? 'Fans unlock the gallery by signing with a wallet that holds at least this many $ONLYONE -- the balance is read on-chain and nothing is spent. The creator always sees their own page. Admins see gated media in this panel, but see locked tiles on the public profile like any other visitor.'
+                          : 'Token gating switches on once the $ONLYONE token contract is configured. Until then the flag is saved but nobody is gated.'}
+                      </p>
+                    )}
                     <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={draft.trending}
+                        checked={!!draft.trending}
                         onChange={(e) => setDraft({ ...draft, trending: e.target.checked })}
                       />
                       Trending
@@ -538,7 +664,7 @@ export default function AdminPanel() {
                     <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={draft.premium}
+                        checked={!!draft.premium}
                         onChange={(e) => setDraft({ ...draft, premium: e.target.checked })}
                       />
                       Premium (gold check, 200 content slots)
@@ -556,16 +682,35 @@ export default function AdminPanel() {
                       <input
                         type="checkbox"
                         checked={!!draft.founding}
-                        disabled={foundingCapReached && !draft.founding}
+                        disabled={foundingCapReached && !draft.founding && !isFoundingCreator(selected)}
                         onChange={(e) => setDraft({ ...draft, founding: e.target.checked })}
                       />
                       Founding Creator — {foundingCount} of {FOUNDING_LIMIT} taken
                       {foundingCapReached && !draft.founding && ' (full)'}
                     </label>
                     {draft.founding && selected.foundingSince && (
-                      <p className="text-xs text-gray-500 -mt-1">
+                      <p className="basis-full text-xs text-gray-500 -mt-3">
                         Founding since {new Date(selected.foundingSince).toLocaleDateString()} — granting again
                         does not restart the fee-free window.
+                      </p>
+                    )}
+                    {!draft.founding && isFoundingCreator(selected) && (
+                      <p className="basis-full text-xs text-yellow-400/90 -mt-3">
+                        Saving with this unticked REVOKES their Founding badge and ends their fee waiver. It is recorded as a
+                        revocation, so approval will never auto-grant it back -- only ticking it again by hand re-grants it
+                        (with a fresh fee window).
+                      </p>
+                    )}
+                    {!draft.founding && !isFoundingCreator(selected) && selected.foundingRevokedAt && (
+                      <p className="basis-full text-xs text-gray-500 -mt-3">
+                        Founding was revoked on {new Date(selected.foundingRevokedAt).toLocaleDateString()}; it won't be
+                        auto-granted again. Tick it to re-grant by hand.
+                      </p>
+                    )}
+                    {selectedIsPending && !draft.founding && !selected.foundingRevokedAt && (
+                      <p className="basis-full text-xs text-gray-500 -mt-3">
+                        Approving (Pending → Active) grants Founding automatically if their profile is finished and a slot
+                        is free. To approve without it, untick it on a second save afterwards.
                       </p>
                     )}
                     <label className="flex items-center gap-2 text-sm text-gray-300">
@@ -577,11 +722,28 @@ export default function AdminPanel() {
                       >
                         <option value="active">Active (public)</option>
                         <option value="pending">Pending (hidden)</option>
-                        <option value="suspended">Suspended (hidden, 30 days)</option>
+                        {/* A suspension lifts itself into 'active' after 30
+                            days, so for an applicant who was never approved it
+                            would mean "publish in a month". The server refuses
+                            it; the option isn't offered. */}
+                        {!selectedIsPending && <option value="suspended">Suspended (hidden, 30 days)</option>}
                         <option value="banned">Banned (hidden, permanent)</option>
                       </select>
                     </label>
                   </div>
+
+                  {draft.status === 'banned' && selectedStatus !== 'banned' && (
+                    <p className="text-xs text-red-400">
+                      Banning takes down every unsold listing, deletes its media and freezes their credit balance and any
+                      pending payouts.
+                    </p>
+                  )}
+                  {draft.status === 'active' && selectedStatus && selectedStatus !== 'active' && (
+                    <p className="text-xs text-gray-400">
+                      Making this creator live needs a handle and a non-archived §2257 record linked to them, and re-screens
+                      every public field. If any check fails nothing is saved and the reason is shown above.
+                    </p>
+                  )}
 
                   {(selected.contentViolationCount > 0 || selectedStatus === 'suspended' || selectedStatus === 'banned') && (
                     <p className="text-xs text-red-400">
@@ -604,25 +766,29 @@ export default function AdminPanel() {
                   <div>
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="font-bold text-brand-gold">
-                        Gallery ({selected.gallery?.length || 0}/{selected.premium ? 200 : 50})
+                        Gallery ({selected.gallery?.length || 0}/200)
                       </h3>
                       <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
-                        {busy ? 'Uploading...' : 'Upload Content'}
+                        {busy ? 'Working...' : 'Upload Content'}
                         <input
                           type="file"
-                          accept="image/*,video/*"
+                          accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/heic,image/heif,video/mp4,video/quicktime,video/webm"
                           className="hidden"
                           disabled={busy}
                           onChange={(e) => {
-                            const file = e.target.files[0];
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
                             if (!file) return;
                             uploadGalleryItem(file, nextUploadIsAi);
                             setNextUploadIsAi(false);
-                            e.target.value = '';
                           }}
                         />
                       </label>
                     </div>
+                    <p className="text-[10px] text-gray-500 mb-2">
+                      Images up to 25MB, videos (MP4, MOV, WebM) up to 50MB. Admin uploads may use up to 200 slots; the
+                      creator's own limit is {selected.premium ? 200 : 50}. Removing an item also deletes the file.
+                    </p>
                     {/* Same self-reported AI label creators get on their own uploads
                         (pages/dashboard.js) -- content uploaded on a creator's behalf
                         has to be able to carry it too, since the labeling requirement
@@ -633,9 +799,9 @@ export default function AdminPanel() {
                     </label>
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                       {(selected.gallery || []).map((item, i) => (
-                        <div key={i} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
+                        <div key={`${item.src}-${i}`} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
                           {item.type === 'video' ? (
-                            <video src={item.src} className="w-full h-full object-cover" muted />
+                            <video src={item.src} className="w-full h-full object-cover" muted preload="metadata" />
                           ) : (
                             <img src={item.src} alt="" className="w-full h-full object-cover" />
                           )}
@@ -643,9 +809,10 @@ export default function AdminPanel() {
                             <span className="absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
                           )}
                           <button
-                            onClick={() => deleteGalleryItem(i)}
+                            onClick={() => deleteGalleryItem(item, i)}
                             disabled={busy}
-                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition disabled:opacity-30"
+                            title="Remove (also deletes the file)"
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 focus:opacity-100 transition disabled:opacity-30"
                           >
                             <Icons.close className="h-3.5 w-3.5 mx-auto" />
                           </button>
@@ -689,10 +856,9 @@ function ReportsPanel({ adminKey }) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/admin/reports?status=${status}`, { headers: { 'x-admin-key': adminKey } });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load reports');
-      setReports(data.reports);
+      const { res, data } = await adminGet(adminKey, `/api/admin/reports?status=${encodeURIComponent(status)}`);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load reports'));
+      setReports(Array.isArray(data.reports) ? data.reports : []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -702,18 +868,17 @@ function ReportsPanel({ adminKey }) {
 
   useEffect(() => { load(statusFilter); }, [statusFilter]);
 
-  const resolve = async (id, action) => {
-    setBusyId(id);
+  const resolve = async (r, action) => {
+    if (action === 'remove_content') {
+      const what = r.targetType === 'listing' ? 'take this listing down (and delete its media)' : 'delete this comment';
+      if (!confirm(`Remove the reported content? This will ${what}.`)) return;
+    }
+    setBusyId(r.id);
     setError('');
     try {
-      const res = await fetch('/api/admin/reports-resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-        body: JSON.stringify({ id, action }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to resolve report');
-      setReports(reports.filter((r) => String(r.id) !== String(id)));
+      const { res, data } = await adminPost(adminKey, '/api/admin/reports-resolve', { id: r.id, action });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
+      setReports((prev) => prev.filter((x) => String(x.id) !== String(r.id)));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -721,7 +886,7 @@ function ReportsPanel({ adminKey }) {
     }
   };
 
-  const targetLabel = (r) => (r.targetType === 'wall_post' ? 'Wall comment' : r.targetType === 'listing' ? 'Marketplace listing' : r.targetType);
+  const targetLabel = (r) => (r.targetType === 'wall_post' ? 'Wall comment' : r.targetType === 'listing' ? 'Marketplace listing' : String(r.targetType ?? 'Unknown'));
 
   return (
     <div>
@@ -748,22 +913,25 @@ function ReportsPanel({ adminKey }) {
           {reports.map((r) => (
             <div key={r.id} className="premium-card border border-brand-purple/20 p-4">
               <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-bold text-brand-gold">{targetLabel(r)} #{r.targetId}</p>
-                <p className="text-[10px] text-gray-600">{new Date(r.createdAt).toLocaleString()}</p>
+                {/* String(): a stored targetId that isn't a plain value used to
+                    crash the whole tab ("Objects are not valid as a React child"). */}
+                <p className="text-xs font-bold text-brand-gold">{targetLabel(r)} #{String(r.targetId ?? '')}</p>
+                <p className="text-[10px] text-gray-600">{r.createdAt ? new Date(r.createdAt).toLocaleString() : ''}</p>
               </div>
-              <p className="text-sm text-gray-300 mb-3">{r.reason}</p>
+              <p className="text-sm text-gray-300 mb-3"><span className="text-gray-500">Reason:</span> {String(r.reason ?? '')}</p>
+              <ReportTarget report={r} />
               {r.status === 'open' ? (
                 <div className="flex gap-2">
                   <button
-                    onClick={() => resolve(r.id, 'dismiss')}
+                    onClick={() => resolve(r, 'dismiss')}
                     disabled={busyId === r.id}
                     className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
                   >
                     Dismiss
                   </button>
                   <button
-                    onClick={() => resolve(r.id, 'remove_content')}
-                    disabled={busyId === r.id}
+                    onClick={() => resolve(r, 'remove_content')}
+                    disabled={busyId === r.id || r.target?.exists === false}
                     className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
                   >
                     Remove Content
@@ -780,14 +948,58 @@ function ReportsPanel({ adminKey }) {
   );
 }
 
+/**
+ * What a report is actually about -- the comment text and whose wall, or the
+ * listing's title, status and seller -- from the `target` the reports API
+ * attaches (lib/reports-store.js attachReportTargets). Without it a moderator
+ * pressed "Remove Content" on a bare "#123".
+ */
+function ReportTarget({ report }) {
+  const t = report?.target;
+  if (!t || t.exists === false) {
+    return <p className="text-xs text-gray-500 mb-3">The reported item no longer exists (already deleted).</p>;
+  }
+  const seller = t.creatorName ? `${t.creatorName}${t.creatorHandle ? ` (${t.creatorHandle})` : ''}` : t.creatorId ? `creator #${t.creatorId}` : 'unknown creator';
+  if (report.targetType === 'wall_post') {
+    return (
+      <div className="mb-3 px-3 py-2 rounded-md bg-black/30 border border-white/10 text-xs text-gray-300">
+        <p className="text-gray-500 mb-1">
+          Comment by {String(t.authorName ?? 'someone')}{t.authorId ? ` (user #${t.authorId})` : ''} on {seller}'s wall
+          {t.createdAt ? `, ${new Date(t.createdAt).toLocaleString()}` : ''}:
+        </p>
+        <p className="whitespace-pre-wrap break-words">"{String(t.text ?? '')}"</p>
+      </div>
+    );
+  }
+  if (report.targetType === 'listing') {
+    return (
+      <div className="mb-3 px-3 py-2 rounded-md bg-black/30 border border-white/10 text-xs text-gray-300">
+        <p className="font-bold text-white">{String(t.title ?? '(untitled)')}</p>
+        <p className="text-gray-500 mb-1">
+          by {seller} · {String(t.status ?? '')} · {String(t.kind ?? '')}
+          {Number.isFinite(Number(t.priceCents)) ? ` · ${dollars(t.priceCents)}` : ''} · {Number(t.mediaCount) || 0} media item(s)
+        </p>
+        {t.description && <p className="whitespace-pre-wrap break-words">{String(t.description)}</p>}
+      </div>
+    );
+  }
+  return null;
+}
+
 const CONTEXT_LABELS = {
   message: 'Direct message',
   wall_post: 'Wall comment',
   bio: 'Profile bio',
   name: 'Profile display name',
   handle: 'Profile handle',
+  location: 'Profile location',
+  price: 'Profile price',
+  tag: 'Profile tag',
+  tags: 'Profile tags',
+  username: 'Fan username',
   listing_title: 'Listing title',
   listing_description: 'Listing description',
+  listing_tags: 'Listing tags',
 };
 
 /** Auto-flagged, blocked sends -- see lib/payment-circumvention-filter.js. The flagged message/post itself was never stored, only this record of who tried and why. */
@@ -802,10 +1014,9 @@ function ViolationsPanel({ adminKey }) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/admin/violations?status=${status}`, { headers: { 'x-admin-key': adminKey } });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load violations');
-      setViolations(data.violations);
+      const { res, data } = await adminGet(adminKey, `/api/admin/violations?status=${encodeURIComponent(status)}`);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load violations'));
+      setViolations(Array.isArray(data.violations) ? data.violations : []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -819,14 +1030,9 @@ function ViolationsPanel({ adminKey }) {
     setBusyId(id);
     setError('');
     try {
-      const res = await fetch('/api/admin/violations-resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-        body: JSON.stringify({ id, action }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to resolve violation');
-      setViolations(violations.filter((v) => String(v.id) !== String(id)));
+      const { res, data } = await adminPost(adminKey, '/api/admin/violations-resolve', { id, action });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve violation'));
+      setViolations((prev) => prev.filter((v) => String(v.id) !== String(id)));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -838,13 +1044,23 @@ function ViolationsPanel({ adminKey }) {
   // the addViolation calls in pages/api/...). Anything unrecognized shows the
   // raw context rather than being mislabeled as a DM, which is what the old
   // two-branch ternary did to every profile-name, handle and listing flag.
-  const contextLabel = (v) => CONTEXT_LABELS[v.context] || v.context;
+  const contextLabel = (v) => {
+    const ctx = String(v.context ?? '');
+    if (CONTEXT_LABELS[ctx]) return CONTEXT_LABELS[ctx];
+    if (ctx.startsWith('social_')) return `Profile ${ctx.slice(7)} link`;
+    return ctx || 'Unknown';
+  };
 
   // Admin-path flags have no logged-in user behind them -- pages/api/admin/profile.js
-  // records which creator record the text was headed for instead.
+  // records which creator record the text was headed for instead; a refused
+  // signup has no account yet, only the IP it came from.
   const actorLabel = (v) => {
-    const adminEdit = String(v.userId || '').match(/^admin-edit:creator:(.+)$/);
-    return adminEdit ? `creator #${adminEdit[1]} (admin edit)` : `user #${v.userId}`;
+    const id = String(v.userId ?? '');
+    const adminEdit = id.match(/^admin-edit:creator:(.+)$/);
+    if (adminEdit) return `creator #${adminEdit[1]} (admin edit)`;
+    const signup = id.match(/^signup:ip:(.+)$/);
+    if (signup) return `signup attempt from ${signup[1]}`;
+    return `user #${id}`;
   };
 
   return (
@@ -875,8 +1091,8 @@ function ViolationsPanel({ adminKey }) {
                 <p className="text-xs font-bold text-brand-gold">{contextLabel(v)} -- {actorLabel(v)}</p>
                 <p className="text-[10px] text-gray-600">{new Date(v.createdAt).toLocaleString()}</p>
               </div>
-              <p className="text-xs text-gray-500 mb-1">Flagged: {v.reasons.join(', ')}</p>
-              <p className="text-sm text-gray-300 mb-3 font-mono break-all">"{v.snippet}"</p>
+              <p className="text-xs text-gray-500 mb-1">Flagged: {Array.isArray(v.reasons) ? v.reasons.join(', ') : String(v.reasons ?? '')}</p>
+              <p className="text-sm text-gray-300 mb-3 font-mono break-all">"{String(v.snippet ?? '')}"</p>
               {v.status === 'open' ? (
                 <div className="flex gap-2">
                   <button
@@ -911,22 +1127,27 @@ function ViolationsPanel({ adminKey }) {
  * These carry a legal 48-hour handling clock, so they're sorted oldest
  * first and flag how much time has passed instead of just a timestamp.
  */
-function NciiReportsPanel({ adminKey, creators }) {
+function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
   const [statusFilter, setStatusFilter] = useState('open');
   const [reports, setReports] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [attributed, setAttributed] = useState({});
 
   const load = async (status) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/admin/ncii-reports?status=${status}`, { headers: { 'x-admin-key': adminKey } });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load takedown requests');
-      setReports(data.reports);
+      const { res, data } = await adminGet(adminKey, `/api/admin/ncii-reports?status=${encodeURIComponent(status)}`);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load takedown requests'));
+      setReports(Array.isArray(data.reports) ? data.reports : []);
+      if (data.summary) {
+        setSummary(data.summary);
+        if (onSummary) onSummary(data.summary);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -946,22 +1167,30 @@ function NciiReportsPanel({ adminKey, creators }) {
     }
     setBusyId(id);
     setError('');
+    setNotice('');
     try {
-      const res = await fetch('/api/admin/ncii-reports-resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-        body: JSON.stringify({ id, action, creatorId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to resolve report');
-      setReports(reports.filter((r) => String(r.id) !== String(id)));
+      const { res, data } = await adminPost(adminKey, '/api/admin/ncii-reports-resolve', { id, action, creatorId });
+      if (res.status === 409) {
+        // Someone else resolved it first -- re-read rather than keep a stale row.
+        setNotice(errorFrom(res, data, 'That report was already resolved.'));
+        await load(statusFilter);
+        return;
+      }
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
+      const messages = [`Report #${id} resolved.`];
       if (data.creator) {
-        setError(
+        if (onCreatorChanged) onCreatorChanged(data.creator);
+        messages.push(
           data.creator.status === 'banned'
             ? `${data.creator.name} has been permanently banned (2nd confirmed violation).`
-            : `${data.creator.name} suspended until ${new Date(data.creator.suspendedUntil).toLocaleDateString()} (1st confirmed violation).`
+            : `${data.creator.name} suspended until ${data.creator.suspendedUntil ? new Date(data.creator.suspendedUntil).toLocaleDateString() : 'further notice'} (1st confirmed violation).`,
         );
       }
+      setNotice(messages.join(' '));
+      // The ban itself stands even when this is present; the takedown of the
+      // creator's listings needs a retry (re-save the ban from their record).
+      if (data.warning) setError(String(data.warning));
+      await load(statusFilter);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -970,6 +1199,10 @@ function NciiReportsPanel({ adminKey, creators }) {
   };
 
   const hoursOpen = (r) => Math.floor((Date.now() - new Date(r.createdAt).getTime()) / (1000 * 60 * 60));
+  const openCount = Number(summary?.open) || 0;
+  const oldestHours = summary?.oldestOpenCreatedAt
+    ? Math.floor((Date.now() - new Date(summary.oldestOpenCreatedAt).getTime()) / (1000 * 60 * 60))
+    : null;
 
   return (
     <div>
@@ -977,6 +1210,14 @@ function NciiReportsPanel({ adminKey, creators }) {
         Filed via /report-content, no login required. Legally required to be reviewed and, if valid, the content
         removed within 48 hours of submission.
       </p>
+      {summary && (
+        <p className={`text-sm font-bold mb-4 ${openCount === 0 ? 'text-gray-500' : oldestHours !== null && oldestHours >= 36 ? 'text-red-400' : 'text-yellow-400'}`}>
+          {openCount === 0
+            ? 'No open takedown requests.'
+            : `${openCount} open${oldestHours !== null ? ` -- oldest filed ${oldestHours}h ago${oldestHours >= 48 ? ' (OVERDUE)' : ''}` : ''}.`}
+        </p>
+      )}
+      {notice && <p className="text-sm text-green-400 mb-4">{notice}</p>}
       <div className="flex items-center gap-3 mb-4">
         <select
           value={statusFilter}
@@ -1026,7 +1267,7 @@ function NciiReportsPanel({ adminKey, creators }) {
                         <option value="">— Not attributed to a creator —</option>
                         {(creators || []).map((c) => (
                           <option key={c.id} value={c.id}>
-                            {c.name} ({c.handle}){c.contentViolationCount ? ` — ${c.contentViolationCount} prior violation(s)` : ''}
+                            {c.name} ({c.handle || `#${c.id}`}){c.contentViolationCount ? ` — ${c.contentViolationCount} prior violation(s)` : ''}
                           </option>
                         ))}
                       </select>
@@ -1095,10 +1336,9 @@ function WaitlistPanel({ adminKey }) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/admin/waitlist', { headers: { 'x-admin-key': adminKey } });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load the waitlist');
-      setEntries(data.entries || []);
+      const { res, data } = await adminGet(adminKey, '/api/admin/waitlist');
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load the waitlist'));
+      setEntries(Array.isArray(data.entries) ? data.entries : []);
       setCounts(data.counts || { total: 0, fans: 0, creators: 0 });
     } catch (err) {
       setError(err.message);
@@ -1116,12 +1356,12 @@ function WaitlistPanel({ adminKey }) {
     setError('');
     try {
       const res = await fetch('/api/admin/waitlist?format=csv', { headers: { 'x-admin-key': adminKey } });
-      if (!res.ok) throw new Error('Export failed');
+      if (!res.ok) throw new Error(errorFrom(res, await readJson(res), 'Export failed'));
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'onlyone-waitlist.csv';
+      a.download = `onlyone-waitlist-${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1140,8 +1380,8 @@ function WaitlistPanel({ adminKey }) {
         method: 'DELETE',
         headers: { 'x-admin-key': adminKey },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to remove');
+      const data = await readJson(res);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to remove'));
       setEntries((prev) => prev.filter((e) => String(e.id) !== String(id)));
       setCounts((prev) => ({
         total: Math.max(0, prev.total - 1),
@@ -1184,6 +1424,11 @@ function WaitlistPanel({ adminKey }) {
         </button>
       </div>
 
+      <p className="text-[11px] text-gray-500 mb-4">
+        The export is a list of people who signed up for an adult platform -- keep it off shared drives. Any cell that
+        would start a spreadsheet formula (= + - @) is prefixed with an apostrophe so it opens as plain text.
+      </p>
+
       {error && <div className="mb-4 px-4 py-3 rounded-md bg-red-900/30 border border-red-500/40 text-red-300 text-sm">{error}</div>}
 
       {loading ? (
@@ -1223,17 +1468,47 @@ function WaitlistPanel({ adminKey }) {
   );
 }
 
-// The balance was already debited the moment the creator requested this --
-// see lib/db.js's payout_requests comment. Marking one "paid" here is
-// purely a record: the admin sends the real USDG by hand FIRST, then enters
-// the transaction hash to close the loop. There is no button anywhere that
+// The credits were already reserved (taken off the creator's withdrawable
+// balance) the moment the creator requested this -- see lib/credits-store.js
+// requestPayout. Marking one "paid" here only RECORDS a payment: the admin
+// sends the real USDG by hand FIRST, then enters the transaction hash, which
+// the server checks on-chain before recording. Rejecting one returns the
+// reserved credits to the creator's balance. There is no button anywhere that
 // moves real money -- that's the point.
+function PayoutAccount({ r }) {
+  const a = r.account || {};
+  const who = a.creatorName
+    ? `${a.creatorName}${a.creatorHandle ? ` (${a.creatorHandle})` : ''}`
+    : a.email || `user ${r.user_id}`;
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <span className="text-sm text-white">{who}</span>
+      <span className="text-[11px] text-gray-500">user {String(r.user_id)}</span>
+      {a.status && (
+        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${a.status === 'active' ? 'bg-green-500/15 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+          {a.status}
+        </span>
+      )}
+      {!a.creatorId && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">NO CREATOR PROFILE</span>}
+      {a.seed && <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-500/30 text-gray-300 font-bold">DEMO</span>}
+      {r.frozen && r.status === 'pending' && (
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-600 text-white font-bold" title="The account is no longer an active creator. Reject it (credits go back, still frozen) rather than pay it.">
+          FROZEN
+        </span>
+      )}
+    </span>
+  );
+}
+
 function PayoutsPanel({ adminKey }) {
   const [requests, setRequests] = useState([]);
   const [paid, setPaid] = useState([]);
+  const [rejected, setRejected] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showRejected, setShowRejected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [txInputs, setTxInputs] = useState({});
   const [manual, setManual] = useState({ userId: '', txHash: '', fromAddress: '' });
@@ -1244,11 +1519,11 @@ function PayoutsPanel({ adminKey }) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/admin/payouts', { headers: { 'x-admin-key': adminKey } });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load payout requests');
-      setRequests(data.requests || []);
-      setPaid(data.paid || []);
+      const { res, data } = await adminGet(adminKey, '/api/admin/payouts');
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load payout requests'));
+      setRequests(Array.isArray(data.requests) ? data.requests : []);
+      setPaid(Array.isArray(data.paid) ? data.paid : []);
+      setRejected(Array.isArray(data.rejected) ? data.rejected : []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1258,23 +1533,92 @@ function PayoutsPanel({ adminKey }) {
 
   useEffect(() => { load(); }, []);
 
-  const markPaid = async (id) => {
+  // Each escape hatch the server offers is its own explicit confirmation,
+  // never a default:
+  //  - 409 payout_frozen: the account is banned/suspended/no longer an active
+  //    creator. Normal action is Reject; "pay anyway" re-posts override:true.
+  //  - 501/502: the on-chain check couldn't run. "Record without checking"
+  //    re-posts skipChainCheck:true.
+  //  - 400 on-chain mismatch and 409 tx_hash_reused are shown as they are:
+  //    the hash is wrong or already closes another request.
+  const markPaid = async (r) => {
+    const id = r.id;
     const txHash = (txInputs[id] || '').trim();
     if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
       setError('Enter the real transaction hash (0x + 64 hex characters) once the USDG has actually been sent.');
       return;
     }
+    if (r.frozen && !confirm(
+      'This account is FROZEN (no longer an active creator). Its payout normally gets Rejected, not paid. '
+      + 'Continue to record it as paid anyway?',
+    )) return;
     setBusyId(id);
     setError('');
+    setNotice('');
     try {
-      const res = await fetch('/api/admin/payouts-mark-paid', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-        body: JSON.stringify({ id, txHash }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to mark paid');
-      load(); // re-fetch rather than splice locally -- the row now belongs in "paid" too
+      const opts = { override: r.frozen === true, skipChainCheck: false };
+      for (;;) {
+        const { res, data } = await adminPost(adminKey, '/api/admin/payouts-mark-paid', { id, txHash, ...opts });
+        if (res.ok) break;
+        if (res.status === 409 && data.code === 'payout_frozen' && !opts.override) {
+          if (!confirm(`${data.error || 'This payout is frozen.'}\n\nThe account is not an active creator in good standing. Pay anyway (override)?`)) {
+            setNotice('Not recorded. Use Reject to return the credits instead.');
+            return;
+          }
+          opts.override = true;
+          continue;
+        }
+        if ((res.status === 502 || res.status === 501) && !opts.skipChainCheck) {
+          if (!confirm(
+            `${data.error || 'The transaction could not be checked on-chain.'}\n\n`
+            + 'Record it as paid WITHOUT the on-chain check? Only do this if you have confirmed the transfer on a block explorer yourself.',
+          )) {
+            setNotice('Not recorded. Try again when the on-chain check is available.');
+            return;
+          }
+          opts.skipChainCheck = true;
+          continue;
+        }
+        if (res.status === 409 && data.code === 'tx_hash_reused') {
+          throw new Error(`${data.error || 'That transaction hash already closes another payout.'} Each payout needs its own transaction.`);
+        }
+        throw new Error(errorFrom(res, data, 'Failed to mark paid'));
+      }
+      setTxInputs((prev) => ({ ...prev, [id]: '' }));
+      setNotice(`Payout #${id} recorded as paid${opts.skipChainCheck ? ' (without the on-chain check)' : ' -- transfer verified on-chain'}.`);
+      await load(); // re-fetch rather than splice locally -- the row now belongs in "paid"
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reject = async (r) => {
+    const reason = window.prompt(
+      `Reject payout #${r.id} of ${formatCredits(r.amount_cents)}? The credits go back to the creator's balance`
+      + `${r.frozen ? ' (and stay frozen while the account is suspended or banned)' : ''}. `
+      + 'The reason is shown to the creator:',
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      setError('A reason is required to reject a payout.');
+      return;
+    }
+    setBusyId(r.id);
+    setError('');
+    setNotice('');
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/payouts-reject', { id: r.id, reason: reason.trim() });
+      if (res.status === 409) {
+        // Already paid or rejected elsewhere -- show where it went.
+        setError(errorFrom(res, data, 'That payout is no longer pending.'));
+        await load();
+        return;
+      }
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to reject'));
+      setNotice(`Payout #${r.id} rejected; ${formatCredits(r.amount_cents)} returned to the creator's balance.`);
+      await load();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1291,13 +1635,8 @@ function PayoutsPanel({ adminKey }) {
     setManualMsg('');
     setManualBusy(true);
     try {
-      const res = await fetch('/api/admin/manual-credit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
-        body: JSON.stringify(manual),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not credit that payment');
+      const { res, data } = await adminPost(adminKey, '/api/admin/manual-credit', manual);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not credit that payment'));
       setManualMsg(`Credited ${formatCredits(data.creditedCents)} to ${data.creditedUserEmail || `user ${manual.userId}`}.`);
       setManual({ userId: '', txHash: '', fromAddress: '' });
     } catch (err) {
@@ -1309,12 +1648,19 @@ function PayoutsPanel({ adminKey }) {
 
   return (
     <div>
-      <p className="text-sm text-gray-400 mb-4">
-        A creator's balance is already debited the moment they request one of these. Send the real USDG to their wallet
-        yourself, THEN paste the transaction hash here to close it out.
+      <p className="text-sm text-gray-400 mb-2">
+        Only credits a creator EARNED can be requested, and the amount is reserved from their balance the moment they
+        ask. Send the real USDG to the wallet shown -- one transaction per request, since one hash can only close one
+        payout -- THEN paste the transaction hash here. It is checked on-chain (at least the requested amount, to that
+        wallet) before it is recorded.
+      </p>
+      <p className="text-xs text-gray-500 mb-4">
+        FROZEN means the account is no longer an active creator (suspended, banned, pending or deleted). Don't pay those:
+        Reject returns the credits to their balance, which stays frozen until they're reinstated.
       </p>
 
-      {error && <div className="mb-4 px-4 py-3 rounded-md bg-red-900/30 border border-red-500/40 text-red-300 text-sm">{error}</div>}
+      {error && <div className="mb-4 px-4 py-3 rounded-md bg-red-900/30 border border-red-500/40 text-red-300 text-sm whitespace-pre-line">{error}</div>}
+      {notice && <div className="mb-4 px-4 py-3 rounded-md bg-green-900/20 border border-green-500/30 text-green-300 text-sm">{notice}</div>}
 
       {loading ? (
         <p className="text-gray-500 text-sm">Loading…</p>
@@ -1323,33 +1669,49 @@ function PayoutsPanel({ adminKey }) {
       ) : (
         <div className="space-y-2 mb-6">
           {requests.map((r) => (
-            <div key={r.id} className="premium-card p-4 flex flex-wrap items-center gap-3">
-              <span className="font-bold text-white">{formatCredits(r.amount_cents)}</span>
-              <span className="text-[11px] text-gray-500">user {r.user_id}</span>
-              <span className="font-mono text-[11px] text-gray-400 break-all">{r.payout_wallet}</span>
-              <span className="text-[11px] text-gray-600">{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
-              <div className="flex-1" />
-              <input
-                value={txInputs[r.id] || ''}
-                onChange={(e) => setTxInputs((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                placeholder="0x… tx hash"
-                className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white font-mono w-64"
-              />
-              <button
-                onClick={() => markPaid(r.id)}
-                disabled={busyId === r.id}
-                className="premium-button text-xs px-4 py-1.5 disabled:opacity-50"
-              >
-                {busyId === r.id ? 'Marking…' : 'Mark Paid'}
-              </button>
+            <div key={r.id} className={`premium-card p-4 space-y-2 ${r.frozen ? 'border border-red-500/60' : ''}`}>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-bold text-white">{formatCredits(r.amount_cents)}</span>
+                <PayoutAccount r={r} />
+                <div className="flex-1" />
+                <span className="text-[11px] text-gray-600">#{String(r.id)} · {r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
+              </div>
+              <p className="font-mono text-[11px] text-gray-400 break-all">Send USDG to: {String(r.payout_wallet || '(no wallet)')}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={txInputs[r.id] || ''}
+                  onChange={(e) => setTxInputs((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                  placeholder="0x… tx hash"
+                  className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white font-mono w-72 max-w-full"
+                />
+                <button
+                  onClick={() => markPaid(r)}
+                  disabled={busyId === r.id}
+                  className="premium-button text-xs px-4 py-1.5 disabled:opacity-50"
+                >
+                  {busyId === r.id ? 'Working…' : 'Mark Paid'}
+                </button>
+                <button
+                  onClick={() => reject(r)}
+                  disabled={busyId === r.id}
+                  className="text-xs px-4 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                >
+                  Reject &amp; refund
+                </button>
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      <button onClick={() => setShowHistory((v) => !v)} className="text-xs text-gray-400 hover:text-white transition mb-3">
-        {showHistory ? 'Hide' : 'Show'} recently paid ({paid.length})
-      </button>
+      <div className="flex gap-4 mb-3">
+        <button onClick={() => setShowHistory((v) => !v)} className="text-xs text-gray-400 hover:text-white transition">
+          {showHistory ? 'Hide' : 'Show'} recently paid ({paid.length})
+        </button>
+        <button onClick={() => setShowRejected((v) => !v)} className="text-xs text-gray-400 hover:text-white transition">
+          {showRejected ? 'Hide' : 'Show'} recently rejected ({rejected.length})
+        </button>
+      </div>
       {showHistory && (
         <div className="space-y-2 mb-6">
           {!paid.length ? (
@@ -1358,9 +1720,25 @@ function PayoutsPanel({ adminKey }) {
             paid.map((r) => (
               <div key={r.id} className="premium-card p-4 flex flex-wrap items-center gap-3 opacity-75">
                 <span className="font-bold text-white">{formatCredits(r.amount_cents)}</span>
-                <span className="text-[11px] text-gray-500">user {r.user_id}</span>
-                <span className="font-mono text-[11px] text-gray-400 break-all">{r.tx_hash}</span>
+                <PayoutAccount r={r} />
+                <span className="font-mono text-[11px] text-gray-400 break-all">{String(r.tx_hash || '')}</span>
                 <span className="text-[11px] text-gray-600">{r.paid_at ? new Date(r.paid_at).toLocaleString() : ''}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      {showRejected && (
+        <div className="space-y-2 mb-6">
+          {!rejected.length ? (
+            <p className="text-gray-500 text-sm">Nothing rejected.</p>
+          ) : (
+            rejected.map((r) => (
+              <div key={r.id} className="premium-card p-4 flex flex-wrap items-center gap-3 opacity-75">
+                <span className="font-bold text-white">{formatCredits(r.amount_cents)}</span>
+                <PayoutAccount r={r} />
+                <span className="text-[11px] text-gray-400">Reason: {String(r.reject_reason || '')}</span>
+                <span className="text-[11px] text-gray-600">{r.rejected_at ? new Date(r.rejected_at).toLocaleString() : ''}</span>
               </div>
             ))
           )}
@@ -1372,7 +1750,7 @@ function PayoutsPanel({ adminKey }) {
         <p className="text-xs text-gray-500 mb-3">
           For a fan whose payment confirmed on-chain but whose browser died before the credit call ran, and who couldn't
           self-recover it from the Credits page. Verifies the exact transaction really came from the address given
-          before crediting anything.
+          before crediting anything. Deposited credits are spend-only -- they can never be cashed out.
         </p>
         <div className="flex flex-wrap gap-2 mb-2">
           <input
@@ -1421,12 +1799,10 @@ function PerformerRecordsPanel({ adminKey, creators }) {
 
   const load = async () => {
     setLoading(true);
-    setError('');
     try {
-      const res = await fetch('/api/admin/performer-records', { headers: { 'x-admin-key': adminKey } });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load records');
-      setRecords(data.records);
+      const { res, data } = await adminGet(adminKey, '/api/admin/performer-records');
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load records'));
+      setRecords(Array.isArray(data.records) ? data.records : []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1435,6 +1811,47 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   };
 
   useEffect(() => { load(); }, []);
+
+  // The raw ID file is the request body; its name travels URL-encoded in the
+  // query string. Putting file.name in a header (as this used to) makes fetch
+  // throw before sending on any name outside Latin-1 -- every macOS
+  // screenshot -- which left a freshly created record with no ID attached.
+  // `replace` keeps the previous document in the record's history.
+  const uploadDocument = async (recordId, docFile, { replace = false } = {}) => {
+    const params = new URLSearchParams({ id: String(recordId), fileName: docFile.name || 'id-document' });
+    if (replace) params.set('replace', '1');
+    const res = await fetch(`/api/admin/performer-record-document?${params.toString()}`, {
+      method: 'POST',
+      headers: { 'x-admin-key': adminKey, 'Content-Type': docFile.type || 'application/octet-stream' },
+      body: docFile,
+    });
+    return { res, data: await readJson(res) };
+  };
+
+  // Attach an ID to an existing record, or replace the one on file. A 409 means
+  // one is already there: replacing is its own explicit confirmation.
+  const attachDocument = async (record, docFile) => {
+    if (!docFile) return;
+    const hasOne = !!record.document;
+    if (hasOne && !confirm('Replace the ID document on file? The current one is kept in this record\'s history, not destroyed.')) return;
+    setBusyId(record.id);
+    setError('');
+    setNotice('');
+    try {
+      let { res, data } = await uploadDocument(record.id, docFile, { replace: hasOne });
+      if (res.status === 409 && !hasOne) {
+        if (!confirm(`${data.error || 'A document is already on file.'}\n\nReplace it? The current one is kept in history.`)) return;
+        ({ res, data } = await uploadDocument(record.id, docFile, { replace: true }));
+      }
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not attach that document'));
+      setNotice(`ID document ${hasOne ? 'replaced' : 'attached'} on record #${record.id}.`);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const update = (key) => (e) => setForm({ ...form, [key]: e.target.value });
 
@@ -1446,34 +1863,26 @@ function PerformerRecordsPanel({ adminKey, creators }) {
     if (!form.dateOfBirth) { setError('A date of birth is required.'); return; }
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/performer-records', {
-        method: 'POST',
-        headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not save that record');
+      const { res, data } = await adminPost(adminKey, '/api/admin/performer-records', form);
+      if (!res.ok || !data.record) throw new Error(errorFrom(res, data, 'Could not save that record'));
 
       // The document is a second call on purpose: the record must exist
       // before an ID scan is attached to it, so a failed upload leaves a
-      // record with no document rather than an orphaned document.
-      if (file) {
-        const up = await fetch(`/api/admin/performer-record-document?id=${data.record.id}`, {
-          method: 'POST',
-          headers: {
-            'x-admin-key': adminKey,
-            'Content-Type': file.type || 'application/octet-stream',
-            'x-file-name': file.name,
-          },
-          body: file,
-        });
-        const upData = await up.json();
-        if (!up.ok) throw new Error(`Record saved, but the ID document did not attach: ${upData.error}`);
+      // record with no document rather than an orphaned document -- and the
+      // form is cleared either way, because the record IS saved; the ID can
+      // be attached to it from the list below.
+      const savedName = (Array.isArray(data.record.aliases) && data.record.aliases[0]) || form.legalName;
+      setForm(BLANK_RECORD);
+      const docFile = file;
+      setFile(null);
+      if (docFile) {
+        const up = await uploadDocument(data.record.id, docFile);
+        if (!up.res.ok) {
+          throw new Error(`Record #${data.record.id} saved, but the ID document did not attach: ${errorFrom(up.res, up.data, 'upload failed')}. Use "Attach ID" on the record below to try again.`);
+        }
       }
 
-      setForm(BLANK_RECORD);
-      setFile(null);
-      setNotice(`Record saved for ${data.record.aliases[0] || form.legalName}.`);
+      setNotice(`Record saved for ${savedName}.`);
       await load();
     } catch (err) {
       setError(err.message);
@@ -1487,10 +1896,9 @@ function PerformerRecordsPanel({ adminKey, creators }) {
     setBusyId(id);
     setError('');
     try {
-      const res = await fetch(`/api/admin/performer-record-document?id=${id}`, { headers: { 'x-admin-key': adminKey } });
+      const res = await fetch(`/api/admin/performer-record-document?id=${encodeURIComponent(id)}`, { headers: { 'x-admin-key': adminKey } });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Could not open that document');
+        throw new Error(errorFrom(res, await readJson(res), 'Could not open that document'));
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -1510,13 +1918,8 @@ function PerformerRecordsPanel({ adminKey, creators }) {
     if (reason === null) return;
     setBusyId(id);
     try {
-      const res = await fetch('/api/admin/performer-records', {
-        method: 'POST',
-        headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'archive', id, reason }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not archive that record');
+      const { res, data } = await adminPost(adminKey, '/api/admin/performer-records', { action: 'archive', id, reason });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not archive that record'));
       await load();
     } catch (err) {
       setError(err.message);
@@ -1603,12 +2006,14 @@ function PerformerRecordsPanel({ adminKey, creators }) {
 
         <div className="grid md:grid-cols-2 gap-4">
           <label className="block">
-            <span className="block text-xs text-gray-400 mb-1">Creator account (optional)</span>
+            <span className="block text-xs text-gray-400 mb-1">
+              Creator account -- a creator can't be made live without a record linked here
+            </span>
             <select value={form.creatorId} onChange={update('creatorId')}
               className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm">
               <option value="">— not linked —</option>
               {creators.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} ({c.handle})</option>
+                <option key={c.id} value={c.id}>{c.name} ({c.handle || `#${c.id}`})</option>
               ))}
             </select>
           </label>
@@ -1687,16 +2092,32 @@ function PerformerRecordsPanel({ adminKey, creators }) {
                       keep until {String(r.retainUntil).slice(0, 10)}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {r.document ? (
                       <button onClick={() => openDocument(r.id)} disabled={busyId === r.id}
                         className="text-xs px-3 py-1.5 rounded-full border border-brand-pink/50 text-brand-pink hover:bg-brand-pink/10 transition disabled:opacity-50">
-                        {busyId === r.id ? 'Opening…' : 'View ID'}
+                        {busyId === r.id ? 'Working…' : 'View ID'}
                       </button>
                     ) : (
                       <span className="text-xs px-3 py-1.5 rounded-full border border-yellow-500/40 text-yellow-400">
                         {r.documentLocation === 'offline' ? 'ID held offline' : 'No ID on file'}
                       </span>
+                    )}
+                    {r.status !== 'archived' && !r.unreadable && (
+                      <label className={`text-xs px-3 py-1.5 rounded-full border border-white/15 text-gray-300 hover:text-white transition cursor-pointer ${busyId === r.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                        {r.document ? 'Replace ID' : 'Attach ID'}
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf"
+                          className="hidden"
+                          disabled={busyId === r.id}
+                          onChange={(e) => {
+                            const docFile = e.target.files?.[0] || null;
+                            e.target.value = '';
+                            attachDocument(r, docFile);
+                          }}
+                        />
+                      </label>
                     )}
                     {r.status !== 'archived' && (
                       <button onClick={() => archive(r.id)} disabled={busyId === r.id}
@@ -1711,6 +2132,19 @@ function PerformerRecordsPanel({ adminKey, creators }) {
                   <p className="text-xs text-gray-400">
                     {[r.idType, r.idIssuer, r.idNumber && `no. ${r.idNumber}`, r.idExpiry && `expires ${r.idExpiry}`]
                       .filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                {r.creatorId && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Linked creator: {(() => {
+                      const c = creators.find((x) => String(x.id) === String(r.creatorId));
+                      return c ? `${c.name} (${c.handle || `#${c.id}`})` : `#${r.creatorId} (no longer exists)`;
+                    })()}
+                  </p>
+                )}
+                {Array.isArray(r.documentHistory) && r.documentHistory.length > 0 && (
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    {r.documentHistory.length} earlier ID document(s) kept in history.
                   </p>
                 )}
                 {r.contentUrls?.length > 0 && (

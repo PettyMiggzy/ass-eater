@@ -135,6 +135,8 @@ export default function ReportContent() {
             This form exists to comply with the federal TAKE IT DOWN Act's notice-and-removal requirement. For a
             copyright (DMCA) claim instead, see our{' '}
             <a href="/terms#content-removal" className="text-brand-gold underline">Terms of Service</a>.
+            What you submit here is used only to review and act on this report — see our{' '}
+            <a href="/privacy" className="text-brand-gold underline">Privacy Policy</a>.
           </p>
         </div>
       </div>

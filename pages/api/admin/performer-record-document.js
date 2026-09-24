@@ -4,6 +4,7 @@ import {
   readPerformerDocument,
   MAX_DOCUMENT_BYTES,
   RecordsNotConfigured,
+  sanitizeDocumentFileName,
 } from '../../../lib/performer-records-store';
 
 // The exact, complete set of plain-Error messages attachPerformerDocument()
@@ -14,7 +15,10 @@ const SAFE_MESSAGES = new Set([
   'No document was received.',
   'That document is too large (4MB maximum).',
   'Record not found',
+  'An archived record is read-only.',
 ]);
+const ALREADY_ON_FILE = 'A document is already on file for this record. Replace it explicitly to keep the old one in history.';
+const POSITIVE_INT = /^[1-9]\d{0,17}$/;
 
 // Raw body, like every other upload route here -- base64 in JSON would
 // inflate a 3MB ID photo past Vercel's request limit for no gain.
@@ -43,7 +47,7 @@ export default async function handler(req, res) {
   if (!requireAdminKey(req, res)) return;
 
   const id = req.query.id || req.headers['x-record-id'];
-  if (!id) return res.status(400).json({ error: 'Missing record id' });
+  if (!POSITIVE_INT.test(String(id ?? ''))) return res.status(400).json({ error: 'Missing record id' });
 
   try {
     if (req.method === 'GET') {
@@ -53,7 +57,11 @@ export default async function handler(req, res) {
       // government ID is exactly what this design is avoiding.
       res.setHeader('Cache-Control', 'no-store, private, max-age=0');
       res.setHeader('Content-Type', doc.meta.contentType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${(doc.meta.fileName || `record-${id}`).replace(/"/g, '')}"`);
+      // An ASCII-only fallback plus the RFC 5987 UTF-8 form: a raw non-Latin-1
+      // filename in a header throws in Node before a byte is sent.
+      const name = sanitizeDocumentFileName(doc.meta.fileName) || `record-${id}`;
+      const asciiName = name.replace(/[^\x20-\x7e]/g, '_') || `record-${id}`;
+      res.setHeader('Content-Disposition', `inline; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`);
       res.setHeader('X-Content-Type-Options', 'nosniff');
       return res.status(200).send(doc.buffer);
     }
@@ -61,13 +69,24 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const body = await readBody(req);
       if (!body) return res.status(413).json({ error: 'That document is too large (4MB maximum).' });
-      const record = await attachPerformerDocument(id, body, req.headers['content-type'], req.headers['x-file-name']);
+      // The filename travels URL-encoded -- `?fileName=` or an
+      // encodeURIComponent()'d `x-file-name` header. A raw header value
+      // cannot carry anything past Latin-1 (fetch throws on a macOS
+      // screenshot name before the request is even sent), which used to
+      // leave a freshly created record with no ID attached.
+      // sanitizeDocumentFileName() decodes and cleans either form.
+      const rawName = typeof req.query.fileName === 'string' ? req.query.fileName : req.headers['x-file-name'];
+      const replace = req.query.replace === '1' || req.query.replace === 'true';
+      const record = await attachPerformerDocument(id, body, req.headers['content-type'], rawName, { replace });
       return res.status(200).json({ ok: true, record });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (err) {
     if (err instanceof RecordsNotConfigured) return res.status(503).json({ error: err.message });
+    if (err instanceof Error && err.message === ALREADY_ON_FILE) {
+      return res.status(409).json({ error: err.message });
+    }
     if (err instanceof Error && SAFE_MESSAGES.has(err.message)) {
       return res.status(400).json({ error: err.message });
     }

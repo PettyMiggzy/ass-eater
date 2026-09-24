@@ -1,6 +1,12 @@
 import crypto from 'crypto';
 import { checkRateLimit, clearFailures, clientIp, recordFailure } from '../../../lib/rate-limit';
-import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, createAgeVerificationToken } from '../../../lib/age-verification';
+import {
+  AGE_VERIFIED_COOKIE_NAME,
+  ageVerificationSecret,
+  bypassMaxAgeSeconds,
+  createBypassAgeVerificationToken,
+} from '../../../lib/age-verification';
+import { safeRedirectPath } from '../../../lib/safe-redirect';
 
 /**
  * External-reviewer bypass for the state age-verification block.
@@ -18,7 +24,12 @@ import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, createAgeVerificationT
  * REVIEWER_ACCESS_KEY is its own env var, separate from OWNER_ACCESS_KEY,
  * on purpose:
  *  - It can be rotated or removed the moment a review is done without
- *    touching the owner's own daily-use bypass.
+ *    touching the owner's own daily-use bypass -- and doing so revokes every
+ *    cookie this link already issued, on the next request (the token carries
+ *    a keyed fingerprint of the key that minted it; see
+ *    createBypassAgeVerificationToken in lib/age-verification.js).
+ *  - The cookie lasts 14 days, not the 180 a real verification gets: a
+ *    review takes days, and the bypass should not outlive it by months.
  *  - `via: 'reviewer'` in the token distinguishes it from an owner bypass in
  *    a decoded token, so a leaked link's use is attributable to the right
  *    audience.
@@ -69,14 +80,14 @@ export default async function handler(req, res) {
 
   clearFailures(bucket);
 
-  const token = await createAgeVerificationToken(ageVerificationSecret(), { via: 'reviewer' });
+  const token = await createBypassAgeVerificationToken(ageVerificationSecret(), 'reviewer');
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `${AGE_VERIFIED_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 180}${secure}`);
+  res.setHeader('Set-Cookie', `${AGE_VERIFIED_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${bypassMaxAgeSeconds('reviewer')}${secure}`);
   console.warn(`[reviewer-access] bypass granted on host ${req.headers.host || 'unknown'}`);
 
-  const requested = typeof req.query.next === 'string' ? req.query.next : '';
-  const safeNext = requested.startsWith('/') && !requested.startsWith('//') && !requested.startsWith('/\\');
-  const next = safeNext ? requested : '/home';
+  // Same-origin only, via the shared resolver: a prefix check here once
+  // passed "/\t/evil.com", which URL parsing turns into "//evil.com".
+  const next = safeRedirectPath(req.query.next, '/home');
   res.writeHead(302, { Location: next });
   return res.end();
 }

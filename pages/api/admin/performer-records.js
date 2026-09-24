@@ -18,6 +18,8 @@ const SAFE_MESSAGES = new Set([
   'A legal name is required.',
   'A date of birth is required.',
   'That date of birth or production date could not be read.',
+  'The production date cannot be in the future.',
+  'An archived record is read-only.',
   'Record not found',
 ]);
 
@@ -45,6 +47,9 @@ export default async function handler(req, res) {
       if (action === 'update') {
         const { id, fields } = req.body || {};
         if (!id) return res.status(400).json({ error: 'Missing record id' });
+        if (fields !== undefined && (fields === null || typeof fields !== 'object' || Array.isArray(fields))) {
+          return res.status(400).json({ error: 'Invalid fields' });
+        }
         return res.status(200).json({ ok: true, record: await updatePerformerRecord(id, fields || {}) });
       }
 

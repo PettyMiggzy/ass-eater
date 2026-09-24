@@ -1,16 +1,48 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getCreators } from '../lib/creators-store';
-import { effectiveCreatorStatus } from '../lib/creator-status';
+import { effectiveCreatorStatus, isPubliclyVisible, LISTING_LIMITS } from '../lib/creator-status';
 import { getListings } from '../lib/listings-store';
-import { tokenGateLive, sanitizeGateTokens, gateTokensOf } from '../lib/token-gate';
-import { creatorShareText, feeWaiverEndsAt, feeWaiverPending, isFoundingCreator, foundingProfileGaps, foundingSlotsLeft, FEE_WAIVER_DAYS } from '../lib/founding';
+import { holderVerificationLive } from '../lib/holder-access';
+import { signupsOpen } from '../lib/signups';
+import { sanitizeGateTokens, MAX_GATE_TOKENS } from '../lib/token-gate';
+import {
+  creatorShareText,
+  feeWaiverActive,
+  feeWaiverEndsAt,
+  feeWaiverPending,
+  isFoundingCreator,
+  foundingProfileGaps,
+  foundingSlotsLeft,
+  FEE_WAIVER_DAYS,
+} from '../lib/founding';
 import { Icons, SolidIcons } from '../components/Brand';
+import SiteNav from '../components/SiteNav';
+import Inbox from '../components/dashboard/Inbox';
+import CashOutPanel from '../components/dashboard/CashOutPanel';
+import OrdersToShip from '../components/dashboard/OrdersToShip';
+import { uploadPrivateMedia, generateListingPreview, postJson } from '../components/dashboard/media-upload';
+import {
+  draftFromCreator,
+  profileFieldsFromDraft,
+  payoutWalletError,
+  dollarsToCents,
+  responseErrorMessage,
+} from '../components/dashboard/helpers';
 import { TAG_GROUPS, LISTING_TAG_GROUPS } from '../lib/tag-taxonomy';
-import { formatCredits } from '../lib/brand';
+import {
+  PLATFORM_FEE_PCT,
+  MARKETPLACE_FEE_PCT,
+  LISTING_FEE_PCT,
+  DM_PRICE_FLOOR_CENTS,
+  SETTLE_ASSET,
+  BRIDGE_ASSET,
+  formatCredits,
+} from '../lib/brand';
+import { DM_PRICE_MAX_CENTS } from '../lib/field-validation';
 import { marketplacePaymentsLive } from '../lib/marketplace-payment-config';
 
 export async function getServerSideProps({ req }) {
@@ -26,6 +58,7 @@ export async function getServerSideProps({ req }) {
   let creator = null;
   let listings = [];
   let foundingLeft = 0;
+  let founding = null;
   if (user.role === 'creator' && user.creatorId) {
     const creators = await getCreators();
     foundingLeft = foundingSlotsLeft(creators);
@@ -34,123 +67,102 @@ export async function getServerSideProps({ req }) {
     listings = allListings
       .filter((l) => String(l.creatorId) === String(user.creatorId))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    if (creator) {
+      // Computed HERE, not in the browser: PAYMENTS_LIVE_AT can be overridden
+      // by a server-only env var the client bundle never sees, so a date
+      // worked out client-side could disagree with the one transferWithFee
+      // actually enforces.
+      const endsAt = feeWaiverEndsAt(creator);
+      founding = {
+        isFounding: isFoundingCreator(creator),
+        pending: feeWaiverPending(creator),
+        active: feeWaiverActive(creator),
+        endsAt: endsAt ? endsAt.toISOString() : null,
+      };
+    }
   }
 
-  return { props: { user: publicUser(user), creator, listings, foundingLeft, paymentsLive: marketplacePaymentsLive() } };
+  return {
+    props: {
+      user: publicUser(user),
+      creator,
+      listings,
+      foundingLeft,
+      founding,
+      paymentsLive: marketplacePaymentsLive(),
+      gateVerifierLive: holderVerificationLive(),
+      signupsOpen: signupsOpen(),
+      publiclyVisible: creator ? isPubliclyVisible(creator) : false,
+    },
+  };
 }
 
-export default function Dashboard({ user, creator: initialCreator, listings: initialListings, foundingLeft, paymentsLive }) {
+// Fixed locale and time zone so the server render and the browser agree
+// (a date formatted in the server's zone and again in the viewer's is a
+// hydration mismatch on every page load near midnight).
+function formatDate(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+export default function Dashboard({
+  user,
+  creator: initialCreator,
+  listings: initialListings,
+  foundingLeft,
+  founding,
+  paymentsLive,
+  gateVerifierLive,
+  signupsOpen: signupsAreOpen,
+  publiclyVisible,
+}) {
   const router = useRouter();
   const [creator, setCreator] = useState(initialCreator);
   const [listings, setListings] = useState(initialListings || []);
-  const [balanceCents, setBalanceCents] = useState(null);
-  const [payoutAmount, setPayoutAmount] = useState('');
-  const [payoutBusy, setPayoutBusy] = useState(false);
-  const [payoutMsg, setPayoutMsg] = useState('');
-  const [ledger, setLedger] = useState(null);
-  const [payoutHistory, setPayoutHistory] = useState(null);
-  const [showActivity, setShowActivity] = useState(false);
-  const [draft, setDraft] = useState({
-    name: initialCreator?.name || '',
-    handle: initialCreator?.handle || '',
-    bio: initialCreator?.bio || '',
-    tags: (initialCreator?.tags || []).join(', '),
-    age: initialCreator?.age ?? '',
-    location: initialCreator?.location || '',
-    price: initialCreator?.price || '',
-    // 'onlyass' is a legacy value from when the token was the payment
-    // asset. It no longer is (see lib/brand.js), and nothing was ever
-    // paid out under it, so it reads as the dollar stablecoin.
-    locked: !!initialCreator?.locked,
-    gateTokens: gateTokensOf(initialCreator) || '',
-    payoutMethod: initialCreator?.payoutMethod === 'eth' ? 'eth' : 'usdg',
-    walletAddress: initialCreator?.walletAddress || '',
-    socials: {
-      twitter: initialCreator?.socials?.twitter || '',
-      instagram: initialCreator?.socials?.instagram || '',
-      tiktok: initialCreator?.socials?.tiktok || '',
-      reddit: initialCreator?.socials?.reddit || '',
-      website: initialCreator?.socials?.website || '',
-    },
-  });
+  const [draft, setDraft] = useState(() => draftFromCreator(initialCreator));
+  const [origin, setOrigin] = useState('');
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
   const creatorStatus = creator ? effectiveCreatorStatus(creator) : null;
   const isRestricted = creatorStatus === 'suspended' || creatorStatus === 'banned';
+  const isDemo = !!creator && (creator.seed === true || creator.demo === true);
+  const walletError = payoutWalletError(draft.walletAddress);
+  const walletDirty = String(draft.walletAddress || '').trim() !== String(creator?.walletAddress || '').trim();
+
+  // window is not available during SSR; reading it in render made the
+  // server and client HTML differ.
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
 
   const logout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/');
-  };
-
-  useEffect(() => {
-    if (!creator) return;
-    fetch('/api/credits/balance')
-      .then((r) => r.json())
-      .then((d) => setBalanceCents(d.balanceCents ?? 0))
-      .catch(() => {});
-  }, [creator]);
-
-  // Loaded once activity is actually opened, not on every dashboard visit --
-  // a creator who never clicks "Recent activity" shouldn't pay for two extra
-  // fetches just for landing on their own dashboard.
-  //
-  // Two overlapping calls are possible (opening the panel, then cashing out
-  // again before the first reload lands) and fetch responses aren't
-  // guaranteed to resolve in request order -- without the sequence guard
-  // below, a slower FIRST call's response could land after a faster SECOND
-  // one's and overwrite fresher state with stale data. Bumping a ref per
-  // call and only applying a response if it's still the latest one fixes
-  // that without needing to cancel/await anything.
-  const activityRequestId = useRef(0);
-  const loadActivity = () => {
-    const id = ++activityRequestId.current;
-    fetch('/api/credits/ledger').then((r) => r.json()).then((d) => { if (activityRequestId.current === id) setLedger(d.entries || []); }).catch(() => { if (activityRequestId.current === id) setLedger([]); });
-    fetch('/api/credits/payout-status').then((r) => r.json()).then((d) => { if (activityRequestId.current === id) setPayoutHistory(d.requests || []); }).catch(() => { if (activityRequestId.current === id) setPayoutHistory([]); });
-  };
-
-  const requestCashOut = async () => {
-    setPayoutMsg('');
-    const cents = Math.round(Number(payoutAmount) * 100);
-    if (!Number.isFinite(cents) || cents <= 0) {
-      setPayoutMsg('Enter a valid amount.');
-      return;
-    }
-    setPayoutBusy(true);
     try {
-      const res = await fetch('/api/credits/payout-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountCents: cents }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Cash out failed');
-      setBalanceCents(data.balanceCents);
-      setPayoutAmount('');
-      setPayoutMsg(`Requested — $${(cents / 100).toFixed(2)} in USDG is on its way to your saved wallet.`);
-      if (payoutHistory !== null) loadActivity(); // keep an already-open history list in sync with the request just made
-    } catch (err) {
-      setPayoutMsg(err.message);
+      await fetch('/api/auth/logout', { method: 'POST' });
     } finally {
-      setPayoutBusy(false);
+      router.push('/');
     }
   };
 
   const saveProfile = async () => {
+    const built = profileFieldsFromDraft(draft);
+    if (built.error) {
+      setStatus(`Error: ${built.error}`);
+      return;
+    }
     setBusy(true);
     setStatus('Saving...');
     try {
-      const res = await fetch('/api/me/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: { ...draft, img: creator.img } }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Save failed');
+      // No `img` here: the avatar is set only by the avatar upload, and the
+      // server ignores one posted with the profile.
+      const { res, data } = await postJson('/api/me/profile', { fields: built.fields });
+      if (!res.ok || !data?.creator) throw new Error(responseErrorMessage(res.status, data, 'Save failed'));
       setCreator(data.creator);
-      setDraft((d) => ({ ...d, tags: (data.creator.tags || []).join(', ') }));
+      // Resync every field to what was actually stored (normalised handle,
+      // cleaned tags, clamped gate amount, trimmed wallet...).
+      setDraft(draftFromCreator(data.creator));
       setStatus('Saved.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -159,19 +171,20 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     }
   };
 
+  const progress = (label) => (pct) => setStatus(`${label} ${pct}%`);
+
   const uploadAvatar = async (file) => {
     if (!file) return;
     setBusy(true);
     setStatus('Uploading avatar...');
     try {
-      const res = await fetch('/api/me/avatar', {
-        method: 'POST',
-        headers: { 'x-file-name': file.name, 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
+      const data = await uploadPrivateMedia({
+        file,
+        purpose: 'avatar',
+        finalizeUrl: '/api/me/avatar',
+        onProgress: progress('Uploading avatar...'),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
-      setCreator(data.creator);
+      if (data.creator) setCreator(data.creator);
       setStatus('Avatar updated.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -185,20 +198,14 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     setBusy(true);
     setStatus('Uploading content...');
     try {
-      const res = await fetch('/api/me/upload', {
-        method: 'POST',
-        headers: {
-          'x-file-name': file.name,
-          'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
-          'x-current-gallery': JSON.stringify(creator.gallery || []),
-          'x-ai-generated': aiGenerated ? 'true' : 'false',
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-        body: file,
+      const data = await uploadPrivateMedia({
+        file,
+        purpose: 'gallery',
+        finalizeUrl: '/api/me/upload',
+        finalizeBody: { aiGenerated: !!aiGenerated },
+        onProgress: progress('Uploading content...'),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
-      setCreator(data.creator);
+      if (data.creator) setCreator(data.creator);
       setStatus('Content added.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -207,17 +214,20 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     }
   };
 
-  const deleteItem = async (index) => {
+  // Addressed by src (the item's identity) with the index as a hint: a bare
+  // index removed whatever sat at that position on the server, which after an
+  // edit in another tab was a different photo from the one clicked.
+  const deleteItem = async (item, index) => {
+    if (!item?.src) return;
     setBusy(true);
     setStatus('Removing...');
     try {
-      const res = await fetch('/api/me/gallery-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ index }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Delete failed');
+      const { res, data } = await postJson('/api/me/gallery-delete', { src: item.src, index });
+      if (res.status === 409) {
+        setStatus('That item was already removed or changed somewhere else. Refresh the page to see your current gallery.');
+        return;
+      }
+      if (!res.ok || !data?.creator) throw new Error(responseErrorMessage(res.status, data, 'Delete failed'));
       setCreator(data.creator);
       setStatus('Removed.');
     } catch (err) {
@@ -231,14 +241,9 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     setBusy(true);
     setStatus('Creating listing...');
     try {
-      const res = await fetch('/api/marketplace/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fields),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to create listing');
-      setListings([data.listing, ...listings]);
+      const { res, data } = await postJson('/api/marketplace/create', fields);
+      if (!res.ok || !data?.listing) throw new Error(responseErrorMessage(res.status, data, 'Failed to create listing'));
+      setListings((list) => [data.listing, ...list]);
       setStatus('Listing created — add photos/video below.');
       return data.listing;
     } catch (err) {
@@ -251,25 +256,23 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
 
   const uploadListingMedia = async (listingId, file) => {
     if (!file) return;
-    const listing = listings.find((l) => l.id === listingId);
     setBusy(true);
-    setStatus('Uploading...');
+    setStatus('Preparing preview...');
     try {
-      const res = await fetch('/api/marketplace/upload', {
-        method: 'POST',
-        headers: {
-          'x-listing-id': String(listingId),
-          'x-file-name': file.name,
-          'x-file-type': file.type.startsWith('video') ? 'video' : 'image',
-          'x-current-media': JSON.stringify(listing?.media || []),
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-        body: file,
+      // The blurred preview is the only image of this media a non-buyer ever
+      // gets. If the browser can't decode the file it is null and the
+      // listing shows a placeholder -- never the real file.
+      const preview = await generateListingPreview(file);
+      const data = await uploadPrivateMedia({
+        file,
+        purpose: 'listing',
+        listingId,
+        finalizeUrl: '/api/marketplace/upload',
+        finalizeBody: { listingId, preview },
+        onProgress: progress('Uploading...'),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
-      setListings(listings.map((l) => (l.id === listingId ? data.listing : l)));
-      setStatus('Media added.');
+      if (data.listing) setListings((list) => list.map((l) => (l.id === listingId ? data.listing : l)));
+      setStatus(preview ? 'Media added.' : 'Media added. Your browser could not make a blurred preview of it, so shoppers see a placeholder instead.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -277,27 +280,25 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
     }
   };
 
-  const toggleListingStatus = async (listingId, status) => {
+  const toggleListingStatus = async (listingId, nextStatus) => {
     setBusy(true);
     try {
-      const res = await fetch('/api/marketplace/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, fields: { status } }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Update failed');
-      setListings(listings.map((l) => (l.id === listingId ? data.listing : l)));
+      const { res, data } = await postJson('/api/marketplace/update', { listingId, fields: { status: nextStatus } });
+      if (!res.ok || !data?.listing) throw new Error(responseErrorMessage(res.status, data, 'Update failed'));
+      setListings((list) => list.map((l) => (l.id === listingId ? data.listing : l)));
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
       setBusy(false);
     }
   };
+
+  const profileUrl = creator ? `${origin}/creator/${creator.id}` : '';
 
   return (
     <>
       <Head><title>Dashboard - OnlyOne</title></Head>
+      <SiteNav signedIn viewerAvatar={creator?.img || null} />
       <div className="min-h-screen bg-gradient-luxury text-white px-6 py-10">
         <div className="max-w-3xl mx-auto">
           <div className="flex items-center justify-between mb-8">
@@ -310,20 +311,26 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
           </div>
 
           {status && (
-            <div className="mb-6 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-brand-secondary text-sm">
+            <div className="mb-6 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-brand-secondary text-sm" role="status">
               {status}
             </div>
           )}
 
-          <Inbox currentUserId={user.id} />
+          <Inbox currentUserId={user.id} isCreator={user.role === 'creator' && !!creator} />
 
           {user.role !== 'creator' && (
             <div className="premium-card p-8">
               <p className="text-gray-300 mb-2">Logged in as <span className="text-brand-gold font-bold">{user.email}</span></p>
               <p className="text-gray-400 text-sm mb-6">
-                You're set up as a fan. Head to the platform to browse creators — unlocks are paid for with credits, which you top up with dollars.
+                You&apos;re set up as a fan. Credits are what you spend here — on Marketplace items and on messages to
+                creators — and spending them needs no wallet. Buying credits does: you send {SETTLE_ASSET} from a crypto
+                wallet on the {process.env.NEXT_PUBLIC_MARKETPLACE_CHAIN_NAME || 'Robinhood Chain'} network.
               </p>
-              <a href="/creators" className="premium-button inline-block">Browse Creators</a>
+              <div className="flex flex-wrap gap-3">
+                <a href="/creators" className="premium-button inline-block">Browse Creators</a>
+                <a href="/credits" className="px-5 py-3 rounded-md border border-brand-purple/30 text-sm text-gray-200 hover:bg-white/5 transition">Buy Credits</a>
+                <a href="/orders" className="px-5 py-3 rounded-md border border-brand-purple/30 text-sm text-gray-200 hover:bg-white/5 transition">Your Orders</a>
+              </div>
             </div>
           )}
 
@@ -347,45 +354,59 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
 
           {user.role === 'creator' && creator && (
             <div className="premium-card p-6 space-y-6">
-              {creator.status === 'pending' && (
+              {isDemo && (
+                <div className="px-4 py-3 rounded-md bg-white/5 border border-white/15 text-gray-300 text-sm">
+                  Demo profile — not for sale. Demo listings can&apos;t be bought and demo accounts can&apos;t cash out.
+                </div>
+              )}
+              {creatorStatus === 'pending' && (
                 <div className="px-4 py-3 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
-                  Your profile is pending review and not yet visible on the platform. Build it out below — our team will verify and publish it soon.
+                  Your profile is pending review and not yet visible on the platform. Build it out below — you can upload
+                  and create listings now, and they go live (and can sell) once our team approves your profile.
                 </div>
               )}
               {creatorStatus === 'suspended' && (
                 <div className="px-4 py-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-                  Your account is suspended until {new Date(creator.suspendedUntil).toLocaleDateString()} following a
-                  confirmed content violation. Your profile is hidden and you can't post or edit content until then.
+                  Your account is suspended until {formatDate(creator.suspendedUntil)} following a confirmed content
+                  violation. Your profile and listings are hidden, you can&apos;t post, edit or sell, and your balance and
+                  any pending cash-outs are held until then. You can still ship orders fans have already paid for.
                 </div>
               )}
               {creatorStatus === 'banned' && (
                 <div className="px-4 py-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
                   Your account has been permanently banned following a second confirmed content violation. Your
-                  profile is hidden and you can no longer post or edit content.
+                  profile is hidden, you can no longer post, edit or sell, and your balance is frozen and never paid out.
                 </div>
               )}
 
               <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-md bg-black/30 border border-brand-purple/20">
                 <div className="min-w-0">
                   <p className="text-xs text-gray-500 mb-1">Your shareable profile link</p>
-                  <p className="text-sm text-gray-300 truncate font-mono">
-                    {typeof window !== 'undefined' ? `${window.location.origin}/creator/${creator.id}` : `/creator/${creator.id}`}
-                  </p>
+                  <p className="text-sm text-gray-300 truncate font-mono">{profileUrl || `/creator/${creator.id}`}</p>
                 </div>
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`${window.location.origin}/creator/${creator.id}`);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(profileUrl);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    } catch {
+                      setCopied(false);
+                    }
                   }}
-                  className="shrink-0 text-xs px-4 py-2 rounded-md border border-brand-gold/40 text-brand-gold hover:bg-brand-gold/10 transition"
+                  disabled={!profileUrl}
+                  className="shrink-0 text-xs px-4 py-2 rounded-md border border-brand-gold/40 text-brand-gold hover:bg-brand-gold/10 transition disabled:opacity-50"
                 >
                   {copied ? 'Copied!' : 'Copy Link'}
                 </button>
               </div>
 
               <div className="flex items-center gap-4">
-                <img src={creator.img} alt={creator.name} className="w-20 h-20 rounded-full object-cover object-top border-2 border-brand-gold" />
+                {creator.img ? (
+                  <img src={creator.img} alt={creator.name} className="w-20 h-20 rounded-full object-cover object-top border-2 border-brand-gold" />
+                ) : (
+                  <div className="w-20 h-20 rounded-full bg-brand-purple/30 border-2 border-brand-gold" />
+                )}
                 <div>
                   <p className="font-bold text-white flex items-center gap-1 mb-2">
                     {creator.name}
@@ -393,7 +414,17 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   </p>
                   <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy || isRestricted ? 'opacity-50 pointer-events-none' : ''}`}>
                     Change PFP
-                    <input type="file" accept="image/*" className="hidden" disabled={busy || isRestricted} onChange={(e) => uploadAvatar(e.target.files[0])} />
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif,image/avif,image/heic,image/heif"
+                      className="hidden"
+                      disabled={busy || isRestricted}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        uploadAvatar(file);
+                      }}
+                    />
                   </label>
                 </div>
               </div>
@@ -401,21 +432,39 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Display Name</label>
-                  <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <input value={draft.name} maxLength={80} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Handle</label>
-                  <input value={draft.handle} onChange={(e) => setDraft({ ...draft, handle: e.target.value })} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <input value={draft.handle} maxLength={40} onChange={(e) => setDraft({ ...draft, handle: e.target.value })} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">Subscription Price</label>
-                  <input value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <label className="block text-sm text-gray-400 mb-2">Price text on your profile</label>
+                  <input value={draft.price} maxLength={40} onChange={(e) => setDraft({ ...draft, price: e.target.value })} placeholder="e.g. Free" className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Display text only — subscriptions aren&apos;t sold on OnlyOne yet, so nobody is charged this.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Price for a fan to message you ($)</label>
+                  <input
+                    value={draft.dmPrice}
+                    inputMode="decimal"
+                    onChange={(e) => setDraft({ ...draft, dmPrice: e.target.value })}
+                    placeholder={`${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)} (default)`}
+                    className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Every message a fan sends you costs this in credits (${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)} minimum,
+                    ${(DM_PRICE_MAX_CENTS / 100).toFixed(2)} maximum). You earn it less the {PLATFORM_FEE_PCT}% platform fee.
+                    Your replies are free. Leave blank for the ${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)} default.
+                  </p>
                 </div>
               </div>
 
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Bio</label>
-                <textarea value={draft.bio} onChange={(e) => setDraft({ ...draft, bio: e.target.value })} rows={3} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                <textarea value={draft.bio} maxLength={1000} onChange={(e) => setDraft({ ...draft, bio: e.target.value })} rows={3} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
               </div>
 
               <div>
@@ -494,7 +543,9 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
 
               {/* Token gating. Hold, never spend -- a fan who unlocks this way
                   has paid nobody, which is exactly why it isn't a payment.
-                  See lib/token-gate.js. */}
+                  Enforced server-side (lib/token-gate.js, lib/holder-access.js):
+                  while the gate is on, a gated creator's photo and video srcs
+                  are never sent to anyone who hasn't proven the holding. */}
               <div className="rounded-md border border-brand-purple/30 bg-black/20 p-4">
                 <label className="flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
                   <input
@@ -502,11 +553,13 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                     checked={!!draft.locked}
                     onChange={(e) => setDraft({ ...draft, locked: e.target.checked })}
                   />
-                  Token-gate my profile
+                  Token-gate my photos and videos
                 </label>
                 <p className="text-xs text-gray-500 mt-2">
-                  Fans have to <strong>hold</strong> $ONLYONE to see your page. They don't spend it and you
-                  aren't paid from it — it's a gate, not a price, and it works alongside whatever you charge.
+                  Fans have to <strong>hold</strong> $ONLYONE to see your photos and videos. They unlock by signing a
+                  message with a wallet that holds the amount — nothing is spent, and you aren&apos;t paid from it. It&apos;s
+                  a gate, not a price. Your name, bio and marketplace listings stay visible to everyone, and you always
+                  see your own page.
                 </p>
                 {draft.locked && (
                   <div className="mt-3">
@@ -514,23 +567,27 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                     <input
                       type="number"
                       min="1"
+                      max={MAX_GATE_TOKENS}
                       step="1"
                       value={draft.gateTokens}
                       onChange={(e) => setDraft({ ...draft, gateTokens: e.target.value })}
                       placeholder="e.g. 2500000"
                       className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
                     />
-                    {!sanitizeGateTokens(draft.gateTokens) && (
+                    {!sanitizeGateTokens(draft.gateTokens) ? (
                       <p className="text-xs text-yellow-400/80 mt-2">
-                        Set a number above zero — a gate with no amount doesn't gate anything, and your page
+                        Set a number above zero — a gate with no amount doesn&apos;t gate anything, and your page
                         stays open.
                       </p>
-                    )}
-                    {!tokenGateLive() && (
+                    ) : !gateVerifierLive ? (
+                      <p className="text-xs text-yellow-400/80 mt-2">
+                        Wallet verification is switched off on the platform right now, so while this is on nobody but
+                        you can see your gated photos and videos — fans have no way to unlock them until it&apos;s back.
+                      </p>
+                    ) : (
                       <p className="text-xs text-gray-500 mt-2">
-                        $ONLYONE hasn't launched yet, so nobody is locked out in the meantime — your page
-                        shows as "unlocks at launch" and stays visible. The gate starts working the day the
-                        token does.
+                        Anyone who hasn&apos;t proven they hold at least {sanitizeGateTokens(draft.gateTokens).toLocaleString()} $ONLYONE
+                        sees locked tiles instead of your photos and videos.
                       </p>
                     )}
                   </div>
@@ -554,6 +611,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   <label className="block text-sm text-gray-400 mb-2">Location</label>
                   <input
                     value={draft.location}
+                    maxLength={80}
                     onChange={(e) => setDraft({ ...draft, location: e.target.value })}
                     placeholder="e.g. Los Angeles, CA"
                     className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
@@ -564,129 +622,48 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 Both show on your public profile. Leave them blank to keep them off it — plenty of creators do.
               </p>
 
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Get Paid In</label>
-                  <select
-                    value={draft.payoutMethod}
-                    onChange={(e) => setDraft({ ...draft, payoutMethod: e.target.value })}
-                    className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
-                  >
-                    <option value="usdg">USDG (dollars)</option>
-                    <option value="eth">ETH</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Payout Wallet Address</label>
-                  <input
-                    value={draft.walletAddress}
-                    onChange={(e) => setDraft({ ...draft, walletAddress: e.target.value })}
-                    placeholder="0x..."
-                    className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white font-mono text-sm"
-                  />
-                </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Payout Wallet Address ({SETTLE_ASSET})</label>
+                <input
+                  value={draft.walletAddress}
+                  maxLength={120}
+                  onChange={(e) => setDraft({ ...draft, walletAddress: e.target.value })}
+                  placeholder="0x..."
+                  aria-invalid={!!walletError}
+                  className={`w-full px-4 py-3 rounded-md bg-black/40 border text-white font-mono text-sm ${walletError ? 'border-red-500/60' : 'border-brand-purple/30'}`}
+                />
+                {walletError && <p className="text-xs text-red-400 mt-1">{walletError}</p>}
               </div>
               <p className="text-xs text-gray-500 -mt-2">
-                Your earnings are paid out to this wallet in USDG — the dollar stablecoin on Robinhood Chain, worth $1 each. Bridge it out and it arrives as USDC, which Coinbase accepts. The platform takes 10% (15% on marketplace sales) automatically when a fan spends — what lands in your credits balance below is already net.
+                Payouts are {SETTLE_ASSET} only — the dollar stablecoin on {process.env.NEXT_PUBLIC_MARKETPLACE_CHAIN_NAME || 'Robinhood Chain'},
+                worth $1 each — sent to this wallet. Bridge it out and it arrives as {BRIDGE_ASSET}, which Coinbase accepts.
+                Double-check the address: a payout sent to the wrong one can&apos;t be recovered. The platform keeps
+                {` ${PLATFORM_FEE_PCT}%`} of paid messages and {MARKETPLACE_FEE_PCT}% of marketplace sales ({PLATFORM_FEE_PCT}% platform
+                fee + {LISTING_FEE_PCT}% listing fee) when a fan spends — what lands in your balance below is already net.
+                {founding?.isFounding && ' As a Founding Creator you pay neither fee during your fee-free window (see below).'}
               </p>
 
-              <button onClick={saveProfile} disabled={busy || isRestricted} className="premium-button disabled:opacity-50">
+              <button onClick={saveProfile} disabled={busy || isRestricted || !!walletError} className="premium-button disabled:opacity-50">
                 Save Profile
               </button>
 
-              <div className="premium-card p-5 mt-6">
-                <p className="text-sm font-bold text-white mb-1">Credits balance</p>
-                <p className="text-2xl font-black text-brand-gold mb-4">
-                  {balanceCents === null ? '…' : formatCredits(balanceCents)}
-                </p>
-                <p className="text-xs text-gray-500 mb-4">
-                  Fans pay you in credits with no wallet needed on their end. Cash out to the wallet address saved above —
-                  real USDG is sent to you by hand once requested (usually within a day), never automatically.
-                </p>
-                {isRestricted ? (
-                  <p className="text-xs text-red-400">
-                    Cash-outs are disabled while your account is {creatorStatus} — this is enforced server-side either way, but shown here so it's not a surprise after typing an amount.
-                  </p>
-                ) : !creator?.walletAddress ? (
-                  <p className="text-xs text-brand-gold">Add a payout wallet address above and save your profile before cashing out.</p>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      value={payoutAmount}
-                      onChange={(e) => setPayoutAmount(e.target.value)}
-                      placeholder="Amount ($)"
-                      disabled={isRestricted}
-                      className="px-4 py-2.5 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm w-40"
-                    />
-                    <button onClick={requestCashOut} disabled={payoutBusy || !balanceCents || isRestricted} className="premium-button text-sm disabled:opacity-50">
-                      {payoutBusy ? 'Requesting…' : 'Cash Out'}
-                    </button>
-                    {balanceCents > 0 && (
-                      <button
-                        onClick={() => setPayoutAmount((balanceCents / 100).toFixed(2))}
-                        className="text-xs text-gray-400 hover:text-white transition"
-                      >
-                        Max
-                      </button>
-                    )}
-                  </div>
-                )}
-                {payoutMsg && <p className="text-xs text-gray-400 mt-3">{payoutMsg}</p>}
-
-                <button
-                  onClick={() => { const next = !showActivity; setShowActivity(next); if (next && ledger === null) loadActivity(); }}
-                  className="text-xs text-brand-pink hover:underline mt-4"
-                >
-                  {showActivity ? 'Hide' : 'Show'} recent activity & cash-out history
-                </button>
-
-                {showActivity && (
-                  <div className="mt-4 grid sm:grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs font-bold tracking-widest text-gray-500 mb-2">RECENT ACTIVITY</p>
-                      {ledger === null ? (
-                        <p className="text-xs text-gray-500">Loading…</p>
-                      ) : !ledger.length ? (
-                        <p className="text-xs text-gray-500">Nothing yet.</p>
-                      ) : (
-                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                          {ledger.map((e) => (
-                            <div key={e.id} className="flex items-center justify-between text-xs bg-black/20 rounded-lg px-3 py-2">
-                              <span className="text-gray-400 truncate pr-2">{e.type.replace(/_/g, ' ')}</span>
-                              <span className={`font-bold shrink-0 ${e.amountCents >= 0 ? 'text-green-400' : 'text-gray-300'}`}>
-                                {e.amountCents >= 0 ? '+' : ''}{formatCredits(e.amountCents)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold tracking-widest text-gray-500 mb-2">CASH-OUT HISTORY</p>
-                      {payoutHistory === null ? (
-                        <p className="text-xs text-gray-500">Loading…</p>
-                      ) : !payoutHistory.length ? (
-                        <p className="text-xs text-gray-500">No cash-out requests yet.</p>
-                      ) : (
-                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                          {payoutHistory.map((r) => (
-                            <div key={r.id} className="flex items-center justify-between text-xs bg-black/20 rounded-lg px-3 py-2">
-                              <span className="text-gray-400">{formatCredits(r.amountCents)}</span>
-                              <span className={`font-bold shrink-0 ${r.status === 'paid' ? 'text-green-400' : 'text-brand-gold'}`}>
-                                {r.status === 'paid' ? 'Paid' : 'Pending'}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <CashOutPanel
+                creator={creator}
+                effectiveStatus={creatorStatus}
+                savedWallet={creator.walletAddress || ''}
+                walletDirty={walletDirty}
+              />
 
               <hr className="border-brand-purple/20" />
 
-              <ShareKit creator={creator} foundingLeft={foundingLeft} />
+              <ShareKit
+                creator={creator}
+                foundingLeft={foundingLeft}
+                founding={founding}
+                origin={origin}
+                publiclyVisible={publiclyVisible}
+                signupsOpen={signupsAreOpen}
+              />
 
               <hr className="border-brand-purple/20" />
 
@@ -698,22 +675,29 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                   return (
                     <>
                       {/* A creator will ask whether their content is safe.
-                          Telling them it can't be copied would be a lie they
-                          would find out about the hard way, so this says
-                          exactly what is and isn't true. */}
+                          Telling them it can't be copied, or that every
+                          viewer is marked, would be a lie they'd find out
+                          about the hard way -- so this says exactly what is
+                          and isn't true today. */}
                       <div className="mb-4 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-gray-400 leading-relaxed">
                         <p className="text-brand-gold font-bold text-sm mb-1">How your content is protected</p>
                         <p>
-                          Right-click saving, dragging and the phone long-press "Save Image" menu are all
-                          blocked, and every image and video is stamped with a code identifying whoever is
-                          looking at it — so anything that leaks points back to the account it came from.
+                          Your files sit in private storage and are only handed out through OnlyOne, never at a
+                          permanent public link. Right-click saving, dragging and the phone long-press &quot;Save Image&quot;
+                          menu are blocked on your page.
                         </p>
                         <p className="mt-2">
-                          What no website can do is block a screenshot. That's not a feature we haven't built:
-                          the browser has to hand the picture to the operating system to show it to anyone, and
-                          the screenshot tool reads it from there. Anyone claiming otherwise is selling
-                          something. The watermark is what makes a leak traceable, and traceable is what
-                          actually stops people.
+                          Viewers who are logged in see a faint code over your photos and videos that identifies their
+                          account, so a screenshot from a logged-in viewer points back to them. Be clear about the limits:
+                          visitors who aren&apos;t logged in see your content with no code on it, and the code is drawn
+                          over the picture on the page rather than stamped into the file itself, so a copy of the file
+                          carries no mark.
+                        </p>
+                        <p className="mt-2">
+                          What no website can do is block a screenshot. The browser has to hand the picture to the
+                          operating system to show it to anyone, and the screenshot tool reads it from there. Anyone
+                          claiming otherwise is selling something. If you want only paying or holding fans to see
+                          something, sell it on the Marketplace or turn on token-gating above.
                         </p>
                       </div>
                       <div className="flex items-center justify-between mb-2">
@@ -724,18 +708,18 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                           </span>
                         ) : (
                           <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
-                            {busy ? 'Uploading...' : 'Upload'}
+                            {busy ? 'Working...' : 'Upload'}
                             <input
                               type="file"
-                              accept="image/*,video/*"
+                              accept="image/*,video/mp4,video/quicktime,video/webm"
                               className="hidden"
                               disabled={busy}
                               onChange={(e) => {
-                                const file = e.target.files[0];
+                                const file = e.target.files?.[0];
+                                e.target.value = '';
                                 if (!file) return;
                                 uploadContent(file, nextUploadIsAi);
                                 setNextUploadIsAi(false);
-                                e.target.value = '';
                               }}
                             />
                           </label>
@@ -744,7 +728,7 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                       {!atLimit && (
                         <label className="flex items-center gap-2 text-xs text-gray-400 mb-2 cursor-pointer">
                           <input type="checkbox" checked={nextUploadIsAi} onChange={(e) => setNextUploadIsAi(e.target.checked)} />
-                          This upload is AI-generated or synthetic content (will be labeled "AI" on your profile)
+                          This upload is AI-generated or synthetic content (will be labeled &quot;AI&quot; on your profile)
                         </label>
                       )}
                       {!creator.premium && (
@@ -752,27 +736,31 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                           Free accounts get 50 content slots. Premium creators get 200 and a gold check — contact us to upgrade.
                         </p>
                       )}
+                      <p className="text-xs text-gray-500 mb-3">Photos up to 25MB, videos (MP4, MOV, WebM) up to 50MB.</p>
                     </>
                   );
                 })()}
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                   {(creator.gallery || []).map((item, i) => (
-                    <div key={i} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
+                    <div key={item.src || i} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
                       {item.type === 'video' ? (
-                        <video src={item.src} className="w-full h-full object-cover" muted />
+                        <video src={item.src} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                       ) : (
                         <img src={item.src} alt="" className="w-full h-full object-cover" />
                       )}
                       {item.aiGenerated && (
                         <span className="absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
                       )}
-                      <button
-                        onClick={() => deleteItem(i)}
-                        disabled={busy}
-                        className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition disabled:opacity-30"
-                      >
-                        <Icons.close className="h-3.5 w-3.5 mx-auto" />
-                      </button>
+                      {!isRestricted && (
+                        <button
+                          onClick={() => deleteItem(item, i)}
+                          disabled={busy}
+                          aria-label="Remove this item"
+                          className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition disabled:opacity-30"
+                        >
+                          <Icons.close className="h-3.5 w-3.5 mx-auto" />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -784,6 +772,9 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
                 listings={listings}
                 busy={busy}
                 disabled={isRestricted}
+                creatorStatus={creatorStatus}
+                isDemo={isDemo}
+                founding={founding}
                 paymentsLive={paymentsLive}
                 onCreate={createListing}
                 onUploadMedia={uploadListingMedia}
@@ -813,17 +804,14 @@ export default function Dashboard({ user, creator: initialCreator, listings: ini
  * creator and the site. "/" is the one page everyone can open, it carries
  * the ?ref through to signup via the cookie in lib/referral.js, and the
  * creator's profile is one click past it.
+ *
+ * What the link actually does, stated plainly because the old copy promised
+ * more: signup (pages/api/auth/signup.js) records a referral only when the
+ * referring creator is publicly visible at that moment, only while account
+ * signups are open at all, and no referral reward is paid today.
  */
-function ShareKit({ creator, foundingLeft }) {
+function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, signupsOpen }) {
   const [copiedField, setCopiedField] = useState('');
-  const [origin, setOrigin] = useState('');
-
-  // window is not available during SSR, and hardcoding a domain would break
-  // the link on every other host this project serves (joinonlyone.com,
-  // onlyass.fun, onlyone1.fun, preview deployments).
-  useEffect(() => {
-    setOrigin(window.location.origin);
-  }, []);
 
   const handle = String(creator?.handle || '').replace(/^@/, '');
   const link = handle && origin ? `${origin}/?ref=${encodeURIComponent(handle)}` : '';
@@ -839,8 +827,7 @@ function ShareKit({ creator, foundingLeft }) {
     }
   };
 
-  const founding = isFoundingCreator(creator);
-  const waiverEnds = feeWaiverEndsAt(creator);
+  const isFounding = !!founding?.isFounding;
   const gaps = foundingProfileGaps(creator);
 
   return (
@@ -851,21 +838,21 @@ function ShareKit({ creator, foundingLeft }) {
           The programme is decided automatically at approval, so a creator who
           is told "finish these four things" can actually act on it -- which is
           the difference between a perk and a lottery. */}
-      {!founding && foundingLeft > 0 && gaps.length > 0 && (
+      {!isFounding && foundingLeft > 0 && gaps.length > 0 && (
         <div className="mb-4 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-sm">
           <p className="font-bold text-brand-gold">
             {foundingLeft} Founding Creator {foundingLeft === 1 ? 'spot' : 'spots'} left
           </p>
           <p className="text-gray-400 mt-1">
             The first 100 creators approved with a finished profile get the badge, priority placement and
-            a fee-free window. Yours still needs:
+            a {FEE_WAIVER_DAYS}-day fee-free window. Yours still needs:
           </p>
           <ul className="list-disc pl-5 mt-2 text-gray-300 space-y-1">
             {gaps.map((g) => <li key={g}>{g}</li>)}
           </ul>
         </div>
       )}
-      {!founding && foundingLeft > 0 && gaps.length === 0 && (
+      {!isFounding && foundingLeft > 0 && gaps.length === 0 && (
         <div className="mb-4 px-4 py-3 rounded-md bg-black/40 border border-brand-gold/30 text-sm">
           <p className="font-bold text-brand-gold">Your profile qualifies for Founding Creator</p>
           <p className="text-gray-400 mt-1">
@@ -875,15 +862,17 @@ function ShareKit({ creator, foundingLeft }) {
         </div>
       )}
 
-      {founding && (
+      {isFounding && (
         <div className="mb-4 px-4 py-3 rounded-md bg-brand-gold/10 border border-brand-gold/30 text-sm">
           <p className="font-black tracking-wide text-brand-gold inline-flex items-center gap-1.5"><SolidIcons.star className="h-4 w-4" />FOUNDING CREATOR</p>
           <p className="text-gray-300 mt-1">
-            {feeWaiverPending(creator)
-              ? `Your ${FEE_WAIVER_DAYS} days at 0% platform fee start the day payments go live — not today — so you get the full window when there's actually a fee to waive.`
-              : waiverEnds && waiverEnds.getTime() > Date.now()
-                ? `You're paying 0% platform fee until ${waiverEnds.toLocaleDateString()}.`
-                : `Your ${FEE_WAIVER_DAYS}-day fee-free window has ended. The badge and priority placement are permanent.`}
+            {founding.pending
+              ? `Your ${FEE_WAIVER_DAYS} fee-free days start once your founding date is recorded — ask us if this doesn't update after approval.`
+              : founding.active && founding.endsAt
+                ? `You pay 0% — no platform fee and no listing fee — on your marketplace sales and paid messages until ${formatDate(founding.endsAt)}. You keep 100% of what fans spend on you until then.`
+                : founding.endsAt && Date.parse(founding.endsAt) > Date.now()
+                  ? `Your ${FEE_WAIVER_DAYS} fee-free days (no platform fee and no listing fee) run until ${formatDate(founding.endsAt)}.`
+                  : `Your ${FEE_WAIVER_DAYS}-day fee-free window has ended. The badge and priority placement are permanent.`}
           </p>
         </div>
       )}
@@ -892,11 +881,24 @@ function ShareKit({ creator, foundingLeft }) {
         <p className="text-sm text-gray-400">Set a handle above and save your profile to get your referral link.</p>
       ) : (
         <>
-          <p className="text-sm text-gray-400 mb-4">
-            Anyone who joins OnlyOne through this link is credited to you, for 30 days after they first click it.
+          <p className="text-sm text-gray-400 mb-2">
+            Fans who sign up within 30 days of first clicking this link are recorded as your referrals. Referral rewards
+            aren&apos;t live yet — nothing is paid for referrals today.
           </p>
+          {!signupsOpen && (
+            <p className="text-xs text-brand-gold mb-2">
+              New account signups are closed right now, so nobody can join through the link yet. Visitors can still
+              browse and join the waitlist.
+            </p>
+          )}
+          {!publiclyVisible && (
+            <p className="text-xs text-brand-gold mb-2">
+              Your profile isn&apos;t publicly visible yet, so signups through your link aren&apos;t recorded as yours
+              until it is approved and live.
+            </p>
+          )}
 
-          <label className="block text-xs text-gray-500 mb-2">YOUR REFERRAL LINK</label>
+          <label className="block text-xs text-gray-500 mb-2 mt-3">YOUR REFERRAL LINK</label>
           <div className="flex gap-2 mb-5">
             <input
               readOnly
@@ -934,132 +936,16 @@ function ShareKit({ creator, foundingLeft }) {
   );
 }
 
-function Inbox({ currentUserId }) {
-  const [conversations, setConversations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [openId, setOpenId] = useState(null);
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState('');
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/messages/conversations');
-      const data = await res.json();
-      if (res.ok) setConversations(data.conversations || []);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const open = conversations.find((c) => c.id === openId);
-
-  const send = async (e) => {
-    e.preventDefault();
-    if (!text.trim() || !open) return;
-    setSending(true);
-    setSendError('');
-    try {
-      const res = await fetch('/api/messages/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ toUserId: open.other.userId, text }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setText('');
-        await load();
-      } else {
-        setSendError(data.error || 'Failed to send');
-      }
-    } finally {
-      setSending(false);
-    }
-  };
-
-  if (loading) return null;
-  if (conversations.length === 0) return null;
-
-  return (
-    <div className="premium-card p-6 mb-6">
-      <h3 className="font-bold text-brand-gold mb-4">Messages</h3>
-      <div className="grid sm:grid-cols-3 gap-4">
-        <div className="space-y-2 sm:border-r border-brand-purple/20 sm:pr-4">
-          {conversations.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setOpenId(c.id)}
-              className={`w-full flex items-center gap-2 p-2 rounded-md text-left transition ${
-                openId === c.id ? 'bg-brand-purple/20' : 'hover:bg-white/5'
-              }`}
-            >
-              {c.other.img ? (
-                <img src={c.other.img} alt="" className="w-8 h-8 rounded-full object-cover object-top" />
-              ) : (
-                <div className="w-8 h-8 rounded-full bg-brand-purple/30" />
-              )}
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-white truncate">{c.other.name}</p>
-                <p className="text-xs text-gray-500 truncate">{c.messages[c.messages.length - 1]?.text}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        <div className="sm:col-span-2">
-          {!open ? (
-            <p className="text-gray-500 text-sm">Select a conversation.</p>
-          ) : (
-            <div className="flex flex-col h-72">
-              <div className="flex-1 overflow-y-auto space-y-2 mb-3 pr-1">
-                {open.messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
-                      String(m.senderId) === String(currentUserId)
-                        ? 'bg-brand-gold text-black ml-auto'
-                        : 'bg-black/40 text-gray-200 mr-auto'
-                    }`}
-                  >
-                    {m.text}
-                  </div>
-                ))}
-              </div>
-              {sendError && <p className="text-xs text-red-400 mb-2">{sendError}</p>}
-              <form onSubmit={send} className="flex gap-2">
-                <input
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  placeholder="Reply..."
-                  className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
-                />
-                <button type="submit" disabled={sending} className="premium-button py-2 px-4 text-sm disabled:opacity-50">
-                  Send
-                </button>
-              </form>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false, tags: '' };
 
-function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, onUploadMedia, onToggleStatus }) {
+function MarketplaceSection({ listings, busy, disabled, creatorStatus, isDemo, founding, paymentsLive, onCreate, onUploadMedia, onToggleStatus }) {
   const [form, setForm] = useState(BLANK_LISTING_FORM);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState('');
 
   const submit = async (e) => {
     e.preventDefault();
-    const priceCents = Math.round(Number(form.price) * 100);
+    const priceCents = dollarsToCents(form.price);
     // Says why instead of returning silently. A blank title or a price under
     // $1 made the Create button look broken -- nothing happened and nothing
     // explained it.
@@ -1067,12 +953,23 @@ function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, 
       setFormError('Give the listing a title.');
       return;
     }
-    if (!Number.isFinite(priceCents) || priceCents < 100) {
-      setFormError('Set a price of at least $1.00.');
+    if (priceCents === null || priceCents < LISTING_LIMITS.minPriceCents) {
+      setFormError(`Set a price of at least $${(LISTING_LIMITS.minPriceCents / 100).toFixed(2)}.`);
       return;
     }
+    if (priceCents > LISTING_LIMITS.maxPriceCents) {
+      setFormError(`Price can be at most $${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString()}.`);
+      return;
+    }
+    let shippingCents;
+    if (form.physical) {
+      shippingCents = String(form.shipping).trim() === '' ? 0 : dollarsToCents(form.shipping);
+      if (shippingCents === null || shippingCents > LISTING_LIMITS.maxShippingCents) {
+        setFormError(`Set a shipping fee from $0 to $${(LISTING_LIMITS.maxShippingCents / 100).toLocaleString()}.`);
+        return;
+      }
+    }
     setFormError('');
-    const shippingCents = form.physical ? Math.round(Number(form.shipping) * 100) || 0 : undefined;
     setCreating(true);
     const listing = await onCreate({
       title: form.title, description: form.description, priceCents, unlimited: form.unlimited,
@@ -1085,20 +982,39 @@ function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, 
     if (listing) setForm(BLANK_LISTING_FORM);
   };
 
+  const canSellNow = creatorStatus === 'active' && !isDemo;
+
   return (
     <div>
       <h3 className="font-bold text-brand-gold mb-3">Sell on the Marketplace (shoponeonly.com)</h3>
       <p className="text-xs text-gray-500 mb-4">
-        List images, videos, or anything else at whatever price you want. Platform takes 10% commission + a 5%
-        listing fee on top when it sells.{' '}
+        List images, videos, or anything else at whatever price you want (${(LISTING_LIMITS.minPriceCents / 100).toFixed(2)}
+        {' '}to ${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString()}). When it sells the platform keeps
+        {` ${MARKETPLACE_FEE_PCT}%`} — a {PLATFORM_FEE_PCT}% platform fee plus a {LISTING_FEE_PCT}% listing fee — and the rest is
+        credited to your balance.
+        {founding?.isFounding && ' During your Founding Creator fee-free window neither fee is charged.'}{' '}
         {paymentsLive
-          ? 'Buying is live — fans pay with credits, no wallet needed on their end.'
-          : "Buying isn't live yet — listings show up on the Marketplace now, ready to sell as soon as payments launch."}
+          ? `Buying is live: fans pay with credits they bought with ${SETTLE_ASSET}, so they need a crypto wallet to buy credits but not to spend them.`
+          : "Buying isn't switched on right now — listings show up on the Marketplace but can't be bought until it is."}
       </p>
+      {!canSellNow && (
+        <p className="text-xs text-brand-gold mb-4">
+          {isDemo
+            ? 'This is a demo profile, so its listings are labelled "Demo — not for sale" and can\'t be bought.'
+            : creatorStatus === 'pending'
+              ? 'Your listings stay hidden and can\'t be bought until your profile is approved.'
+              : creatorStatus === 'suspended'
+                ? 'Your listings are hidden and can\'t be bought while your account is suspended.'
+                : creatorStatus === 'banned'
+                  ? 'Your listings have been taken down and can\'t be bought.'
+                  : 'Your listings can\'t be bought right now.'}
+        </p>
+      )}
 
       <form onSubmit={submit} className="grid sm:grid-cols-2 gap-3 mb-6">
         <input
           value={form.title}
+          maxLength={140}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
           placeholder="Title"
           className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
@@ -1108,12 +1024,14 @@ function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, 
           onChange={(e) => setForm({ ...form, price: e.target.value })}
           placeholder="Price (USD)"
           type="number"
-          min="1"
+          min={LISTING_LIMITS.minPriceCents / 100}
+          max={LISTING_LIMITS.maxPriceCents / 100}
           step="0.01"
           className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
         />
         <textarea
           value={form.description}
+          maxLength={4000}
           onChange={(e) => setForm({ ...form, description: e.target.value })}
           placeholder="Description"
           rows={2}
@@ -1191,7 +1109,7 @@ function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, 
             checked={form.aiGenerated}
             onChange={(e) => setForm({ ...form, aiGenerated: e.target.checked })}
           />
-          AI-generated or synthetic content (will be labeled "AI" on the listing)
+          AI-generated or synthetic content (will be labeled &quot;AI&quot; on the listing)
         </label>
         {form.physical && (
           <>
@@ -1201,6 +1119,7 @@ function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, 
               placeholder="Shipping fee (USD, 0 for free shipping)"
               type="number"
               min="0"
+              max={LISTING_LIMITS.maxShippingCents / 100}
               step="0.01"
               className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
             />
@@ -1220,53 +1139,86 @@ function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, 
         </button>
       </form>
 
+      <p className="text-xs text-gray-500 mb-3">
+        Shoppers who haven&apos;t bought a listing only ever see a small blurred preview of its photos and videos;
+        buyers of a digital listing get the full files from their Orders page.
+      </p>
+
       <div className="space-y-4">
         {listings.length === 0 ? (
           <p className="text-sm text-gray-500">No listings yet.</p>
         ) : (
-          listings.map((l) => (
-            <div key={l.id} className="premium-card border border-brand-purple/20 p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <p className="font-bold text-white">{l.title} — ${(l.priceCents / 100).toFixed(2)}</p>
-                  <p className="text-xs text-gray-500">
-                    {l.status} · {l.unlimited ? 'unlimited' : 'one-of-a-kind'}
-                    {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping)` : ' (free shipping)'}${l.signatureRequired ? ' · signature required' : ''}`}
-                    {l.aiGenerated && ' · AI'}
-                  </p>
-                  {Array.isArray(l.tags) && l.tags.length > 0 && (
-                    <p className="text-xs text-brand-gold mt-1">{l.tags.map((t) => `#${t}`).join(' ')}</p>
-                  )}
-                </div>
-                {l.status !== 'sold' && (
-                  <button
-                    onClick={() => onToggleStatus(l.id, l.status === 'active' ? 'removed' : 'active')}
-                    disabled={busy || disabled}
-                    className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
-                  >
-                    {l.status === 'active' ? 'Remove' : 'Reactivate'}
-                  </button>
-                )}
-              </div>
-              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                {(l.media || []).map((item, i) => (
-                  <div key={i} className="aspect-square rounded-md overflow-hidden border border-brand-purple/20">
-                    {item.type === 'video' ? (
-                      <video src={item.src} className="w-full h-full object-cover" muted />
-                    ) : (
-                      <img src={item.src} alt="" className="w-full h-full object-cover" />
+          listings.map((l) => {
+            const editable = l.status !== 'sold' && !l.moderationRemoved;
+            const mediaCount = (l.media || []).length;
+            return (
+              <div key={l.id} className="premium-card border border-brand-purple/20 p-4">
+                <div className="flex items-center justify-between mb-2 gap-3">
+                  <div className="min-w-0">
+                    <p className="font-bold text-white">
+                      {l.title} — ${(l.priceCents / 100).toFixed(2)}
+                      {(l.demo === true || isDemo) && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-gray-300 align-middle">Demo — not for sale</span>}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {l.moderationRemoved ? 'removed by moderation' : l.status} · {l.unlimited ? 'unlimited' : 'one-of-a-kind'}
+                      {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping)` : ' (free shipping)'}${l.signatureRequired ? ' · signature required' : ''}`}
+                      {l.aiGenerated && ' · AI'}
+                    </p>
+                    {Array.isArray(l.tags) && l.tags.length > 0 && (
+                      <p className="text-xs text-brand-gold mt-1">{l.tags.map((t) => `#${t}`).join(' ')}</p>
                     )}
                   </div>
-                ))}
-                {(l.media || []).length < 10 && (
-                  <label className={`aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition ${busy || disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-                    + Add
-                    <input type="file" accept="image/*,video/*" className="hidden" disabled={busy || disabled} onChange={(e) => onUploadMedia(l.id, e.target.files[0])} />
-                  </label>
+                  {/* 'sold' is terminal and a moderation removal can't be
+                      undone by the creator -- the server refuses both, so no
+                      button that can only fail. */}
+                  {editable && (
+                    <button
+                      onClick={() => onToggleStatus(l.id, l.status === 'active' ? 'removed' : 'active')}
+                      disabled={busy || disabled}
+                      className="shrink-0 text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+                    >
+                      {l.status === 'active' ? 'Remove' : 'Reactivate'}
+                    </button>
+                  )}
+                </div>
+                {l.moderationRemoved && (
+                  <p className="text-xs text-red-400 mb-2">This listing was taken down by moderation and can&apos;t be relisted.</p>
                 )}
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  {(l.media || []).map((item, i) => (
+                    <div key={item.src || i} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20">
+                      {item.type === 'video' ? (
+                        <video src={item.src} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                      ) : (
+                        <img src={item.src} alt="" className="w-full h-full object-cover" />
+                      )}
+                      {!item.preview && (
+                        <span className="absolute bottom-0.5 left-0.5 text-[8px] px-1 rounded bg-black/70 text-gray-300" title="Shoppers see a placeholder for this item">
+                          no preview
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  {editable && mediaCount < LISTING_LIMITS.maxMedia && (
+                    <label className={`aspect-square rounded-md border border-dashed border-brand-purple/30 flex items-center justify-center text-xs text-gray-500 cursor-pointer hover:bg-white/5 transition ${busy || disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+                      + Add
+                      <input
+                        type="file"
+                        accept="image/*,video/mp4,video/quicktime,video/webm"
+                        className="hidden"
+                        disabled={busy || disabled}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          onUploadMedia(l.id, file);
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -1275,115 +1227,6 @@ function MarketplaceSection({ listings, busy, disabled, paymentsLive, onCreate, 
           <hr className="border-brand-purple/20 my-6" />
           <OrdersToShip />
         </>
-      )}
-    </div>
-  );
-}
-
-function OrdersToShip() {
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [shipForm, setShipForm] = useState({}); // orderId -> { carrier, trackingNumber }
-  const [busyId, setBusyId] = useState(null);
-  const [error, setError] = useState('');
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/marketplace/orders/creator');
-      const data = await res.json();
-      if (res.ok) setOrders(data.orders || []);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const markShipped = async (orderId) => {
-    const { carrier, trackingNumber } = shipForm[orderId] || {};
-    if (!carrier || !trackingNumber) { setError('Enter a carrier and tracking number first.'); return; }
-    setBusyId(orderId);
-    setError('');
-    try {
-      const res = await fetch('/api/marketplace/orders/ship', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, carrier, trackingNumber }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to mark shipped');
-      setOrders(orders.map((o) => (o.id === orderId ? data.order : o)));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const pending = orders.filter((o) => o.status === 'pending_shipment');
-  const shipped = orders.filter((o) => o.status === 'shipped');
-
-  return (
-    <div>
-      <h3 className="font-bold text-brand-gold mb-3">Orders to Ship</h3>
-      {loading ? (
-        <p className="text-sm text-gray-500">Loading...</p>
-      ) : orders.length === 0 ? (
-        <p className="text-sm text-gray-500">No physical orders yet.</p>
-      ) : (
-        <div className="space-y-3">
-          {error && <p className="text-xs text-red-400">{error}</p>}
-          {pending.map((o) => {
-            const addr = o.shippingAddress || {};
-            const form = shipForm[o.id] || { carrier: '', trackingNumber: '' };
-            return (
-              <div key={o.id} className="premium-card border border-brand-purple/20 p-4">
-                <p className="text-sm text-white font-bold">Order #{o.id} — ${(o.priceCents / 100).toFixed(2)}{o.shippingCents ? ` + $${(o.shippingCents / 100).toFixed(2)} shipping` : ''}</p>
-                {o.signatureRequired && (
-                  <p className="text-xs text-brand-gold mt-1">Select signature confirmation with your carrier for this one — you marked this listing as requiring it.</p>
-                )}
-                <p className="text-xs text-gray-400 mt-1">
-                  {addr.fullName}<br />
-                  {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}<br />
-                  {addr.city}, {addr.region} {addr.postalCode}<br />
-                  {addr.country}{addr.phone ? ` · ${addr.phone}` : ''}
-                </p>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  <input
-                    value={form.carrier}
-                    onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, carrier: e.target.value } })}
-                    placeholder="Carrier (e.g. USPS)"
-                    className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
-                  />
-                  <input
-                    value={form.trackingNumber}
-                    onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, trackingNumber: e.target.value } })}
-                    placeholder="Tracking number"
-                    className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
-                  />
-                  <button
-                    onClick={() => markShipped(o.id)}
-                    disabled={busyId === o.id}
-                    className="premium-button text-xs px-4 disabled:opacity-50"
-                  >
-                    Mark Shipped
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          {shipped.length > 0 && (
-            <details className="text-xs text-gray-500">
-              <summary className="cursor-pointer">Shipped ({shipped.length})</summary>
-              <div className="mt-2 space-y-1">
-                {shipped.map((o) => (
-                  <p key={o.id}>Order #{o.id} — {o.carrier} {o.trackingNumber}</p>
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
       )}
     </div>
   );

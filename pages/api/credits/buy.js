@@ -1,7 +1,13 @@
 import { recoverMessageAddress } from 'viem';
 import { getVerifiedSessionUserId } from '../../../lib/session';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
-import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM } from '../../../lib/deposit';
+import {
+  creditDepositFromChain,
+  readDepositWalletToken,
+  DEPOSIT_WALLET_COOKIE_NAME,
+  TX_ALREADY_USED,
+  BELOW_MINIMUM,
+} from '../../../lib/deposit';
 import { ageVerificationSecret } from '../../../lib/age-verification';
 import { readWalletNonce, depositProofMessage, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
 import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
@@ -12,8 +18,10 @@ import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
  * and eventually tips/subscriptions) spends from that balance with no
  * wallet interaction at all -- see pages/api/marketplace/orders/create.js.
  *
- * Requires a signature (over a nonce from GET /api/credits/wallet-nonce)
- * proving the caller controls the wallet the payment is claimed to be from.
+ * Requires proof that the caller controls the wallet the payment came from:
+ * normally the cookie set by POST /api/credits/verify-wallet (checked before
+ * the fan sends anything), or a signature over a nonce from GET
+ * /api/credits/wallet-nonce.
  * Without this, the amount+destination check alone doesn't prove who paid --
  * the payout address is public (right there in the client bundle), so
  * anyone watching the chain could submit someone else's real deposit's
@@ -53,32 +61,37 @@ export default async function handler(req, res) {
   }
 
   const { txHash, signature } = req.body || {};
-  if (!txHash) return res.status(400).json({ error: 'Missing transaction hash' });
-  if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]+$/.test(signature)) {
-    return res.status(400).json({ error: 'Missing wallet signature -- verify your wallet before submitting a payment.' });
+  if (typeof txHash !== 'string' || !txHash) return res.status(400).json({ error: 'Missing transaction hash' });
+
+  // The sender proof. Preferred: the oa_deposit_wallet cookie from POST
+  // /api/credits/verify-wallet, established BEFORE the fan sent anything
+  // (see lib/deposit.js). Still accepted: the older one-shot signature over
+  // a wallet-nonce challenge, for a page loaded before this changed.
+  let expectedFrom = readDepositWalletToken(ageVerificationSecret(), req.cookies?.[DEPOSIT_WALLET_COOKIE_NAME], uid);
+  if (!expectedFrom && typeof signature === 'string' && /^0x[0-9a-fA-F]+$/.test(signature)) {
+    const nonce = await readWalletNonce(ageVerificationSecret(), req.cookies?.[DEPOSIT_NONCE_COOKIE_NAME]);
+    if (nonce) {
+      // Rebuilt from the server's own host and its own nonce -- the client
+      // sends ONLY a signature, never the message it claims to have signed.
+      const message = depositProofMessage({ host: req.headers.host || 'joinonlyone.com', nonce });
+      try {
+        expectedFrom = await recoverMessageAddress({ message, signature });
+      } catch {
+        expectedFrom = null;
+      }
+      // Single-use: burn the challenge regardless of outcome.
+      const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+      res.setHeader('Set-Cookie', `${DEPOSIT_NONCE_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
+    }
   }
-
-  const nonce = await readWalletNonce(ageVerificationSecret(), req.cookies?.[DEPOSIT_NONCE_COOKIE_NAME]);
-  if (!nonce) {
-    return res.status(400).json({ error: 'Wallet verification expired. Please try again.' });
+  if (!expectedFrom) {
+    // By the time this runs the USDG may already have left the wallet, so
+    // this must never read as "try paying again" -- that pays twice.
+    return res.status(400).json({
+      code: 'PROOF_REQUIRED',
+      error: 'Your wallet verification has expired, but your payment is safe. Use "Already paid?" below with this transaction to verify your wallet and get credited -- do not pay again.',
+    });
   }
-
-  // Rebuilt from the server's own host and its own nonce -- the client sends
-  // ONLY a signature, never the message it claims to have signed, or it
-  // could hand over any text a real signature happened to exist for.
-  const message = depositProofMessage({ host: req.headers.host || 'joinonlyone.com', nonce });
-
-  let expectedFrom;
-  try {
-    expectedFrom = await recoverMessageAddress({ message, signature });
-  } catch {
-    return res.status(400).json({ error: 'Invalid wallet signature.' });
-  }
-
-  // Single-use: burn the challenge regardless of outcome below, same as the
-  // owner-wallet login does.
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `${DEPOSIT_NONCE_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
 
   try {
     const result = await creditDepositFromChain({ userId: uid, txHash, expectedFrom, config });

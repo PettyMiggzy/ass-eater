@@ -1,5 +1,6 @@
 import { getVerifiedSessionUserId } from '../../../lib/session';
-import { addReport } from '../../../lib/reports-store';
+import { addReport, normalizeTargetId } from '../../../lib/reports-store';
+import { query } from '../../../lib/db';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
 // Every other write-heavy endpoint in this codebase throttles per-user
@@ -17,9 +18,12 @@ export default async function handler(req, res) {
   const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to report a comment' });
 
-  const { postId, reason } = req.body || {};
+  const { postId: rawPostId, reason } = req.body || {};
   // typeof, not just truthiness -- a truthy non-string reason (an object)
-  // passed the old `!reason` check and then threw on `.trim()`.
+  // passed the old `!reason` check and then threw on `.trim()`. The post id
+  // is normalised to a positive integer and checked against a real comment
+  // below, same as marketplace/report.js.
+  const postId = normalizeTargetId(rawPostId);
   if (!postId || typeof reason !== 'string' || !reason.trim()) {
     return res.status(400).json({ error: 'Missing comment id or reason' });
   }
@@ -34,6 +38,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    const { rows } = await query('select 1 from wall_posts where id = $1', [postId]);
+    if (!rows.length) return res.status(404).json({ error: 'Comment not found' });
     const report = await addReport({
       targetType: 'wall_post',
       targetId: postId,

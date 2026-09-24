@@ -1,6 +1,13 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { getListings } from '../../../lib/listings-store';
 
+/**
+ * GET /api/marketplace/mine -> { listings: Listing[] }
+ * The creator's OWN listings, full records including media srcs
+ * (/api/media/... paths, which the media route serves to the owner) and the
+ * `moderationRemoved` flag so the dashboard can hide Reactivate for a listing
+ * moderation took down.
+ */
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });

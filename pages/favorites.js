@@ -4,7 +4,9 @@ import { getVerifiedSessionUserId } from '../lib/session';
 import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { getFavoriteCreatorIds } from '../lib/favorites-store';
-import { Icons, SolidIcons } from '../components/Brand';
+import { SolidIcons } from '../components/Brand';
+import DemoBadge from '../components/public/DemoBadge';
+import { toCreatorCard } from '../components/public/cards';
 
 export async function getServerSideProps({ req }) {
   const uid = await getVerifiedSessionUserId(req);
@@ -14,7 +16,9 @@ export async function getServerSideProps({ req }) {
   const [allCreators, favoriteIds] = await Promise.all([getCreators(), getFavoriteCreatorIds(uid)]);
   const creators = allCreators
     .filter((c) => isPubliclyVisible(c) && favoriteIds.some((id) => String(id) === String(c.id)))
-    .map(toPublicCreator);
+    // Public projection first (private fields and gated srcs gone), then
+    // just the card this page draws -- no gallery arrays.
+    .map((c) => toCreatorCard(toPublicCreator(c)));
   return { props: { creators } };
 }
 
@@ -44,6 +48,7 @@ export default function Favorites({ creators }) {
                       {c.name}
                       {c.premium && <SolidIcons.verified className="h-3.5 w-3.5 text-brand-pink" />}
                     </p>
+                    {c.demo && <DemoBadge short className="mt-1" />}
                   </div>
                 </a>
               ))}

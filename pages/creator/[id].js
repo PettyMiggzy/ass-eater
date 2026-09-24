@@ -1,23 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import ProtectedMedia from '../../components/ProtectedMedia';
+import ProtectedMedia, { GUEST_MARK } from '../../components/ProtectedMedia';
 import { getCreators } from '../../lib/creators-store';
-import { toPublicCreator, isPubliclyVisible } from '../../lib/creator-status';
-import { getVerifiedSessionUserId } from '../../lib/session';
+import { toPublicCreator, toPublicListing, isPubliclyVisible, effectiveCreatorStatus } from '../../lib/creator-status';
+import { getSessionUser } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
-import { getWallPostsForCreator } from '../../lib/wall-store';
+import { getWallPostsForCreator, toPublicWallPost } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
 import { viewerMarkFor } from '../../lib/viewer-mark';
-import { isTokenGated, tokenGateLive, formatGate } from '../../lib/token-gate';
+import { holderGateState } from '../../lib/holder-access';
+import { tokenGateLive, formatGate } from '../../lib/token-gate';
+import { DM_PRICE_FLOOR_CENTS, formatCredits } from '../../lib/brand';
 import { FoundingBadge, Icons, SolidIcons, Tagline, pickTagline } from '../../components/Brand';
 import SiteNav from '../../components/SiteNav';
+import DemoBadge from '../../components/public/DemoBadge';
+import ListingPreview from '../../components/public/ListingPreview';
+import MediaLightbox from '../../components/public/MediaLightbox';
+import TokenUnlockPanel from '../../components/public/TokenUnlockPanel';
+import { isDemoCreator, isDemoListing, DEMO_LABEL } from '../../components/public/cards';
 
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
   let creator = creators.find((c) => String(c.id) === String(params.id)) || null;
-  const viewerId = await getVerifiedSessionUserId(req);
+  const sessionUser = await getSessionUser(req).catch(() => null);
+  const viewerId = sessionUser ? sessionUser.id : null;
   const creatorUser = creator ? await findUserByCreatorId(creator.id) : null;
 
   // Pending applicants, suspended, and banned creators aren't public --
@@ -26,22 +34,55 @@ export async function getServerSideProps({ req, params }) {
   // from themselves.
   if (creator && !isPubliclyVisible(creator)) {
     const isOwner = String(viewerId) === String(creatorUser?.id);
-    if (creator.status === 'banned' || !isOwner) creator = null;
+    if (effectiveCreatorStatus(creator) === 'banned' || !isOwner) creator = null;
   }
 
+  // Token gate, decided HERE and nowhere else: toPublicCreator strips a gated
+  // creator's media srcs unless this viewer is the owner or a holder whose
+  // balance the server just read (lib/holder-access.js). The page never
+  // receives a src it is not allowed to show, so there is nothing for a CSS
+  // blur to hide.
+  const gate = creator
+    ? await holderGateState(req, creator, { user: sessionUser })
+    : { allowed: false, reason: 'no_creator' };
+  const viewerMayUnlock = gate.allowed === true;
+
+  // Listings reach the page through toPublicListing: a tiny blurred preview
+  // per item and never a src -- the files go only to buyers, via
+  // /api/marketplace/orders/delivery.
   const allListings = creator ? await getListings() : [];
   const listings = allListings
     .filter((l) => String(l.creatorId) === String(creator?.id) && l.status === 'active')
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  const wallPosts = creator ? await getWallPostsForCreator(creator.id) : [];
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .map((l) => ({ ...toPublicListing(l), demo: isDemoListing(l, creator) }));
+
+  // Wall comments in their public shape: `mine` instead of every
+  // commenter's account id.
+  const wallPosts = creator
+    ? (await getWallPostsForCreator(creator.id)).map((p) => toPublicWallPost(p, viewerId))
+    : [];
   const initialFavorited = creator && viewerId ? await isFavorite(viewerId, creator.id) : false;
   // Computed server-side: the mark is an HMAC and the key never leaves the
-  // server. See lib/viewer-mark.js.
+  // server. See lib/viewer-mark.js. '' for a signed-out visitor -- the page
+  // then shows a generic site mark and says plainly that it is not traceable.
   const viewerMark = viewerMarkFor(viewerId);
+
+  // What a message to this creator costs THIS viewer: fans (and creator
+  // accounts that are not live yet) pay the creator's price, never less than
+  // the platform floor; a live creator messages another creator for free.
+  // Display only -- /api/messages/send decides and charges.
+  const viewerCreator = sessionUser?.creatorId
+    ? creators.find((c) => String(c.id) === String(sessionUser.creatorId)) || null
+    : null;
+  const viewerIsLiveCreator =
+    !!viewerCreator && effectiveCreatorStatus(viewerCreator) === 'active' && !isDemoCreator(viewerCreator);
+  const ownPrice = Number.isInteger(creator?.dmPriceCents) ? creator.dmPriceCents : 0;
+  const dmPriceCents = viewerIsLiveCreator ? 0 : Math.max(DM_PRICE_FLOOR_CENTS, ownPrice);
+
   return {
     props: {
-      creator: toPublicCreator(creator),
-      viewerId: viewerId || null,
+      creator: creator ? toPublicCreator(creator, { viewerMayUnlock }) : null,
+      viewerId: viewerId ? String(viewerId) : null,
       viewerMark,
       // Must be re-checked against the post-visibility-check `creator`
       // (null'd out above for a hidden profile), not the original
@@ -50,6 +91,15 @@ export async function getServerSideProps({ req, params }) {
       // __NEXT_DATA__ JSON even while the page itself correctly renders
       // "Creator not found".
       creatorUserId: creator && creatorUser ? String(creatorUser.id) : null,
+      gate: {
+        allowed: gate.allowed === true,
+        reason: gate.reason || null,
+        required: gate.required ?? null,
+        held: gate.held ?? null,
+      },
+      tokenLive: tokenGateLive(),
+      demo: isDemoCreator(creator),
+      dmPriceCents,
       listings,
       wallPosts,
       initialFavorited,
@@ -57,13 +107,40 @@ export async function getServerSideProps({ req, params }) {
   };
 }
 
-export default function CreatorProfile({ creator, viewerId, viewerMark, creatorUserId, listings, wallPosts, initialFavorited }) {
+export default function CreatorProfile({
+  creator,
+  viewerId,
+  viewerMark,
+  creatorUserId,
+  gate,
+  tokenLive,
+  demo,
+  dmPriceCents,
+  listings,
+  wallPosts,
+  initialFavorited,
+}) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('posts');
   const [toast, setToast] = useState(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [favorited, setFavorited] = useState(initialFavorited);
   const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [viewing, setViewing] = useState(null);
+  const closeViewer = useCallback(() => setViewing(null), []);
+
+  // /creators' "Hold to Unlock" links here with ?unlock=1 -- bring the
+  // unlock control into view rather than leaving the visitor to find it.
+  useEffect(() => {
+    if (router.query.unlock !== '1') return;
+    const el = document.getElementById('unlock');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [router.query.unlock]);
+
+  const flash = (msg, ms = 3500) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), ms);
+  };
 
   const toggleFavorite = async () => {
     if (!viewerId) {
@@ -80,21 +157,15 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ creatorId: creator.id }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to save');
       setFavorited(data.favorited);
     } catch (err) {
       setFavorited(prev);
-      setToast(err.message);
-      setTimeout(() => setToast(null), 3000);
+      flash(err.message, 3000);
     } finally {
       setFavoriteBusy(false);
     }
-  };
-
-  const showComingSoon = (msg) => {
-    setToast(msg || 'Subscriptions arent live yet — you can browse and message for now.');
-    setTimeout(() => setToast(null), 3500);
   };
 
   const openInbox = () => {
@@ -102,12 +173,16 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
       router.push(`/login?next=/creator/${creator.id}`);
       return;
     }
+    if (demo) {
+      flash('This is a demo profile — it can’t receive messages.');
+      return;
+    }
     if (!creatorUserId) {
-      showComingSoon("This creator hasn't claimed their account yet — messaging isn't available.");
+      flash("This creator hasn't claimed their account yet — messaging isn't available.");
       return;
     }
     if (String(viewerId) === String(creatorUserId)) {
-      showComingSoon("That's you!");
+      flash("That's you!");
       return;
     }
     setInboxOpen(true);
@@ -125,21 +200,25 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
   }
 
   const gallery = Array.isArray(creator.gallery) ? creator.gallery : [];
-  // `locked` means TOKEN-GATED, not "subscribers only" -- see lib/token-gate.js.
-  // Reading the bare flag here blurred this whole profile behind a
-  // "Subscribe to unlock" button that only called showComingSoon(), for any
-  // creator whose record had the flag set with no threshold behind it. A gate
-  // needs both the flag and a real number.
-  const locked = isTokenGated(creator);
+  // Locked is the SERVER's decision for this viewer (holderGateState), not
+  // "is this creator gated": the owner and a verified holder see the real,
+  // watermarked media; everyone else gets items with no src at all.
+  const locked = !gate?.allowed;
   const gateLabel = formatGate(creator);
-  const gateLive = tokenGateLive();
+  const unlockedByWallet = gate?.reason === 'holds_enough';
+  // A signed-in viewer's overlay carries their account code; a signed-out
+  // visitor's carries only the site name, and the page says so.
+  const overlayMark = viewerMark || GUEST_MARK;
+
   // Everything below is drawn from what this creator actually has. Counts
   // are their stored values, not invented ones, and a section with nothing
   // real behind it does not render at all rather than showing placeholders.
-  const featured = creator.video
+  const firstViewable = gallery.find((g) => g && !g.locked && g.src) || null;
+  const featured = !locked && creator.video
     ? { type: 'video', src: creator.video }
-    : gallery[0] || { type: 'image', src: creator.img };
+    : firstViewable;
   const latestPosts = gallery.slice(0, 4);
+  const morePosts = gallery.slice(4, 8);
 
   const SOCIAL_BASES = {
     twitter: { label: 'X', base: 'https://x.com/' },
@@ -155,7 +234,6 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
       ? [{ label: 'Web', href: creator.socials.website, display: creator.socials.website.replace(/^https:\/\//, '') }]
       : []),
   ];
-  const lockedPreview = gallery.slice(4, 8);
   const socials = creator.socials || {};
   const websiteUrl = socials.website || null;
   const isOwner = !!viewerId && String(viewerId) === String(creatorUserId);
@@ -167,34 +245,76 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
     { key: 'about', label: 'About' },
   ];
 
-  const Tile = ({ item, badge }) => (
-    <div className="relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/5">
-      {/* A blurred (locked) tile carries no mark -- there is nothing
-          identifiable to leak, and a watermark over a blur is just noise. */}
-      <ProtectedMedia
-        src={item?.src || creator.img}
-        type={item?.type === 'video' ? 'video' : 'image'}
-        mark={locked ? '' : viewerMark}
-        className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`}
-      />
-      {locked && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/25">
-          <span className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center text-white"><SolidIcons.lock className="h-4 w-4" /></span>
-        </div>
-      )}
-      {item?.aiGenerated && (
-        <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold">AI</span>
-      )}
-      {badge && (
-        <span className="absolute bottom-2 left-2 text-[11px] px-2 py-0.5 rounded bg-black/70 text-white font-semibold">{badge}</span>
-      )}
-    </div>
+  const disconnectWallet = async () => {
+    try {
+      await fetch('/api/token-gate/clear', { method: 'POST', credentials: 'same-origin' });
+    } finally {
+      router.replace(router.asPath, undefined, { scroll: false });
+    }
+  };
+
+  // A locked item has no src (toPublicCreator stripped it), so it is drawn
+  // from nothing but its type: the creator's public avatar, blurred, under a
+  // padlock. It carries no mark -- there is nothing identifiable to leak.
+  const Tile = ({ item, badge }) => {
+    const isLocked = locked || !!item?.locked || !item?.src;
+    return (
+      <div className="relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/5">
+        {isLocked ? (
+          <>
+            {creator.img ? (
+              <img src={creator.img} alt="" className="w-full h-full object-cover blur-xl scale-110 opacity-60" draggable={false} />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-br from-brand-pink/20 to-black/40" />
+            )}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+              <span className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center text-white"><SolidIcons.lock className="h-4 w-4" /></span>
+            </div>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setViewing(item)}
+            aria-label={item.type === 'video' ? 'Play video' : 'View photo'}
+            className="block w-full h-full"
+          >
+            <ProtectedMedia
+              src={item.src}
+              type={item.type === 'video' ? 'video' : 'image'}
+              mark={overlayMark}
+              className="w-full h-full object-cover"
+            />
+            {item.type === 'video' && (
+              <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="w-11 h-11 rounded-full bg-black/60 flex items-center justify-center text-white">
+                  <svg viewBox="0 0 20 20" className="h-5 w-5 ml-0.5" fill="currentColor" aria-hidden="true"><path d="M6 4l10 6-10 6z" /></svg>
+                </span>
+              </span>
+            )}
+          </button>
+        )}
+        {item?.aiGenerated && (
+          <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold pointer-events-none">AI</span>
+        )}
+        {badge && (
+          <span className="absolute bottom-2 left-2 text-[11px] px-2 py-0.5 rounded bg-black/70 text-white font-semibold pointer-events-none">{badge}</span>
+        )}
+      </div>
+    );
+  };
+
+  const markNotice = (
+    <p className="mt-4 text-[11px] text-gray-500 text-center">
+      {viewerMark
+        ? 'Content on this page carries a mark tied to your account. Sharing it outside OnlyOne is traceable back to you and is grounds for losing access.'
+        : 'You’re browsing signed out, so this page carries only a site watermark, not one tied to you. Signed-in viewers see a mark that traces back to their account.'}
+    </p>
   );
 
   return (
     <>
       <Head>
-        <title>{creator.name} — {creator.handle}</title>
+        <title>{`${creator.name} — ${creator.handle}`}</title>
       </Head>
 
       {toast && (
@@ -203,23 +323,34 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
         </div>
       )}
 
+      <MediaLightbox item={viewing} mark={overlayMark} onClose={closeViewer} />
+
       <div className="min-h-screen bg-brand-ink text-white pb-20">
         <SiteNav signedIn={!!viewerId} />
 
         <main className="max-w-6xl mx-auto px-4 md:px-6">
-          {/* Cover */}
+          {demo && (
+            <div className="mt-4 px-4 py-3 rounded-xl border border-yellow-400/40 bg-yellow-400/10 text-sm text-yellow-100 flex flex-wrap items-center gap-2">
+              <DemoBadge />
+              <span>This is a sample profile made by OnlyOne to show how a creator page works. It isn&apos;t a real person and nothing on it can be bought or messaged.</span>
+            </div>
+          )}
+
+          {/* Cover. Only ever the creator's public avatar or a video the
+              viewer is allowed to see (a gated creator's video is not sent
+              until unlocked), through ProtectedMedia like every other tile. */}
           <div className="relative mt-4 h-52 sm:h-64 md:h-72 rounded-2xl overflow-hidden bg-white/5">
-            {creator.video ? (
-              <video src={creator.video} autoPlay loop muted playsInline className="w-full h-full object-cover blur-sm scale-105" />
-            ) : (
-              <img src={creator.img} alt="" className="w-full h-full object-cover blur-sm scale-105" />
-            )}
+            {!locked && creator.video ? (
+              <ProtectedMedia src={creator.video} type="video" autoPlay className="w-full h-full object-cover blur-sm scale-105" />
+            ) : creator.img ? (
+              <ProtectedMedia src={creator.img} type="image" className="w-full h-full object-cover blur-sm scale-105" />
+            ) : null}
             {/* Darkest at the bottom, where the identity row overlaps the
                 cover, and again at top-right so the tagline stays readable
                 regardless of what's underneath it -- a plain top-to-bottom
                 fade left that corner exactly as bright as the photo. */}
-            <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-brand-ink/20 to-transparent" />
-            <div className="absolute inset-0 bg-gradient-to-bl from-black/50 via-transparent to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-brand-ink/20 to-transparent pointer-events-none" />
+            <div className="absolute inset-0 bg-gradient-to-bl from-black/50 via-transparent to-transparent pointer-events-none" />
             <button
               onClick={() => router.push('/creators')}
               aria-label="Back to creators"
@@ -236,7 +367,9 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
           <div className="relative px-1 sm:px-4">
             <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-14 sm:-mt-16">
               <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full border-4 border-brand-ink ring-2 ring-brand-pink/70 overflow-hidden bg-white/10 shrink-0">
-                <img src={creator.img} alt={creator.name} className="w-full h-full object-cover object-top" />
+                {creator.img && (
+                  <ProtectedMedia src={creator.img} type="image" alt={creator.name} className="w-full h-full object-cover object-top" />
+                )}
               </div>
 
               <div className="flex-1 sm:pb-2">
@@ -254,6 +387,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                       FOUNDING CREATOR
                     </span>
                   )}
+                  {demo && <DemoBadge />}
                 </h1>
                 <p className="text-gray-400 text-sm">{creator.handle}</p>
                 {(creator.age || creator.location) && (
@@ -266,6 +400,10 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                 {creator.bio && <p className="text-gray-300 text-sm mt-1 line-clamp-1">{creator.bio}</p>}
               </div>
 
+              {/* Subscribe and Tip buttons used to sit here, wired to a
+                  "coming soon" toast. Neither can be bought on this site, so
+                  they are not offered; what CAN be bought (marketplace items,
+                  paid messages) is. */}
               <div className="flex items-center gap-2 sm:pb-2">
                 <button
                   onClick={toggleFavorite}
@@ -277,24 +415,22 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                 >
                   {favorited ? <SolidIcons.heart className="h-5 w-5" /> : <Icons.heart className="h-5 w-5" />}
                 </button>
-                <button
-                  onClick={openInbox}
-                  className="px-5 h-11 rounded-full border border-white/15 font-semibold text-sm hover:border-white/40 transition"
-                >
-                  Message
-                </button>
-                <button
-                  onClick={() => showComingSoon('Tipping opens when payments do.')}
-                  className="px-5 h-11 rounded-full border border-white/15 font-semibold text-sm hover:border-brand-pink/60 transition"
-                >
-                  Send a Tip
-                </button>
-                <button
-                  onClick={() => showComingSoon()}
-                  className="px-6 h-11 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold text-sm transition"
-                >
-                  Subscribe
-                </button>
+                {!demo && (
+                  <button
+                    onClick={openInbox}
+                    className="px-5 h-11 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold text-sm transition"
+                  >
+                    Message
+                  </button>
+                )}
+                {listings.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('marketplace')}
+                    className="px-5 h-11 rounded-full border border-white/15 font-semibold text-sm hover:border-brand-pink/60 transition"
+                  >
+                    Shop
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -342,29 +478,36 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                 </button>
               )}
 
+              {/* How to support this creator, stated as what actually works
+                  today. This card used to sell a subscription at the
+                  creator's price with a Subscribe button that could never
+                  take the money. */}
               <div className="rounded-xl border border-white/10 bg-brand-card p-5">
-                <p className="font-bold mb-1">Subscribe to {creator.name}</p>
-                <p className="text-xs text-gray-400 mb-4">Get exclusive content and direct messaging.</p>
-                {/* Always the creator's own subscription price. This used to
-                    show "Free" to anyone who wasn't token-gated, which is a
-                    different field entirely -- so every creator who had set
-                    $19.99/month and no token gate advertised themselves as
-                    free. */}
-                <p className="text-2xl font-black mb-4">{creator.price || 'Free'}</p>
-                <button onClick={() => showComingSoon()} className="w-full py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition">
-                  Subscribe
-                </button>
-                {/* Stated plainly rather than implied: there is no payment
-                    processing on this site yet, so a Subscribe button that
-                    looked functional would be a promise it cannot keep. */}
-                <p className="text-[11px] text-gray-500 mt-3">
-                  Subscriptions aren&apos;t live yet. Browsing, saving and messaging all work today.
-                </p>
-                <ul className="mt-4 space-y-2 text-sm text-gray-300">
-                  {['Exclusive photos & videos', 'Direct messaging', 'Early access to new content'].map((f) => (
-                    <li key={f} className="flex items-start gap-2"><Icons.check className="h-4 w-4 mt-0.5 shrink-0 text-brand-pink" />{f}</li>
-                  ))}
-                </ul>
+                <p className="font-bold mb-1">Support {creator.name}</p>
+                {demo ? (
+                  <p className="text-xs text-gray-400">{DEMO_LABEL}. Real creators can be supported through their marketplace and paid messages.</p>
+                ) : (
+                  <>
+                    <ul className="mt-3 space-y-2 text-sm text-gray-300">
+                      <li className="flex items-start gap-2">
+                        <Icons.check className="h-4 w-4 mt-0.5 shrink-0 text-brand-pink" />
+                        <span>Buy from their marketplace with credits.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <Icons.check className="h-4 w-4 mt-0.5 shrink-0 text-brand-pink" />
+                        <span>
+                          {dmPriceCents > 0
+                            ? `Send a message — ${formatCredits(dmPriceCents)} each, paid to them.`
+                            : 'Send a message — free for you as a creator.'}
+                        </span>
+                      </li>
+                    </ul>
+                    <a href="/credits" className="mt-4 block text-center w-full py-2.5 rounded-full border border-white/15 text-sm font-semibold hover:border-brand-pink/60 transition">
+                      Get credits
+                    </a>
+                    <p className="text-[11px] text-gray-500 mt-3">Subscriptions and tips aren&apos;t available yet.</p>
+                  </>
+                )}
               </div>
             </aside>
 
@@ -384,39 +527,38 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                 ))}
               </div>
 
+              {unlockedByWallet && (
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-xl border border-brand-pink/30 bg-brand-pink/5 text-xs text-gray-300">
+                  <span>Unlocked — your verified wallet holds enough $ONLYONE for this creator.</span>
+                  <button onClick={disconnectWallet} className="text-gray-400 hover:text-white underline">Disconnect wallet</button>
+                </div>
+              )}
+
               {activeTab === 'posts' && (
                 <div className="space-y-8">
                   <div className="grid md:grid-cols-[1.6fr_1fr] gap-4">
                     <div className="relative rounded-xl overflow-hidden bg-white/5 border border-white/5 aspect-video">
-                      {/* Was a bare <video>/<img> -- the single largest, most
-                          prominent tile on the page, and the only one NOT
-                          wrapped in ProtectedMedia, so it had no right-click/
-                          drag/long-press blocking and no per-viewer
-                          watermark, unlike every other tile below it on the
-                          same page (and unlike what dashboard.js tells
-                          creators this platform actually does). A blurred
-                          (locked) featured item still carries no mark, same
-                          rule as Tile above -- nothing identifiable to leak. */}
-                      <ProtectedMedia
-                        src={featured.src}
-                        type={featured.type === 'video' ? 'video' : 'image'}
-                        mark={locked ? '' : viewerMark}
-                        autoPlay={featured.type === 'video'}
-                        className={`w-full h-full object-cover ${locked ? 'blur-xl scale-110' : ''}`}
-                      />
-                      {locked && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center bg-black/40">
-                          <span className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center text-white"><SolidIcons.lock className="h-5 w-5" /></span>
-                          <p className="font-semibold">Hold {gateLabel} to unlock</p>
-                          {/* No button. The balance check needs a deployed
-                              token and a wallet the fan has proved they own,
-                              and neither exists yet -- so this says what the
-                              gate is instead of offering a control that can't
-                              do anything. Matches /creators. */}
-                          <p className="text-xs text-gray-300">
-                            {gateLive ? 'Connect a wallet that holds enough to view.' : 'Unlocks when $ONLYONE launches.'}
-                          </p>
-                        </div>
+                      {locked ? (
+                        <>
+                          {creator.img && (
+                            <img src={creator.img} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-50" />
+                          )}
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                            <TokenUnlockPanel gate={gate} gateLabel={gateLabel} tokenLive={tokenLive} />
+                          </div>
+                        </>
+                      ) : featured ? (
+                        <button type="button" onClick={() => setViewing(featured)} className="block w-full h-full" aria-label="Open">
+                          <ProtectedMedia
+                            src={featured.src}
+                            type={featured.type === 'video' ? 'video' : 'image'}
+                            mark={overlayMark}
+                            autoPlay={featured.type === 'video'}
+                            className="w-full h-full object-cover"
+                          />
+                        </button>
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">No media yet.</div>
                       )}
                     </div>
 
@@ -424,13 +566,14 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                       <p className="font-bold mb-1">{creator.name}&apos;s Marketplace</p>
                       <p className="text-xs text-gray-400 mb-3">
                         {listings.length > 0
-                          ? `${listings.length} item${listings.length === 1 ? '' : 's'} available to buy.`
+                          ? demo
+                            ? `${listings.length} sample item${listings.length === 1 ? '' : 's'} — not for sale.`
+                            : `${listings.length} item${listings.length === 1 ? '' : 's'} available to buy.`
                           : 'Nothing listed yet.'}
                       </p>
-                      {listings[0]?.media?.[0] && (
+                      {listings[0] && (
                         <div className="relative rounded-lg overflow-hidden aspect-[4/3] mb-3">
-                          <img src={listings[0].media[0].src} alt="" className="w-full h-full object-cover blur-lg scale-110" />
-                          <span className="absolute inset-0 flex items-center justify-center text-white"><SolidIcons.lock className="h-5 w-5" /></span>
+                          <ListingPreview media={listings[0].media} />
                         </div>
                       )}
                       <button
@@ -457,16 +600,21 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                     </div>
                   )}
 
-                  {lockedPreview.length > 0 && (
+                  {/* Items 5-8. Only called "locked" when they actually are
+                      for this viewer -- it used to say "Locked Content
+                      Preview" over fully visible photos. */}
+                  {morePosts.length > 0 && (
                     <div>
-                      <h2 className="font-bold mb-3">Locked Content Preview</h2>
+                      <h2 className="font-bold mb-3">{locked ? 'Locked Content Preview' : 'More Content'}</h2>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        {lockedPreview.map((item, i) => (
-                          <Tile key={i} item={item} />
+                        {morePosts.map((item, i) => (
+                          <Tile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} />
                         ))}
                       </div>
                     </div>
                   )}
+
+                  {!locked && gallery.length > 0 && markNotice}
 
                   <div className="grid md:grid-cols-2 gap-4">
                     <div className="rounded-xl border border-white/10 bg-brand-card p-4">
@@ -521,17 +669,17 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                   <p className="text-sm text-gray-500">No media yet.</p>
                 ) : (
                   <>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {gallery.map((item, i) => <Tile key={i} item={item} />)}
-                    </div>
-                    {/* The mark deters because the viewer knows it is there.
-                        An invisible one only helps after the fact. */}
-                    {viewerMark && (
-                      <p className="mt-4 text-[11px] text-gray-500 text-center">
-                        Content on this page is watermarked to your account. Sharing it outside OnlyOne is
-                        traceable back to you and is grounds for losing access.
-                      </p>
+                    {locked && (
+                      <div className="mb-5 rounded-xl border border-white/10 bg-brand-card p-5">
+                        <TokenUnlockPanel gate={gate} gateLabel={gateLabel} tokenLive={tokenLive} compact />
+                      </div>
                     )}
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {gallery.map((item, i) => <Tile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} />)}
+                    </div>
+                    {/* The mark deters because the viewer knows it is there,
+                        and the notice says exactly what kind of mark it is. */}
+                    {!locked && markNotice}
                   </>
                 )
               )}
@@ -544,25 +692,23 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
                     {listings.map((l) => (
                       <a key={l.id} href="/marketplace"
                          className="group relative aspect-square rounded-xl overflow-hidden border border-white/10 hover:border-brand-pink/60 transition">
-                        {l.media?.[0] ? (
-                          l.media[0].type === 'video' ? (
-                            <video src={l.media[0].src} muted className="w-full h-full object-cover blur-lg scale-110" />
-                          ) : (
-                            <img src={l.media[0].src} alt="" className="w-full h-full object-cover blur-lg scale-110" />
-                          )
-                        ) : (
-                          <div className="w-full h-full bg-gradient-pink opacity-30" />
-                        )}
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-                        <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white"><SolidIcons.lock className="h-5 w-5" /></span>
-                        {l.aiGenerated && (
-                          <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold">AI</span>
-                        )}
+                        <ListingPreview media={l.media} />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent pointer-events-none" />
+                        <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
+                          {l.demo && <DemoBadge short />}
+                          {(l.aiGenerated || l.media?.some((m) => m.aiGenerated)) && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold">AI</span>
+                          )}
+                        </div>
                         <div className="absolute bottom-0 left-0 right-0 p-2">
                           <p className="text-xs font-bold truncate">{l.title}</p>
-                          <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-brand-pink text-white text-[11px] font-black">
-                            ${(l.priceCents / 100).toFixed(2)}
-                          </span>
+                          {l.demo ? (
+                            <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-yellow-400 text-black text-[11px] font-black">{DEMO_LABEL}</span>
+                          ) : (
+                            <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-brand-pink text-white text-[11px] font-black">
+                              ${(l.priceCents / 100).toFixed(2)}
+                            </span>
+                          )}
                         </div>
                       </a>
                     ))}
@@ -601,6 +747,7 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
           otherUserId={creatorUserId}
           otherName={creator.name}
           otherImg={creator.img}
+          initialPriceCents={dmPriceCents}
           onClose={() => setInboxOpen(false)}
         />
       )}
@@ -608,42 +755,90 @@ export default function CreatorProfile({ creator, viewerId, viewerMark, creatorU
   );
 }
 
-function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
+// A fresh id per send ATTEMPT; a retry of the same attempt reuses it so the
+// server can recognise a duplicate and not charge twice.
+function newClientMessageId() {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  } catch {
+    // fall through
+  }
+  return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function readJson(res) {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
+const MAX_DM_LENGTH = 2000;
+
+function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onClose }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-
-  const load = async () => {
-    try {
-      const res = await fetch(`/api/messages/with/${otherUserId}`);
-      const data = await res.json();
-      if (res.ok) setMessages(data.conversation?.messages || []);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [needsCredits, setNeedsCredits] = useState(false);
+  const [priceCents, setPriceCents] = useState(initialPriceCents || 0);
+  // Reused across retries of the SAME text, replaced once a send lands.
+  const attemptId = useRef(null);
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/messages/with/${encodeURIComponent(otherUserId)}`);
+        const data = await readJson(res);
+        if (cancelled) return;
+        if (res.ok) {
+          setMessages(Array.isArray(data.conversation?.messages) ? data.conversation.messages : []);
+          if (Number.isInteger(data.dmPriceCents)) setPriceCents((p) => Math.max(p, data.dmPriceCents));
+        } else {
+          setError(data.error || 'Could not load messages.');
+        }
+      } catch {
+        if (!cancelled) setError('Could not load messages.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [otherUserId]);
 
   const send = async (e) => {
     e.preventDefault();
-    if (!text.trim()) return;
+    const body = text.trim();
+    if (!body || sending) return;
+    if (body.length > MAX_DM_LENGTH) {
+      setError(`That message is too long (${MAX_DM_LENGTH} characters maximum).`);
+      return;
+    }
+    if (!attemptId.current) attemptId.current = newClientMessageId();
     setSending(true);
     setError('');
+    setNeedsCredits(false);
     try {
       const res = await fetch('/api/messages/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ toUserId: otherUserId, text }),
+        body: JSON.stringify({ toUserId: otherUserId, text: body, clientMessageId: attemptId.current }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to send');
-      setMessages(data.conversation.messages);
+      const data = await readJson(res);
+      if (!res.ok) {
+        if (res.status === 402) setNeedsCredits(true);
+        // 402 not enough credits, 403 not allowed / restricted, 409 the
+        // creator is not taking messages -- the server's text says which.
+        throw new Error(data.error || (res.status === 409 ? "This creator isn't accepting messages right now." : 'Failed to send'));
+      }
+      if (Array.isArray(data.conversation?.messages)) setMessages(data.conversation.messages);
       setText('');
+      attemptId.current = null;
     } catch (err) {
       setError(err.message);
     } finally {
@@ -655,7 +850,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
     <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4">
       <div className="rounded-xl border border-white/10 bg-brand-card w-full max-w-md h-[70vh] sm:h-[560px] flex flex-col overflow-hidden">
         <div className="flex items-center gap-3 p-4 border-b border-white/10">
-          <img src={otherImg} alt={otherName} className="w-9 h-9 rounded-full object-cover object-top" />
+          {otherImg && <img src={otherImg} alt={otherName} className="w-9 h-9 rounded-full object-cover object-top" />}
           <p className="font-bold text-white flex-1 truncate">{otherName}</p>
           <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-white"><Icons.close className="h-5 w-5" /></button>
         </div>
@@ -669,7 +864,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
             messages.map((m) => (
               <div
                 key={m.id}
-                className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
+                className={`max-w-[80%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap break-words ${
                   String(m.senderId) === String(otherUserId)
                     ? 'bg-black/40 text-gray-200 mr-auto'
                     : 'bg-brand-pink text-black ml-auto'
@@ -681,17 +876,36 @@ function MessagePanel({ otherUserId, otherName, otherImg, onClose }) {
           )}
         </div>
 
-        {error && <p className="text-red-400 text-xs px-4">{error}</p>}
+        {priceCents > 0 && (
+          <p className="text-[11px] text-gray-400 px-4 pt-2">
+            Each message costs {formatCredits(priceCents)}, paid to {otherName}.
+          </p>
+        )}
+        {error && (
+          <p className="text-red-400 text-xs px-4 pt-1">
+            {error}
+            {needsCredits && (
+              <>
+                {' '}
+                <a href="/credits" className="underline text-brand-pink">Get credits</a>
+              </>
+            )}
+          </p>
+        )}
 
         <form onSubmit={send} className="p-3 border-t border-white/10 flex gap-2">
           <input
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              attemptId.current = null; // different text = a new attempt
+            }}
+            maxLength={MAX_DM_LENGTH}
             placeholder="Type a message..."
             className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm"
           />
-          <button type="submit" disabled={sending} className="px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
-            Send
+          <button type="submit" disabled={sending || !text.trim()} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
+            {sending ? 'Sending…' : priceCents > 0 ? `Send · ${(priceCents / 100).toFixed(2)}` : 'Send'}
           </button>
         </form>
       </div>
@@ -719,7 +933,7 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ postId: reporting.id, reason: reportReason }),
       });
-      const data = await res.json();
+      const data = await readJson(res);
       if (!res.ok) throw new Error(data.error || 'Failed to report');
       setReporting(null);
       setReportReason('');
@@ -731,9 +945,13 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
   };
 
   const refresh = async () => {
-    const res = await fetch(`/api/wall/list?creatorId=${creatorId}`);
-    const data = await res.json();
-    if (res.ok) setPosts(data.posts);
+    try {
+      const res = await fetch(`/api/wall/list?creatorId=${encodeURIComponent(creatorId)}`);
+      const data = await readJson(res);
+      if (res.ok && Array.isArray(data.posts)) setPosts(data.posts);
+    } catch {
+      // keep what is on screen
+    }
   };
 
   const submit = async (e) => {
@@ -751,9 +969,14 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ creatorId, text }),
       });
-      const data = await res.json();
+      const data = await readJson(res);
       if (!res.ok) throw new Error(data.error || 'Failed to post');
       setText('');
+      // Show the new comment at once (the server returns it in its public
+      // shape, `mine: true`), then resync with everyone else's.
+      if (data.post && data.post.id != null) {
+        setPosts((prev) => [data.post, ...prev.filter((p) => String(p.id) !== String(data.post.id))]);
+      }
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -769,7 +992,7 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
       });
-      if (res.ok) setPosts(posts.filter((p) => String(p.id) !== String(id)));
+      if (res.ok) setPosts((prev) => prev.filter((p) => String(p.id) !== String(id)));
     } catch {
       // best-effort -- the post stays visible if the delete failed, no toast needed for this
     }
@@ -828,12 +1051,14 @@ function Wall({ creatorId, viewerId, initialPosts, isWallOwner }) {
                   <p className="text-sm text-gray-300 mt-1 whitespace-pre-wrap break-words">{p.text}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {viewerId && String(viewerId) !== String(p.authorId) && (
+                  {/* `mine` is decided server-side against the session; the
+                      public wall shape carries no other commenter's id. */}
+                  {viewerId && !p.mine && (
                     <button onClick={() => setReporting(p)} className="text-xs text-gray-600 hover:text-brand-pink transition" title="Report">
                       <Icons.flag className="h-4 w-4" />
                     </button>
                   )}
-                  {(isWallOwner || String(viewerId) === String(p.authorId)) && (
+                  {(isWallOwner || p.mine) && (
                     <button onClick={() => remove(p.id)} className="text-xs text-gray-500 hover:text-red-400 transition" title="Delete">
                       <Icons.close className="h-4 w-4" />
                     </button>

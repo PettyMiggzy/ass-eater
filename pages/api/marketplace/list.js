@@ -1,14 +1,21 @@
 import { getListings } from '../../../lib/listings-store';
 import { getCreators } from '../../../lib/creators-store';
-import { isPubliclyVisible } from '../../../lib/creator-status';
+import { isPubliclyVisible, toPublicListing } from '../../../lib/creator-status';
 
+/**
+ * GET /api/marketplace/list?q= -> { listings: PublicListing[] }
+ * PublicListing = toPublicListing(listing) + { creatorName, creatorHandle }.
+ * Unauthenticated, so it NEVER carries a media src -- only { type, preview,
+ * aiGenerated } per item. It used to return every listing's full-resolution
+ * file URLs to anyone, with a CSS blur as the only "lock".
+ */
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const [listings, creators] = await Promise.all([getListings(), getCreators()]);
-  const q = (req.query.q || '').toLowerCase().trim();
+  const q = (typeof req.query.q === 'string' ? req.query.q : '').toLowerCase().trim();
 
   // Resolved against the PUBLICLY VISIBLE roster, and a listing whose seller
   // isn't on it is dropped entirely rather than shown with the name masked.
@@ -27,7 +34,7 @@ export default async function handler(req, res) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .map((l) => {
       const creator = visible.get(String(l.creatorId));
-      return { ...l, creatorName: creator.name, creatorHandle: creator.handle || '' };
+      return { ...toPublicListing(l), creatorName: creator.name, creatorHandle: creator.handle || '' };
     });
 
   return res.status(200).json({ listings: active });

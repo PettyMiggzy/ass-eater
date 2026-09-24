@@ -1,5 +1,6 @@
 import { getVerifiedSessionUserId } from '../../../lib/session';
-import { addReport } from '../../../lib/reports-store';
+import { addReport, normalizeTargetId } from '../../../lib/reports-store';
+import { query } from '../../../lib/db';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
 const MAX_REPORTS = 20;
@@ -13,7 +14,11 @@ export default async function handler(req, res) {
   const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to report a listing' });
 
-  const { listingId, reason } = req.body || {};
+  const { listingId: rawListingId, reason } = req.body || {};
+  // A positive integer, normalised, and a listing that actually exists --
+  // this used to store whatever it was sent, and an object stored as the
+  // target crashed the admin REPORTS panel for everyone.
+  const listingId = normalizeTargetId(rawListingId);
   if (!listingId || typeof reason !== 'string' || !reason.trim()) {
     return res.status(400).json({ error: 'Missing listing id or reason' });
   }
@@ -28,6 +33,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    const { rows } = await query('select 1 from listings where id = $1', [listingId]);
+    if (!rows.length) return res.status(404).json({ error: 'Listing not found' });
     const report = await addReport({
       targetType: 'listing',
       targetId: listingId,

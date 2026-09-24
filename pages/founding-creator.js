@@ -11,6 +11,7 @@ import { Mark, Icons, FoundingBadge } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 import { PREVIEW_COOKIE_NAME, previewModeEnabled, previewSecret, verifyPreviewToken } from '../lib/preview-access';
 import { signupsOpen } from '../lib/signups';
+import { PLATFORM_FEE_PCT, MARKETPLACE_FEE_PCT, LISTING_FEE_PCT, CREDIT_PURCHASE_FEE_PCT } from '../lib/brand';
 import { getCreators } from '../lib/creators-store';
 import {
   FOUNDING_LIMIT,
@@ -30,12 +31,13 @@ import {
  * verified adults outside the 27 blocked states can open recruits nobody), and it is only
  * allowed to be public because there is nothing on it to verify anyone for.
  *
- * The other rule here is honesty about the offer. Three of the six perks are
- * real today (badge, Explore placement, Marketplace placement); crypto
- * payouts are just how this platform already works; the referral link is
- * real; and the 0% fee is a promise about a fee that does not exist yet,
- * which the copy says in plain words rather than implying a countdown is
- * already running. See lib/founding.js for why the clock is deferred.
+ * The other rule here is honesty about the offer: every perk on this page
+ * must be true in code. The badge and both placements are real sorts; the
+ * 0% fee is enforced in lib/credits-store.js's transferWithFee (no platform
+ * fee and no listing fee on anything a fan spends on a founding creator
+ * during their window -- see lib/founding.js); payouts are USDG from earned
+ * credits; the referral link records who arrived through it but pays
+ * nothing yet, and the copy says exactly that.
  */
 
 export async function getServerSideProps({ req }) {
@@ -73,15 +75,22 @@ export async function getServerSideProps({ req }) {
   }
   const signupLocked = previewLocked || !signupsOpen();
 
-  return { props: { taken, left, paymentsLive: !!PAYMENTS_LIVE_AT, signupLocked } };
+  // The waiver clock's earliest start, computed here on the server, where
+  // the PAYMENTS_LIVE_AT env override is actually visible.
+  const live = Date.parse(PAYMENTS_LIVE_AT);
+  const paymentsLiveOn = Number.isNaN(live)
+    ? null
+    : new Date(live).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+
+  return { props: { taken, left, paymentsLiveOn, signupLocked } };
 }
 
 const PERKS = [
   {
     Icon: Icons.lock,
-    title: `0% PLATFORM FEE`,
+    title: `0% FEES`,
     sub: `FOR YOUR FIRST ${FEE_WAIVER_DAYS} DAYS`,
-    body: 'Every dollar a fan spends on you is yours. No cut, no split, no exceptions.',
+    body: 'Every credit a fan spends on you — marketplace sales and paid messages — is yours in full. No platform fee, no listing fee.',
   },
   {
     Icon: Icons.star,
@@ -103,15 +112,15 @@ const PERKS = [
   },
   {
     Icon: Icons.message,
-    title: 'REFERRAL REWARDS',
+    title: 'REFERRAL LINK',
     sub: 'BRING YOUR AUDIENCE',
-    body: 'Your own link. Anyone who arrives through it in the next 30 days is credited to you.',
+    body: 'Your own link. Fans who sign up through it within 30 days of clicking are recorded as yours. Referral rewards are not live yet — nothing is paid for referrals today.',
   },
   {
     Icon: Icons.heart,
     title: 'CRYPTO PAYOUTS',
     sub: 'PAID OUT IN DOLLARS',
-    body: 'Earnings settle in a dollar stablecoin — not in a token you have to sell first, and not in something that moves overnight.'
+    body: 'Cash out what fans spend on you in USDG, a dollar stablecoin — not in a token you have to sell first, and not in something that moves overnight.'
   },
 ];
 
@@ -119,7 +128,7 @@ const PERKS = [
 // of the same sentence is three chances for them to drift apart.
 const shareDescription = `The first ${FOUNDING_LIMIT} creators on OnlyOne keep 100% of their earnings for ${FEE_WAIVER_DAYS} days, get a permanent Founding Creator badge, and lead every browse page.`;
 
-export default function FoundingCreator({ taken, left, paymentsLive, signupLocked }) {
+export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLocked }) {
   // Unknown counts read as open: the cap is enforced server-side on the
   // actual grant, so the worst case here is one extra applicant, not an
   // over-granted programme.
@@ -219,19 +228,18 @@ export default function FoundingCreator({ taken, left, paymentsLive, signupLocke
             ))}
           </ul>
 
-          {/* The one perk that is a promise rather than a live feature says
-              so here, in the same size type as the promise itself. Burying
-              this would be the dishonest version. */}
-          {!paymentsLive && (
-            <div className="mt-12 px-5 py-4 rounded-xl border border-brand-pink/25 bg-brand-pink/5">
-              <p className="text-sm text-gray-300 leading-relaxed">
-                <span className="text-brand-pink font-bold">About the 0% fee:</span> OnlyOne does not process
-                payments yet, so there is no fee to charge anyone today. Your {FEE_WAIVER_DAYS} fee-free days
-                start the day payments go live — not the day you join — so the offer is still worth something
-                when it can actually be spent. Everything else on this page is live right now.
-              </p>
-            </div>
-          )}
+          {/* Exactly when the clock runs, in the same size type as the
+              promise itself. Burying this would be the dishonest version. */}
+          <div className="mt-12 px-5 py-4 rounded-xl border border-brand-pink/25 bg-brand-pink/5">
+            <p className="text-sm text-gray-300 leading-relaxed">
+              <span className="text-brand-pink font-bold">About the 0% fees:</span> your {FEE_WAIVER_DAYS} fee-free
+              days start the day you’re approved as a Founding Creator
+              {paymentsLiveOn ? ` (or ${paymentsLiveOn}, when payments went live, if that’s later)` : ''} — not
+              the day you sign up. During them, nothing is taken from what fans spend on you. After them,
+              the standard fees apply: {PLATFORM_FEE_PCT}% on paid messages, {MARKETPLACE_FEE_PCT}% on marketplace
+              sales ({PLATFORM_FEE_PCT}% platform fee + {LISTING_FEE_PCT}% listing fee).
+            </p>
+          </div>
 
           <p className="mt-16 text-2xl sm:text-4xl font-black tracking-tight leading-tight">
             YOUR CONTENT.
@@ -281,7 +289,7 @@ export default function FoundingCreator({ taken, left, paymentsLive, signupLocke
               source="founding-creator"
               defaultRole="creator"
               title="NOT READY TO SIGN UP YET?"
-              blurb="Leave your email and we’ll tell you when payouts go live and when founding spots are running out."
+              blurb="Leave your email and we’ll let you know when you can join and when founding spots are running out."
               className="max-w-md"
             />
           </div>
@@ -290,7 +298,10 @@ export default function FoundingCreator({ taken, left, paymentsLive, signupLocke
             18+ only. Every creator profile is reviewed by our team before it is published.
             A founding spot goes to each of the first {FOUNDING_LIMIT} creators approved with a finished
             profile — avatar, bio, tags and content up — not simply the first {FOUNDING_LIMIT} to sign up.
-            The {FEE_WAIVER_DAYS}-day fee waiver applies to the platform fee only.
+            The {FEE_WAIVER_DAYS}-day waiver removes both the {PLATFORM_FEE_PCT}% platform fee and the{' '}
+            {LISTING_FEE_PCT}% marketplace listing fee on what fans spend on you (marketplace sales and paid
+            messages) — 0% in total. Fans still pay the {CREDIT_PURCHASE_FEE_PCT}% fee when they buy credits;
+            that is on their side of the purchase, not yours.
           </p>
         </main>
 

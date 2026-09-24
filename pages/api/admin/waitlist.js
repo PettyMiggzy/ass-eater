@@ -1,4 +1,4 @@
-import { getWaitlist, getWaitlistCounts, removeFromWaitlist } from '../../../lib/waitlist-store';
+import { getWaitlist, getWaitlistCounts, removeFromWaitlist, csvSafeCell } from '../../../lib/waitlist-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 
 function toCsv(entries) {
@@ -14,7 +14,12 @@ function toCsv(entries) {
   // Quote every field and double any embedded quote. Email addresses and a
   // source string should never contain a comma, but a list that silently
   // shifts a column when one does is worse than a slightly noisier file.
-  const escape = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  //
+  // csvSafeCell() first: quoting does NOT stop a spreadsheet evaluating a
+  // cell that starts with = + - @. Both the email (the regex is deliberately
+  // loose) and older `source` values come from a public form, so every cell
+  // is neutralised, not just the ones that look suspicious.
+  const escape = (v) => `"${csvSafeCell(v).replace(/"/g, '""')}"`;
   return [header, ...rows].map((r) => r.map(escape).join(',')).join('\r\n');
 }
 

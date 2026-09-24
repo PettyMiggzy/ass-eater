@@ -5,14 +5,20 @@ import SiteNav from '../components/SiteNav';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getCreators } from '../lib/creators-store';
-import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
+import { toPublicCreator, toPublicListing, isPubliclyVisible } from '../lib/creator-status';
 import { getListings } from '../lib/listings-store';
-import { Icons, SolidIcons } from '../components/Brand';
+import { SolidIcons } from '../components/Brand';
+import ListingPreview from '../components/public/ListingPreview';
+import DemoBadge from '../components/public/DemoBadge';
+import { toCreatorCard, isDemoListing, DEMO_LABEL } from '../components/public/cards';
+
+const str = (v) => (typeof v === 'string' ? v : '');
 
 export async function getServerSideProps({ query, req }) {
   const sessionUser = publicUser(await getSessionUser(req));
-  const q = String(query.q || '').trim().toLowerCase();
-  const tag = String(query.tag || '').trim().toLowerCase();
+  // A repeated ?q=a&q=b arrives as an array; only a plain string is a query.
+  const q = str(query.q).trim().toLowerCase().slice(0, 200);
+  const tag = str(query.tag).trim().toLowerCase().slice(0, 50);
   const [allCreators, allListings] = await Promise.all([getCreators(), getListings()]);
   const visibleCreators = allCreators.filter(isPubliclyVisible);
 
@@ -20,16 +26,19 @@ export async function getServerSideProps({ query, req }) {
     ? visibleCreators.filter((c) => Array.isArray(c.tags) && c.tags.includes(tag))
     : q
     ? visibleCreators.filter((c) =>
-        c.name?.toLowerCase().includes(q) || c.handle?.toLowerCase().includes(q) || c.bio?.toLowerCase().includes(q)
+        str(c.name).toLowerCase().includes(q) || str(c.handle).toLowerCase().includes(q) || str(c.bio).toLowerCase().includes(q)
       )
     : [];
 
   const listings = !tag && q
     ? allListings
-        .filter((l) => l.status === 'active' && (String(l.title || '').toLowerCase().includes(q) || String(l.description || '').toLowerCase().includes(q)))
+        .filter((l) => l.status === 'active' && (str(l.title).toLowerCase().includes(q) || str(l.description).toLowerCase().includes(q)))
         .map((l) => {
           const creator = visibleCreators.find((c) => String(c.id) === String(l.creatorId));
-          return creator ? { ...l, creatorName: creator.name } : null;
+          // toPublicListing: blurred previews only, never a media src.
+          return creator
+            ? { ...toPublicListing(l), creatorName: creator.name, demo: isDemoListing(l, creator) }
+            : null;
         })
         // Dropped outright, not shown as "Unknown": hiding a suspended or
         // banned creator has to hide what they are selling too, the same way
@@ -39,9 +48,12 @@ export async function getServerSideProps({ query, req }) {
 
   // Every distinct tag any creator has set, for the browse-by-tag cloud shown
   // when nobody's searching for anything specific yet.
-  const allTags = [...new Set(visibleCreators.flatMap((c) => (Array.isArray(c.tags) ? c.tags : [])))].sort();
+  const allTags = [...new Set(visibleCreators.flatMap((c) => (Array.isArray(c.tags) ? c.tags.filter((t) => typeof t === 'string') : [])))].sort();
 
-  return { props: { q, tag, creators: creators.map(toPublicCreator), listings, allTags, sessionUser } };
+  // Cards only -- a result tile needs a name and an avatar, not galleries.
+  return {
+    props: { q, tag, creators: creators.map((c) => toCreatorCard(toPublicCreator(c))), listings, allTags, sessionUser },
+  };
 }
 
 export default function Search({ q, tag, creators, listings, allTags, sessionUser }) {
@@ -132,18 +144,15 @@ export default function Search({ q, tag, creators, listings, allTags, sessionUse
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {listings.map((l) => (
                       <a key={l.id} href="/marketplace" className="premium-card border border-brand-gold/20 overflow-hidden block">
-                        <div className="aspect-square relative bg-black/40">
-                          {l.media?.[0] && (
-                            l.media[0].type === 'video' ? (
-                              <video src={l.media[0].src} className="w-full h-full object-cover blur-md scale-110" muted />
-                            ) : (
-                              <img src={l.media[0].src} alt="" className="w-full h-full object-cover blur-md scale-110" />
-                            )
-                          )}
+                        <div className="aspect-square relative">
+                          <ListingPreview media={l.media} />
+                          {l.demo && <DemoBadge short className="absolute top-2 left-2" />}
                         </div>
                         <div className="p-2">
                           <p className="text-sm font-bold truncate">{l.title}</p>
-                          <p className="text-xs text-gray-500 truncate">{l.creatorName} · ${(l.priceCents / 100).toFixed(2)}</p>
+                          <p className="text-xs text-gray-500 truncate">
+                            {l.creatorName} · {l.demo ? DEMO_LABEL : `$${(l.priceCents / 100).toFixed(2)}`}
+                          </p>
                         </div>
                       </a>
                     ))}

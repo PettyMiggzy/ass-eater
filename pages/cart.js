@@ -72,7 +72,14 @@ export default function CartPage({ sessionUser }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: cart.items.map((it) => ({ listingId: it.id })),
+          // The price the fan is looking at goes with each item: the server
+          // charges it only if it still matches the live listing.
+          items: cart.items.map((it) => ({
+            listingId: it.id,
+            expectedPriceCents: it.priceCents,
+            expectedShippingCents: it.kind === 'physical' ? it.shippingCents || 0 : 0,
+            expectedKind: it.kind === 'physical' ? 'physical' : 'digital',
+          })),
           shippingAddress: cart.needsShipping ? address : undefined,
           ageConfirmed,
           tosAccepted,
@@ -80,6 +87,20 @@ export default function CartPage({ sessionUser }) {
         }),
       });
       const data = await res.json();
+      if (res.status === 409 && data.code === 'PRICE_CHANGED') {
+        // Nothing was charged. Show the new prices and make the fan confirm
+        // again -- with a fresh key, since this is a different agreement.
+        if (Array.isArray(data.items)) cart.applyChanges(data.items);
+        setIdempotencyKey(newIdempotencyKey());
+        throw new Error(data.error || 'Something in your cart changed. Review the new total and confirm again.');
+      }
+      if ((res.status === 404 || res.status === 409) && data.listingId) {
+        // That listing is gone (sold, removed, or its creator can't sell
+        // right now). Nothing was charged; take it out of the cart.
+        cart.remove(data.listingId);
+        setIdempotencyKey(newIdempotencyKey());
+        throw new Error(`${data.error || 'An item is no longer available'} -- it has been removed from your cart. Nothing was charged.`);
+      }
       if (!res.ok) throw new Error(data.error || 'Payment could not be confirmed');
       setPaidOrders(data.orders);
       setBalanceCents(data.balanceCents);
@@ -100,7 +121,8 @@ export default function CartPage({ sessionUser }) {
           <SolidIcons.heart className="h-10 w-10 text-brand-pink mx-auto mb-4" />
           <h1 className="text-2xl font-black mb-2">Payment confirmed</h1>
           <p className="text-gray-400 text-sm mb-8">
-            {paidOrders.length} {paidOrders.length === 1 ? 'order has' : 'orders have'} been placed. Digital items are unlocked now; physical items ship once the creator confirms your address.
+            {paidOrders.length} {paidOrders.length === 1 ? 'order has' : 'orders have'} been placed. Find your digital
+            items in your order history; physical items ship once the creator confirms your address.
           </p>
           <div className="flex items-center justify-center gap-3">
             <a href="/marketplace" className="inline-block px-6 py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition">
@@ -199,6 +221,14 @@ export default function CartPage({ sessionUser }) {
                       />
                     ))}
                   </div>
+                  <p className="text-[11px] text-gray-500 mt-3 leading-relaxed">
+                    Your name and address are shared only with the creator who sells you this item, so they can
+                    ship it. See our{' '}
+                    <a href={`${MAIN_SITE}/privacy#shipping`} target="_blank" rel="noreferrer" className="text-brand-pink underline">
+                      Privacy Policy
+                    </a>
+                    .
+                  </p>
                 </div>
               )}
 

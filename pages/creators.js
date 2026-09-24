@@ -4,11 +4,26 @@ import Head from 'next/head';
 import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { byPlacement } from '../lib/founding';
-import { isTokenGated, formatGate, tokenGateLive } from '../lib/token-gate';
+import { tokenGateLive } from '../lib/token-gate';
 import { getSessionUser } from '../lib/session';
 import { Icons, Lockup, SolidIcons } from '../components/Brand';
 import { publicUser } from '../lib/users-store';
-import { VIP_PRICE_USD, VIP_PERKS } from '../lib/brand';
+import {
+  VIP_PRICE_USD,
+  VIP_PERKS,
+  PLATFORM_FEE_PCT,
+  MARKETPLACE_FEE_PCT,
+  LISTING_FEE_PCT,
+  CREDIT_PURCHASE_FEE_PCT,
+} from '../lib/brand';
+import { marketplaceVerificationLive } from '../lib/marketplace-payment-config';
+import DemoBadge from '../components/public/DemoBadge';
+import { toCreatorCard } from '../components/public/cards';
+
+// Every fee quoted on this page comes from lib/brand.js (derived from
+// lib/fees.js), never a typed number -- this page used to say "We take 10%
+// — nothing else" while marketplace sales paid 15%.
+const FEE_LINE = `We take ${PLATFORM_FEE_PCT}% (${MARKETPLACE_FEE_PCT}% on marketplace sales: ${PLATFORM_FEE_PCT}% + ${LISTING_FEE_PCT}% listing fee).`;
 
 export async function getServerSideProps({ req }) {
   const creators = await getCreators();
@@ -17,8 +32,18 @@ export async function getServerSideProps({ req }) {
     props: {
       // "Priority placement in Explore" -- Founding Creators lead every
       // listing on this page. See lib/founding.js.
-      creators: creators.filter(isPubliclyVisible).sort(byPlacement).map(toPublicCreator),
+      // Cards, not whole records: the grid needs an avatar, a name and a
+      // count -- shipping every creator's full gallery array to every
+      // visitor was the heaviest (and, for a gated creator, the leakiest)
+      // payload on the site.
+      creators: creators
+        .filter(isPubliclyVisible)
+        .sort(byPlacement)
+        .map((c) => toCreatorCard(toPublicCreator(c))),
       sessionUser,
+      // Credits and marketplace checkout are live exactly when the chain
+      // config and the server's verification RPC are both set.
+      paymentsLive: marketplaceVerificationLive(),
     },
   };
 }
@@ -50,23 +75,24 @@ const PRICING_TIERS = [
     price: '$1',
     unit: '= 1 credit',
     lines: [
-      'Top up once, spend it on whatever you want',
-      'Subscriptions, tips, unlocks, marketplace',
-      'Each creator sets their own price — some are free',
+      'Top up once with a crypto wallet, then spend without one',
+      'Marketplace purchases and messages to creators',
+      'Each creator sets their own prices',
     ],
-    footnote: 'Topping up costs 2%: $100 lands as 98 credits.',
+    footnote: `Topping up costs ${CREDIT_PURCHASE_FEE_PCT}%: $100 lands as ${100 - CREDIT_PURCHASE_FEE_PCT} credits. Credits are final — never refunded or cashed out.`,
   },
   {
     name: 'VIP',
     Icon: Icons.crown,
     price: `$${VIP_PRICE_USD}`,
-    unit: 'per month, optional',
+    unit: 'per month — coming later, not on sale yet',
     featured: true,
     lines: VIP_PERKS,
     // Said outright, on the card, not buried in terms. A tier called VIP
     // that merely sounds like it includes content is how a chargeback starts.
+    // And it cannot be bought on this site yet, so the card says so.
     footnote:
-      'VIP includes no creator’s content and discounts nothing. You still pay each creator their own price.',
+      'VIP can’t be bought yet. When it opens it will include no creator’s content and discount nothing — you still pay each creator their own price.',
   },
 ];
 
@@ -128,18 +154,13 @@ function PricingCard({ tier }) {
   );
 }
 
-export default function Creators({ creators, sessionUser }) {
+export default function Creators({ creators, sessionUser, paymentsLive }) {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [showSplash, setShowSplash] = useState(true);
   const [splashFading, setShowSplashFading] = useState(false);
-  const [toast, setToast] = useState(null);
-
-  const showComingSoon = (msg) => {
-    setToast(msg || 'Not live yet — wallet features open when $ONLYONE launches.');
-    setTimeout(() => setToast(null), 3000);
-  };
+  const gatingLive = tokenGateLive();
 
   useEffect(() => {
     const fadeTimer = setTimeout(() => setShowSplashFading(true), 3200);
@@ -168,13 +189,10 @@ export default function Creators({ creators, sessionUser }) {
         String(c.handle || '').toLowerCase().includes(search.toLowerCase());
       return matchesFilter && matchesSearch;
     });
-  }, [activeFilter, search]);
+  }, [creators, activeFilter, search]);
 
   // Real content count across the roster, for the stats bar.
-  const totalPosts = creators.reduce(
-    (n, c) => n + (Array.isArray(c.gallery) ? c.gallery.length : 0),
-    0,
-  );
+  const totalPosts = creators.reduce((n, c) => n + (c.galleryCount || 0), 0);
 
   return (
     <>
@@ -183,11 +201,6 @@ export default function Creators({ creators, sessionUser }) {
         <meta name="description" content="Token-gated exclusive content platform" />
       </Head>
 
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] px-6 py-3 rounded-full bg-brand-gold text-black font-bold shadow-luxury-lg animate-pulse">
-          {toast}
-        </div>
-      )}
 
       {showSplash && (
         <div
@@ -244,7 +257,10 @@ export default function Creators({ creators, sessionUser }) {
                   <a href="/signup" className="text-sm text-gray-300 hover:text-brand-gold transition hidden sm:block">Sign Up</a>
                 </>
               )}
-              <button onClick={() => showComingSoon()} className="premium-button text-sm px-6 py-2">Connect Wallet</button>
+              {/* Was a "Connect Wallet" button wired to a toast saying wallet
+                  features weren't live. The one wallet step a fan needs is
+                  buying credits, and that page works. */}
+              <a href="/credits" className="premium-button text-sm px-6 py-2">Buy Credits</a>
             </div>
           </div>
         </nav>
@@ -260,7 +276,7 @@ export default function Creators({ creators, sessionUser }) {
             <h1 className="text-7xl md:text-8xl font-black mb-3 premium-title">ONLY<span className="text-brand-pink">ONE</span></h1>
             <p className="text-brand-secondary font-bold text-xl mb-3">Support the creators you actually love.</p>
             <p className="text-gray-400 max-w-xl mx-auto mb-10">
-              Subscribe, tip and unlock with credits — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for.
+              Buy from creators and message them with credits — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for.
             </p>
 
             {/* Stats Bar */}
@@ -277,8 +293,8 @@ export default function Creators({ creators, sessionUser }) {
                 <p className="text-xs text-gray-400 uppercase tracking-wide">Pieces of Content</p>
               </div>
               <div className="text-center">
-                <p className="text-3xl font-black text-brand-gold">10%</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide">Platform Fee</p>
+                <p className="text-3xl font-black text-brand-gold">{PLATFORM_FEE_PCT}%</p>
+                <p className="text-xs text-gray-400 uppercase tracking-wide">Platform Fee ({MARKETPLACE_FEE_PCT}% on marketplace)</p>
               </div>
             </div>
 
@@ -340,18 +356,20 @@ export default function Creators({ creators, sessionUser }) {
                           loop
                           muted
                           playsInline
-                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${isTokenGated(c) ? 'blur-md scale-110' : ''}`}
+                          className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
                         />
                       ) : (
                         <img
                           src={c.img}
                           alt={c.name}
-                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${isTokenGated(c) ? 'blur-md scale-110' : ''}`}
+                          className={`w-full h-full object-cover group-hover:scale-105 transition duration-500 ${c.gated ? 'blur-md scale-110' : ''}`}
                         />
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
 
-                      {c.founding ? (
+                      {c.demo ? (
+                        <div className="absolute top-3 left-3"><DemoBadge /></div>
+                      ) : c.founding ? (
                         <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-brand-pink text-white text-xs font-black">
                           FOUNDING
                         </div>
@@ -361,17 +379,19 @@ export default function Creators({ creators, sessionUser }) {
                         </div>
                       ) : null}
 
-                      <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur text-brand-gold text-xs font-bold">
-                        {c.price}
-                      </div>
+                      {c.price && (
+                        <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur text-brand-gold text-xs font-bold">
+                          {c.price}
+                        </div>
+                      )}
 
-                      {isTokenGated(c) && (
+                      {c.gated && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                           <div className="bg-black/60 backdrop-blur-sm rounded-full p-5 border border-brand-gold/40">
                             <SolidIcons.lock className="h-8 w-8 text-white/80" />
                           </div>
                           <p className="text-[11px] text-brand-gold font-bold bg-black/70 px-2 py-0.5 rounded-full">
-                            {formatGate(c)}
+                            {c.gateLabel}
                           </p>
                         </div>
                       )}
@@ -385,20 +405,24 @@ export default function Creators({ creators, sessionUser }) {
                       <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
                       <p className="text-gray-400 text-xs mb-4">{c.subs} subscribers</p>
                       <div className="flex gap-2">
-                        {/* A gated creator gets an honest label, not a button
-                            that can't do its job yet. Holding the tokens is how
-                            you get in -- nothing is spent, so there is nothing
-                            to "buy" here even once it's live. */}
-                        {isTokenGated(c) && !tokenGateLive() ? (
+                        {/* A gated creator gets an honest label while the token
+                            isn't configured; once it is, "Hold to Unlock"
+                            opens the real wallet-signature flow on the
+                            profile (?unlock=1 scrolls to it). Holding is how
+                            you get in -- nothing is spent. */}
+                        {c.gated && !gatingLive ? (
                           <span className="flex-1 text-sm py-2 px-3 rounded-md border border-brand-gold/30 text-brand-gold/80 text-center">
                             Unlocks at launch
                           </span>
                         ) : (
                           <button
-                            onClick={(e) => { e.stopPropagation(); router.push(`/creator/${c.id}`); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              router.push(c.gated ? `/creator/${c.id}?unlock=1` : `/creator/${c.id}`);
+                            }}
                             className="flex-1 premium-button text-sm py-2"
                           >
-                            {isTokenGated(c) ? 'Hold to Unlock' : 'View'}
+                            {c.gated ? 'Hold to Unlock' : 'View'}
                           </button>
                         )}
                         <button
@@ -462,7 +486,10 @@ export default function Creators({ creators, sessionUser }) {
             </div>
 
             <p className="text-center text-sm text-gray-500 mt-14">
-              Payments are not switched on yet — nothing here can charge you today.
+              {paymentsLive
+                ? 'Credits and marketplace checkout are live. Subscriptions, tips and VIP are not on sale yet.'
+                : 'Payments are not switched on yet — nothing here can charge you today.'}{' '}
+              <a href="/terms#payments" className="underline hover:text-brand-pink">Fees &amp; payouts</a>
             </p>
           </div>
         </section>
@@ -475,7 +502,7 @@ export default function Creators({ creators, sessionUser }) {
           <div className="max-w-4xl mx-auto">
             <h2 className="text-4xl font-black text-center mb-2 premium-title">CREATE ON ONLYONE</h2>
             <p className="text-center text-gray-400 mb-10">
-              Your page, your prices, your content. We take 10% — nothing else.
+              Your page, your prices, your content. {FEE_LINE}
             </p>
 
             <div className="grid sm:grid-cols-3 gap-4 mb-10">
@@ -500,16 +527,17 @@ export default function Creators({ creators, sessionUser }) {
             </div>
 
             <div className="premium-card p-6 mb-8">
-              <p className="font-bold mb-2">Not live yet, and worth saying plainly</p>
+              <p className="font-bold mb-2">What&apos;s live, said plainly</p>
               <p className="text-gray-400 text-sm">
-                Payments are not switched on. Subscriptions, tips and marketplace checkout are built
-                but not taking money yet, so there are no earnings to show you. Set your page up now
-                and it is ready the day they open.
+                {paymentsLive
+                  ? 'Fans buy credits and spend them on your marketplace listings and on messages to you. What you earn is paid out in USDG on request, after review. Subscriptions and tips are not built into the live site yet.'
+                  : 'Payments are not switched on yet, so nothing can be sold today. Set your page up now and it is ready the day they open.'}{' '}
+                <a href="/terms#payments" className="underline hover:text-brand-pink">How fees and payouts work</a>
               </p>
             </div>
 
             <div className="text-center">
-              <a href="/become-creator" className="inline-block premium-button text-sm">Apply to Become a Creator</a>
+              <a href="/signup?role=creator" className="inline-block premium-button text-sm">Apply to Become a Creator</a>
             </div>
           </div>
         </section>
@@ -517,9 +545,9 @@ export default function Creators({ creators, sessionUser }) {
         {/* Bottom CTA */}
         <section className="py-16 px-6 border-t border-brand-gold/20">
           <div className="max-w-2xl mx-auto text-center premium-card p-10 border-2 border-brand-gold/40">
-            <h2 className="text-3xl font-black text-brand-gold mb-3">Become a Subscriber</h2>
-            <p className="text-gray-300 mb-6">Top up with dollars and spend credits on the creators you want. No token required.</p>
-            <button onClick={() => showComingSoon()} className="premium-button">Buy Credits</button>
+            <h2 className="text-3xl font-black text-brand-gold mb-3">Get Credits</h2>
+            <p className="text-gray-300 mb-6">Top up once and spend credits on the creators you want. No token required.</p>
+            <a href="/credits" className="inline-block premium-button">Buy Credits</a>
           </div>
         </section>
 

@@ -1,6 +1,10 @@
 import Head from 'next/head';
 
-const LAST_UPDATED = 'September 17, 2026';
+// Bump on every material change -- Section 10 promises it. This policy has to
+// describe what the code actually collects and sets; when a feature adds a
+// field, a cookie, or a new recipient of someone's data, this file changes
+// in the same release.
+const LAST_UPDATED = 'September 24, 2026';
 
 export default function Privacy() {
   return (
@@ -20,9 +24,21 @@ export default function Privacy() {
                 </li>
                 <li>
                   <strong>Creator profile info.</strong> What a creator puts on their own profile —
-                  display name, handle, bio, tags, avatar, and a payout wallet address. We do not
-                  currently collect government-issued ID or a selfie from creators. If we add formal
-                  identity verification, this policy will say so before that collection starts.
+                  display name, handle, bio, tags, age and location (if given), avatar, social links,
+                  message price, and a payout wallet address.
+                </li>
+                <li id="performer-records">
+                  <strong>Performer records (18 U.S.C. §2257).</strong> For every person who appears in
+                  sexually explicit content on the Platform, we keep the records federal law requires
+                  (18 U.S.C. §2257 and 28 C.F.R. Part 75): the performer&apos;s legal name, date of
+                  birth, government ID number, a copy of their government-issued photo ID, every name
+                  they have performed under, the date the content was produced, and where it appears on
+                  the Platform. We collect these to confirm every performer was an adult and to meet our
+                  record-keeping obligations — for no other purpose. The legal name, date of birth, ID
+                  number, and ID image are encrypted at rest, and the records are accessible only to the
+                  Platform&apos;s records custodian and administrators. See our{' '}
+                  <a href="/2257" className="text-brand-gold underline">§2257 statement</a> and Section 7
+                  for how long they are kept.
                 </li>
                 <li>
                   <strong>Fan age-verification info.</strong> Some states now require real age verification
@@ -37,10 +53,26 @@ export default function Privacy() {
                   listings, messages, wall comments.
                 </li>
                 <li>
-                  <strong>Wallet addresses and on-chain activity.</strong> If you connect a wallet or make a
-                  payment, we see that wallet's address and the transactions it sends to or receives from
-                  the Platform. See Section 4 — this data is not private in the way the rest of this policy
-                  describes.
+                  <strong>Credits and payments.</strong> Your credit balance and a record of every credit
+                  purchase, spend, sale, and payout on your account; for each credit purchase, the
+                  transaction hash and the wallet address it was sent from; for each creator payout
+                  request, the amount, the destination wallet address, its status, and — if the Platform
+                  declines it — the reason given.
+                </li>
+                <li id="shipping">
+                  <strong>Marketplace orders and shipping addresses.</strong> The items you buy and when.
+                  If you buy a physical item, we collect the recipient&apos;s full name and shipping
+                  address. That name and address are encrypted at rest and are{' '}
+                  <strong>disclosed to the creator who sold you the item</strong> so they can ship it —
+                  they are not shown to anyone else. We also record your age confirmation and acceptance
+                  of the Marketplace terms against each order.
+                </li>
+                <li>
+                  <strong>Wallet addresses and on-chain activity.</strong> If you connect a wallet — to buy
+                  credits, receive a payout, or prove you hold $ONLYONE to see a token-gated creator — we
+                  see that wallet&apos;s address and, where relevant, its $ONLYONE balance and the
+                  transactions it sends to or receives from the Platform. See Section 4 — this data is not
+                  private in the way the rest of this policy describes.
                 </li>
                 <li>
                   <strong>Basic usage data.</strong> Standard technical logs (IP address, browser/device
@@ -76,64 +108,138 @@ export default function Privacy() {
               <p className="mt-3">
                 This is a deliberate design choice, not an oversight: the less real-world identifying
                 information a Fan account requires, the less there is to ever be exposed, subpoenaed
-                unnecessarily, or leaked. Creator accounts are held to a different standard (Section 1) —
-                that verification exists to keep minors and non-consenting people off the Platform, which
-                we treat as non-negotiable regardless of the privacy tradeoff.
+                unnecessarily, or leaked. Two exceptions: buying a <strong>physical</strong> Marketplace
+                item requires a real shipping name and address, which the selling creator sees (Section
+                1); and fans in some states must pass age verification through our vendor (Section 6).
+              </p>
+              <p className="mt-3">
+                Creators and the people who appear in their content are held to a different standard.
+                Every creator profile is reviewed by our team, and we keep identity records for performers
+                in sexually explicit content (Section 1, Performer records). Those exist to keep minors
+                and non-consenting people off the Platform, which we treat as non-negotiable regardless of
+                the privacy tradeoff.
               </p>
             </Section>
 
             <Section title="3. How We Use It">
               <ul className="list-disc pl-5 space-y-2">
-                <li>To operate your account, log you in, and show you the content you've paid to unlock.</li>
-                <li>To review a creator's profile before it goes public.</li>
-                <li>To process payments and calculate fees.</li>
+                <li>To operate your account, log you in, and show you the content you&apos;ve bought or are entitled to see.</li>
+                <li>To review a creator&apos;s profile before it goes public, and to keep the performer records described in Section 1.</li>
+                <li>To credit your purchases, take fees, and send creator payouts.</li>
+                <li>
+                  To fulfil Marketplace orders — including sharing a physical order&apos;s shipping name and
+                  address with the creator who sold it, and no one else.
+                </li>
                 <li>To detect and prevent fraud, abuse, and violations of our Terms of Service.</li>
                 <li>To respond to a valid legal request (subpoena, court order) where we're required to.</li>
               </ul>
               <p className="mt-3">We do not sell your personal information to third parties, and we do not use your content or account data to train AI models.</p>
             </Section>
 
-            <Section title="4. Blockchain & On-Chain Data Is Public">
+            <Section title="4. Credits, Payouts & Public On-Chain Data">
               <p>
-                Payments on this Platform happen as direct, on-chain cryptocurrency transactions (see the{' '}
-                <a href="/terms#marketplace" className="text-brand-gold underline">Terms of Service</a>).
+                Fans buy credits by sending USDG from their own wallet to the Platform&apos;s wallet on
+                Robinhood Chain, and creators are paid out by the Platform sending USDG to the wallet they
+                give us (see the{' '}
+                <a href="/terms#payments" className="text-brand-gold underline">Terms of Service</a>).
+                Those two kinds of transfer happen on a public blockchain. Everything in between — your
+                credit balance, what you spend credits on, and what a creator earns — is an internal
+                record kept by the Platform, not an on-chain transaction.
+              </p>
+              <p className="mt-3">
                 Blockchains are public ledgers by design: a wallet address and every transaction it sends or
                 receives is visible to anyone who looks, forever, on the blockchain itself — not just to us.
-                We cannot make on-chain data private, and we cannot delete, alter, or reverse anything once
-                it's confirmed on-chain, even if you later delete your Platform account. If linking a wallet
-                to your real identity is a concern, don't fund it from an address or exchange account that's
-                already tied to your name.
+                Anyone who knows the Platform&apos;s wallet can see that a given address sent it money. We
+                cannot make on-chain data private, and we cannot delete, alter, or reverse anything once
+                it&apos;s confirmed on-chain, even if you later delete your Platform account. If linking a
+                wallet to your real identity is a concern, don&apos;t fund it from an address or exchange
+                account that&apos;s already tied to your name.
               </p>
             </Section>
 
             <Section title="5. Cookies & Sessions" id="cookies">
               <p>
-                We use a single session cookie to keep you logged in. We don't currently run third-party
-                advertising trackers or analytics cookies on the Platform.
+                We only set our own (first-party) cookies, each for a specific job:
+              </p>
+              <ul className="list-disc pl-5 space-y-2 mt-3">
+                <li><strong>Login session</strong> (<code>oa_session</code>) — keeps you logged in, up to 30 days.</li>
+                <li>
+                  <strong>Age verification</strong> (<code>oa_age_verified</code>) — records that this browser
+                  passed age verification (or was let in by the site owner or an authorised reviewer), so you
+                  aren&apos;t asked again; up to 180 days.
+                </li>
+                <li>
+                  <strong>Referral</strong> (<code>oa_ref</code>) — set only when you arrive through a
+                  creator&apos;s <code>?ref=</code> link, whether or not you have an account, so that creator
+                  is credited if you sign up; 30 days.
+                </li>
+                <li>
+                  <strong>Wallet sign-in challenges</strong> (<code>oa_wallet_nonce</code>,{' '}
+                  <code>oa_deposit_nonce</code>) — a one-time value you sign to prove you control a wallet;
+                  about 5 minutes.
+                </li>
+                <li>
+                  <strong>Token holding</strong> — if you prove you hold $ONLYONE to see a token-gated creator,
+                  a cookie records that proof for a limited time so you don&apos;t have to sign again on every
+                  page.
+                </li>
+                <li>
+                  <strong>Preview invite</strong> (<code>oa_preview</code>) — only when the site is in
+                  invite-only preview mode and you followed an invite link.
+                </li>
+                <li>
+                  <strong>Administrator access</strong> — used only by Platform administrators, to view
+                  media in the admin panel.
+                </li>
+              </ul>
+              <p className="mt-3">
+                We also store two things in your browser&apos;s local storage, which never leave your device
+                unless you check out: that you dismissed the 18+ notice, and the contents of your
+                Marketplace cart.
+              </p>
+              <p className="mt-3">
+                We don&apos;t run third-party advertising trackers or analytics cookies on the Platform.
               </p>
             </Section>
 
             <Section title="6. Third-Party Services">
               <p>
-                We use infrastructure providers (hosting, file storage, and an age-verification vendor,
-                AgeChecker.Net, for fans in states that require it) to run the Platform. Those providers
-                can access the specific data needed to perform their function (e.g., storage providers
-                hold uploaded files; AgeChecker.Net handles age-verification documents) under their own
-                confidentiality and security obligations — we don't hand any of them more than what's
-                needed for that purpose.
+                We use infrastructure providers (web hosting, a database host, private file storage, a
+                blockchain node provider used to check payments and token balances, and an
+                age-verification vendor, AgeChecker.Net, for fans in states that require it) to run the
+                Platform. Those providers can access the specific data needed to perform their function
+                (e.g., storage providers hold uploaded files; AgeChecker.Net handles age-verification
+                documents) under their own confidentiality and security obligations — we don&apos;t hand
+                any of them more than what&apos;s needed for that purpose.
+              </p>
+              <p className="mt-3">
+                Other users see only what the Platform shows them: a creator&apos;s public profile, what
+                you post publicly, and messages you send them. The one case where another user receives
+                your personal details is a physical Marketplace order, where the selling creator receives
+                the shipping name and address (Section 1).
               </p>
             </Section>
 
             <Section title="7. Data Retention & Deletion">
               <p>
                 You can request deletion of your account and associated off-chain data (profile info,
-                messages, uploaded content) at any time by contacting support. Some limits on that:
+                messages, uploaded content) at any time by emailing team@onlyone1.fun. Some limits on that:
               </p>
               <ul className="list-disc pl-5 space-y-2 mt-3">
                 <li>On-chain transaction history cannot be deleted — see Section 4.</li>
                 <li>
-                  Creator identity-verification records may be retained beyond account deletion where we're
-                  legally required to keep them (e.g., recordkeeping rules for adult-content platforms).
+                  Performer records kept under 18 U.S.C. §2257 (Section 1) are retained for at least seven
+                  years, including after the related account or content is deleted, because the law requires
+                  it. They cannot be deleted on request during that period.
+                </li>
+                <li>
+                  Credit, sale, and payout records are kept as financial records and are not deleted on
+                  request while we are required to keep them.
+                </li>
+                <li>
+                  A physical order&apos;s shipping name and address stay with the order record so the creator
+                  can fulfil it; once the order has shipped you can ask us to delete them, unless we need
+                  them for a dispute or legal claim already in progress.
                 </li>
                 <li>We may retain limited data where necessary to investigate fraud, abuse, or a legal claim already in progress.</li>
               </ul>
@@ -142,7 +248,7 @@ export default function Privacy() {
             <Section title="8. Your Rights">
               <p>
                 Depending on where you live, you may have rights to access, correct, or request deletion of
-                your personal information, or to object to certain uses of it. Contact support to exercise
+                your personal information, or to object to certain uses of it. Email team@onlyone1.fun to exercise
                 any of these — we'll respond consistent with applicable law, subject to the retention limits
                 in Section 7.
               </p>
@@ -166,7 +272,10 @@ export default function Privacy() {
             </Section>
 
             <Section title="11. Contact">
-              <p>Questions about this policy, or a data request under Section 7 or 8, can be directed to the Platform's support contact.</p>
+              <p>
+                Questions about this policy, or a data request under Section 7 or 8, can be sent to{' '}
+                <a href="mailto:team@onlyone1.fun" className="text-brand-gold underline">team@onlyone1.fun</a>.
+              </p>
             </Section>
           </div>
 

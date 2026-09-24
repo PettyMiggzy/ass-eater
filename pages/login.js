@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import SiteNav from '../components/SiteNav';
+import { safeRedirectPath } from '../lib/safe-redirect';
 
 export default function Login() {
   const router = useRouter();
@@ -25,11 +26,11 @@ export default function Login() {
       // Honour ?next=. Every "you need to log in for this" redirect on the
       // site sets it -- saving a creator, commenting on a wall -- and
       // ignoring it dumped a fan on a near-empty dashboard with no way back
-      // to the creator they were trying to interact with. Same-origin only:
-      // "//evil.com" starts with "/" and browsers resolve it off-site.
-      const next = typeof router.query.next === 'string' ? router.query.next : '';
-      const safe = next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\');
-      router.push(safe ? next : '/dashboard');
+      // to the creator they were trying to interact with. Same-origin only,
+      // decided by RESOLVING the value (lib/safe-redirect.js), not by prefix:
+      // a prefix check passed "/%09/evil.com", which URL parsing turns into
+      // "//evil.com" and the router then hard-navigates off-site.
+      router.push(safeRedirectPath(router.query.next, '/dashboard'));
     } catch (err) {
       setError(err.message);
     } finally {

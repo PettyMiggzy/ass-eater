@@ -20,6 +20,10 @@ import SiteNav from '../components/SiteNav';
  *
  * The records themselves live in the admin panel -- see
  * lib/performer-records-store.js.
+ *
+ * The creator record-keeping obligation cited below is Terms Section 4
+ * (id="records" in pages/terms.js). It did not exist when this page first
+ * cited it; if that clause moves or is reworded, this link has to follow.
  */
 const CUSTODIAN_NAME = process.env.NEXT_PUBLIC_RECORDS_CUSTODIAN_NAME || '';
 const CUSTODIAN_ADDRESS = process.env.NEXT_PUBLIC_RECORDS_CUSTODIAN_ADDRESS || '';
@@ -36,7 +40,7 @@ export default function Statement2257() {
         <SiteNav />
         <div className="max-w-3xl mx-auto px-6 py-14">
           <h1 className="text-3xl font-black premium-title mb-2">18 U.S.C. §2257 Statement</h1>
-          <p className="text-xs text-gray-500 mb-8">Last updated 2026-09-19</p>
+          <p className="text-xs text-gray-500 mb-8">Last updated 2026-09-24</p>
 
           <div className="space-y-6 text-sm text-gray-300 leading-relaxed">
             <p>
@@ -47,9 +51,9 @@ export default function Statement2257() {
 
             <p>
               Content on this Platform is uploaded by its creators, and each creator is the producer
-              of their own content. Our{' '}
-              <a href="/terms" className="text-brand-pink hover:underline">Terms of Service</a>{' '}
-              require every creator to create and keep the records §2257 asks of a producer and to
+              of their own content. Section 4 of our{' '}
+              <a href="/terms#records" className="text-brand-pink hover:underline">Terms of Service</a>{' '}
+              requires every creator to create and keep the records §2257 asks of a producer and to
               produce them on request.
             </p>
             <p>

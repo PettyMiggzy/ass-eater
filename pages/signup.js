@@ -109,6 +109,9 @@ export default function Signup({ open }) {
                 <p className="text-xs text-gray-500 mt-1.5">
                   We never require a real email for fan accounts — plenty of people would rather not have this show up in an inbox anyone else can see.
                 </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  If you use a username instead of an email, it's shown as your name on comments and messages — so don't use your real name or phone number. An email address is never shown.
+                </p>
               </div>
             ) : (
               <div>
@@ -129,7 +132,8 @@ export default function Signup({ open }) {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Handle</label>
-                  <input required placeholder="@yourname" value={form.handle} onChange={update('handle')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <input required placeholder="@yourname" maxLength={31} value={form.handle} onChange={update('handle')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <p className="text-xs text-gray-500 mt-1">2–30 characters: letters, numbers, ".", "_" or "-".</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Bio</label>

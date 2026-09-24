@@ -5,11 +5,14 @@ import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getListings } from '../lib/listings-store';
 import { getCreators } from '../lib/creators-store';
-import { isPubliclyVisible } from '../lib/creator-status';
+import { isPubliclyVisible, toPublicListing, LISTING_LIMITS } from '../lib/creator-status';
 import { isFoundingCreator } from '../lib/founding';
 import { Icons, SolidIcons, Tagline } from '../components/Brand';
 import { useCart } from '../lib/cart';
 import { marketplacePaymentsLive, getMarketplacePaymentConfig } from '../lib/marketplace-payment-config';
+import ListingPreview from '../components/public/ListingPreview';
+import DemoBadge from '../components/public/DemoBadge';
+import { isDemoListing, DEMO_LABEL } from '../components/public/cards';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
@@ -37,11 +40,17 @@ export async function getServerSideProps({ req }) {
     .filter((l) => l.status === 'active' && visible.has(String(l.creatorId)))
     .map((l) => {
       const creator = visible.get(String(l.creatorId));
+      // toPublicListing: a tiny blurred preview per media item and NEVER a
+      // src. The paid files reach only buyers, through
+      // /api/marketplace/orders/delivery (checked again by /api/media).
       return {
-        ...l,
+        ...toPublicListing(l),
         creatorName: creator.name,
         creatorImg: creator.img || '/images/avatar-placeholder.png',
         creatorFounding: isFoundingCreator(creator),
+        // The platform's own sample creators/listings: labelled, and never
+        // given a buy button (checkout refuses them too).
+        demo: isDemoListing(l, creator),
       };
     })
     // "Priority placement in Marketplace" for Founding Creators, newest
@@ -97,7 +106,12 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
   const [kind, setKind] = useState('all');
   const [tag, setTag] = useState('');
   const [sort, setSort] = useState('newest');
-  const maxCents = Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => l.priceCents || 0));
+  // Clamped to the listing price ceiling the create/update routes enforce,
+  // so one legacy absurd price can't make the slider useless for everyone.
+  const maxCents = Math.min(
+    LISTING_LIMITS.maxPriceCents,
+    Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => (Number.isFinite(l.priceCents) ? l.priceCents : 0))),
+  );
   const [maxPriceCents, setMaxPriceCents] = useState(maxCents);
 
   const showToast = (msg) => {
@@ -106,7 +120,10 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
   };
 
   const addToCart = (listing) => {
-    cart.add(listing);
+    if (listing.demo) return;
+    // The cart's thumbnail is the listing's public blurred preview -- there
+    // is no media src in a public listing to fall back on.
+    cart.add({ ...listing, preview: listing.media?.[0]?.preview || null });
     showToast(`Added "${listing.title}" to your cart.`);
   };
 
@@ -120,7 +137,7 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId: reporting.id, reason }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to report');
       showToast('Reported — our team will review it.');
       setReporting(null);
@@ -255,7 +272,7 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
               <span className="text-brand-pink font-bold">Heads up:</span>
               <span>
                 {paymentsLive
-                  ? `Checkout is live — pay with credits, no wallet needed at checkout. Buy credits once with a crypto wallet (${stableSymbol}) on the Credits page, then spend anywhere on OnlyOne.`
+                  ? `Checkout is live — pay with credits, no wallet needed at checkout. Buy credits once with a crypto wallet (${stableSymbol}) on the Credits page, then spend them on marketplace items and messages. Digital items appear under Your Orders once bought.`
                   : 'Browsing is live. Checkout opens when payments do — nothing here can charge you yet.'}
               </span>
             </div>
@@ -406,24 +423,14 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
                 {filtered.map((l) => (
                   <div key={l.id} className="group rounded-2xl overflow-hidden bg-white/5 border border-white/5 hover:border-brand-pink/40 transition flex flex-col">
                     <div className="aspect-square relative bg-black/40">
-                      {l.media?.[0] ? (
-                        l.media[0].type === 'video' ? (
-                          <video src={l.media[0].src} className="w-full h-full object-cover blur-xl scale-110" muted />
-                        ) : (
-                          <img src={l.media[0].src} alt="" className="w-full h-full object-cover blur-xl scale-110" />
-                        )
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">No preview</div>
-                      )}
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                        <span className="w-10 h-10 rounded-full bg-black/60 border border-white/15 flex items-center justify-center text-white"><SolidIcons.lock className="h-4 w-4" /></span>
-                      </div>
+                      <ListingPreview media={l.media} />
 
                       <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
+                        {l.demo && <DemoBadge short />}
                         {l.creatorFounding && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-pink text-white font-black tracking-wide">FOUNDING</span>
                         )}
-                        {l.aiGenerated && (
+                        {(l.aiGenerated || l.media?.some((m) => m.aiGenerated)) && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-black/75 text-brand-pink font-bold">AI</span>
                         )}
                         {l.kind === 'physical' && (
@@ -451,6 +458,11 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
                       {Array.isArray(l.tags) && l.tags.length > 0 && (
                         <p className="text-[10px] text-brand-pink/80 mb-2 line-clamp-1">{l.tags.map((t) => `#${t}`).join(' ')}</p>
                       )}
+                      {l.demo ? (
+                        <p className="mt-auto w-full py-2.5 rounded-full bg-yellow-400/15 border border-yellow-400/40 text-yellow-200 text-xs font-bold text-center">
+                          {DEMO_LABEL}
+                        </p>
+                      ) : (
                       <button
                         onClick={() => addToCart(l)}
                         disabled={cart.has(l.id)}
@@ -464,6 +476,7 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
                           <>${(l.priceCents / 100).toFixed(2)} · Add to cart</>
                         )}
                       </button>
+                      )}
                     </div>
                   </div>
                 ))}

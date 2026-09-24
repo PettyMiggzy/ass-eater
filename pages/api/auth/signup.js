@@ -5,7 +5,17 @@ import { createSessionToken, setSessionCookie } from '../../../lib/session';
 import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
 import { withTransaction } from '../../../lib/db';
 import { signupsOpen, SIGNUPS_CLOSED_MESSAGE } from '../../../lib/signups';
-import { validateTextFields } from '../../../lib/field-validation';
+import {
+  validateTextFields,
+  normalizeHandle,
+  handleKey,
+  isEmailIdentifier,
+  USERNAME_RE,
+  EMAIL_IDENTIFIER_MAX,
+} from '../../../lib/field-validation';
+import { screenPublicText, publicProfileTextEntries } from '../../../lib/prohibited-terms';
+import { addViolation } from '../../../lib/violations-store';
+import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
 
 // Signup unavoidably tells the caller whether an identifier is already
 // taken: there is no email-confirmation channel on this site (nothing here
@@ -33,7 +43,8 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: SIGNUPS_CLOSED_MESSAGE });
   }
 
-  const { password, role, displayName, handle, bio } = req.body || {};
+  const { password, role, displayName, bio } = req.body || {};
+  let { handle } = req.body || {};
   // Field is still called "email" internally (nothing here ever sends real
   // email, it's purely a unique login identifier + display-name fallback --
   // see lib/users-store.js) but a fan can put any username in it; only
@@ -41,8 +52,23 @@ export default async function handler(req, res) {
   // client-side. Server-side we just need a sane minimum length either way.
   const email = String(req.body?.email || '').trim();
 
-  if (!email || email.length < 3 || !password || password.length < 6) {
+  if (!email || email.length < 3 || typeof password !== 'string' || password.length < 6) {
     return res.status(400).json({ error: 'An email or username (3+ characters) and a password (6+ characters) are required' });
+  }
+  // A username (no "@") is shown publicly as this account's name on wall
+  // comments and DMs (lib/users-store.js displayNameFor), so it is public
+  // text: capped, restricted to a plain charset, and screened below like any
+  // other public field. An email-shaped identifier is never shown and just
+  // gets a sane upper bound.
+  if (isEmailIdentifier(email)) {
+    if (email.length > EMAIL_IDENTIFIER_MAX) {
+      return res.status(400).json({ error: `Email must be ${EMAIL_IDENTIFIER_MAX} characters or fewer` });
+    }
+  } else if (!USERNAME_RE.test(email)) {
+    return res.status(400).json({ error: 'Usernames are 3-40 characters: letters, numbers, ".", "_" or "-".' });
+  } else if (/^[\d.\-_]{7,}$/.test(email)) {
+    // A username is published; a phone number as one would be too.
+    return res.status(400).json({ error: "A username can't be a phone number -- it's shown publicly on your comments and messages." });
   }
   if (!['fan', 'creator'].includes(role)) {
     return res.status(400).json({ error: 'Role must be fan or creator' });
@@ -60,6 +86,11 @@ export default async function handler(req, res) {
   if (role === 'creator') {
     const invalid = validateTextFields({ name: displayName, handle, bio }, ['name', 'handle', 'bio']);
     if (invalid) return res.status(400).json({ error: invalid });
+    // One canonical stored form ("@" + body), the same one the profile
+    // editors write, so "alice" and "@alice" can never be two creators.
+    const normalized = normalizeHandle(handle);
+    if (normalized.error) return res.status(400).json({ error: normalized.error });
+    handle = normalized.handle;
   }
 
   // Counted after the shape checks, so somebody fumbling the form doesn't
@@ -71,6 +102,25 @@ export default async function handler(req, res) {
   if (limited) {
     res.setHeader('Retry-After', String(retryAfterSeconds));
     return res.status(429).json({ error: 'Too many signup attempts from this connection. Please wait a few minutes and try again.' });
+  }
+
+  // The same public-text screen every other creator-text writer runs
+  // (payment circumvention + prohibited terms). Signup used to be the one
+  // path with no filter at all, and admin approval then skipped the
+  // unchanged text -- so a signup bio of "cashapp $jane" went public on
+  // approval with nothing logged. A fan's username is on the list because it
+  // becomes the public author name of every comment and DM they write.
+  // After the rate limit, so a flood of flagged signups can't flood the
+  // violations queue for free.
+  const publicText = role === 'creator'
+    ? publicProfileTextEntries({ name: displayName, handle, bio: bio || '' })
+    : isEmailIdentifier(email) ? [] : [['username', email]];
+  for (const [context, value] of publicText) {
+    const hit = screenPublicText(value);
+    if (hit) {
+      await addViolation({ userId: `signup:ip:${clientIp(req)}`, context, reasons: hit.reasons, snippet: value });
+      return res.status(400).json({ error: hit.message });
+    }
   }
 
   // Look for a taken identifier BEFORE writing anything. createUser checks
@@ -94,9 +144,9 @@ export default async function handler(req, res) {
   const refCode = normalizeReferralCode(req.body?.ref);
   if (refCode) {
     const existingCreators = await getCreators();
-    const referrer = existingCreators.find(
-      (c) => String(c.handle || '').replace(/^@/, '').toLowerCase() === refCode && isPubliclyVisible(c),
-    );
+    // handleKey is the same "@"-stripped, lowercased form the unique index
+    // compares, so at most one creator can ever match.
+    const referrer = existingCreators.find((c) => handleKey(c.handle) === refCode && isPubliclyVisible(c));
     if (referrer) referredByCreatorId = String(referrer.id);
   }
 
@@ -118,7 +168,7 @@ export default async function handler(req, res) {
         const creator = await createCreator(
           {
             name: displayName,
-            handle: handle.startsWith('@') ? handle : `@${handle}`,
+            handle,
             bio: bio || '',
             status: 'pending',
             // NOT locked. `locked` means token-gated (lib/token-gate.js),
@@ -151,17 +201,16 @@ export default async function handler(req, res) {
       user: { id: user.id, email: user.email, role: user.role, creatorId },
     });
   } catch (err) {
-    // 23505 here can only be the creator handle-uniqueness index (lib/db.js)
-    // -- createUser() already converts ITS OWN email collision into a plain,
-    // friendly Error with no .code (see lib/users-store.js), so any raw
-    // Postgres constraint violation reaching here is the handle, not the
-    // email. Reported the same friendly way me/profile.js and
-    // admin/profile.js already do for the identical constraint, rather than
-    // as a raw "duplicate key value violates unique constraint ..." message.
-    if (err && err.code === '23505') {
-      return res.status(409).json({ error: 'That handle is already taken. Pick another.' });
+    // createUser() converts its OWN email collision into a plain Error with
+    // no .code (see lib/users-store.js). A raw 23505 reaching here is a
+    // creators constraint -- and only the handle indexes mean "handle
+    // taken". The creators primary key can also raise 23505 (a sequence
+    // collision); calling that "handle taken" sent people retrying names
+    // that were never the problem.
+    if (isHandleConflict(err)) {
+      return res.status(409).json({ error: HANDLE_TAKEN_MESSAGE });
     }
-    if (err.message === 'An account with that email already exists') {
+    if (err && err.message === 'An account with that email already exists') {
       return res.status(400).json({ error: err.message });
     }
     console.error('[auth/signup] unexpected error:', err);

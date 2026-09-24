@@ -1,9 +1,11 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
-import { createListing } from '../../../lib/listings-store';
-import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
+import { PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
+import { screenPublicText, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { validateTextFields } from '../../../lib/field-validation';
 import { consumeAttempt } from '../../../lib/rate-limit';
+import { LISTING_LIMITS, sanitizeTags } from '../../../lib/creator-status';
+import { createListing, findCircumventionInTags } from '../../../lib/listings-store';
 
 // No cap of any kind existed here, unlike the gallery's slot limit or the
 // rate limits on every other comparable write path (wall posts, DMs,
@@ -12,6 +14,38 @@ import { consumeAttempt } from '../../../lib/rate-limit';
 // media-upload allotment.
 const WINDOW_MS = 60 * 60 * 1000;
 const MAX_PER_CREATOR = 20;
+
+/**
+ * The public-text screen for a marketplace listing, applied identically by
+ * create.js and update.js. KEEP IDENTICAL to the copy in update.js -- the two
+ * routes must screen listing text the same way.
+ *
+ * Runs lib/prohibited-terms.js's screenPublicText -- the payment-circumvention
+ * filter AND the prohibited-terms list, the same screen a creator's public
+ * profile goes through -- over the title, the description, and every tag both
+ * exactly as typed and as sanitizeTags() will store it. Only keys present in
+ * `fields` are screened, so a partial edit checks only what it writes.
+ *
+ * Returns null, or { context, reasons, snippet, message } for the first hit:
+ * `context` is what the violations queue records ('listing_title',
+ * 'listing_description', 'listing_tags'); `message` is safe to show the user.
+ */
+function screenListingText(fields) {
+  if (!fields || typeof fields !== 'object') return null;
+  const entries = [];
+  for (const key of ['title', 'description']) {
+    if (key in fields && typeof fields[key] === 'string' && fields[key]) entries.push([`listing_${key}`, fields[key]]);
+  }
+  if ('tags' in fields && fields.tags !== undefined && fields.tags !== null) {
+    for (const raw of rawTagItems(fields.tags)) entries.push(['listing_tags', raw]);
+    for (const tag of sanitizeTags(fields.tags)) entries.push(['listing_tags', tag]);
+  }
+  for (const [context, value] of entries) {
+    const hit = screenPublicText(value);
+    if (hit) return { context, reasons: hit.reasons, snippet: value, message: hit.message };
+  }
+  return null;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -42,20 +76,39 @@ export default async function handler(req, res) {
   // typeof, not just truthiness -- validateTextFields skips a key whose
   // value is undefined entirely (treats "not provided" as valid), so an
   // omitted title passed that check and then threw on `.trim()` here.
-  if (typeof title !== 'string' || !title.trim() || !Number.isFinite(price) || price < 100) {
+  if (typeof title !== 'string' || !title.trim() || !Number.isSafeInteger(price) || price < LISTING_LIMITS.minPriceCents) {
     return res.status(400).json({ error: 'Title and a price of at least $1 are required' });
   }
+  // An upper bound too: one absurd price set the range of the marketplace's
+  // MAX PRICE slider for every visitor and rendered as "$1e+19".
+  if (price > LISTING_LIMITS.maxPriceCents) {
+    return res.status(400).json({ error: `Price can be at most $${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString()}` });
+  }
   const shipping = shippingCents == null ? null : Math.round(Number(shippingCents));
-  if (kind === 'physical' && (shipping == null || !Number.isFinite(shipping) || shipping < 0)) {
+  if (kind === 'physical' && (shipping == null || !Number.isSafeInteger(shipping) || shipping < 0)) {
     return res.status(400).json({ error: 'Physical items need a shipping fee (can be 0 for free shipping)' });
   }
+  if (kind === 'physical' && shipping > LISTING_LIMITS.maxShippingCents) {
+    return res.status(400).json({ error: `Shipping can be at most $${(LISTING_LIMITS.maxShippingCents / 100).toLocaleString()}` });
+  }
 
-  for (const [field, value] of [['title', title], ['description', description]]) {
-    const check = detectPaymentCircumvention(value);
-    if (check.flagged) {
-      await addViolation({ userId: ctx.user.id, context: `listing_${field}`, reasons: check.reasons, snippet: value });
-      return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
-    }
+  // Title, description and every tag -- each tag both as typed and as it will
+  // be stored -- go through the same screen as a creator's public profile:
+  // payment circumvention AND the prohibited-terms list. All of it renders
+  // publicly (every card, /search, the sidebar tag cloud); only the payment
+  // half used to be checked, so a prohibited term typed as a title or tag went
+  // straight out.
+  const hit = screenListingText({ title, description, tags });
+  if (hit) {
+    await addViolation({ userId: ctx.user.id, context: hit.context, reasons: hit.reasons, snippet: hit.snippet });
+    return res.status(400).json({ error: hit.message });
+  }
+  // Tags are also checked JOINED, so a handle or phone number split across two
+  // tags ("venmo", "@janedoe") is caught the same as in a title.
+  const tagHit = findCircumventionInTags(tags);
+  if (tagHit) {
+    await addViolation({ userId: ctx.user.id, context: 'listing_tags', reasons: tagHit.reasons, snippet: tagHit.snippet });
+    return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
   }
 
   try {

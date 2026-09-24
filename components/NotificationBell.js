@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Icons } from './Brand';
 
 // In-app only -- no email provider exists on this stack (see MEMORY.md's
-// creator-inbox-notifications history). The unread count is fetched once on
-// mount so the badge is right without opening the dropdown; the full list is
-// fetched lazily on open, and opening marks everything read (there's no
-// per-notification action to take, just acknowledging the list).
+// creator-inbox-notifications history). The unread count is fetched on
+// mount (and refreshed every minute while the page is open) so the badge is
+// right without opening the dropdown; the full list is fetched lazily on
+// open, and what was actually DISPLAYED is marked read -- up to the highest
+// id shown, never "everything", and never if the panel was closed before
+// the list arrived.
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState(null);
@@ -17,16 +19,32 @@ export default function NotificationBell() {
   const requestId = useRef(0);
 
   useEffect(() => {
-    fetch('/api/notifications')
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => setUnread(d.unreadCount || 0))
-      .catch(() => {});
+    let cancelled = false;
+    const refresh = () => {
+      fetch('/api/notifications')
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((d) => { if (!cancelled) setUnread(d.unreadCount || 0); })
+        .catch(() => {});
+    };
+    refresh();
+    // New DMs and wall comments land here now, so the badge has to notice
+    // them without a page reload.
+    const timer = setInterval(refresh, 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
     if (!open) return;
     const onClickOutside = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+      if (rootRef.current && !rootRef.current.contains(e.target)) {
+        // Closing supersedes any in-flight load, so a list that arrives
+        // after the panel is gone is never marked read.
+        requestId.current += 1;
+        setOpen(false);
+      }
     };
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
@@ -35,21 +53,34 @@ export default function NotificationBell() {
   const toggle = async () => {
     const next = !open;
     setOpen(next);
-    if (next) {
-      const id = ++requestId.current;
-      setError(false);
-      try {
-        const res = await fetch('/api/notifications');
-        if (!res.ok) throw new Error('bad response');
-        const data = await res.json();
-        if (id !== requestId.current) return; // a later open/close already superseded this
-        setItems(data.notifications || []);
-        setUnread(0);
-        fetch('/api/notifications/read', { method: 'POST' }).catch(() => {});
-      } catch {
-        if (id !== requestId.current) return;
-        setError(true);
+    if (!next) {
+      requestId.current += 1; // see onClickOutside above
+      return;
+    }
+    const id = ++requestId.current;
+    setError(false);
+    try {
+      const res = await fetch('/api/notifications');
+      if (!res.ok) throw new Error('bad response');
+      const data = await res.json();
+      if (id !== requestId.current) return; // a later open/close already superseded this
+      const shown = data.notifications || [];
+      setItems(shown);
+      const shownUnread = shown.filter((n) => !n.read).length;
+      setUnread(Math.max(0, (data.unreadCount || 0) - shownUnread));
+      const ids = shown.map((n) => Number(n.id) || 0).filter((n) => n > 0);
+      const upToId = ids.length ? Math.max(...ids) : 0;
+      const fromId = ids.length ? Math.min(...ids) : 0;
+      if (shownUnread > 0 && upToId > 0) {
+        fetch('/api/notifications/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fromId, upToId }),
+        }).catch(() => {});
       }
+    } catch {
+      if (id !== requestId.current) return;
+      setError(true);
     }
   };
 

@@ -1,9 +1,21 @@
 import Head from 'next/head';
+import { marketplacePaymentsLive } from '../lib/marketplace-payment-config';
+import { tokenGateLive } from '../lib/token-gate';
+import { DM_PRICE_FLOOR_CENTS } from '../lib/brand';
 
 // Empty until the token is actually deployed. Deliberately NOT
 // NEXT_PUBLIC_CONTRACT_ADDRESS, which still holds the address from the
 // cancelled launch.
 const ONLYONE_ADDRESS = process.env.NEXT_PUBLIC_ONLYONE_TOKEN_ADDRESS || '';
+
+// Statuses that depend on configuration are computed, not typed, so this
+// page cannot say "planned" beside a live contract address again (it did:
+// the roadmap called the token launch, credit purchases and marketplace
+// buying "planned"/"built" while all three were live in production).
+// NEXT_PUBLIC_* values are inlined at build, so this is safe on a static page.
+const PAYMENTS_LIVE = marketplacePaymentsLive();
+const GATING_LIVE = tokenGateLive();
+const liveIf = (cond, otherwise) => (cond ? 'live' : otherwise);
 
 const ROADMAP = [
   {
@@ -18,14 +30,16 @@ const ROADMAP = [
   },
   {
     title: 'Phase 1',
-    subtitle: 'Payments go live',
+    subtitle: 'Payments',
     items: [
-      { label: 'Custodial payment backend deployed (Postgres/Fastify, already built and tested)', status: 'built' },
-      { label: 'Real subscriptions, tips, and pay-per-view unlocks', status: 'built' },
-      { label: 'Fans buy credits with dollars (USDG on Robinhood Chain); creators are paid out the same way', status: 'planned' },
-      { label: 'Instant creator payouts (+2% fee, waived for token-lock creators) and scheduled payouts', status: 'built' },
-      { label: 'Marketplace buying', status: 'built' },
-      { label: 'Creator token-lock perk: fans lock $ONLYONE for a creator-defined perk', status: 'built' },
+      { label: 'Fans buy credits with dollars (USDG on Robinhood Chain)', status: liveIf(PAYMENTS_LIVE, 'built') },
+      { label: 'Marketplace buying with credits', status: liveIf(PAYMENTS_LIVE, 'built') },
+      { label: `Paid messages to creators (from $${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)}, creator-priced)`, status: liveIf(PAYMENTS_LIVE, 'built') },
+      { label: 'Creators cash out earnings in USDG (requests reviewed by hand)', status: liveIf(PAYMENTS_LIVE, 'built') },
+      { label: 'Full payment backend (Postgres/Fastify) deployed — not yet connected to the site', status: 'built' },
+      { label: 'Subscriptions, tips, and pay-per-view unlocks', status: 'built' },
+      { label: 'Scheduled and instant creator payouts', status: 'built' },
+      { label: 'Creator perk tiers, priced in credits', status: 'built' },
       { label: 'Referral payouts to whoever brought a creator or a fan onto the platform', status: 'built' },
     ],
   },
@@ -33,7 +47,9 @@ const ROADMAP = [
     title: 'Phase 2',
     subtitle: 'Token infrastructure',
     items: [
-      { label: '$ONLYONE launched onto Robinhood Chain', status: 'planned' },
+      { label: '$ONLYONE launched onto Robinhood Chain', status: liveIf(!!ONLYONE_ADDRESS, 'planned') },
+      { label: 'Token-gated creators: prove you hold $ONLYONE by signing with your wallet — nothing is spent or moved', status: liveIf(GATING_LIVE, 'planned') },
+      { label: 'VIP membership whose revenue buys $ONLYONE on the open market and burns it', status: 'planned' },
       { label: 'Live price oracle for $ONLYONE (Uniswap pool once one exists)', status: 'planned' },
     ],
   },
@@ -43,9 +59,9 @@ const ROADMAP = [
     items: [
       { label: 'Creator identity verification (KYC vendor)', status: 'planned' },
       { label: 'Age verification for states that require it by law (live via AgeChecker.Net)', status: 'live' },
-      { label: 'Terms of Service and Privacy Policy (built, template -- needs attorney review before launch)', status: 'built' },
+      { label: 'Terms of Service and Privacy Policy (template -- needs attorney review)', status: 'live' },
       { label: 'Non-consensual content (deepfake/NCII) reporting & 48-hour takedown process, required by the federal TAKE IT DOWN Act', status: 'live' },
-      { label: '18 U.S.C. §2257 statement', status: 'planned' },
+      { label: '18 U.S.C. §2257 statement and performer records', status: 'live' },
     ],
   },
   {
@@ -89,14 +105,14 @@ export default function TokenLanding() {
               $ONLYONE
             </h1>
             <p className="text-lg text-gray-300 mb-10 max-w-xl mx-auto">
-              An access token for a real creator platform. Hold it to unlock token-gated creators, and
-              back a live product from day one.
+              An access token for a real creator platform. Hold it to unlock token-gated creators —
+              you prove it by signing a message with your wallet, and nothing is spent or moved.
             </p>
             {/* Stated up front, not buried, because it is the whole design:
                 content is paid for in dollar credits and this token is
                 deliberately kept out of that path. See lib/brand.js. */}
             <p className="text-sm text-gray-500 max-w-xl mx-auto">
-              $ONLYONE is not a payment method. Subscriptions, tips and unlocks are paid for with credits
+              $ONLYONE is not a payment method. Everything on the platform is paid for with credits
               bought in dollars — you never need to hold this token to use the platform.
             </p>
           </div>
@@ -140,7 +156,12 @@ export default function TokenLanding() {
             </div>
             <div className="premium-card p-6">
               <h3 className="text-lg font-black text-brand-gold mb-2">Holder Perks</h3>
-              <p className="text-gray-400 text-sm">Hold it to unlock token-gated creators. Once payments are live, VIP membership revenue will buy it on the open market and burn it.</p>
+              <p className="text-gray-400 text-sm">
+                {GATING_LIVE
+                  ? 'Hold it to unlock token-gated creators — a wallet signature proves you hold it; nothing is spent.'
+                  : 'Token-gated creators unlock for holders once gating is switched on.'}{' '}
+                Planned: VIP membership revenue buys it on the open market and burns it.
+              </p>
             </div>
           </div>
         </section>
@@ -182,7 +203,7 @@ export default function TokenLanding() {
             </div>
 
             <p className="text-xs text-gray-600 text-center mt-8">
-              "Built" = code is done and tested, waiting on the backend deployment / a vendor account to go live.
+              "Built" = code is done and tested, but not connected to the live site yet.
               "Planned" = not started yet.
             </p>
           </div>

@@ -1,6 +1,24 @@
 import Head from 'next/head';
+import {
+  PLATFORM_FEE_PCT,
+  MARKETPLACE_FEE_PCT,
+  LISTING_FEE_PCT,
+  CREDIT_PURCHASE_FEE_PCT,
+  DM_PRICE_FLOOR_CENTS,
+} from '../lib/brand';
+import { FEE_WAIVER_DAYS } from '../lib/founding';
+import { MIN_PAYOUT_CENTS } from '../lib/fees';
 
-const LAST_UPDATED = 'September 17, 2026';
+// Bump this on every material change -- Section 11 promises it. Fee figures
+// below are interpolated from lib/brand.js (derived from lib/fees.js) so the
+// Terms can never quote a rate the code does not charge.
+//
+// Section 6 is the Marketplace terms a buyer accepts at checkout
+// (CURRENT_TOS_VERSION in lib/orders-store.js); a material change to it
+// should bump that version too.
+const LAST_UPDATED = 'September 24, 2026';
+const DM_FLOOR = `$${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)}`;
+const MIN_PAYOUT = `$${(MIN_PAYOUT_CENTS / 100).toFixed(2)}`;
 
 export default function Terms() {
   return (
@@ -33,25 +51,40 @@ export default function Terms() {
 
             <Section title="3. Accounts">
               <p>
-                You may register as a <strong>Fan</strong> (to browse and unlock creator content) or a{' '}
-                <strong>Creator</strong> (to publish and sell your own content). Creator accounts are
+                You may register as a <strong>Fan</strong> (to browse creators, message them, and buy
+                from the Marketplace) or a <strong>Creator</strong> (to publish and sell your own
+                content). Creator accounts are
                 reviewed before becoming publicly visible; we may require identity and age verification
                 before approving a creator profile. You are responsible for maintaining the confidentiality
                 of your login credentials and for all activity under your account.
               </p>
             </Section>
 
-            <Section title="4. Creator Content & Licensing">
+            <Section title="4. Creator Content & Licensing" id="creator-content">
               <ul className="list-disc pl-5 space-y-2">
                 <li>Creators retain ownership of the content they upload.</li>
                 <li>
                   By uploading content, a Creator grants the Platform a non-exclusive, worldwide license to
-                  host, display, and distribute that content to Fans who have paid to unlock it.
+                  host, display, and distribute that content to users of the Platform as the Creator makes
+                  it available, including to Fans who buy it.
                 </li>
                 <li>
                   Creators represent and warrant that they own or have all necessary rights to the content
                   they upload, and that everyone depicted is a consenting adult who has authorized its
                   publication.
+                </li>
+                <li id="records">
+                  <strong>18 U.S.C. §2257 records.</strong> A Creator is the producer of the content they
+                  upload. For every person appearing in any visual depiction of actual or simulated
+                  sexually explicit conduct in that content, the Creator must create and keep the records
+                  required of a producer by 18 U.S.C. §2257 and 28 C.F.R. Part 75 (including proof of
+                  each performer&apos;s identity and that they were 18 or older when the content was
+                  made), and must produce those records to the Platform or its Custodian of Records
+                  promptly on request. The Platform also keeps its own records for performers (see our{' '}
+                  <a href="/2257" className="text-brand-gold underline">§2257 statement</a>) and may
+                  require a Creator to supply a performer&apos;s legal name, date of birth, and
+                  government-issued photo ID before content is published or approved. Content for which
+                  records are not provided may be removed.
                 </li>
                 <li>
                   <strong>Zero tolerance:</strong> content depicting minors, non-consensual acts, or any
@@ -72,46 +105,86 @@ export default function Terms() {
               </ul>
             </Section>
 
-            <Section title="5. Payments">
+            <Section title="5. Credits, Fees & Payouts" id="payments">
               <p>
                 Fans buy <strong>credits</strong> with a dollar-pegged stablecoin (USDG on Robinhood
-                Chain; USDC bridged in converts to USDG automatically). One credit is one US dollar, less a
-                <strong>2% purchase fee</strong> — $100 buys 98 credits.
-                Credits are an in-platform balance used to subscribe, tip, and unlock content. They are not
-                money, not a cryptocurrency, and not an investment: they can only be spent on this
-                Platform, they cannot be transferred to another person, and they cannot be cashed back out.
-                Creators are paid in USDG, less a platform fee (currently 10%).
+                Chain; USDC bridged in converts to USDG automatically), sent from the Fan&apos;s own
+                wallet to the Platform&apos;s wallet. One credit is one US dollar, less a{' '}
+                <strong>{CREDIT_PURCHASE_FEE_PCT}% purchase fee</strong> — $100 buys 98 credits. Credits are
+                a balance the Platform holds and records for you; they are not money, not a
+                cryptocurrency, and not an investment.
               </p>
               <ul className="list-disc pl-5 space-y-2 mt-3">
                 <li>
-                  Credit purchases are final. There are no refunds for credits once purchased or for
-                  content once unlocked.
+                  <strong>What credits buy today.</strong> Credits can currently be spent on Marketplace
+                  purchases (Section 6) and on paid messages to Creators. Tips and subscriptions are not
+                  available yet; do not buy credits expecting to use them for those.
                 </li>
                 <li>
-                  Credits have no cash value, expire only as described here, and confer no ownership,
-                  equity, or claim against the Platform.
+                  <strong>Paid messages.</strong> A message from a Fan to a Creator costs at least{' '}
+                  {DM_FLOOR} in credits; a Creator may set a higher price, which is shown before you send.
+                  The charge is taken when the message is sent. Creators can message, free of charge,
+                  Fans who have messaged them or bought from them; Fans cannot message other Fans.
+                </li>
+                <li>
+                  <strong>Credits are closed-loop.</strong> Credits you buy can only be spent on this
+                  Platform. They cannot be transferred to another person, refunded, or cashed back out —
+                  not on request and not when an account closes. Credit purchases are final, and so are
+                  purchases made with credits.
+                </li>
+                <li>
+                  Credits do not expire, have no cash value, and confer no ownership, equity, or claim
+                  against the Platform other than the right to spend them here.
+                </li>
+                <li>
+                  <strong>Platform fees.</strong> On each sale to a Fan, the Platform keeps a{' '}
+                  {PLATFORM_FEE_PCT}% platform fee and credits the rest to the Creator. Marketplace sales
+                  carry an additional {LISTING_FEE_PCT}% listing fee, so the Platform keeps{' '}
+                  {MARKETPLACE_FEE_PCT}% of a Marketplace sale in total. Creators accepted into the{' '}
+                  <a href="/founding-creator" className="text-brand-gold underline">Founding Creator programme</a>{' '}
+                  pay no platform fee and no listing fee on what Fans spend with them (Marketplace sales and
+                  paid messages) for {FEE_WAIVER_DAYS} days, counted from the later of the day they were
+                  accepted into the programme and the day payments went live on the Platform. The{' '}
+                  {CREDIT_PURCHASE_FEE_PCT}% credit purchase fee is paid by the Fan and is not part of that
+                  waiver.
+                </li>
+                <li>
+                  <strong>Creator payouts.</strong> What a Creator earns from other people&apos;s
+                  purchases is credited to the Creator&apos;s balance on the Platform, which the Platform
+                  holds until the Creator requests a payout. Only earned credits can be paid out — credits
+                  a Creator bought themselves can only be spent here. Payouts are sent only in USDG, to a
+                  valid wallet address the Creator provides, with a minimum of {MIN_PAYOUT} per request;
+                  every request is reviewed and sent manually by the Platform, so a payout is not
+                  instant. Only Creators whose accounts are approved, active and in good standing can
+                  request a payout. While an account is suspended or banned its credit balance is
+                  frozen — it cannot be spent, sent, or cashed out — and its pending payout requests are
+                  frozen too; the Platform may decline a frozen request, which returns the amount to the
+                  (still frozen) balance (see Section 7). The Platform is not responsible for funds sent
+                  to a wallet address a Creator entered incorrectly.
                 </li>
                 <li>
                   <strong>$ONLYONE is not a payment method.</strong> It cannot be used to buy credits,
-                  subscribe, tip, or unlock content. It is a separate token offering access and status
+                  pay for anything, or be paid out. It is a separate token offering access and status
                   features only, and the Platform makes no representation about its value, liquidity, or
                   future price.
                 </li>
                 <li>
                   You are responsible for the security of your own wallet and private keys, for any
                   network/gas fees, and for complying with tax obligations arising from your transactions.
+                  On-chain transfers (your credit purchases and Creator payouts) cannot be reversed once
+                  confirmed.
                 </li>
               </ul>
             </Section>
 
             <Section title="6. Marketplace Purchases" id="marketplace">
               <p>
-                The Platform's Marketplace lets Creators list and sell their own digital content and
-                physical merchandise directly to Fans, at whatever price the Creator sets. A Marketplace
-                purchase is an agreement <strong>directly between the buying Fan and the selling Creator</strong>.
-                The Platform is not a party to that sale, does not manufacture, own, warehouse, inspect, or
-                take possession of anything sold, and acts solely as a payment processor collecting its
-                listing/commission fees.
+                The Platform&apos;s Marketplace lets Creators list and sell their own digital content and
+                physical merchandise to Fans, at whatever price the Creator sets, paid for in credits. A
+                Marketplace purchase is an agreement <strong>directly between the buying Fan and the
+                selling Creator</strong>. The Platform is not a party to that sale and does not
+                manufacture, own, warehouse, inspect, or take possession of anything sold; it provides
+                the listing and the credits payment, and keeps its fees (Section 5).
               </p>
               <ul className="list-disc pl-5 space-y-2 mt-3">
                 <li>
@@ -122,10 +195,18 @@ export default function Terms() {
                   shipped, described accurately, or delivered.
                 </li>
                 <li>
-                  Marketplace purchases are paid to the Creator at the time of sale and are final. The
-                  Platform does not hold funds in escrow, does not guarantee delivery, and has no
-                  obligation to investigate, mediate, arbitrate, or resolve a dispute between a Fan and a
-                  Creator, or to issue a refund on a Creator's behalf.
+                  For a physical item, the Fan must give a shipping name and address. That name and
+                  address are shared with the selling Creator so they can ship the order (see the{' '}
+                  <a href="/privacy" className="text-brand-gold underline">Privacy Policy</a>).
+                </li>
+                <li>
+                  When a purchase completes, its price in credits is taken from the Fan&apos;s balance and
+                  the Creator&apos;s share (the price less the fees in Section 5) is credited to the
+                  Creator&apos;s Platform balance at that moment, to be paid out on request as Section 5
+                  describes. Purchases are final. The Platform does not hold the purchase price pending
+                  delivery, does not guarantee delivery, and has no obligation to investigate, mediate,
+                  arbitrate, or resolve a dispute between a Fan and a Creator, or to issue a refund on a
+                  Creator&apos;s behalf.
                 </li>
                 <li>
                   Any disagreement about a Marketplace order — including a claim that an item never
@@ -147,7 +228,7 @@ export default function Terms() {
               <ul className="list-disc pl-5 space-y-2">
                 <li>Uploading illegal content, or content involving minors or non-consenting individuals.</li>
                 <li>Harassment, threats, or impersonation of another person or creator.</li>
-                <li>Attempting to defraud, chargeback, or reverse a completed on-chain payment.</li>
+                <li>Attempting to defraud the Platform or another user, or to reverse a completed payment or purchase.</li>
                 <li>Scraping, redistributing, or reselling content without the creator's authorization.</li>
                 <li>Circumventing the Platform's payment or age-verification systems.</li>
                 <li>Posting AI-generated or synthetic content without labeling it as such.</li>
@@ -162,8 +243,10 @@ export default function Terms() {
                 For a confirmed violation of the AI-labeling requirement or the non-consensual-content ban
                 specifically: a first confirmed violation results in a 30-day account suspension (your profile is
                 hidden and you can't post or edit content during that time); a second confirmed violation results
-                in a permanent ban and forfeiture of any money the Platform owes you that hasn't already been
-                paid out.
+                in a permanent ban. While an account is suspended, its credit balance and pending payout
+                requests are frozen: nothing can be spent, sent, or cashed out until the suspension ends. A
+                ban freezes them permanently: any earned balance the Platform holds for you that
+                hasn&apos;t already been paid out is forfeited, and pending payout requests are not paid.
               </p>
             </Section>
 
@@ -189,7 +272,9 @@ export default function Terms() {
               <p>
                 We may suspend or terminate any account, at any time, for violating these Terms, engaging
                 in illegal activity, or for any other reason at our discretion. You may close your account
-                at any time; outstanding on-chain transactions cannot be reversed by account closure.
+                at any time. Closing an account does not reverse completed transactions and does not turn
+                unspent credits into money (Section 5); a Creator in good standing may request a payout of
+                their earned balance before closing.
               </p>
             </Section>
 

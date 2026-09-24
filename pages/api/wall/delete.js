@@ -1,5 +1,5 @@
 import { getSessionUser } from '../../../lib/session';
-import { deleteWallPost, getWallPosts } from '../../../lib/wall-store';
+import { deleteWallPost, getWallPostById } from '../../../lib/wall-store';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -13,13 +13,14 @@ export default async function handler(req, res) {
   const { id } = req.body || {};
   if (!id) return res.status(400).json({ error: 'Missing comment id' });
 
-  const posts = await getWallPosts();
-  const post = posts.find((p) => String(p.id) === String(id));
-  if (!post) return res.status(404).json({ error: 'Comment not found' });
-
-  const isWallOwner = user?.role === 'creator' && String(user.creatorId) === String(post.creatorId);
-
   try {
+    // One row, and a malformed id is simply "not found" -- this used to read
+    // every wall post on the platform to find one.
+    const post = await getWallPostById(id);
+    if (!post) return res.status(404).json({ error: 'Comment not found' });
+
+    const isWallOwner = user?.role === 'creator' && String(user.creatorId) === String(post.creatorId);
+
     await deleteWallPost(id, uid, { isWallOwner });
     return res.status(200).json({ ok: true });
   } catch (err) {

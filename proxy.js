@@ -90,7 +90,26 @@ const BLOCKED_STATE_CODES = new Set([
 // is the circular dead end /blocked-region and /report-content were each
 // fixed for. It shows no content and does nothing without a signature from
 // one specific private key, so exempting it gives away nothing.
-const SFW_PATHS = new Set(['/', '/blocked-region', '/verify-age', '/owner', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257']);
+// /coming-soon is the pre-launch preview page: wordmark, three lines of copy
+// and the waitlist, no creator content -- the same basis as "/". It was
+// already in PREVIEW_PUBLIC_PATHS and _app.js's NO_NOTICE_PATHS; leaving it
+// out of this list broke the rule that the three move together.
+const SFW_PATHS = new Set(['/', '/coming-soon', '/blocked-region', '/verify-age', '/owner', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257']);
+
+// Site plumbing files that are not pages and carry no content: the crawler
+// directives, the sitemap, the PWA manifest (which references only
+// favicon-*.png) and the iOS home-screen icon. _document.js links the last
+// two from EVERY page, the exempt ones included, so gating them handed a
+// blocked-state visitor the blocked-region HTML where JSON or a PNG belonged
+// (a manifest syntax error on the page that tells them where they are), and
+// handed a crawler geolocated to a blocked state an HTML robots.txt with none
+// of its Disallow lines in it.
+//
+// Exact matches, deliberately not prefixes or a matcher lookahead, so no
+// future path that merely starts with one of these names slips through.
+// Exempt from BOTH gates -- listed in PREVIEW_PUBLIC_PATHS too.
+const PUBLIC_STATIC_FILES = ['/robots.txt', '/sitemap.xml', '/manifest.json', '/apple-touch-icon.png'];
+for (const p of PUBLIC_STATIC_FILES) SFW_PATHS.add(p);
 
 // Brand art, and the ONLY files under /images/ that skip either gate.
 //
@@ -179,6 +198,7 @@ const PREVIEW_PUBLIC_PATHS = new Set([
   // rule as everywhere else in this file.
   '/gateway', '/token',
   ...BRAND_ART_PATHS,
+  ...PUBLIC_STATIC_FILES,
 ]);
 
 // The waitlist is the entire job of the preview site, so its endpoint has to
@@ -286,7 +306,18 @@ export async function proxy(request) {
   if (!isExempt(servedPath)) {
     const country = request.headers.get('x-vercel-ip-country');
     const region = request.headers.get('x-vercel-ip-country-region');
-    if (country === 'US' && BLOCKED_STATE_CODES.has(region)) {
+    // Fails CLOSED for US traffic whose state Vercel could not resolve. The
+    // region header is optional per IP -- some carrier, VPN and IPv6 ranges
+    // geolocate to the country only -- and BLOCKED_STATE_CODES.has(null) is
+    // false, so a visitor in Texas with no region header used to be served
+    // the whole site with no check at all. An unknown state now gets the
+    // same gate as a blocked one; /blocked-region sends them to /verify-age,
+    // so this costs a real adult one verification, not access.
+    //
+    // A MISSING COUNTRY is deliberately not treated the same way: no geo
+    // headers at all means the request did not come through Vercel's edge
+    // (local dev, tests), and gating those would gate everything.
+    if (country === 'US' && (!region || BLOCKED_STATE_CODES.has(region))) {
       const token = request.cookies.get(AGE_VERIFIED_COOKIE_NAME)?.value;
       const verified = await verifyAgeVerificationToken(ageVerificationSecret(), token);
       if (!verified) {
@@ -320,7 +351,12 @@ export async function proxy(request) {
 
 // images/ and videos/ hold real creator content (seed demo photos/videos are
 // adult content) and must go through the age check -- only icons/favicon and
-// framework assets (never content) are excluded outright. api/ and
+// framework assets (never content) are excluded outright. The other public
+// plumbing files (robots.txt, sitemap.xml, manifest.json, apple-touch-icon)
+// DO run through here and are exempted by exact path in PUBLIC_STATIC_FILES,
+// not by widening this matcher. Media and token-gate APIs (/api/media/,
+// /api/token-gate/) are deliberately NOT exempt: they serve creator content
+// and stay behind the age gate like every other /api route. api/ and
 // _next/data/ deliberately DO run through the proxy: both serve the same
 // data the pages do, and the routes that must stay reachable from a blocked
 // state are exempted by path above, not by skipping the check entirely.

@@ -6,8 +6,13 @@ import { publicUser } from '../lib/users-store';
 import { formatCredits } from '../lib/brand';
 import { Icons, SolidIcons } from '../components/Brand';
 import { useWallet } from '../lib/wallet';
-import { getMarketplacePaymentConfig, getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../lib/marketplace-payment-config';
-import { FEES } from '../lib/fees';
+import {
+  getMarketplacePaymentConfig,
+  getMarketplaceVerificationConfig,
+  marketplaceVerificationLive,
+  safetyCheckAvailable,
+} from '../lib/marketplace-payment-config';
+import { FEES, MIN_DEPOSIT_CENTS } from '../lib/fees';
 
 export async function getServerSideProps({ req }) {
   const sessionUser = publicUser(await getSessionUser(req));
@@ -56,46 +61,61 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
 
   const feeCents = Math.floor((amountCents * FEES.DEPOSIT_BPS) / 10_000);
   const netCents = amountCents - feeCents;
+  // Refused BEFORE anything is sent: the server won't credit a transfer
+  // under the minimum, and a transaction's amount can never be changed
+  // afterwards, so sending one would simply lose the money.
+  const belowMinimum = !Number.isInteger(amountCents) || amountCents < MIN_DEPOSIT_CENTS;
+  const canSimulate = safetyCheckAvailable(paymentConfig.chainId);
 
   const runSimulation = async () => {
-    if (!wallet.address) return;
+    if (!wallet.address || belowMinimum) return;
     setSimulating(true);
     setSimResult(null);
     try {
+      // The server builds the real transfer(payout, amount) itself from its
+      // own config; the page only says who is paying and how much.
       const res = await fetch('/api/marketplace/simulate-tx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chainId: paymentConfig.chainId,
-          from: wallet.address,
-          to: paymentConfig.usdcAddress,
-          data: '0x', // the safety signal covers a known transfer() to our own fixed address, not an arbitrary contract interaction
-          value: '0',
-        }),
+        body: JSON.stringify({ from: wallet.address, amountCents }),
       });
-      setSimResult(await res.json());
+      setSimResult(res.ok ? await res.json() : { available: true, safe: null, reason: 'Safety check failed to run' });
     } catch {
-      setSimResult({ available: false });
+      setSimResult({ available: true, safe: null, reason: 'Could not reach the safety check' });
     } finally {
       setSimulating(false);
     }
   };
 
-  // Proves the connected wallet is the one about to pay (or that already
-  // paid, for recovery) before the server will trust a txHash's sender.
-  // Two wallet prompts by design: sign, then send -- see lib/wallet-auth.js.
-  const signDepositProof = async () => {
+  // Proves the connected wallet is yours BEFORE anything is sent: the
+  // server checks the signature now (and remembers the proven address for
+  // two hours in an httpOnly cookie), so an expired challenge or a wallet
+  // whose signature doesn't verify is caught while nothing has moved.
+  // Returns the proven address.
+  const proveWallet = async () => {
+    if (!wallet.address) {
+      const acct = await wallet.connect();
+      if (!acct) throw new Error(wallet.error === 'no_wallet' ? 'No wallet extension detected' : 'Could not connect wallet');
+    }
     const nonceRes = await fetch('/api/credits/wallet-nonce');
     const nonceData = await nonceRes.json();
     if (!nonceRes.ok) throw new Error(nonceData.error || 'Could not start wallet verification');
-    return wallet.signMessage(nonceData.message);
+    const { address, signature } = await wallet.signMessageWithAddress(nonceData.message);
+    const res = await fetch('/api/credits/verify-wallet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address, signature }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not verify your wallet');
+    return data.address;
   };
 
-  const submitPayment = async (txHash, signature) => {
+  const submitPayment = async (txHash) => {
     const res = await fetch('/api/credits/buy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ txHash, signature }),
+      body: JSON.stringify({ txHash }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not confirm payment');
@@ -104,14 +124,15 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
 
   const buy = async () => {
     setError(null);
+    if (belowMinimum) {
+      setError(`The minimum is $${(MIN_DEPOSIT_CENTS / 100).toFixed(2)}.`);
+      return;
+    }
     setBuying(true);
+    let sentHash = null;
     try {
-      if (!wallet.address) {
-        const acct = await wallet.connect();
-        if (!acct) throw new Error(wallet.error === 'no_wallet' ? 'No wallet extension detected' : 'Could not connect wallet');
-      }
-      const signature = await signDepositProof();
-      const txHash = await wallet.sendUsdc({
+      const proven = await proveWallet();
+      sentHash = await wallet.sendUsdc({
         tokenAddress: paymentConfig.usdcAddress,
         payoutAddress: paymentConfig.payoutAddress,
         amountCents,
@@ -120,22 +141,32 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
         chainName: paymentConfig.chainName,
         rpcUrl: paymentConfig.publicRpcUrl,
         nativeSymbol: paymentConfig.nativeSymbol,
+        expectedFrom: proven,
       });
-      const data = await submitPayment(txHash, signature);
+      const data = await submitPayment(sentHash);
       setBalanceCents(data.balanceCents);
       setResult(data);
     } catch (err) {
-      setError(err.message || 'Something went wrong');
+      if (sentHash) {
+        // The USDG has already left the wallet. Never say "try again" here
+        // -- pressing Pay again sends a second payment. Hand the hash to
+        // the recovery box instead, which credits THIS transaction.
+        setRecoverHash(sentHash);
+        setShowRecovery(true);
+        setError(`Your payment was sent but isn’t credited yet (${err.message || 'confirmation failed'}). Don’t pay again -- use “Verify this transaction” below.`);
+      } else {
+        setError(err.message || 'Something went wrong');
+      }
     } finally {
       setBuying(false);
     }
   };
 
   // Recovery path: the payment already went out on-chain (tab closed,
-  // wallet crashed, network dropped right after broadcasting) but the
-  // credit call never ran. /api/credits/buy is safe to call again for a
-  // real, unclaimed txHash -- this just gives a fan a way to retry it
-  // without re-sending money.
+  // wallet crashed, network dropped right after broadcasting, or the
+  // confirmation above failed) but the credit call never succeeded.
+  // /api/credits/buy is safe to call again for a real, unclaimed txHash --
+  // this retries it without re-sending money.
   const recover = async () => {
     setRecoverError(null);
     setRecovering(true);
@@ -143,12 +174,8 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
       if (!/^0x[0-9a-fA-F]{64}$/.test(recoverHash.trim())) {
         throw new Error('That doesn’t look like a transaction hash (should start with 0x, 66 characters total)');
       }
-      if (!wallet.address) {
-        const acct = await wallet.connect();
-        if (!acct) throw new Error(wallet.error === 'no_wallet' ? 'No wallet extension detected' : 'Could not connect wallet');
-      }
-      const signature = await signDepositProof();
-      const data = await submitPayment(recoverHash.trim(), signature);
+      await proveWallet();
+      const data = await submitPayment(recoverHash.trim());
       setBalanceCents(data.balanceCents);
       setResult(data);
       setShowRecovery(false);
@@ -199,7 +226,7 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                 {PRESETS.map((p) => (
                   <button
                     key={p}
-                    onClick={() => { setAmountCents(p); setCustomAmount(''); }}
+                    onClick={() => { setAmountCents(p); setCustomAmount(''); setSimResult(null); }}
                     className={`py-2.5 rounded-lg text-sm font-bold border transition ${
                       amountCents === p && !customAmount ? 'bg-brand-pink border-brand-pink text-white' : 'border-white/15 text-gray-300 hover:bg-white/5'
                     }`}
@@ -212,8 +239,12 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                 value={customAmount}
                 onChange={(e) => {
                   setCustomAmount(e.target.value);
+                  setSimResult(null); // a check for a different amount says nothing about this one
                   const n = Math.round(Number(e.target.value) * 100);
-                  if (Number.isFinite(n) && n > 0) setAmountCents(n);
+                  // Kept even when under the minimum, so the page can SAY so
+                  // and keep Pay disabled -- silently leaving the previous
+                  // preset selected would pay an amount nobody typed.
+                  setAmountCents(Number.isSafeInteger(n) && n > 0 ? n : 0);
                 }}
                 placeholder="Or enter a custom amount ($)"
                 className="w-full px-4 py-2.5 rounded-full bg-white/5 border border-white/10 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-brand-pink/60 mb-6"
@@ -234,18 +265,40 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                 </div>
               </div>
 
-              {wallet.address && (
+              {belowMinimum && (
+                <p className="text-xs text-red-400 text-center mb-3">
+                  The minimum is ${(MIN_DEPOSIT_CENTS / 100).toFixed(2)} -- smaller payments can’t be credited.
+                </p>
+              )}
+
+              {/* The safety check only exists on networks GoPlus can simulate.
+                  On any other network it says so, rather than offering a
+                  button that quietly does nothing and reads as a pass. */}
+              {wallet.address && !canSimulate && (
+                <p className="text-[11px] text-gray-500 text-center mb-3">
+                  An independent transaction safety check isn’t available on {paymentConfig.chainName || 'this network'}.
+                </p>
+              )}
+              {wallet.address && canSimulate && (
                 <>
                   {!simResult && !simulating && (
-                    <button onClick={runSimulation} className="w-full mb-3 py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 text-xs font-semibold transition">
+                    <button onClick={runSimulation} disabled={belowMinimum} className="w-full mb-3 py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 text-xs font-semibold transition disabled:opacity-50">
                       Run a safety check before paying
                     </button>
                   )}
                   {simulating && <p className="text-xs text-gray-500 text-center mb-3">Checking transaction safety…</p>}
+                  {simResult && !simResult.available && (
+                    <p className="text-xs text-gray-400 text-center mb-3">Safety check unavailable on this network.</p>
+                  )}
                   {simResult?.available && simResult.safe === true && (
                     <div className="flex items-center justify-center gap-1.5 text-xs text-green-400 mb-3">
                       <SolidIcons.verified className="h-4 w-4" /> Verified safe by GoPlus Security
                     </div>
+                  )}
+                  {simResult?.available && simResult.safe === null && (
+                    <p className="text-xs text-gray-400 text-center mb-3">
+                      Safety check inconclusive{simResult.reason ? ` — ${simResult.reason}` : ''}. This is not a pass.
+                    </p>
                   )}
                   {simResult?.available && simResult.safe === false && (
                     <div className="flex items-center justify-center gap-1.5 text-xs text-red-400 mb-3">
@@ -262,7 +315,7 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
 
               <button
                 onClick={buy}
-                disabled={buying || !paymentsLive || amountCents <= 0 || (simResult?.available && simResult.safe === false)}
+                disabled={buying || !paymentsLive || belowMinimum || (simResult?.available && simResult.safe === false)}
                 className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <Icons.wallet className="h-4 w-4" />

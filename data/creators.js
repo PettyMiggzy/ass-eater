@@ -4,6 +4,13 @@
 // are explicitly a free "how it works" example, not a simulated marketplace
 // of fake creators. Photorealistic (generated with Venice, seedream-v5-pro),
 // not the earlier illustrated/cartoon style -- the founder didn't like those.
+//
+// Every image here is AI-generated, so every gallery item carries
+// aiGenerated: true -- Terms section 7 makes the label mandatory and the
+// platform's own demo content must not be the one exception. Rows already
+// seeded into a database before this flag existed are labelled anyway:
+// toPublicCreator (lib/creator-status.js) marks every seed creator's gallery
+// items aiGenerated at projection time.
 export const creators = [
   {
     id: 1,
@@ -22,8 +29,8 @@ export const creators = [
     media: 3,
     likes: '0',
     gallery: [
-      { type: 'image', src: '/images/demo_female_1.jpg' },
-      { type: 'image', src: '/images/demo_female_2.jpg' },
+      { type: 'image', src: '/images/demo_female_1.jpg', aiGenerated: true },
+      { type: 'image', src: '/images/demo_female_2.jpg', aiGenerated: true },
     ],
   },
   {
@@ -43,8 +50,8 @@ export const creators = [
     media: 3,
     likes: '0',
     gallery: [
-      { type: 'image', src: '/images/demo_male_1.jpg' },
-      { type: 'image', src: '/images/demo_male_2.jpg' },
+      { type: 'image', src: '/images/demo_male_1.jpg', aiGenerated: true },
+      { type: 'image', src: '/images/demo_male_2.jpg', aiGenerated: true },
     ],
   },
 ];

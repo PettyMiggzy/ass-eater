@@ -10,6 +10,7 @@ import {
 } from '../lib/social';
 import { Icons, Mark, SolidIcons } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
+import { LANDING_CATEGORIES as CATEGORIES } from '../lib/tag-taxonomy';
 
 /**
  * The public front door -- the ONLY page on this site that sits outside the
@@ -30,17 +31,9 @@ import WaitlistForm from '../components/WaitlistForm';
 
 const AUDIENCES = ['WOMEN', 'MEN', 'COUPLES', 'LGBTQ+', 'EVERYONE'];
 
-// These read as categories, and each one goes to the real tag search rather
-// than a dead link. Tag pages are behind the gate, which is correct -- the
-// label is safe to show publicly, the creators behind it are not.
-const CATEGORIES = [
-  { label: 'MEN', tag: 'men' },
-  { label: 'WOMEN', tag: 'women' },
-  { label: 'COUPLES', tag: 'couples' },
-  { label: 'TRANS', tag: 'trans' },
-  { label: 'NON-BINARY', tag: 'non-binary' },
-  { label: 'ALL CREATORS', tag: null },
-];
+// The category links live in lib/tag-taxonomy.js (LANDING_CATEGORIES) so a
+// test can hold them to the tag picker's own vocabulary -- see the comment
+// there for why that matters.
 
 // Only the things that actually work today. Subscriptions, tips and
 // pay-per-view are on the roadmap but cannot take money yet, and this is a

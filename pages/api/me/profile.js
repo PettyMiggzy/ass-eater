@@ -1,9 +1,13 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { updateCreatorProfile, sanitizeSocials, sanitizeTags, sanitizeAge, sanitizeLocation, UnderageProfile } from '../../../lib/creators-store';
-import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
+import { screenPublicText, publicProfileTextEntries, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { sanitizeGateTokens } from '../../../lib/token-gate';
-import { validateTextFields } from '../../../lib/field-validation';
+import { validateTextFields, normalizeHandle, sanitizeDmPriceCents, sanitizePayoutFields } from '../../../lib/field-validation';
+import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
+import { findCircumventionInTags } from '../../../lib/listings-store';
+import { PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
+import { getAddress } from 'viem';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -14,17 +18,59 @@ export default async function handler(req, res) {
   if (!ctx) return;
 
   const { fields } = req.body || {};
-  const allowed = ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress', 'img', 'locked'];
+  // `key in fields` throws a TypeError on a string or number, which surfaced
+  // as an uncaught 500; an array would be read as an empty edit.
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    return res.status(400).json({ error: 'Missing fields' });
+  }
+  // `img` is deliberately NOT here. The avatar is set only by the avatar
+  // upload endpoint, which stores a path under this creator's own media
+  // folder. Accepting it here let a creator point their public avatar at any
+  // URL -- a tracking pixel on their own server logging the IP of every fan
+  // browsing Explore, or an off-site image no moderation tool ever sees. The
+  // dashboard used to echo `img` back on every save; it is now ignored.
+  const allowed = ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress', 'locked'];
   const safeFields = {};
   for (const key of allowed) {
-    if (fields && key in fields) safeFields[key] = fields[key];
+    if (key in fields) safeFields[key] = fields[key];
   }
   // Before anything else touches these: a non-string here is stored verbatim
   // in jsonb and then 500s /search and /creators for every visitor, from one
   // ordinary creator account. See lib/field-validation.js.
-  const invalid = validateTextFields(safeFields, ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress', 'img']);
+  const invalid = validateTextFields(safeFields, ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress']);
   if (invalid) return res.status(400).json({ error: invalid });
   if ('locked' in safeFields) safeFields.locked = !!safeFields.locked;
+  // Payouts are USDG only (payoutMethod is forced to 'usdg'), and the wallet
+  // must be a real EVM address: a typo'd one is refused now, when it is
+  // typed, not discovered when a payout is requested. An empty string clears
+  // it. Stored checksummed, the form requestPayout() records. The dashboard
+  // echoes the wallet on every save, so an unchanged echo of a legacy
+  // malformed value is left alone rather than blocking an unrelated bio edit
+  // (requestPayout() still refuses to pay it).
+  if (
+    'walletAddress' in safeFields &&
+    String(safeFields.walletAddress ?? '').trim() === String(ctx.creator.walletAddress ?? '').trim()
+  ) {
+    delete safeFields.walletAddress;
+  }
+  const payoutError = sanitizePayoutFields(safeFields);
+  if (payoutError) return res.status(400).json({ error: payoutError });
+  if (safeFields.walletAddress) safeFields.walletAddress = getAddress(safeFields.walletAddress);
+
+  // One canonical stored form for handles ("@" + body), so "alice" and
+  // "@alice" can't be two creators and ?ref=alice can't resolve to the wrong
+  // one. See normalizeHandle.
+  if ('handle' in safeFields) {
+    const { handle, error } = normalizeHandle(safeFields.handle);
+    if (error) return res.status(400).json({ error });
+    safeFields.handle = handle;
+  }
+
+  if ('dmPriceCents' in fields) {
+    const { value, error } = sanitizeDmPriceCents(fields.dmPriceCents);
+    if (error) return res.status(400).json({ error });
+    safeFields.dmPriceCents = value;
+  }
 
   if (fields && 'socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if (fields && 'tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
@@ -41,25 +87,31 @@ export default async function handler(req, res) {
     }
   }
 
-  for (const field of ['name', 'handle', 'bio']) {
-    if (!(field in safeFields)) continue;
-    const check = detectPaymentCircumvention(safeFields[field]);
-    if (check.flagged) {
-      await addViolation({ userId: ctx.user.id, context: field, reasons: check.reasons, snippet: safeFields[field] });
-      return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+  // Every public free-text field, checked AFTER sanitising so what is
+  // screened is exactly what will be stored: name, handle, bio, location,
+  // price, each tag and each social handle. Location, price and tags used to
+  // skip this entirely although all three render publicly (profile header,
+  // every Explore card, the site-wide tag cloud) -- "venmo @mia 555-123-4567"
+  // saved as a location went straight out. Prohibited terms (lib/
+  // prohibited-terms.js) ride the same loop: a "teen" tag is public the
+  // moment it saves.
+  const entries = publicProfileTextEntries(safeFields);
+  if (fields && 'tags' in fields) for (const raw of rawTagItems(fields.tags)) entries.push(['tag', raw]);
+  for (const [context, value] of entries) {
+    const hit = screenPublicText(value);
+    if (hit) {
+      await addViolation({ userId: ctx.user.id, context, reasons: hit.reasons, snippet: value });
+      return res.status(400).json({ error: hit.message });
     }
   }
-
-  // sanitizeSocials only bounds shape/length -- it does not stop a "handle"
-  // field from actually being "cashapp $handle, text me at 555-123-4567".
-  // Public-facing the same way name/handle/bio are, so it gets the same gate.
-  if (safeFields.socials) {
-    for (const [field, value] of Object.entries(safeFields.socials)) {
-      const check = detectPaymentCircumvention(value);
-      if (check.flagged) {
-        await addViolation({ userId: ctx.user.id, context: `social_${field}`, reasons: check.reasons, snippet: value });
-        return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
-      }
+  // Each tag was screened on its own above; this also screens them JOINED, so a handle or
+  // phone number split across two tags ("venmo", "@janedoe") is caught the
+  // same way it is on a marketplace listing.
+  if (fields && 'tags' in fields) {
+    const tagHit = findCircumventionInTags(fields.tags);
+    if (tagHit) {
+      await addViolation({ userId: ctx.user.id, context: 'tags', reasons: tagHit.reasons, snippet: tagHit.snippet });
+      return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
     }
   }
 
@@ -67,11 +119,11 @@ export default async function handler(req, res) {
     const creator = await updateCreatorProfile(ctx.creator.id, safeFields);
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
-    // 23505 is the handle-uniqueness index in lib/db.js. Reported as a
-    // conflict with a usable message rather than a 500 with a raw Postgres
-    // error in it.
-    if (err && err.code === '23505') {
-      return res.status(409).json({ error: 'That handle is already taken. Pick another.' });
+    // Only the handle-uniqueness indexes mean "handle taken" -- any other
+    // duplicate key is a server problem and must not be reported as the
+    // creator's fault.
+    if (isHandleConflict(err)) {
+      return res.status(409).json({ error: HANDLE_TAKEN_MESSAGE });
     }
     console.error('[me/profile] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });

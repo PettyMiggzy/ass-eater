@@ -1,6 +1,12 @@
 import crypto from 'crypto';
 import { checkRateLimit, clearFailures, clientIp, recordFailure } from '../../../lib/rate-limit';
-import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, createAgeVerificationToken } from '../../../lib/age-verification';
+import {
+  AGE_VERIFIED_COOKIE_NAME,
+  ageVerificationSecret,
+  bypassMaxAgeSeconds,
+  createBypassAgeVerificationToken,
+} from '../../../lib/age-verification';
+import { safeRedirectPath } from '../../../lib/safe-redirect';
 
 /**
  * Owner bypass for the state age-verification block.
@@ -33,10 +39,13 @@ import { AGE_VERIFIED_COOKIE_NAME, ageVerificationSecret, createAgeVerificationT
  *  - It is NOT set anywhere by default. With the env var unset this endpoint
  *    404s, so a fork or preview deployment that doesn't inherit it has no
  *    bypass at all rather than a guessable one.
- *  - Rotate it if it is ever pasted somewhere shared. Rotating instantly
- *    invalidates nothing already issued (the cookie is a normal 180-day
- *    age-verification cookie), so treat rotation as "stop new uses", not
- *    "revoke past ones".
+ *  - Rotate it if it is ever pasted somewhere shared -- and never write its
+ *    value into this repo, MEMORY.md or a commit message. Rotating (or
+ *    unsetting) it now REVOKES every cookie it minted, on the next request:
+ *    the token carries a keyed fingerprint of the key that issued it and
+ *    lib/age-verification.js refuses it once that no longer matches the
+ *    configured OWNER_ACCESS_KEY. The owner re-opens this link once per
+ *    domain after a rotation.
  *  - Don't hand it to creators or testers. Anyone who needs real access
  *    should verify properly; that is the point of the control.
  */
@@ -93,18 +102,16 @@ export default async function handler(req, res) {
   clearFailures(bucket);
 
   // `via` records how this cookie was obtained, so a future reader of a
-  // decoded token can tell an owner bypass from a real AgeChecker pass.
-  const token = await createAgeVerificationToken(ageVerificationSecret(), { via: 'owner' });
+  // decoded token can tell an owner bypass from a real AgeChecker pass, and
+  // the embedded key fingerprint is what lets a key rotation revoke it.
+  const token = await createBypassAgeVerificationToken(ageVerificationSecret(), 'owner');
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `${AGE_VERIFIED_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 180}${secure}`);
+  res.setHeader('Set-Cookie', `${AGE_VERIFIED_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${bypassMaxAgeSeconds('owner')}${secure}`);
   console.warn(`[owner-access] bypass granted on host ${req.headers.host || 'unknown'}`);
 
-  // "//evil.com" and "/\evil.com" both start with "/" and both are resolved
-  // by browsers as a protocol-relative URL to another origin, so
-  // startsWith('/') alone was an open redirect out of the site.
-  const requested = typeof req.query.next === 'string' ? req.query.next : '';
-  const safeNext = requested.startsWith('/') && !requested.startsWith('//') && !requested.startsWith('/\\');
-  const next = safeNext ? requested : '/home';
+  // Same-origin only, via the shared resolver: a prefix check here once
+  // passed "/\t/evil.com", which URL parsing turns into "//evil.com".
+  const next = safeRedirectPath(req.query.next, '/home');
   res.writeHead(302, { Location: next });
   return res.end();
 }

@@ -1,23 +1,17 @@
-import { put } from '@vercel/blob';
-import { readLimitedBody, acceptedUploadType, UPLOAD_TYPE_MESSAGE, UPLOAD_SIZE_MESSAGE } from '../../../lib/upload-guard';
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { setCreatorAvatar } from '../../../lib/creators-store';
-import { consumeAttempt } from '../../../lib/rate-limit';
+import { mediaSrc, parseMediaPathname, verifyUploadedBlob, MediaRejected } from '../../../lib/media';
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
-// Unlike the gallery, an avatar has no slot cap to bound abuse -- the blob
-// path is timestamp-named, so allowOverwrite never actually limits how many
-// blobs get written, and there was no rate limit either. A compromised or
-// scripted creator account could otherwise write an unbounded number of
-// blobs (up to MAX_UPLOAD_BYTES each) with nothing to stop it.
-const WINDOW_MS = 15 * 60 * 1000;
-const MAX_PER_CREATOR = 10;
-
+/**
+ * POST /api/me/avatar -- finalize an avatar upload.
+ * JSON { pathname } -> 200 { ok: true, creator }
+ *
+ * Token from POST /api/media/upload-token { purpose: 'avatar', ... }. The
+ * token route carries the rate limit (it is where a new file can be created);
+ * this only records a file the caller already uploaded into their own avatar
+ * prefix, re-checking its real type/size. The previous avatar file is deleted
+ * once the change commits (setCreatorAvatar).
+ */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -26,34 +20,18 @@ export default async function handler(req, res) {
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`me-avatar:creator:${ctx.creator.id}`, {
-    limit: MAX_PER_CREATOR,
-    windowMs: WINDOW_MS,
-  });
-  if (limited) {
-    res.setHeader('Retry-After', String(retryAfterSeconds));
-    return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
+  const { pathname } = req.body && typeof req.body === 'object' ? req.body : {};
+  const parsed = parseMediaPathname(pathname);
+  if (!parsed || parsed.purpose !== 'avatar' || parsed.creatorId !== String(ctx.creator.id)) {
+    return res.status(400).json({ error: 'That upload is not your profile photo.' });
   }
 
-  const fileName = req.headers['x-file-name'] || `avatar-${Date.now()}`;
-
-  // Allowlisted, not taken from the header -- see lib/upload-guard.js.
-  const uploadType = acceptedUploadType(req);
-  if (!uploadType) return res.status(400).json({ error: UPLOAD_TYPE_MESSAGE });
-
   try {
-    const body = await readLimitedBody(req);
-    if (!body) return res.status(413).json({ error: UPLOAD_SIZE_MESSAGE });
-    const blob = await put(`avatars/${ctx.creator.id}/${Date.now()}-${fileName}`, body, {
-      access: 'public',
-      contentType: uploadType,
-      allowOverwrite: true,
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
-
-    const creator = await setCreatorAvatar(ctx.creator.id, blob.url);
+    await verifyUploadedBlob(pathname, 'avatar');
+    const creator = await setCreatorAvatar(ctx.creator.id, mediaSrc(pathname));
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
+    if (err instanceof MediaRejected) return res.status(err.status).json({ error: err.message });
     console.error('[me/avatar] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
