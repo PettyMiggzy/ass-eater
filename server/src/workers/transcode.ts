@@ -5,14 +5,15 @@ import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
-import { hasAudio, hlsArgs, sanitizeImage } from './transcode-steps.js';
+import { hasAudio, hlsArgs, sanitizeImage, previewArgs } from './transcode-steps.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { prisma } from '../lib/prisma.js';
 import { s3, BUCKET, deletePrefix, deleteObject, isNotFound } from '../lib/s3.js';
 import { UPLOAD_LIMITS } from '../core/upload-limits.js';
-import { connection } from '../lib/redis.js';
+import { connection, transcodeQueue } from '../lib/redis.js';
+import { reconcileProcessingMedia } from '../core/transcode-reconcile.js';
 import { registerWorker, onStop } from './process-guards.js';
 
 const run = promisify(execFile);
@@ -76,7 +77,7 @@ registerWorker(new Worker('transcode', async (job) => {
       const hls = join(work, 'hls'); await run('mkdir', ['-p', hls]);
       // 720p + 480p ladder, 6s segments, master playlist
       await run('ffmpeg', hlsArgs(src, hls, await hasAudio(src)), { timeout: 3_600_000 });
-      await run('ffmpeg', ['-y', '-ss', '00:00:01', '-i', src, '-frames:v', '1', '-vf', 'scale=480:-2,boxblur=20:5', preview]);
+      await run('ffmpeg', previewArgs(src, preview, { seekSeconds: 1 }));
       if (!(await stillProcessing(m.id))) return;
       await uploadDir(hls, outPrefix + '/hls');
       await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${outPrefix}/preview.jpg`, Body: await readFile(preview), ContentType: 'image/jpeg' }));
@@ -93,8 +94,9 @@ registerWorker(new Worker('transcode', async (job) => {
       if ((await stat(src)).size > UPLOAD_LIMITS.IMAGE_MAX_BYTES) throw new Error('image_too_large');
       const clean = await sanitizeImage(src, m.mime);
       await writeFile(src, clean);
-      // Then the blurred preview shown to fans who haven't unlocked it yet.
-      await run('ffmpeg', ['-y', '-i', src, '-vf', 'scale=480:-2,boxblur=20:5', preview]);
+      // Then the blurred preview shown to fans who haven't unlocked it yet --
+      // its first frame only (an animated GIF has many; see previewArgs).
+      await run('ffmpeg', previewArgs(src, preview));
       // Re-checked right before the in-place overwrite: after a takedown the
       // raw key is gone, and writing it back would resurrect the content.
       if (!(await stillProcessing(m.id))) return;
@@ -146,4 +148,7 @@ export async function sweepAbandonedUploads(now = Date.now()) {
 if (process.env.NODE_ENV !== 'test') {
   const t = setInterval(() => { sweepAbandonedUploads().catch((e) => console.error('upload sweep', e)); }, 60 * 60 * 1000);
   onStop(() => clearInterval(t));
+  // Media stuck PROCESSING with no job behind it -- see core/transcode-reconcile.ts.
+  const r = setInterval(() => { reconcileProcessingMedia(transcodeQueue).catch((e) => console.error('transcode reconcile', e)); }, 5 * 60 * 1000);
+  onStop(() => clearInterval(r));
 }

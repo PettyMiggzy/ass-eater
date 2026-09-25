@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { isAddress } from 'viem';
 import { money, lockBalance, post, InsufficientFunds, postPlatformRevenue, getTopSupporters, FEES } from '../core/ledger.js';
-import { isSubscribed } from '../core/access.js';
+import { isSubscribed, creatorMayOperate } from '../core/access.js';
 import { page } from '../plugins/pagination.js';
 
 // What anyone may see of a creator's profile. userId and user.kycStatus are
@@ -13,7 +13,7 @@ const PUBLIC_CREATOR_SELECT = {
   inboundDmPriceCents: true, promotedUntil: true,
   stakePerkEnabled: true, stakePerkDescription: true, stakeUsdCents: true,
   tiers: { where: { active: true } },
-  user: { select: { username: true, kycStatus: true } },
+  user: { select: { username: true, kycStatus: true, siteUid: true, siteCreatorStatus: true } },
 } as const;
 
 export const creators: FastifyPluginAsync = async (app) => {
@@ -47,19 +47,28 @@ export const creators: FastifyPluginAsync = async (app) => {
       select: PUBLIC_CREATOR_SELECT,
     });
     if (!c) return reply.code(404).send({ error: 'not_found' });
+    // "Approved" is the same bar discovery uses: KYC-approved AND, for a row
+    // bridged from the site, approved there (siteCreatorStatus 'active').
+    // Checking KYC alone kept a creator the site had moved back to 'pending'
+    // reachable -- and payable -- by direct link.
+    //
     // The subscriber exception is load-bearing, not politeness: kycStatus
-    // defaults to NONE, and the Sumsub webhook can demote an already-approved
-    // creator to PENDING/REJECTED at any time (modules/kyc.ts). Neither
-    // POST /subscriptions nor workers/renewals.ts looks at kycStatus, so those
-    // fans keep being billed either way -- hiding the page behind the gate
-    // would take away access they are still paying for.
-    const visible = c.user.kycStatus === 'APPROVED' || c.userId === viewerId || (!!viewerId && await isSubscribed(viewerId, c.userId));
+    // defaults to NONE, and the Sumsub webhook (or the site) can demote an
+    // already-approved creator at any time. A current subscriber paid for
+    // the period they are in, so they keep the page until it ends; nobody
+    // can pay the creator anything new meanwhile -- charge() and the renewals
+    // worker both refuse an unapproved creator (core/creator-standing.ts).
+    const approved = creatorMayOperate({ role: 'CREATOR', ...c.user });
+    const visible = approved || c.userId === viewerId || (!!viewerId && await isSubscribed(viewerId, c.userId));
     if (!visible) return reply.code(404).send({ error: 'not_found' });
     // What a fan will actually be charged to message them (modules/messages.ts
     // POST /to applies the same max()), so it can be shown before sending.
     const cfg = await prisma.platformConfig.findUnique({ where: { id: 1 }, select: { minDmPriceCents: true } });
     const dmPriceCents = Math.max(cfg?.minDmPriceCents ?? FEES.MIN_DM_PRICE_CENTS, c.inboundDmPriceCents ?? 0);
-    return { ...c, dmPriceCents };
+    // siteUid is the creator's site user id -- only selected for the check
+    // above, never returned.
+    const { siteUid: _uid, siteCreatorStatus: _scs, ...user } = c.user;
+    return { ...c, user, dmPriceCents, acceptingPayments: approved };
   });
 
   app.patch('/me', { preHandler: app.role('CREATOR') }, async (req) => {

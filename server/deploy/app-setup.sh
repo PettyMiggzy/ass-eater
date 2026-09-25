@@ -87,6 +87,11 @@ sudo -u "$APP_USER" npm run build
 echo "==> seeding system accounts (platform + escrow pseudo-users)"
 sudo -u "$APP_USER" node dist/scripts/seed-system-accounts.js
 
+echo "==> operator admin account"
+# Reminder only (never fails the deploy): without an ADMIN row nobody can
+# resolve a FAILED/HELD payout -- see DEPLOY.md step 4b.
+sudo -u "$APP_USER" node dist/scripts/admin-check.js || true
+
 echo "==> install systemd units"
 cp "$APP_DIR/deploy/onlyone-api.service" /etc/systemd/system/onlyone-api.service
 cp "$APP_DIR/deploy/onlyone-workers.service" /etc/systemd/system/onlyone-workers.service

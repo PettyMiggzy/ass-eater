@@ -22,7 +22,7 @@ async function makeUser(opts: { referredById?: string } = {}) {
 
 async function makeCreator(opts: { referredById?: string; payoutAsset?: 'STABLE' | 'ONLYONE' } = {}) {
   const userId = await makeUser({ referredById: opts.referredById });
-  await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR' } });
+  await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR', kycStatus: 'APPROVED' } });
   await prisma.creatorProfile.create({
     data: { userId, displayName: 'Test Creator', payoutAsset: opts.payoutAsset ?? 'STABLE' },
   });
@@ -236,7 +236,7 @@ describe('ledger.charge', () => {
 
   it('rejects a fan paying themselves', async () => {
     const fan = await makeUser();
-    await prisma.user.update({ where: { id: fan }, data: { role: 'CREATOR' } });
+    await prisma.user.update({ where: { id: fan }, data: { role: 'CREATOR', kycStatus: 'APPROVED' } });
     await prisma.creatorProfile.create({ data: { userId: fan, displayName: 'Self' } });
     await fund(fan, 10_000);
 

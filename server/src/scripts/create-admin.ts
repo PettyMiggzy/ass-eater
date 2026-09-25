@@ -1,6 +1,7 @@
 import argon2 from 'argon2';
 import { prisma } from '../lib/prisma.js';
 import { PLATFORM_ID, BURNED_ID } from '../core/ledger.js';
+import { readSecret } from './read-secret.js';
 
 // Creates (or re-passwords) the operator account that signs in to /admin.
 //
@@ -22,34 +23,7 @@ import { PLATFORM_ID, BURNED_ID } from '../core/ledger.js';
 // existing row -- a bridged site account or a native fan is a person with
 // their own identity, not a login to hand admin rights to.
 
-async function readPassword(): Promise<string> {
-  const stdin = process.stdin;
-  if (stdin.isTTY) {
-    process.stdout.write('Admin password (input hidden): ');
-    stdin.setRawMode(true);
-  }
-  stdin.setEncoding('utf8');
-  return new Promise((resolve, reject) => {
-    let buf = '';
-    const done = () => {
-      if (stdin.isTTY) { stdin.setRawMode(false); process.stdout.write('\n'); }
-      stdin.pause();
-      stdin.removeListener('data', onData);
-      resolve(buf.replace(/\r?\n$/, ''));
-    };
-    const onData = (chunk: string) => {
-      for (const ch of chunk) {
-        if (ch === '\u0003') { if (stdin.isTTY) stdin.setRawMode(false); reject(new Error('aborted')); return; }
-        if (stdin.isTTY && (ch === '\r' || ch === '\n')) { done(); return; }
-        if (stdin.isTTY && (ch === '\u007f' || ch === '\b')) { buf = buf.slice(0, -1); continue; }
-        buf += ch;
-      }
-    };
-    stdin.on('data', onData);
-    if (!stdin.isTTY) stdin.on('end', done);
-    stdin.resume();
-  });
-}
+const readPassword = () => readSecret('Admin password', process.stdout);
 
 async function main() {
   const [emailArg, usernameArg] = process.argv.slice(2);

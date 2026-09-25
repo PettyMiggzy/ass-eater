@@ -59,7 +59,8 @@ warn about any line that does this). In particular:
 - `WEB_ORIGIN`, `SITE_URL` -- `https://www.joinonlyone.com`
 - `DEPOSIT_XPUB` -- after the build (step 4), run
   `sudo -u onlyone node dist/scripts/derive-deposit-xpub.js < /dev/tty`,
-  paste the mnemonic, and put the printed value here. The API derives
+  paste the mnemonic at the hidden prompt (it is not echoed), and put the
+  printed value here. The API derives
   deposit addresses from it.
 - The stablecoin: leave `USDG_ADDRESS` commented out to use the canonical
   USDG contract (`0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168`, from
@@ -97,6 +98,36 @@ upload), gives the `onlyone` user ownership of the code, runs `npm ci`,
 `prisma migrate deploy`, builds the TypeScript, seeds the system accounts,
 installs and restarts the `onlyone-api` and `onlyone-workers` systemd
 services, and wires up the nginx reverse proxy on port 80.
+
+## 4b. Create the operator admin account (once; re-run to rotate the password)
+
+There is no HTTP way to create an ADMIN: `/auth/register` is closed, the
+bridge refuses ADMIN rows, and password login answers only for ADMIN rows
+made by this script. Without one, nobody can reach `/admin` -- and every
+case the payout worker deliberately leaves for a human (FAILED payouts it
+could not settle, HELD payouts, `POST /admin/payouts/:id/resolve`, manual
+token-burn records) waits forever. As root:
+
+```bash
+sudo -u onlyone sh -c 'cd /opt/onlyone/server && node dist/scripts/create-admin.js you@example.com youradmin'
+```
+
+The password (16+ characters) is typed at a hidden prompt, never passed as
+an argument. Running it again for the same email resets the password and
+signs out every session. `app-setup.sh` prints a warning on every deploy
+until an admin exists.
+
+### Settling a payout by hand
+
+Before sending anything from the treasury yourself, move the payout out of
+the automatic paths: `POST /admin/payouts/:id/resolve {"action":"hold"}`
+(PENDING or FAILED -> HELD). Then send, then `mark_sent` with your
+transaction's hash. Skipping the hold can pay the creator twice: a queued
+job broadcasts its own transfer, and the reconciler can refund a FAILED
+payout whose nonce your transfer consumed. A payout held out of FAILED
+still carries the worker's signed transaction, which may yet land: it can
+only be closed with `mark_sent` or `refund` (check the explorer first),
+never `release`d back to the queue.
 
 ## 5. TLS
 
@@ -185,7 +216,7 @@ mnemonic in `.env`, which the API loads. To move them:
 
 ```bash
 cd /opt/onlyone/server
-sudo -u onlyone node dist/scripts/derive-deposit-xpub.js < /dev/tty   # paste the mnemonic
+sudo -u onlyone node dist/scripts/derive-deposit-xpub.js < /dev/tty   # paste the mnemonic (hidden)
 # add the printed DEPOSIT_XPUB=... line to .env
 # cut the TREASURY_PRIVATE_KEY= and DEPOSIT_MNEMONIC= lines out of .env into .env.workers
 chmod 600 .env .env.workers

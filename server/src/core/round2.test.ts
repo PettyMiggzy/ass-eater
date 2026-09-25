@@ -35,6 +35,8 @@ async function makeCreator(extra: Record<string, unknown> = {}) {
   await prisma.creatorProfile.create({ data: { userId, displayName: 'C', payoutAddress: '0x000000000000000000000000000000000000dEaD' } });
   return userId;
 }
+// A DIGITAL listing needs a READY media item to be biddable/sellable (core/auctions.ts hasDeliverable).
+const readyMedia = (ownerId: string) => ({ create: { ownerId, key: `raw/${ownerId}/${randomUUID()}`, mime: 'image/jpeg', status: 'READY' as const } });
 const acct = async (userId: string) => prisma.account.findUniqueOrThrow({ where: { userId } });
 const deposit = (userId: string, cents: number) => money(prisma, (tx) => creditDeposit(tx, userId, BigInt(cents), `dep-${randomUUID()}`));
 
@@ -150,7 +152,7 @@ describe('auction orders carry the winner\'s own confirmation', () => {
     const creator = await makeCreator();
     const winner = await makeUser();
     await deposit(winner, 100_000);
-    const mk = () => prisma.listing.create({ data: { creatorId: creator, title: 'Lot', saleType: 'AUCTION', priceCents: 1000, auctionEndsAt: new Date(Date.now() + 3_600_000) } });
+    const mk = () => prisma.listing.create({ data: { creatorId: creator, title: 'Lot', saleType: 'AUCTION', priceCents: 1000, auctionEndsAt: new Date(Date.now() + 3_600_000), media: readyMedia(creator) } });
     const confirmedAt = new Date('2026-09-20T10:00:00Z');
     const l1 = await mk();
     await money(prisma, (tx) => placeBid(tx, l1.id, winner, 1000, { ageConfirmedAt: confirmedAt, tosVersion: 'v1' }));
@@ -178,7 +180,7 @@ describe('an auction hold returns earned credits as earned', () => {
     const seller = await makeCreator();
     const rival = await makeUser();
     await deposit(rival, 100_000);
-    const mk = () => prisma.listing.create({ data: { creatorId: seller, title: 'Lot', saleType: 'AUCTION', priceCents: 1000, auctionEndsAt: new Date(Date.now() + 3_600_000) } });
+    const mk = () => prisma.listing.create({ data: { creatorId: seller, title: 'Lot', saleType: 'AUCTION', priceCents: 1000, auctionEndsAt: new Date(Date.now() + 3_600_000), media: readyMedia(seller) } });
 
     // Outbid.
     const l1 = await mk();
@@ -202,7 +204,7 @@ describe('an auction hold returns earned credits as earned', () => {
     expect((await acct(bidderCreator)).withdrawableCents).toBe(9000n);
 
     // Reserve not met at close.
-    const l3 = await prisma.listing.create({ data: { creatorId: seller, title: 'Lot', saleType: 'AUCTION', priceCents: 1000, reserveCents: 50_000, auctionEndsAt: new Date(Date.now() + 3_600_000) } });
+    const l3 = await prisma.listing.create({ data: { creatorId: seller, title: 'Lot', saleType: 'AUCTION', priceCents: 1000, reserveCents: 50_000, auctionEndsAt: new Date(Date.now() + 3_600_000), media: readyMedia(seller) } });
     await money(prisma, (tx) => placeBid(tx, l3.id, bidderCreator, 2000));
     await prisma.listing.update({ where: { id: l3.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
     await money(prisma, (tx) => closeAuction(tx, l3.id));
@@ -218,7 +220,7 @@ describe('an auction hold returns earned credits as earned', () => {
     await money(prisma, (tx) => charge(tx, { fanId: fan, creatorId: bidderCreator, grossCents: 10_000, type: 'TIP', refId: randomUUID() })); // earns 9000
     await deposit(bidderCreator, 5_000); // +4900 deposited, balance 13900
     const seller = await makeCreator();
-    const l = await prisma.listing.create({ data: { creatorId: seller, title: 'Lot', saleType: 'AUCTION', priceCents: 1000, auctionEndsAt: new Date(Date.now() + 3_600_000) } });
+    const l = await prisma.listing.create({ data: { creatorId: seller, title: 'Lot', saleType: 'AUCTION', priceCents: 1000, auctionEndsAt: new Date(Date.now() + 3_600_000), media: readyMedia(seller) } });
     await money(prisma, (tx) => placeBid(tx, l.id, bidderCreator, 10_000)); // 4900 deposited + 5100 earned
     expect((await acct(bidderCreator)).withdrawableCents).toBe(3900n);
     await money(prisma, (tx) => cancelAuction(tx, l.id, 'test'));

@@ -27,7 +27,7 @@ async function makeUser() {
 
 async function makeCreator(opts: { notifyOnDm?: boolean; notifyEmail?: string } = {}) {
   const userId = await makeUser();
-  await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR' } });
+  await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR', kycStatus: 'APPROVED' } });
   await prisma.creatorProfile.create({
     data: {
       userId,

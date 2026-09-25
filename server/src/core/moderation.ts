@@ -34,6 +34,16 @@ export async function applyUserStatus(
     prisma.user.update({ where: { id: userId }, data: { status, statusBySite: !!opts.bySite } }),
     prisma.refreshToken.deleteMany({ where: { userId } }),
     ...(status !== 'ACTIVE' ? [prisma.creatorProfile.updateMany({ where: { userId }, data: { payoutsFrozen: true } })] : []),
+    // Their own subscriptions and token locks AS A FAN stop renewing: a
+    // suspended or banned account fails app.auth on every route, cancelling
+    // included, so it could never turn auto-renew off itself and would keep
+    // being charged. Access already paid for runs to its period end.
+    // (workers/renewals.ts also refuses to renew a non-ACTIVE fan, which
+    // covers rows this misses, e.g. a status set before this existed.)
+    ...(status !== 'ACTIVE' ? [
+      prisma.subscription.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } }),
+      prisma.tokenLock.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } }),
+    ] : []),
     ...(status === 'BANNED' ? [prisma.subscription.updateMany({ where: { creatorId: userId }, data: { autoRenew: false, status: 'CANCELLED' } })] : []),
   ]);
   if (status === 'ACTIVE') return;

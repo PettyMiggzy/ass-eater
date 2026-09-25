@@ -54,3 +54,17 @@ export async function sanitizeImage(input: Buffer | string, mime: string): Promi
   if (mime === 'image/webp') return img.webp({ quality: 92 }).toBuffer();
   return img.jpeg({ quality: 92 }).toBuffer();
 }
+
+/**
+ * ffmpeg arguments for the blurred preview (the thumbnail shown to fans who
+ * have not unlocked the media). ONE frame, always: the output is a single
+ * JPEG, and without `-frames:v 1` an animated source (a sanitized GIF keeps
+ * every frame) makes the image2 muxer refuse frame 2 ("Could not get frame
+ * filename number 2 ... Use -frames:v 1"). ffmpeg exited non-zero, and every
+ * animated GIF upload ended REJECTED after three attempts.
+ */
+export function previewArgs(src: string, out: string, opts: { seekSeconds?: number } = {}): string[] {
+  return ['-y',
+    ...(opts.seekSeconds ? ['-ss', `00:00:${String(opts.seekSeconds).padStart(2, '0')}`] : []),
+    '-i', src, '-frames:v', '1', '-vf', 'scale=480:-2,boxblur=20:5', out];
+}

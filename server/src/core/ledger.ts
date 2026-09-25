@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient, TxType } from '@prisma/client';
+import { creatorMayBePaid } from './creator-standing.js';
 
 export const PLATFORM_ID = '00000000-0000-0000-0000-000000000000';
 // Pseudo-account tokens burned via core/vip.ts's burnTokens() are posted to --
@@ -40,7 +41,21 @@ export const FEES = {
   // Admin moves the live value with PATCH /admin/vip-config
   // (minDmPriceCents, 1..50000 -- it can never be zero).
   MIN_DM_PRICE_CENTS: 99,
+  // Smallest NON-ZERO price a creator may set on the pay-per-use surfaces.
+  // charge() floors the platform's fee per transaction, so a price small
+  // enough that fee = floor(price * bps / 10000) = 0 moved 100% to the
+  // creator: a 4-cent minute at 20% or a 9-cent priced message at 10% kept
+  // the platform nothing, on every minute of every viewer. Each floor here
+  // keeps the fee at least one cent at its rate. 0 still means "free / off".
+  MIN_PER_MINUTE_CENTS: 5, // 20% of 5 = 1
+  MIN_TICKET_CENTS: 100,
+  MIN_PRICED_MESSAGE_CENTS: 100, // same as the PPV-post floor
+  // The admin-set floor on inbound DM prices can go no lower than this.
+  MIN_DM_FLOOR_CENTS: 10, // 10% of 10 = 1
 };
+
+/** zod-friendly check: 0 (off/free) or at least `min`. */
+export const zeroOrAtLeast = (min: number) => (v: number) => v === 0 || v >= min;
 
 /**
  * The two balances an account carries, and they are not interchangeable.
@@ -343,11 +358,19 @@ export async function charge(
   const [creator, fan] = await Promise.all([
     tx.creatorProfile.findUniqueOrThrow({
       where: { userId: p.creatorId },
-      include: { user: { select: { referredById: true, createdAt: true, status: true } } },
+      include: { user: { select: { referredById: true, createdAt: true, status: true, role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true } } },
     }),
     tx.user.findUniqueOrThrow({ where: { id: p.fanId }, select: { referredById: true, createdAt: true } }),
   ]);
-  if (creator.user.status !== 'ACTIVE') throw new Error('creator_unavailable');
+  // Every new flow of money to a creator -- tips, DMs, unlocks, live, new
+  // subscriptions and their renewals, token locks -- requires a creator who
+  // is not suspended or banned AND is still approved (KYC, and for a row
+  // bridged from the site, the site's own approval with its §2257 gate).
+  // Checking only status let a creator whose KYC was demoted, or whom the
+  // site moved back to 'pending', keep taking money by direct link while
+  // discovery already hid them. Serving content already paid for is a
+  // separate rule (core/access.ts creatorIsActive).
+  if (!creatorMayBePaid(creator.user)) throw Object.assign(new Error('creator_unavailable'), { statusCode: 400 });
 
   // The fan pays the list price. Nothing reduces it.
   const chargeCents = p.grossCents;

@@ -110,12 +110,27 @@ export async function recordManualBurn(
   tx: Tx,
   p: { txHash: string; tokensBurned?: string; note?: string },
 ) {
-  const txHash = String(p.txHash || '').trim();
-  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error('invalid_tx_hash');
+  const txHash = String(p.txHash || '').trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(txHash)) throw new Error('invalid_tx_hash');
+
+  // One burn transaction closes one set of obligations, once. Without this,
+  // last month's hash (or any unrelated hash) pasted again closed this
+  // month's obligations with no burn behind them, while still pointing at a
+  // real explorer link. Case-insensitive, and inside the caller's
+  // (Serializable) transaction, so two concurrent records of the same hash
+  // cannot both pass. The admin route additionally checks the hash on-chain
+  // when the token and an RPC are configured (modules/admin.ts).
+  const reused = await tx.tokenBurn.findFirst({
+    where: { OR: [{ txHash: { equals: txHash, mode: 'insensitive' } }, { pendingTxHash: { equals: txHash, mode: 'insensitive' } }] },
+    select: { id: true },
+  });
+  if (reused) throw Object.assign(new Error('tx_already_recorded'), { statusCode: 409 });
 
   const upTo = new Date();
   const owed = await tx.tokenBurn.findMany({
-    where: { executedAt: null, createdAt: { lte: upTo } },
+    // An obligation the automatic burner already has a swap in flight for
+    // (pendingTxHash) is not closed here: that swap is settling it.
+    where: { executedAt: null, pendingTxHash: null, createdAt: { lte: upTo } },
     select: { id: true, usdCents: true },
   });
   if (!owed.length) return { closed: 0, usdCents: 0n, txHash };

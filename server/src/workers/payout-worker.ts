@@ -1,11 +1,11 @@
 import { Worker } from 'bullmq';
 import { encodeFunctionData, keccak256, parseUnits, TransactionNotFoundError, TransactionReceiptNotFoundError } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, HEDGE_STABLE, erc20Abi, envInt } from '../lib/chain.js';
+import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
 import { getUsdPrice } from '../lib/price.js';
 import { money } from '../core/ledger.js';
-import { refundPayout, markPayoutSent } from '../core/payouts.js';
-import { payoutJobId, payoutJobOptions } from '../core/payout-queue.js';
+import { refundPayout, markPayoutSent, isOwnNonceCancel } from '../core/payouts.js';
+import { payoutJobId, payoutJobOptions, jobInFlight } from '../core/payout-queue.js';
 import { publish, connection, payoutQueue } from '../lib/redis.js';
 import { registerWorker, onStop, isStopping } from './process-guards.js';
 
@@ -41,34 +41,60 @@ async function nodeKnows(hash: `0x${string}`): Promise<boolean> {
  * same nonce with bumped fees, under the treasury lock -- and the refund is
  * only safe once the CONFIRMED nonce has moved past ours while the original
  * hash is still unknown. Exactly one transaction can hold a nonce, so the
- * original can then never land. Any doubt (an RPC error included) answers
+ * original can then never land.
+ *
+ * And the nonce must have been consumed by THAT cancel, not by anything
+ * else. "Consumed and unknown" proves the original can never land, not that
+ * no money moved: an admin settling a failed payout by hand from the
+ * treasury takes the very nonce the failed transaction held, and refunding
+ * then paid the creator twice (USDG on-chain plus the credits back). The
+ * cancel's hash is persisted on the payout before it is broadcast, so a later
+ * reconciler run can still check it; a nonce consumed by any other
+ * transaction answers false. Any doubt (an RPC error included) answers
  * false, and the payout is held FAILED with its hash for an admin.
  */
-async function provablyNeverSent(hash: `0x${string}`, nonce: number): Promise<boolean> {
+async function provablyNeverSent(p: { id: string; txHash: string; nonce: number; cancelTxHash: string | null }): Promise<boolean> {
+  const hash = p.txHash as `0x${string}`;
+  const nonce = p.nonce;
   try {
     await new Promise(r => setTimeout(r, BROADCAST_SETTLE_MS));
     if (await nodeKnows(hash)) return false;   // it went out
     const me = treasuryAccount().address;
     const consumed = async () => (await publicClient.getTransactionCount({ address: me, blockTag: 'latest' })) > nonce;
+    let cancelHash = p.cancelTxHash as `0x${string}` | null;
     if (!(await consumed())) {
-      const cancel = await withTreasuryLock(async () => {
+      const sent = await withTreasuryLock(async () => {
         if (await consumed()) return null;
         const wallet = treasuryWallet();
         const fees = await publicClient.estimateFeesPerGas();
         try {
-          return await wallet.sendTransaction({
+          const request = await wallet.prepareTransactionRequest({
             to: me, value: 0n, nonce,
             // A replacement must outbid whatever may sit in a mempool at this nonce.
             maxFeePerGas: (fees.maxFeePerGas ?? 0n) * 2n + 1n,
             maxPriorityFeePerGas: (fees.maxPriorityFeePerGas ?? 0n) * 2n + 1n,
           } as any);
+          const serialized = await wallet.signTransaction(request as any);
+          const h = keccak256(serialized);
+          // Persisted before broadcast, like the payout's own hash.
+          await prisma.payout.updateMany({ where: { id: p.id, status: { in: ['PROCESSING', 'FAILED'] } }, data: { cancelTxHash: h } });
+          await wallet.sendRawTransaction({ serializedTransaction: serialized });
+          return h;
         } catch {
           return null;   // e.g. "nonce too low": something took it -- decided below
         }
       });
-      if (cancel) await publicClient.waitForTransactionReceipt({ hash: cancel, timeout: 180_000 }).catch(() => {});
+      if (sent) {
+        cancelHash = sent;
+        await publicClient.waitForTransactionReceipt({ hash: sent, timeout: 180_000 }).catch(() => {});
+      }
     }
-    return (await consumed()) && !(await nodeKnows(hash));
+    if (!(await consumed()) || (await nodeKnows(hash))) return false;
+    if (!cancelHash) return false;
+    const rcpt = await publicClient.getTransactionReceipt({ hash: cancelHash }).catch(() => null);
+    if (rcpt?.status !== 'success') return false;
+    const cancelTx = await publicClient.getTransaction({ hash: cancelHash }).catch(() => null);
+    return isOwnNonceCancel(cancelTx as any, me, nonce);
   } catch {
     return false;
   }
@@ -99,6 +125,18 @@ async function claimPayout(payoutId: string) {
 }
 
 registerWorker(new Worker('payout', async (job) => {
+  // Never sign on an unverified scale. The payout amount is converted with
+  // HEDGE_STABLE.decimals from configuration; a typo there (6 -> 2) sends a
+  // ten-thousandth of what is owed, the transfer succeeds, and the row is
+  // marked SENT. Checked against the contract BEFORE the payout is claimed,
+  // so on a mismatch (or an RPC failure) it simply stays PENDING -- the job
+  // fails, and the reconciler re-queues it once the config is fixed.
+  try {
+    await assertStableDecimals();
+  } catch (e) {
+    if (e instanceof TokenDecimalsMismatchError) console.error('payout: REFUSING to pay -- stablecoin decimals do not match the chain. Payouts stay PENDING until the configuration is fixed and the workers restarted.', e.message);
+    throw e;
+  }
   const p = await claimPayout(job.data.payoutId);
   if (!p) return;
 
@@ -128,7 +166,7 @@ registerWorker(new Worker('payout', async (job) => {
       const serialized = await wallet.signTransaction(request as any);
       hash = keccak256(serialized);
       nonce = request.nonce;
-      await prisma.payout.update({ where: { id: p.id }, data: { txHash: hash, nonce, assetAmount: raw.toString(), priceUsed: px } });
+      await prisma.payout.update({ where: { id: p.id }, data: { txHash: hash, nonce, signedAt: new Date(), assetAmount: raw.toString(), priceUsed: px } });
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
     });
 
@@ -144,7 +182,7 @@ registerWorker(new Worker('payout', async (job) => {
     // else -- a lost broadcast response, a receipt wait that timed out -- is
     // held FAILED with its hash for the reconciler or an admin. Never
     // double-pay.
-    const refund = !hash || reverted || (nonce !== undefined && await provablyNeverSent(hash, nonce));
+    const refund = !hash || reverted || (nonce !== undefined && await provablyNeverSent({ id: p.id, txHash: hash, nonce, cancelTxHash: null }));
     let refunded = false;
     if (refund) {
       refunded = await money(prisma, (tx) => refundPayout(tx, p.id, ['PROCESSING'], String(e.message), { txHash: hash ?? null }));
@@ -169,9 +207,15 @@ registerWorker(new Worker('payout', async (job) => {
  *    before broadcasting), so it is refunded. With a hash, the chain decides:
  *    a successful receipt marks it SENT, a revert refunds, and a tx no node
  *    knows is refunded only once provablyNeverSent() shows its nonce was
- *    consumed by something else. Anything still in doubt stays FAILED for an
- *    admin (POST /admin/payouts/:id/resolve). FAILED rows older than
- *    FAILED_AUTO_WINDOW_MS (7 days) are no longer touched automatically.
+ *    consumed by the worker's own cancel. Anything still in doubt stays
+ *    FAILED for an admin (POST /admin/payouts/:id/resolve).
+ *
+ * The age limits are measured from when the transaction was SIGNED
+ * (signedAt), never from the request (createdAt): a payout HELD for days and
+ * then released used to be ignored the moment it failed. A receipt showing
+ * success or revert settles a FAILED payout at any age up to
+ * FAILED_RECEIPT_WINDOW_MS; only the refund-because-it-never-sent branch is
+ * limited to FAILED_AUTO_WINDOW_MS (7 days).
  */
 const PENDING_STALE_MS = envInt('PAYOUT_PENDING_STALE_MS', 5 * 60_000, 60_000);
 // FAILED payouts older than this are left for an admin. An RPC node that
@@ -180,7 +224,14 @@ const PENDING_STALE_MS = envInt('PAYOUT_PENDING_STALE_MS', 5 * 60_000, 60_000);
 // then refund money that was in fact paid. Bounding the window also stops
 // the loop re-examining (and re-sleeping on) the same rows forever.
 const FAILED_AUTO_WINDOW_MS = envInt('PAYOUT_FAILED_AUTO_WINDOW_MS', 7 * 24 * 60 * 60_000, 60 * 60_000);
+// How long a FAILED payout with a hash keeps being re-checked for a receipt.
+// A receipt is an answer at any age (unlike "not found"); the bound only
+// stops the loop rescanning the same rows forever.
+const FAILED_RECEIPT_WINDOW_MS = envInt('PAYOUT_FAILED_RECEIPT_WINDOW_MS', 30 * 24 * 60 * 60_000, 60 * 60_000);
 const RECONCILE_EVERY_MS = envInt('PAYOUT_RECONCILE_INTERVAL_MS', 5 * 60_000, 30_000);
+
+// Rotating page cursor over old FAILED payouts (see reconcilePayouts).
+let oldFailedCursor = '';
 
 export async function reconcilePayouts() {
   const cutoff = new Date(Date.now() - PENDING_STALE_MS);
@@ -190,18 +241,30 @@ export async function reconcilePayouts() {
   }
 
   const failedSince = new Date(Date.now() - FAILED_AUTO_WINDOW_MS);
-  const stuck = await prisma.payout.findMany({
-    where: {
-      createdAt: { lt: cutoff },
-      OR: [{ status: 'PROCESSING' }, { status: 'FAILED', createdAt: { gte: failedSince } }],
-    },
-    orderBy: { createdAt: 'asc' },
-    take: 50,
-  });
+  const receiptSince = new Date(Date.now() - FAILED_RECEIPT_WINDOW_MS);
+  // Three separate, bounded queries. One `take: 50` over all of them, oldest
+  // first, let 50 old FAILED rows that only an admin can settle (past the
+  // 7-day auto window, no receipt) crowd out every newer PROCESSING or
+  // FAILED row for up to 30 days -- those were never reconciled at all.
+  const signedOrCreatedSince = (d: Date) => ({ OR: [{ signedAt: { gte: d } }, { signedAt: null, createdAt: { gte: d } }] });
+  const signedOrCreatedBefore = (d: Date) => ({ OR: [{ signedAt: { lt: d } }, { signedAt: null, createdAt: { lt: d } }] });
+  const [processing, failedRecent, failedOld] = await Promise.all([
+    prisma.payout.findMany({ where: { status: 'PROCESSING', createdAt: { lt: cutoff } }, orderBy: { createdAt: 'asc' }, take: 50 }),
+    // Only FAILED rows with a hash have anything left to settle: with no
+    // hash nothing was signed and the worker already refunded it.
+    prisma.payout.findMany({ where: { status: 'FAILED', txHash: { not: null }, ...signedOrCreatedSince(failedSince) }, orderBy: { createdAt: 'asc' }, take: 50 }),
+    // Past the auto window only a receipt can still settle them; walk these
+    // a page per cycle with a rotating cursor so every one is re-checked.
+    prisma.payout.findMany({
+      where: { status: 'FAILED', txHash: { not: null }, id: { gt: oldFailedCursor }, AND: [signedOrCreatedSince(receiptSince), signedOrCreatedBefore(failedSince)] },
+      orderBy: { id: 'asc' }, take: 25,
+    }),
+  ]);
+  oldFailedCursor = failedOld.length < 25 ? '' : failedOld[failedOld.length - 1].id;
+  const stuck = [...processing, ...failedRecent, ...failedOld];
   for (const p of stuck) {
     if (isStopping()) return;
-    const job = await payoutQueue.getJob(payoutJobId(p.id));
-    if (job && (await job.isActive() || await job.isWaiting() || await job.isDelayed())) continue;
+    if (await jobInFlight(await payoutQueue.getJob(payoutJobId(p.id)))) continue;
     try {
       if (!p.txHash) {
         if (p.status === 'PROCESSING') {
@@ -223,7 +286,7 @@ export async function reconcilePayouts() {
         }
         continue;
       }
-      if (p.nonce != null && p.createdAt >= failedSince && await provablyNeverSent(hash, p.nonce)) {
+      if (p.nonce != null && (p.signedAt ?? p.createdAt) >= failedSince && await provablyNeverSent({ id: p.id, txHash: p.txHash, nonce: p.nonce, cancelTxHash: p.cancelTxHash })) {
         await money(prisma, (tx) => refundPayout(tx, p.id, ['PROCESSING', 'FAILED'], 'never broadcast'));
         continue;
       }

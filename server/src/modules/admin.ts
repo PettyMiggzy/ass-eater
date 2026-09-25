@@ -1,16 +1,16 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { money, post, PLATFORM_ID } from '../core/ledger.js';
+import { money, post, PLATFORM_ID, FEES } from '../core/ledger.js';
 import { deleteObject, deletePrefix, purgeCdnPrefix } from '../lib/s3.js';
 import { wmPrefix } from '../lib/watermark.js';
 import { recordManualBurn } from '../core/vip.js';
 import { applyUserStatus } from '../core/moderation.js';
-import { refundPayout, markPayoutSent } from '../core/payouts.js';
-import { payoutJobOptions, payoutJobId } from '../core/payout-queue.js';
+import { refundPayout, markPayoutSent, holdForManualSettlement } from '../core/payouts.js';
+import { payoutJobOptions, payoutJobId, jobInFlight } from '../core/payout-queue.js';
 import { payoutQueue } from '../lib/redis.js';
-import { publicClient, HEDGE_STABLE, TRANSFER_EVENT, treasuryAddress } from '../lib/chain.js';
-import { decodeEventLog, parseUnits } from 'viem';
+import { publicClient, HEDGE_STABLE, TRANSFER_EVENT, treasuryAddress, TOKENS, DECIMALS, onlyOneBurnedIn, burnSenders } from '../lib/chain.js';
+import { decodeEventLog, formatUnits, parseUnits, TransactionReceiptNotFoundError } from 'viem';
 import { Prisma } from '@prisma/client';
 import { storageKeyOf } from '../core/media-key.js';
 
@@ -39,9 +39,11 @@ export const admin: FastifyPluginAsync = async (app) => {
       // Capped at 100%: the platform cannot commit to burning more than the
       // revenue it took in, which would be spending money it does not have.
       burnBps: z.number().int().min(0).max(10_000).optional(),
-      // The floor on paid inbound DMs (modules/messages.ts). min(1): messaging
-      // a creator is never free (decided 2026-09-20).
-      minDmPriceCents: z.number().int().min(1).max(50_000).optional(),
+      // The floor on paid inbound DMs (modules/messages.ts). Never zero:
+      // messaging a creator is never free (decided 2026-09-20). And never
+      // below FEES.MIN_DM_FLOOR_CENTS, where the 10% fee would floor to 0
+      // and the platform would keep nothing on the message.
+      minDmPriceCents: z.number().int().min(FEES.MIN_DM_FLOOR_CENTS).max(50_000).optional(),
     }).parse(req.body);
     return prisma.platformConfig.upsert({ where: { id: 1 }, create: { id: 1, ...body }, update: body });
   });
@@ -54,17 +56,45 @@ export const admin: FastifyPluginAsync = async (app) => {
    * one this endpoint would let the platform mark supply destroyed that
    * nobody can verify.
    */
-  app.post('/token-burns/record', async (req: any) => {
+  app.post('/token-burns/record', async (req: any, reply) => {
     const b = z.object({
       txHash: z.string(),
       tokensBurned: z.string().max(80).optional(),
       note: z.string().max(200).optional(),
     }).parse(req.body);
+    // When the chain can actually be asked (token configured and an RPC set),
+    // the hash must be a SUCCESSFUL transaction in which the platform's own
+    // burn wallet -- the treasury (TREASURY_ADDRESS / the treasury key) or
+    // an address listed in BURN_SENDER_ADDRESSES -- sent $ONLYONE to a burn
+    // sink (0x…dEaD or address(0)). Any holder's public burn, even of 1
+    // wei, used to pass. The on-chain amount replaces the admin's free-text
+    // tokensBurned and is returned next to the USD value closed, so a
+    // token burn far smaller than what it settles is visible at once. Not
+    // checked while RPC_URL is still a placeholder on the droplet (then the
+    // hash is admin-trusted; the reuse check in recordManualBurn applies
+    // either way).
+    let onChainBurnedRaw: bigint | null = null;
+    if (/^0x[0-9a-fA-F]{64}$/.test(String(b.txHash).trim()) && TOKENS.ONLYONE.address && process.env.RPC_URL) {
+      let rcpt: any;
+      try {
+        rcpt = await publicClient.getTransactionReceipt({ hash: String(b.txHash).trim() as `0x${string}` });
+      } catch (e) {
+        if (e instanceof TransactionReceiptNotFoundError) return reply.code(409).send({ error: 'tx_not_found' });
+        req.log.error({ err: e }, 'token-burns/record: receipt lookup failed');
+        return reply.code(503).send({ error: 'chain_unreachable' });
+      }
+      if (rcpt.status !== 'success') return reply.code(409).send({ error: 'tx_not_successful' });
+      const senders = burnSenders();
+      if (!senders.length) return reply.code(409).send({ error: 'burn_sender_not_configured' });
+      onChainBurnedRaw = onlyOneBurnedIn(rcpt.logs, { includeZero: true, from: senders });
+      if (onChainBurnedRaw <= 0n) return reply.code(409).send({ error: 'not_a_burn' });
+    }
     try {
+      const tokensBurned = onChainBurnedRaw != null ? formatUnits(onChainBurnedRaw, DECIMALS.ONLYONE) : b.tokensBurned;
       // usdCents is a BigInt, which JSON.stringify refuses: returned raw, the
       // burn was recorded and the admin got a 500 saying it failed.
-      const r = await money(prisma, (tx) => recordManualBurn(tx, b));
-      return { ...r, usdCents: r.usdCents.toString() };
+      const r = await money(prisma, (tx) => recordManualBurn(tx, { ...b, tokensBurned }));
+      return { ...r, usdCents: r.usdCents.toString(), tokensBurned: tokensBurned ?? null, verifiedOnChain: onChainBurnedRaw != null };
     } catch (e: any) {
       if (e.message === 'invalid_tx_hash') {
         throw Object.assign(new Error('txHash must be a 0x-prefixed 32-byte transaction hash'), { statusCode: 400 });
@@ -197,40 +227,75 @@ export const admin: FastifyPluginAsync = async (app) => {
    * current status, so it can never race the worker into paying or
    * refunding twice.
    *
-   *  - mark_sent {txHash}: only against a SUCCESSFUL on-chain transaction
-   *    containing a USDG Transfer FROM the treasury (TREASURY_ADDRESS) TO
-   *    this payout's address for the payout's amount (its recorded
-   *    assetAmount when the worker got that far, else at least the net
-   *    amount at $1), and only a hash no other payout already records (also
-   *    a unique index). Refused while the payout's worker job is still
-   *    queued or running -- that job would broadcast its own transfer and
-   *    pay the creator twice -- and when the payout's own signed tx already
-   *    succeeded (mark it with that hash instead).
+   *  - hold: PENDING / FAILED -> HELD. RUN THIS BEFORE SENDING ANYTHING BY
+   *    HAND. A PENDING payout's queued job would otherwise broadcast its own
+   *    transfer alongside the admin's, and a FAILED one stays in the
+   *    reconciler's reach, which can refund it on top of a manual payment
+   *    (a hand-sent treasury transfer takes the nonce its failed tx held).
+   *    HELD is touched by neither. Guarded on status, so a job that already
+   *    claimed the payout (now PROCESSING) is never held under it; the
+   *    queued job of a held PENDING payout is removed (or no-ops on claim).
+   *  - mark_sent {txHash}: from HELD, against the admin's own settlement
+   *    transaction; from FAILED / PROCESSING only with the payout's OWN
+   *    signed txHash (the worker's transfer that landed). Never from
+   *    PENDING -- hold it first. Only against a SUCCESSFUL on-chain
+   *    transaction containing a USDG Transfer FROM the treasury
+   *    (TREASURY_ADDRESS) TO this payout's address for the payout's amount
+   *    (its recorded assetAmount when the worker got that far, else at
+   *    least the net amount at $1), and only a hash no other payout already
+   *    records (also a unique index). Refused while the payout's worker job
+   *    is still queued or running, and when the payout's own signed tx
+   *    already succeeded (mark it with that hash instead).
    *  - refund {reason}: PENDING / HELD / FAILED only. A FAILED payout with a
    *    txHash is refused while its receipt shows success; when no receipt
    *    exists the admin must pass acknowledgeUnconfirmed after checking the
    *    explorer, because the tx could still land later.
    *  - release: HELD -> PENDING and re-queued. Refused while the creator is
    *    still frozen or not ACTIVE -- lifting a freeze (POST
-   *    /creators/:id/freeze) is its own explicit step.
+   *    /creators/:id/freeze) is its own explicit step -- and refused for a
+   *    HELD payout that carries a txHash (held out of FAILED: a signed
+   *    transfer may still land, so only mark_sent or refund may settle it).
    */
   app.post('/payouts/:id/resolve', async (req: any, reply) => {
     const b = z.discriminatedUnion('action', [
       z.object({ action: z.literal('mark_sent'), txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }),
       z.object({ action: z.literal('refund'), reason: z.string().min(3).max(200), acknowledgeUnconfirmed: z.boolean().optional() }),
       z.object({ action: z.literal('release') }),
+      z.object({ action: z.literal('hold') }),
     ]).parse(req.body);
     const p = await prisma.payout.findUniqueOrThrow({ where: { id: req.params.id }, include: { creator: { select: { payoutsFrozen: true, user: { select: { status: true } } } } } });
     const by = { by: req.user.id };
 
+    if (b.action === 'hold') {
+      if (!['PENDING', 'FAILED'].includes(p.status)) return reply.code(409).send({ error: 'wrong_status', status: p.status });
+      // No queued-job check: every PENDING payout's job sits in BullMQ's
+      // 'prioritized' set, so refusing on "queued" made hold impossible. The
+      // guarded PENDING/FAILED -> HELD update is what makes this safe -- the
+      // worker's claim is itself a guarded PENDING -> PROCESSING update and
+      // matches nothing once the row is HELD. A job that already claimed has
+      // moved the row to PROCESSING, which the status check above refuses.
+      const job = await payoutQueue.getJob(payoutJobId(p.id));
+      const ok = await money(prisma, (tx) => holdForManualSettlement(tx, p.id, req.user.id));
+      if (!ok) return reply.code(409).send({ error: 'status_changed' });
+      // Best effort: drop the now-pointless queued job so a later release can
+      // queue a fresh one. If it is already running, remove() fails and the
+      // job's claim no-ops on the HELD row.
+      if (job) await job.remove().catch(() => {});
+      req.log.info({ payoutId: p.id, ...by }, 'payout held for manual settlement');
+      return { ok: true, status: 'HELD' };
+    }
+
     if (b.action === 'mark_sent') {
       const hash = b.txHash.toLowerCase() as `0x${string}`;
-      if (!['PENDING', 'PROCESSING', 'FAILED', 'HELD'].includes(p.status)) return reply.code(409).send({ error: 'wrong_status', status: p.status });
-      if (p.status === 'PENDING' || p.status === 'PROCESSING') {
-        const job = await payoutQueue.getJob(payoutJobId(p.id));
-        if (job && (await job.isActive() || await job.isWaiting() || await job.isDelayed())) {
-          return reply.code(409).send({ error: 'payout_in_flight' });
-        }
+      const ownTx = !!p.txHash && p.txHash.toLowerCase() === hash;
+      if (p.status === 'PENDING') return reply.code(409).send({ error: 'hold_first', status: p.status });
+      if (!['PROCESSING', 'FAILED', 'HELD'].includes(p.status)) return reply.code(409).send({ error: 'wrong_status', status: p.status });
+      // Settling a PROCESSING / FAILED payout with a transfer the admin sent
+      // by hand is exactly the double-pay the hold step exists to prevent:
+      // only the payout's own transaction may close it from those states.
+      if (p.status !== 'HELD' && !ownTx) return reply.code(409).send({ error: 'hold_first', status: p.status });
+      if (p.status === 'PROCESSING' && (await jobInFlight(await payoutQueue.getJob(payoutJobId(p.id))))) {
+        return reply.code(409).send({ error: 'payout_in_flight' });
       }
       if (p.txHash && p.txHash.toLowerCase() !== hash) {
         const own = await publicClient.getTransactionReceipt({ hash: p.txHash as `0x${string}` }).catch(() => null);
@@ -286,8 +351,14 @@ export const admin: FastifyPluginAsync = async (app) => {
     }
 
     if (p.status !== 'HELD') return reply.code(409).send({ error: 'not_held', status: p.status });
+    // A HELD payout that carries a txHash was held out of FAILED: a transfer
+    // was signed and its outcome is unknown -- it may still land. Releasing
+    // it would let the worker sign a SECOND transfer at a new nonce and
+    // overwrite the first hash, paying the creator twice. Such a payout is
+    // settled only by mark_sent or refund, where the receipt checks apply.
+    if (p.txHash) return reply.code(409).send({ error: 'signed_use_mark_sent_or_refund', txHash: p.txHash });
     if (p.creator.payoutsFrozen || p.creator.user.status !== 'ACTIVE') return reply.code(409).send({ error: 'creator_frozen' });
-    const r = await prisma.payout.updateMany({ where: { id: p.id, status: 'HELD' }, data: { status: 'PENDING', error: null } });
+    const r = await prisma.payout.updateMany({ where: { id: p.id, status: 'HELD', txHash: null }, data: { status: 'PENDING', error: null } });
     if (!r.count) return reply.code(409).send({ error: 'status_changed' });
     await payoutQueue.add('send', { payoutId: p.id }, payoutJobOptions(p.id, p.instant)).catch((err) => {
       req.log.error({ err, payoutId: p.id }, 'release: enqueue failed; the reconciler will re-queue it');
@@ -313,8 +384,10 @@ export const admin: FastifyPluginAsync = async (app) => {
     ]);
     // Minus what partial swaps already sold for these deposits (Deposit.hedgedRaw).
     const pendingRaw = pending.reduce((s, d) => s + BigInt(d.rawAmount) - BigInt(d.hedgedRaw ?? '0'), 0n);
-    const swappedRaw = batches.reduce((s, b) => s + BigInt(b.onlyOneRawIn), 0n);
-    const usdcRaw = batches.reduce((s, b) => s + BigInt(b.usdcRawOut), 0n);
+    // Only settled swaps count; a PENDING batch may still revert, a FAILED one sold nothing.
+    const done = batches.filter((b) => b.status === 'DONE');
+    const swappedRaw = done.reduce((s, b) => s + BigInt(b.onlyOneRawIn), 0n);
+    const usdcRaw = done.reduce((s, b) => s + BigInt(b.usdcRawOut), 0n);
     return {
       pendingOnlyOneRaw: pendingRaw.toString(), // not yet swept by the hedge worker (thin liquidity, or below its cycle)
       lifetimeOnlyOneSwappedRaw: swappedRaw.toString(),

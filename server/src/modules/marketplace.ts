@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { money, lockBalance, post, InsufficientFunds, isVip, postPlatformRevenue } from '../core/ledger.js';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION, PHYSICAL_SALES_ENABLED } from '../core/marketplace-fees.js';
-import { placeBid, cancelAuction, statusCode } from '../core/auctions.js';
+import { placeBid, cancelAuction, statusCode, hasDeliverable } from '../core/auctions.js';
+import { OPERATING_CREATOR_USER_WHERE, creatorMayBePaidById } from '../core/creator-standing.js';
 import { page } from '../plugins/pagination.js';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
@@ -62,8 +63,21 @@ function publicListing<T extends { creatorId: string; reserveCents: number | nul
   };
 }
 
-/** A listing is only sellable/visible while its seller's account is ACTIVE (not suspended or banned). */
-const activeSeller = { creator: { user: { status: 'ACTIVE' as const } } };
+/**
+ * A listing is listed and sellable only while its seller may be paid: not
+ * suspended or banned AND still approved (KYC, and the site's approval for a
+ * bridged creator) -- core/creator-standing.ts. Checking status alone kept a
+ * creator whose approval was withdrawn selling by direct link after
+ * discovery had already hidden them.
+ */
+const activeSeller = { creator: { user: OPERATING_CREATOR_USER_WHERE } };
+
+/**
+ * A DIGITAL listing's product IS its media (core/access.ts canViewListing),
+ * so it is listed only once at least one attached item is READY. Physical
+ * items ship; their media is optional.
+ */
+const deliverable = { OR: [{ kind: 'PHYSICAL' as const }, { media: { some: { status: 'READY' as const } } }] };
 
 async function optionalViewer(req: any): Promise<string | null> {
   try { await req.jwtVerify(); return req.user.id; } catch { return null; }
@@ -106,10 +120,18 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       }
       (fields as any).auctionEndsAt = new Date(Date.now() + auctionDurationHours * 3_600_000);
     }
+    // A DIGITAL listing's media is what the buyer gets. There is no route
+    // that attaches media to a listing later, so one created without any
+    // could only ever be sold as nothing.
+    if (fields.kind === 'DIGITAL' && !mediaIds.length) throw Object.assign(new Error('digital_listing_needs_media'), { statusCode: 400 });
+    if (new Set(mediaIds).size !== mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
     return prisma.$transaction(async (tx) => {
       const l = await tx.listing.create({ data: { creatorId: req.user.id, ...fields } });
       if (mediaIds.length) {
-        const r = await tx.media.updateMany({ where: { id: { in: mediaIds }, ownerId: req.user.id, postId: null, messageId: null, listingId: null }, data: { listingId: l.id } });
+        // Unattached originals that can still become viewable (still
+        // uploading/processing is fine -- the listing is not listed or
+        // sellable until one is READY). Never a broadcast copy.
+        const r = await tx.media.updateMany({ where: { id: { in: mediaIds }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: { not: 'REJECTED' } }, data: { listingId: l.id } });
         if (r.count !== mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
       return tx.listing.findUnique({ where: { id: l.id }, include: { media: { select: { id: true, mime: true, previewKey: true } } } });
@@ -170,7 +192,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     const viewerId = await optionalViewer(req);
     // AND, not a second OR key -- spreading another `OR` would silently
     // replace the search one and return everything.
-    const conditions: any[] = [await vipFirstLookFilter(viewerId), activeSeller].filter((c) => Object.keys(c).length);
+    const conditions: any[] = [await vipFirstLookFilter(viewerId), activeSeller, deliverable].filter((c) => Object.keys(c).length);
     if (q) conditions.push({ OR: [{ title: { contains: q, mode: 'insensitive' } }, { description: { contains: q, mode: 'insensitive' } }] });
     const rows = await prisma.listing.findMany({
       where: {
@@ -187,15 +209,25 @@ export const marketplace: FastifyPluginAsync = async (app) => {
   // through GET /media/:id/url, which re-checks ownership via canViewListing.
   //
   // Same visibility as the list: a listing inside its VIP first-look window,
-  // or one whose seller is suspended/banned, is not found for anyone but its
-  // creator -- an id is shareable, so filtering only the list is not a gate.
+  // or one whose seller may not currently sell (suspended, banned, or no
+  // longer approved), is not found for anyone but its creator -- an id is
+  // shareable, so filtering only the list is not a gate. The one exception
+  // is someone who already BOUGHT it: while the seller is not suspended or
+  // banned (core/access.ts canViewListing, the serving rule) a buyer keeps
+  // the page of what they paid for.
   app.get('/listings/:id', async (req: any, reply) => {
     const viewerId = await optionalViewer(req);
     const vip = await vipFirstLookFilter(viewerId);
     const l = await prisma.listing.findFirst({
       where: {
         id: req.params.id,
-        ...(viewerId ? { OR: [{ creatorId: viewerId }, { AND: [vip, activeSeller] }] } : { AND: [vip, activeSeller] }),
+        ...(viewerId
+          ? { OR: [
+            { creatorId: viewerId },
+            { AND: [vip, activeSeller] },
+            { AND: [{ creator: { user: { status: 'ACTIVE' as const } } }, { orders: { some: { buyerId: viewerId } } }] },
+          ] }
+          : { AND: [vip, activeSeller] }),
       },
       select: { ...LISTING_SELECT, media: { select: { id: true, mime: true, previewKey: true } } },
     });
@@ -227,10 +259,14 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       if (l.saleType === 'AUCTION') throw Object.assign(new Error('auction_listing_use_bid'), { statusCode: 400 });
       if (l.creatorId === req.user.id) throw Object.assign(new Error('self_purchase'), { statusCode: 400 });
       if (l.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
-      // A suspended or banned seller's listings are hidden from browsing;
-      // this is the gate for anyone still holding the id.
-      const seller = await tx.user.findUnique({ where: { id: l.creatorId }, select: { status: true } });
-      if (seller?.status !== 'ACTIVE') throw Object.assign(new Error('not_available'), { statusCode: 400 });
+      // A seller who may not currently be paid (suspended, banned, or no
+      // longer approved) is hidden from browsing; this is the gate for anyone
+      // still holding the id.
+      if (!(await creatorMayBePaidById(tx, l.creatorId))) throw Object.assign(new Error('not_available'), { statusCode: 400 });
+      // Nothing to deliver, nothing to sell: a DIGITAL listing's product is
+      // its media, and with none READY the buyer would be charged for an
+      // empty item (fans get no refunds).
+      if (!(await hasDeliverable(tx, l))) throw Object.assign(new Error('no_deliverable'), { statusCode: 409 });
 
       if (l.unlimited) {
         const already = await tx.listingOrder.findFirst({ where: { listingId: l.id, buyerId: req.user.id } });

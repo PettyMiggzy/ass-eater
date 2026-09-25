@@ -1,6 +1,6 @@
-import { parseAbi, type Address } from 'viem';
+import { encodeFunctionData, parseAbi, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi, envInt } from '../lib/chain.js';
+import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, sendTreasuryTx, resolveTreasuryTx } from '../lib/chain.js';
 import { impactBpsOf, allocateHedge, hedgeRemaining } from './treasury-hedge-math.js';
 
 // Fans can deposit $ONLYONE to burn for VIP (core/vip.ts). That balance is
@@ -53,8 +53,55 @@ async function sizeSwap(desiredRaw: bigint, spot: number): Promise<{ amountIn: b
   return null;
 }
 
+/**
+ * Applies a mined swap to the deposits it hedged: the oldest unhedged
+ * deposits absorb `amountIn`, same allocation as always.
+ *
+ * Exactly once per batch. The PENDING -> DONE flip is a guarded update that
+ * runs FIRST, in the same transaction as the allocation, so a second
+ * settlement of the same success (a second worker process, a retry after a
+ * partial failure) matches nothing and allocates nothing -- it used to
+ * advance every deposit's hedgedRaw a second time for tokens sold once.
+ */
+async function applyHedge(batchId: string, amountIn: bigint) {
+  await prisma.$transaction(async (tx) => {
+    const now = new Date();
+    const claimed = await tx.treasuryHedgeBatch.updateMany({ where: { id: batchId, status: 'PENDING' }, data: { status: 'DONE', resolvedAt: now } });
+    if (claimed.count !== 1) return;
+    const pending = await tx.deposit.findMany({ where: { asset: 'ONLYONE', hedgedAt: null }, orderBy: { createdAt: 'asc' } });
+    const alloc = allocateHedge(pending, amountIn, HEDGE_BPS);
+    for (const a of alloc) {
+      await tx.deposit.update({ where: { id: a.id }, data: { hedgedRaw: a.hedgedRaw.toString(), ...(a.done ? { hedgedAt: now } : {}) } });
+    }
+    await tx.treasuryHedgeBatch.update({ where: { id: batchId }, data: { depositCount: alloc.filter((a) => a.done).length } });
+  });
+}
+
+/**
+ * Settles a swap a previous cycle left PENDING (signed, persisted, maybe
+ * broadcast). True when nothing is in flight any more. A receipt wait that
+ * timed out used to leave nothing recorded at all, so the next cycle sold
+ * the same deposits' tokens again.
+ */
+export async function settleInFlightHedge(client = publicClient as any): Promise<boolean> {
+  const b = await prisma.treasuryHedgeBatch.findFirst({ where: { status: 'PENDING' }, orderBy: { createdAt: 'asc' } });
+  if (!b) return true;
+  const r = await resolveTreasuryTx(b.txHash as `0x${string}`, b.nonce, client);
+  if (r.state === 'success') { await applyHedge(b.id, BigInt(b.onlyOneRawIn)); return true; }
+  if (r.state === 'reverted' || r.state === 'dropped') {
+    await prisma.treasuryHedgeBatch.updateMany({ where: { id: b.id, status: 'PENDING' }, data: { status: 'FAILED', resolvedAt: new Date() } });
+    console.error(`treasury-hedge: swap ${b.txHash} ${r.state}; nothing sold`);
+    return true;
+  }
+  console.warn(`treasury-hedge: swap ${b.txHash} still unsettled; not starting another`);
+  return false;
+}
+
 async function sweep() {
   if (!ROUTER || !QUOTER || !process.env.ONLYONE_POOL) return;
+  // The stablecoin side of every quote and impact figure uses HEDGE_STABLE.decimals.
+  await assertStableDecimals();
+  if (!(await settleInFlightHedge())) return;
 
   const pending = await prisma.deposit.findMany({ where: { asset: 'ONLYONE', hedgedAt: null }, orderBy: { createdAt: 'asc' } });
   if (!pending.length) return;
@@ -85,25 +132,22 @@ async function sweep() {
   }
 
   const recipient = treasuryAccount().address;
-  const hash = await withTreasuryLock(() => treasuryWallet().writeContract({
-    address: ROUTER, abi: routerAbi, functionName: 'exactInputSingle',
+  const data = encodeFunctionData({
+    abi: routerAbi, functionName: 'exactInputSingle',
     args: [{ tokenIn: TOKENS.ONLYONE.address, tokenOut: HEDGE_STABLE.address, fee: POOL_FEE, recipient, amountIn: sized.amountIn, amountOutMinimum: sized.amountOutMin, sqrtPriceLimitX96: 0n }],
-  }));
-  const rcpt = await publicClient.waitForTransactionReceipt({ hash });
-  if (rcpt.status !== 'success') { console.error('treasury-hedge: swap reverted', hash); return; }
-
+  });
+  // The batch row exists (PENDING, with the hash) before the swap is
+  // broadcast, so a timeout or restart leaves something to settle instead
+  // of a swap the next cycle cannot see.
+  const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce) => {
+    await prisma.treasuryHedgeBatch.create({ data: {
+      depositCount: 0, onlyOneRawIn: sized.amountIn.toString(), usdcRawOut: sized.amountOut.toString(), priceImpactBps: Math.round(sized.impactBps), txHash: h, nonce, status: 'PENDING',
+    } });
+  });
+  await publicClient.waitForTransactionReceipt({ hash }).catch(() => null);
   // The uncovered remainder of each deposit is intentional treasury exposure,
   // not a balance owed to anyone -- it just stays in the treasury wallet as-is.
-  const alloc = allocateHedge(pending, sized.amountIn, HEDGE_BPS);
-  const now = new Date();
-  await prisma.$transaction(alloc.map((a) => prisma.deposit.update({
-    where: { id: a.id }, data: { hedgedRaw: a.hedgedRaw.toString(), ...(a.done ? { hedgedAt: now } : {}) },
-  })));
-  const doneIds = alloc.filter((a) => a.done).map((a) => a.id);
-
-  await prisma.treasuryHedgeBatch.create({ data: {
-    depositCount: doneIds.length, onlyOneRawIn: sized.amountIn.toString(), usdcRawOut: sized.amountOut.toString(), priceImpactBps: Math.round(sized.impactBps), txHash: hash,
-  } });
+  await settleInFlightHedge();
 }
 
 (async function loop() {

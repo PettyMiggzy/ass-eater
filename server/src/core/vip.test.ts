@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { money, post, isVip, InsufficientFunds, PLATFORM_ID } from './ledger';
 import { subscribeVip, getVipStatus, pendingBurnCents, recordManualBurn, VIP_PERIOD_MS } from './vip';
@@ -46,6 +46,7 @@ beforeEach(async () => {
 async function burnsFor(userId: string) {
   return prisma.tokenBurn.findMany({ where: { refId: userId } });
 }
+const randomHash = () => `0x${randomBytes(32).toString('hex')}`;
 afterAll(() => prisma.$disconnect());
 
 describe('vip.subscribeVip', () => {
@@ -164,7 +165,8 @@ describe('vip.recordManualBurn', () => {
     await fund(fan, 5_000);
     await money(prisma, (tx) => subscribeVip(tx, fan));
 
-    const hash = `0x${'a'.repeat(64)}`;
+    // Unique per run: the table is shared and a hash can only close obligations once.
+    const hash = randomHash();
     const r = await money(prisma, (tx) => recordManualBurn(tx, { txHash: hash, tokensBurned: '1234' }));
 
     expect(r.closed).toBeGreaterThan(0);
@@ -174,13 +176,30 @@ describe('vip.recordManualBurn', () => {
     expect(rows[0].tokensBurned).toBe('1234');
   });
 
+  // One burn transaction closes obligations once. Pasting last month's hash
+  // again (any casing) must not close this month's with no burn behind them.
+  it('refuses a transaction hash that already closed obligations, in any case', async () => {
+    const a = await makeUser();
+    await fund(a, 5_000);
+    await money(prisma, (tx) => subscribeVip(tx, a));
+    const hash = randomHash();
+    await money(prisma, (tx) => recordManualBurn(tx, { txHash: hash.toUpperCase().replace('0X', '0x') }));
+    expect((await burnsFor(a))[0].txHash).toBe(hash.toLowerCase());
+
+    const b = await makeUser();
+    await fund(b, 5_000);
+    await money(prisma, (tx) => subscribeVip(tx, b));
+    await expect(money(prisma, (tx) => recordManualBurn(tx, { txHash: hash }))).rejects.toThrow('tx_already_recorded');
+    expect((await burnsFor(b))[0].executedAt).toBeNull();
+  });
+
   // Revenue that lands after the burn transaction must not be marked burned
   // by a transaction that predates it.
   it('leaves obligations created after the burn still owed', async () => {
     const first = await makeUser();
     await fund(first, 5_000);
     await money(prisma, (tx) => subscribeVip(tx, first));
-    await money(prisma, (tx) => recordManualBurn(tx, { txHash: `0x${'b'.repeat(64)}` }));
+    await money(prisma, (tx) => recordManualBurn(tx, { txHash: randomHash() }));
 
     const later = await makeUser();
     await fund(later, 5_000);

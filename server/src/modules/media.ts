@@ -8,6 +8,7 @@ import { canViewMedia, creatorMayOperate } from '../core/access.js';
 import { getOrCreateWatermarkedUrl, traceCode } from '../lib/watermark.js';
 import { storageKeyOf } from '../core/media-key.js';
 import { maxBytesFor, createUploadWithinQuota } from '../core/upload-limits.js';
+import { transcodeJobOptions } from '../core/transcode-reconcile.js';
 
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm']);
 
@@ -39,7 +40,7 @@ export const media: FastifyPluginAsync = async (app) => {
     // output. Only the request that actually flips the row enqueues.
     const claimed = await prisma.media.updateMany({
       where: { id: m.id, ownerId: req.user.id, status: 'UPLOADING' },
-      data: { status: 'PROCESSING', bytes: Number(head.ContentLength ?? m.bytes) },
+      data: { status: 'PROCESSING', processingSince: new Date(), bytes: Number(head.ContentLength ?? m.bytes) },
     });
     if (!claimed.count) {
       // Someone else already claimed it -- the caller's intent is satisfied
@@ -58,7 +59,19 @@ export const media: FastifyPluginAsync = async (app) => {
     // durable record of how one ended is the Media row (READY or REJECTED,
     // written by workers/transcode.ts), not BullMQ's job sets. No ':' in the id
     // -- BullMQ rejects custom ids containing one.
-    await transcodeQueue.add('transcode', { mediaId: m.id }, { jobId: `transcode-${m.id}`, attempts: 3, backoff: { type: 'exponential', delay: 10_000 }, removeOnComplete: true, removeOnFail: true });
+    //
+    // If the enqueue fails (Redis unreachable) the row goes back to UPLOADING
+    // and the client is told to retry /complete; left PROCESSING with no job
+    // it was stuck for good, since /complete only acts on UPLOADING. (The
+    // reconciler in core/transcode-reconcile.ts is the backstop for a job
+    // lost later.)
+    try {
+      await transcodeQueue.add('transcode', { mediaId: m.id }, transcodeJobOptions(m.id));
+    } catch (err) {
+      req.log.error({ err, mediaId: m.id }, 'transcode enqueue failed; returning the upload to UPLOADING');
+      await prisma.media.updateMany({ where: { id: m.id, status: 'PROCESSING' }, data: { status: 'UPLOADING', processingSince: null } });
+      return reply.code(503).send({ error: 'busy_retry' });
+    }
     return { ok: true, status: 'PROCESSING' };
   });
 

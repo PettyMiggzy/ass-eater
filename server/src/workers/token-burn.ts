@@ -1,6 +1,6 @@
-import { parseAbi, parseEventLogs, parseUnits, type Address } from 'viem';
+import { encodeFunctionData, parseAbi, parseUnits, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, HEDGE_STABLE, erc20Abi, envInt } from '../lib/chain.js';
+import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, sendTreasuryTx, resolveTreasuryTx, onlyOneBurnedIn, DEAD_ADDRESS } from '../lib/chain.js';
 import { getUsdPrice } from '../lib/price.js';
 
 /**
@@ -29,6 +29,13 @@ import { getUsdPrice } from '../lib/price.js';
  *    than being a claim in a dashboard.
  *  - **It batches.** A $20 swap every time someone subscribes would pay more
  *    in gas and price impact than it destroys.
+ *  - **A swap is never paid for twice.** The swap is signed locally and its
+ *    hash persisted on the batch's rows (pendingTxHash) BEFORE it is
+ *    broadcast. A receipt wait that times out, an RPC error or a restart
+ *    used to leave the rows plain pending, so the next run bought and burned
+ *    the same obligations again out of treasury funds. Now every run first
+ *    settles any in-flight swap from the chain and starts a new one only
+ *    when nothing is in flight.
  */
 
 // OFF by default. The founder holds the money and burns manually once a
@@ -49,7 +56,7 @@ const MAX_SLIPPAGE_BPS = BigInt(envInt('TOKEN_BURN_MAX_SLIPPAGE_BPS', 300, 0, 10
 // Not address(0): many ERC-20s reject transfers to it, which would revert the
 // burn rather than perform it. 0x…dEaD is the conventional sink and is
 // visible as a holder on any explorer, so the burn is legible to holders.
-const DEAD = '0x000000000000000000000000000000000000dEaD' as Address;
+const DEAD = DEAD_ADDRESS;
 
 // Only a Uniswap V3 SwapRouter02 single-pool route is implemented. The live
 // $ONLYONE pool is V4 (lib/price.ts), so with the default pool version this
@@ -61,10 +68,42 @@ const routerAbi = parseAbi([
   'function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut)',
 ]);
 
+/**
+ * Settles the swap a previous run left in flight. Returns true when nothing
+ * is in flight any more (a new batch may start), false when it is still
+ * undecided -- then this run does nothing else: doubt never re-sends.
+ */
+export async function settleInFlightBurn(client = publicClient as any): Promise<boolean> {
+  const inFlight = await prisma.tokenBurn.findFirst({ where: { executedAt: null, pendingTxHash: { not: null } }, select: { pendingTxHash: true, pendingNonce: true } });
+  if (!inFlight?.pendingTxHash) return true;
+  const hash = inFlight.pendingTxHash as `0x${string}`;
+  const r = await resolveTreasuryTx(hash, inFlight.pendingNonce, client);
+  if (r.state === 'success') {
+    const burned = onlyOneBurnedIn(r.receipt.logs);
+    const done = await prisma.tokenBurn.updateMany({
+      where: { executedAt: null, pendingTxHash: hash },
+      data: { executedAt: new Date(), txHash: hash.toLowerCase(), tokensBurned: burned.toString(), pendingTxHash: null, pendingNonce: null, pendingSince: null },
+    });
+    console.log(`token-burn: settled in-flight swap ${hash} (${done.count} obligations)`);
+    return true;
+  }
+  if (r.state === 'reverted' || r.state === 'dropped') {
+    // Nothing was bought: the obligations are owed again, as they were.
+    await prisma.tokenBurn.updateMany({ where: { executedAt: null, pendingTxHash: hash }, data: { pendingTxHash: null, pendingNonce: null, pendingSince: null } });
+    console.error(`token-burn: in-flight swap ${hash} ${r.state}; obligations back to pending`);
+    return true;
+  }
+  console.warn(`token-burn: swap ${hash} still unsettled; not starting another`);
+  return false;
+}
+
 export async function runBurnBatch() {
   if (!ROUTER || !TOKENS.ONLYONE.address || !V3_ONLY) return; // nothing to swap through yet
+  // amountIn below is scaled with HEDGE_STABLE.decimals; never on an unchecked scale.
+  await assertStableDecimals();
+  if (!(await settleInFlightBurn())) return;
 
-  const pending = await prisma.tokenBurn.findMany({ where: { executedAt: null }, orderBy: { createdAt: 'asc' }, take: 500 });
+  const pending = await prisma.tokenBurn.findMany({ where: { executedAt: null, pendingTxHash: null }, orderBy: { createdAt: 'asc' }, take: 500 });
   if (!pending.length) return;
 
   const totalCents = pending.reduce((sum, r) => sum + r.usdCents, 0n);
@@ -101,8 +140,8 @@ export async function runBurnBatch() {
   // Straight to the dead address as the swap's recipient: the tokens are
   // destroyed in the same transaction that buys them, so there is no window in
   // which the treasury is holding tokens it has already promised to burn.
-  const hash = await withTreasuryLock(() => treasuryWallet().writeContract({
-    address: ROUTER,
+  const ids = pending.map((r) => r.id);
+  const data = encodeFunctionData({
     abi: routerAbi,
     functionName: 'exactInputSingle',
     args: [{
@@ -114,37 +153,32 @@ export async function runBurnBatch() {
       amountOutMinimum,
       sqrtPriceLimitX96: 0n,
     }],
-  }));
-
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  if (receipt.status !== 'success') {
-    console.error('token-burn: swap reverted, obligations left pending', hash);
-    return;
-  }
+  });
+  // Persist the hash on exactly these rows BEFORE broadcasting (see header).
+  const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce) => {
+    const claimed = await prisma.tokenBurn.updateMany({
+      where: { id: { in: ids }, executedAt: null, pendingTxHash: null },
+      data: { pendingTxHash: h, pendingNonce: nonce, pendingSince: new Date() },
+    });
+    // A manual burn record closed some of them meanwhile: don't buy for those.
+    if (claimed.count !== ids.length) {
+      await prisma.tokenBurn.updateMany({ where: { pendingTxHash: h, executedAt: null }, data: { pendingTxHash: null, pendingNonce: null, pendingSince: null } });
+      throw new Error('token-burn: obligations changed while preparing the swap; retrying next run');
+    }
+  });
 
   // What was actually destroyed is the $ONLYONE that arrived at the dead
   // address in this transaction -- read off the receipt, not assumed. The
-  // stablecoin spent (amountIn) is a different token in different units;
-  // recording it here made the on-chain-checkable burn figure wrong by
-  // construction.
-  const burned = tokensSentToDead(receipt.logs);
-  await prisma.tokenBurn.updateMany({
-    where: { id: { in: pending.map((r) => r.id) } },
-    data: { executedAt: new Date(), txHash: hash, tokensBurned: burned.toString() },
-  });
-  console.log(`token-burn: burned ${totalCents} cents' worth across ${pending.length} obligations (${hash})`);
+  // wait may time out; the rows then stay in flight and the next run
+  // settles them (settleInFlightBurn) rather than swapping again.
+  await publicClient.waitForTransactionReceipt({ hash }).catch(() => null);
+  await settleInFlightBurn();
+  console.log(`token-burn: swap ${hash} for ${totalCents} cents' worth across ${pending.length} obligations`);
 }
 
-/** Sum of $ONLYONE Transfer amounts to the dead address in a receipt's logs. */
+/** Sum of $ONLYONE Transfer amounts to the dead address in a receipt's logs (lib/chain.ts onlyOneBurnedIn). */
 export function tokensSentToDead(logs: { address: string; topics: readonly `0x${string}`[] | `0x${string}`[]; data: `0x${string}` }[]): bigint {
-  const transfers = parseEventLogs({ abi: erc20Abi, eventName: 'Transfer', logs: logs as any, strict: false });
-  let total = 0n;
-  for (const t of transfers) {
-    if (t.address.toLowerCase() !== TOKENS.ONLYONE.address?.toLowerCase()) continue;
-    if ((t.args as any).to?.toLowerCase() !== DEAD.toLowerCase()) continue;
-    total += BigInt((t.args as any).value ?? 0n);
-  }
-  return total;
+  return onlyOneBurnedIn(logs);
 }
 
 /**

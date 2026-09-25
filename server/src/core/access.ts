@@ -2,8 +2,9 @@ import { prisma } from '../lib/prisma.js';
 import { isVip } from './ledger.js';
 
 /**
- * A creator's content is served, and sold, only while their account is
- * ACTIVE. Suspending or banning (modules/admin.ts setStatus) used to change
+ * A creator's content is served only while their account is ACTIVE (and is
+ * SOLD only while they are also approved -- core/creator-standing.ts
+ * creatorMayBePaid). Suspending or banning (modules/admin.ts setStatus) used to change
  * the User row and nothing else, so a creator banned for non-consensual
  * content kept every PUBLIC post, every media URL and every marketplace
  * listing reachable -- and sellable. The owner themselves is exempt; nobody
@@ -14,19 +15,10 @@ export async function creatorIsActive(creatorId: string) {
   return u?.status === 'ACTIVE';
 }
 
-/**
- * May this account act as a creator (publish, sell, price messages,
- * withdraw)? KYC-approved on this stack, AND -- for an account bridged from
- * the Next.js site -- approved THERE ('active' as last seen by
- * lib/bridge.ts). The site's approval queue, including its §2257 gate, is
- * the platform's creator approval; server-side KYC alone is not.
- */
-export function creatorMayOperate(u: { role: string; kycStatus: string; siteUid?: string | null; siteCreatorStatus?: string | null } | null) {
-  if (!u) return false;
-  if (u.role === 'ADMIN') return u.kycStatus === 'APPROVED';
-  if (u.role !== 'CREATOR' || u.kycStatus !== 'APPROVED') return false;
-  return !u.siteUid || u.siteCreatorStatus === 'active';
-}
+// creatorMayOperate / creatorMayBePaid live in core/creator-standing.ts so
+// core/ledger.ts can use them without importing this module (which imports
+// ledger.ts). Re-exported here for the existing callers.
+export { creatorMayOperate, creatorMayBePaid, creatorMayBePaidById, OPERATING_CREATOR_USER_WHERE } from './creator-standing.js';
 
 /**
  * True while `obj` is inside its VIP early-access window for this viewer.
@@ -107,8 +99,15 @@ export async function canViewMedia(userId: string | null, mediaId: string) {
   });
   if (!m || m.status !== 'READY') return { ok: false as const };
   if (m.ownerId === userId) return { ok: true as const, m };
-  if (m.post) return { ok: await canViewPost(userId, m.post), m };
-  if (m.message && userId) return { ok: await canViewMessage(userId, m.message), m };
-  if (m.listing) return { ok: await canViewListing(userId, m.listing.id, m.listing.creatorId), m };
-  return { ok: false as const };
+  // Any context that grants access grants it. Media is only ever attached to
+  // one context (the attach routes all require postId, messageId and
+  // listingId to be null), but this used to be first-match -- post, then
+  // message, then listing -- so a listing's product that also got attached to
+  // a post was decided by the POST's rule, and the people who BOUGHT the
+  // listing were locked out of what they paid for.
+  if (!m.post && !m.message && !m.listing) return { ok: false as const };
+  if (m.post && (await canViewPost(userId, m.post))) return { ok: true as const, m };
+  if (m.message && userId && (await canViewMessage(userId, m.message))) return { ok: true as const, m };
+  if (m.listing && (await canViewListing(userId, m.listing.id, m.listing.creatorId))) return { ok: true as const, m };
+  return { ok: false as const, m };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
-import { hlsArgs, sanitizeImage } from './transcode-steps.js';
+import { hlsArgs, sanitizeImage, previewArgs } from './transcode-steps.js';
 
 describe('hlsArgs', () => {
   it('maps audio only when the source has it', () => {
@@ -29,5 +29,19 @@ describe('sanitizeImage', () => {
   it('keeps the uploaded format', async () => {
     const png = await sharp({ create: { width: 4, height: 4, channels: 4, background: '#0f0' } }).png().toBuffer();
     expect((await sharp(await sanitizeImage(png, 'image/png')).metadata()).format).toBe('png');
+  });
+});
+
+describe('previewArgs', () => {
+  // An animated GIF is sanitized with every frame kept; the preview is ONE
+  // JPEG. Without -frames:v 1 the image2 muxer refused frame 2 and every
+  // animated GIF upload ended REJECTED.
+  it('always asks ffmpeg for exactly one frame, for images and videos', () => {
+    for (const a of [previewArgs('/s', '/p.jpg'), previewArgs('/s', '/p.jpg', { seekSeconds: 1 })]) {
+      expect(a[a.indexOf('-frames:v') + 1]).toBe('1');
+      expect(a.indexOf('-frames:v')).toBeGreaterThan(a.indexOf('-i'));
+      expect(a[a.length - 1]).toBe('/p.jpg');
+    }
+    expect(previewArgs('/s', '/p.jpg', { seekSeconds: 1 }).slice(0, 3)).toEqual(['-y', '-ss', '00:00:01']);
   });
 });

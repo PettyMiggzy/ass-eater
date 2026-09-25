@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, toHex, erc20Abi, parseAbiItem, type Address, type PrivateKeyAccount, type WalletClient, type Chain, type Transport } from 'viem';
+import { createPublicClient, createWalletClient, http, toHex, erc20Abi, parseAbiItem, parseEventLogs, keccak256, TransactionReceiptNotFoundError, TransactionNotFoundError, type Address, type PrivateKeyAccount, type WalletClient, type Chain, type Transport } from 'viem';
 import { HDKey, mnemonicToAccount, privateKeyToAccount, publicKeyToAddress, english } from 'viem/accounts';
 import { robinhood, robinhoodTestnet } from 'viem/chains';
 import { ECDH, createHash } from 'crypto';
@@ -55,6 +55,21 @@ export function treasuryAddress(): Address | null {
   const a = process.env.TREASURY_ADDRESS?.trim();
   if (a && /^0x[0-9a-fA-F]{40}$/.test(a)) return a as Address;
   try { return treasuryAccount().address; } catch { return null; }
+}
+/**
+ * The wallets whose burns count as the platform's (admin token-burn
+ * record): the treasury, plus any comma-separated BURN_SENDER_ADDRESSES
+ * (e.g. the founder's own burn wallet, if he burns from one). Invalid
+ * entries are ignored.
+ */
+export function burnSenders(): Address[] {
+  const out = new Set<string>();
+  const t = treasuryAddress();
+  if (t) out.add(t.toLowerCase());
+  for (const a of String(process.env.BURN_SENDER_ADDRESSES ?? '').split(',').map((x) => x.trim())) {
+    if (/^0x[0-9a-fA-F]{40}$/.test(a)) out.add(a.toLowerCase());
+  }
+  return [...out] as Address[];
 }
 export function treasuryWallet(): WalletClient<Transport, Chain, PrivateKeyAccount> {
   if (!_treasuryClient) _treasuryClient = createWalletClient({ account: treasuryAccount(), chain, transport: http(process.env.RPC_URL) });
@@ -180,6 +195,127 @@ export async function assertTokenDecimals() {
     }
   }
 }
+/**
+ * The same check for the ONE token the treasury pays and swaps with
+ * (HEDGE_STABLE), memoized for the process. The payout worker, the token
+ * burn and the treasury hedge all turn cents into raw units with
+ * HEDGE_STABLE.decimals, and none of them may sign on a scale nobody
+ * checked: decimals configured too LOW make every payout send a fraction of
+ * what is owed -- the transfer succeeds and the row is marked SENT.
+ *
+ * Resolves once the contract agrees. A mismatch is sticky (retrying cannot
+ * fix config; restart after fixing it); an RPC failure is not cached, so the
+ * next caller tries again.
+ */
+let stableDecimalsCheck: Promise<void> | null = null;
+export function assertStableDecimals(client: { readContract: (a: any) => Promise<unknown> } = publicClient): Promise<void> {
+  if (!stableDecimalsCheck) {
+    const t = HEDGE_STABLE;
+    const check = (async () => {
+      if (!t.address) throw new TokenDecimalsMismatchError(`${t.symbol}: no contract address configured`);
+      const onChain = await client.readContract({ address: t.address, abi: erc20Abi, functionName: 'decimals' });
+      if (Number(onChain) !== t.decimals) {
+        throw new TokenDecimalsMismatchError(`${t.symbol} at ${t.address} reports ${onChain} decimals, configured as ${t.decimals}. Refusing to sign treasury transfers on a wrong scale.`);
+      }
+    })();
+    stableDecimalsCheck = check;
+    check.catch((e) => { if (!(e instanceof TokenDecimalsMismatchError) && stableDecimalsCheck === check) stableDecimalsCheck = null; });
+  }
+  return stableDecimalsCheck;
+}
+/** Test hook: forget a memoized result. */
+export function resetStableDecimalsCheck() { stableDecimalsCheck = null; }
+
+/**
+ * Signs a treasury transaction, hands its hash (and nonce) to `persist`, and
+ * only then broadcasts it -- all under the treasury lock. The hash of a
+ * signed transaction is known before it is sent, so recording it first means
+ * a receipt timeout, an RPC error or a restart at ANY later point leaves a
+ * hash the next run can settle from the chain instead of guessing -- the
+ * payout worker's pattern, shared with the burn and the hedge. If `persist`
+ * throws, nothing is broadcast.
+ */
+export async function sendTreasuryTx(
+  req: { to: Address; data: `0x${string}` },
+  persist: (hash: `0x${string}`, nonce: number) => Promise<void>,
+): Promise<`0x${string}`> {
+  return withTreasuryLock(async () => {
+    const wallet = treasuryWallet();
+    const request = await wallet.prepareTransactionRequest(req as any);
+    const serialized = await wallet.signTransaction(request as any);
+    const hash = keccak256(serialized);
+    await persist(hash, Number(request.nonce));
+    await wallet.sendRawTransaction({ serializedTransaction: serialized });
+    return hash;
+  });
+}
+
+type ReceiptClient = {
+  getTransactionReceipt: (a: { hash: `0x${string}` }) => Promise<any>;
+  getTransaction: (a: { hash: `0x${string}` }) => Promise<any>;
+  getTransactionCount: (a: { address: Address; blockTag: 'latest' }) => Promise<number>;
+};
+
+/**
+ * Where a treasury transaction persisted by sendTreasuryTx() stands:
+ *  - 'success' / 'reverted': it was mined (receipt returned);
+ *  - 'dropped': no node knows it and the treasury's CONFIRMED nonce has moved
+ *    past it -- exactly one transaction holds a nonce, so it can never land;
+ *  - 'unknown': anything else (pending, not yet propagated, an RPC error).
+ *    Callers must do nothing on 'unknown' -- doubt never re-sends.
+ */
+export async function resolveTreasuryTx(
+  hash: `0x${string}`, nonce: number | null, client: ReceiptClient = publicClient as any, treasury?: Address,
+): Promise<{ state: 'success' | 'reverted' | 'dropped' | 'unknown'; receipt?: any }> {
+  try {
+    const receipt = await client.getTransactionReceipt({ hash }).catch((e: unknown) => {
+      if (e instanceof TransactionReceiptNotFoundError) return null;
+      throw e;
+    });
+    if (receipt) return { state: receipt.status === 'success' ? 'success' : 'reverted', receipt };
+    const known = await client.getTransaction({ hash }).then(() => true, (e: unknown) => {
+      if (e instanceof TransactionNotFoundError) return false;
+      throw e;
+    });
+    if (known || nonce == null) return { state: 'unknown' };
+    const me = treasury ?? treasuryAccount().address;
+    const confirmed = await client.getTransactionCount({ address: me, blockTag: 'latest' });
+    return { state: confirmed > nonce ? 'dropped' : 'unknown' };
+  } catch {
+    return { state: 'unknown' };
+  }
+}
+
+// Burn sinks. 0x…dEaD is the conventional one (many ERC-20s reject transfers
+// to address(0)); a token with a real burn() emits a Transfer to address(0).
+export const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD' as Address;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/**
+ * Sum of $ONLYONE Transfer amounts to a burn sink (0x…dEaD, or address(0)
+ * when `includeZero`) in a receipt's logs. Read off the receipt, never
+ * assumed: the stablecoin spent in a swap is a different token in different
+ * units.
+ */
+export function onlyOneBurnedIn(
+  logs: { address: string; topics: readonly `0x${string}`[] | `0x${string}`[]; data: `0x${string}` }[],
+  opts: { includeZero?: boolean; from?: readonly string[] } = {},
+): bigint {
+  const transfers = parseEventLogs({ abi: erc20Abi, eventName: 'Transfer', logs: logs as any, strict: false });
+  // When given, only burns sent FROM one of these addresses count -- so a
+  // stranger's public burn cannot be passed off as the platform's.
+  const from = opts.from ? new Set(opts.from.map((a) => a.toLowerCase())) : null;
+  let total = 0n;
+  for (const t of transfers) {
+    if (!TOKENS.ONLYONE.address || t.address.toLowerCase() !== TOKENS.ONLYONE.address.toLowerCase()) continue;
+    if (from && !from.has(String((t.args as any).from ?? '').toLowerCase())) continue;
+    const to = String((t.args as any).to ?? '').toLowerCase();
+    if (to !== DEAD_ADDRESS.toLowerCase() && !(opts.includeZero && to === ZERO_ADDRESS)) continue;
+    total += BigInt((t.args as any).value ?? 0n);
+  }
+  return total;
+}
+
 /** address -> ledger asset. Every accepted stablecoin maps to STABLE; the token to ONLYONE. */
 export const ADDR_TO_ASSET = new Map<string, 'STABLE' | 'ONLYONE'>([
   ...STABLECOINS.map((s) => [s.address.toLowerCase(), 'STABLE' as const] as [string, 'STABLE']),

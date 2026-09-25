@@ -3,12 +3,12 @@ import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
 import { prisma } from '../lib/prisma.js';
-import { charge, money } from '../core/ledger.js';
+import { charge, money, FEES, zeroOrAtLeast } from '../core/ledger.js';
 import { isSubscribed, creatorIsActive } from '../core/access.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { LK, rooms } from '../core/livekit.js';
 import { ensureMinutePaid, payNextMinute } from '../core/live-billing.js';
-import { endStaleStreamFor, checkViewerOnJoin, viewerTokenTtlSeconds } from '../core/live-sweep.js';
+import { endStaleStreamFor, checkViewerOnJoin, viewerTokenTtlSeconds, hasTicket, minuteRefusal } from '../core/live-sweep.js';
 
 let _receiver: WebhookReceiver | undefined;
 const receiver = () => (_receiver ??= new WebhookReceiver(LK.key, LK.secret));
@@ -30,11 +30,13 @@ export const live: FastifyPluginAsync = async (app) => {
   app.post('/start', { preHandler: app.creatorOk }, async (req, reply) => {
     const b = z.object({
       title: z.string().max(120),
-      ticketPriceCents: z.number().int().min(0).max(50_000).default(0),
+      // 0 = off; otherwise at least FEES.MIN_TICKET_CENTS / MIN_PER_MINUTE_CENTS
+      // so the platform's 20% never rounds down to nothing (see FEES).
+      ticketPriceCents: z.number().int().min(0).max(50_000).refine(zeroOrAtLeast(FEES.MIN_TICKET_CENTS), 'ticket_min_price').default(0),
       // Capped well below the ticket cap on purpose: this is charged every
       // minute, so a fat-fingered extra zero here costs a viewer sixty times
       // more per hour than the same mistake on a ticket.
-      perMinuteCents: z.number().int().min(0).max(2_000).default(0),
+      perMinuteCents: z.number().int().min(0).max(2_000).refine(zeroOrAtLeast(FEES.MIN_PER_MINUTE_CENTS), 'per_minute_min_price').default(0),
     }).parse(req.body);
     // A stream whose room is gone (crashed browser, no webhook) is ended here
     // rather than blocking the creator with already_live indefinitely.
@@ -115,6 +117,13 @@ export const live: FastifyPluginAsync = async (app) => {
     if (s.perMinuteCents <= 0) return reply.code(400).send({ error: 'not_per_minute' });
     // A creator watching their own stream is not a customer of it.
     if (s.creatorId === req.user.id) return { paidMinutes: null, perMinuteCents: 0 };
+    // The same entitlement /join applies, because this also hands out a room
+    // token. On a stream with a ticket price the ticket comes FIRST (bought
+    // through /join); without this check a fan skipped /join, called this
+    // once a minute and watched a $50-ticket stream for the per-minute price.
+    // And a suspended/banned creator's stream is not joinable at all.
+    const refused = await minuteRefusal(req.user.id, s);
+    if (refused) return reply.code(refused === 'not_live' ? 404 : 403).send({ error: refused });
     const r = await payNextMinute(req.user.id, s);
     // A fresh token covering the time just bought: the one /join issued ends
     // with the viewer's earlier paid time, so a reconnect needs this one.
@@ -156,17 +165,21 @@ export const live: FastifyPluginAsync = async (app) => {
   app.get('/:id/events', { websocket: true }, (socket: any, req: any) => {
     const id = String(req.params.id ?? '');
     // publish() prefixes with "u:" — tips.ts publishes to `stream:<id>`
-    // Only someone who could watch the stream gets its overlay feed: the
-    // creator, a subscriber, a ticket holder, or a viewer with paid minutes.
+    // Only someone who could watch the stream gets its overlay feed -- the
+    // same entitlement /join applies: the creator; on a ticketed stream a
+    // ticket holder (and nobody else, subscribers included, since /join
+    // charges them the ticket too); otherwise a subscriber, or a viewer with
+    // paid minutes on a per-minute stream.
     serveRealtimeChannel(app, socket, async (user) => {
       if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-      const s = await prisma.liveStream.findUnique({ where: { id }, select: { id: true, creatorId: true } });
+      const s = await prisma.liveStream.findUnique({ where: { id }, select: { id: true, creatorId: true, ticketPriceCents: true, perMinuteCents: true } });
       if (!s) return null;
-      if (s.creatorId !== user.id && !(await creatorIsActive(s.creatorId))) return null;
-      const ok = s.creatorId === user.id
-        || (await isSubscribed(user.id, s.creatorId))
-        || !!(await prisma.liveTicket.findUnique({ where: { fanId_streamId: { fanId: user.id, streamId: s.id } } }))
-        || !!(await prisma.liveMinute.findFirst({ where: { fanId: user.id, streamId: s.id }, select: { minuteIndex: true } }));
+      if (s.creatorId === user.id) return `u:stream:${id}`;
+      if (!(await creatorIsActive(s.creatorId))) return null;
+      let ok: boolean;
+      if (s.ticketPriceCents > 0) ok = await hasTicket(user.id, s.id);
+      else ok = (await isSubscribed(user.id, s.creatorId))
+        || (s.perMinuteCents > 0 && !!(await prisma.liveMinute.findFirst({ where: { fanId: user.id, streamId: s.id }, select: { minuteIndex: true } })));
       return ok ? `u:stream:${id}` : null;
     });
   });

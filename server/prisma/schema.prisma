@@ -442,8 +442,15 @@ model Media {
   // holds; the real storage object is the source's -- see core/media-key.ts.
   sourceMediaId String?
   createdAt     DateTime    @default(now())
+  // When the row last entered PROCESSING (POST /media/:id/complete, or a
+  // re-queue by the reconciler in core/transcode-reconcile.ts), and how many
+  // times the reconciler has had to re-queue a lost/stalled transcode job.
+  // Past the cap the media is REJECTED so a poison file cannot loop forever.
+  processingSince   DateTime?
+  transcodeRequeues Int         @default(0)
 
   @@index([sourceMediaId])
+  @@index([status, processingSince])
 }
 
 model Conversation {
@@ -551,8 +558,17 @@ model TokenBurn {
   executedAt   DateTime?
   txHash       String? // the on-chain swap+burn, once done
   tokensBurned String? // raw units actually destroyed
+  // The automatic burner's swap for this obligation, persisted BEFORE it is
+  // broadcast (workers/token-burn.ts). While set, the obligation is in
+  // flight: the next run settles it from the chain (success -> executed,
+  // revert / provably dropped -> cleared) before it may start a new swap, so
+  // a receipt timeout or restart never buys and burns the same money twice.
+  pendingTxHash String?
+  pendingNonce  Int?
+  pendingSince  DateTime?
 
   @@index([executedAt])
+  @@index([pendingTxHash])
 }
 
 model LedgerEntry {
@@ -626,7 +642,17 @@ model TreasuryHedgeBatch {
   usdcRawOut     String
   priceImpactBps Int
   txHash         String
-  createdAt      DateTime @default(now())
+  // 'PENDING' from the moment the swap is signed (persisted before it is
+  // broadcast) until the chain settles it: 'DONE' (deposits' hedgedRaw
+  // advanced) or 'FAILED' (reverted / provably dropped, nothing sold). A
+  // PENDING batch blocks the next swap, so a receipt timeout can never sell
+  // the same deposits twice. Rows from before this column existed are DONE.
+  status         String    @default("DONE")
+  nonce          Int?
+  resolvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([status])
 }
 
 model Payout {
@@ -645,6 +671,16 @@ model Payout {
   // a payout interrupted mid-flight can be settled later (the reconciler in
   // workers/payout-worker.ts proves a never-broadcast tx dead by nonce).
   nonce       Int?
+  // When the worker signed txHash. The reconciler's automatic-refund window
+  // is measured from this, not from createdAt (the REQUEST time -- a payout
+  // held for days before signing was otherwise never auto-settled).
+  signedAt    DateTime?
+  // The worker's own zero-value nonce-cancel for txHash, persisted before it
+  // is broadcast. A never-sent payout is only refunded automatically when
+  // THIS transaction is what consumed the nonce -- a nonce consumed by
+  // anything else (e.g. a hand-sent treasury transfer settling it) is left
+  // for an admin, because that transfer may itself have paid the creator.
+  cancelTxHash String?
   status      PayoutStatus   @default(PENDING)
   error       String?
   createdAt   DateTime       @default(now())
@@ -653,6 +689,18 @@ model Payout {
 model ChainCursor {
   chainId   Int    @id
   lastBlock BigInt
+}
+
+// One row per tip request, keyed by the client's idempotency key: a retried
+// or double-clicked POST /tips collides on the primary key inside the charge's
+// transaction and gets the first request's result instead of paying again.
+model TipRequest {
+  fanId     String
+  key       String // client-generated uuid, one per tip the fan intends
+  tipId     String
+  createdAt DateTime @default(now())
+
+  @@id([fanId, key])
 }
 
 // ---------- LIVE ----------

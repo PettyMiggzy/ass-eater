@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
-import { charge, money, isVip, FEES } from '../core/ledger.js';
+import { charge, money, isVip, FEES, zeroOrAtLeast } from '../core/ledger.js';
 import { canViewMessage, isSubscribed, creatorMayOperate } from '../core/access.js';
 import { publish, broadcastQueue } from '../lib/redis.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
@@ -91,7 +91,10 @@ export const messages: FastifyPluginAsync = async (app) => {
 
   app.post('/to/:userId', { preHandler: app.auth }, async (req: any, reply) => {
     const b = z.object({
-      text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).default(0),
+      text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]),
+      // 0 = free; a priced message is at least FEES.MIN_PRICED_MESSAGE_CENTS so
+      // the platform's 10% cannot round down to nothing (see FEES).
+      priceCents: z.number().int().min(0).max(50_000).refine(zeroOrAtLeast(FEES.MIN_PRICED_MESSAGE_CENTS), 'message_min_price').default(0),
       // What a fan was shown as the price of sending this (the creator's
       // published dmPriceCents, floored). Required for fan senders: the
       // creator can change their price, and an admin the floor, between the
@@ -158,8 +161,20 @@ export const messages: FastifyPluginAsync = async (app) => {
       const conv = await tx.conversation.upsert({ where: { aId_bId: pair(req.user.id, to) }, create: pair(req.user.id, to), update: { updatedAt: new Date() } });
       const m = await tx.message.create({ data: { conversationId: conv.id, senderId: req.user.id, text: b.text, priceCents: b.priceCents } });
       if (b.mediaIds.length) {
-        const r = await tx.media.updateMany({ where: { id: { in: b.mediaIds }, ownerId: req.user.id, postId: null, messageId: null }, data: { messageId: m.id } });
-        if (r.count !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+        // Same rules as a mass DM (POST /broadcast): every attachment must be
+        // the sender's own unattached original -- never media already sold
+        // as a listing's product (re-homing it cut the listing's buyers off,
+        // core/access.ts canViewMedia) or someone's broadcast copy -- and
+        // READY. A priced DM used to accept an upload still UPLOADING, which
+        // could later be swept or REJECTED: the fan paid for a message whose
+        // media never became viewable.
+        const ids = [...new Set(b.mediaIds)];
+        if (ids.length !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+        const found = await tx.media.findMany({ where: { id: { in: ids }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null }, select: { status: true } });
+        if (found.length !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+        if (found.some((x) => x.status !== 'READY')) throw Object.assign(new Error('media_not_ready'), { statusCode: 400 });
+        const r = await tx.media.updateMany({ where: { id: { in: ids }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: 'READY' }, data: { messageId: m.id } });
+        if (r.count !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
       return tx.message.findUniqueOrThrow({ where: { id: m.id }, include: { media: { select: { id: true, mime: true, previewKey: true } } } });
     });
@@ -206,7 +221,7 @@ export const messages: FastifyPluginAsync = async (app) => {
 
   // Mass DM to all active subscribers (huge OF revenue feature: paid mass PPV drops)
   app.post('/broadcast', { preHandler: app.creatorOk }, async (req, reply) => {
-    const b = z.object({ text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).default(0) }).parse(req.body);
+    const b = z.object({ text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).refine(zeroOrAtLeast(FEES.MIN_PRICED_MESSAGE_CENTS), 'message_min_price').default(0) }).parse(req.body);
     // Every requested attachment must exist, belong to this creator, be an
     // original (not someone's broadcast copy) and be READY. The worker used
     // to filter silently to what was ready and send the priced message

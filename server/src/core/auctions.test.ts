@@ -14,7 +14,7 @@ async function makeUser() {
 
 async function makeCreator() {
   const userId = await makeUser();
-  await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR' } });
+  await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR', kycStatus: 'APPROVED' } });
   await prisma.creatorProfile.create({ data: { userId, displayName: 'Test Creator', payoutAsset: 'STABLE' } });
   return userId;
 }
@@ -40,6 +40,9 @@ async function makeAuctionListing(creatorId: string, opts: { startingBidCents?: 
       saleType: 'AUCTION', priceCents: opts.startingBidCents ?? 1000,
       auctionEndsAt: new Date(Date.now() + (opts.endsInMs ?? 3_600_000)),
       reserveCents: opts.reserveCents, minBidIncrementCents: opts.minBidIncrementCents,
+      // A DIGITAL listing's product is its media; without a READY item there
+      // is nothing to deliver and bids are refused (hasDeliverable).
+      ...((opts.kind ?? 'DIGITAL') === 'DIGITAL' ? { media: { create: { ownerId: creatorId, key: `raw/${creatorId}/${randomUUID()}`, mime: 'image/jpeg', status: 'READY' } } } : {}),
     },
   });
 }

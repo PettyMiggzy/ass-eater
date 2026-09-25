@@ -101,7 +101,10 @@ export const posts: FastifyPluginAsync = async (app) => {
     return prisma.$transaction(async (tx) => {
       const p = await tx.post.create({ data: { creatorId: req.user.id, text: b.text, visibility: b.visibility, priceCents: b.visibility === 'PPV' ? b.priceCents : 0, vipEarlyUntil: b.earlyAccessHours ? new Date(Date.now() + b.earlyAccessHours * 3600_000) : null } });
       if (b.mediaIds.length) {
-        const r = await tx.media.updateMany({ where: { id: { in: b.mediaIds }, ownerId: req.user.id, postId: null, messageId: null }, data: { postId: p.id } });
+        // Unattached originals only: media already sold as a marketplace
+        // listing's product (listingId) or a mass-DM copy (sourceMediaId) is
+        // never re-homed onto a post -- see core/access.ts canViewMedia.
+        const r = await tx.media.updateMany({ where: { id: { in: b.mediaIds }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null }, data: { postId: p.id } });
         if (r.count !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
       return tx.post.findUnique({ where: { id: p.id }, include: { media: true } });

@@ -1,5 +1,6 @@
 import { post, lockBalance, InsufficientFunds, isVip, type Tx, postPlatformRevenue } from './ledger.js';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS } from './marketplace-fees.js';
+import { creatorMayBePaidById } from './creator-standing.js';
 
 // eBay-style auctions on the marketplace. Bids settle in the USD-backed
 // balanceCents pool ONLY -- never the $ONLYONE discount pool. A bid has to
@@ -54,9 +55,25 @@ async function withdrawableOf(tx: Tx, userId: string) {
   return a?.withdrawableCents ?? 0n;
 }
 
+/**
+ * May this auction's seller be paid right now -- not suspended or banned AND
+ * still approved (core/creator-standing.ts). Status alone let a creator whose
+ * approval was withdrawn keep taking bids, and be paid at close.
+ */
 async function sellerActive(tx: Tx, creatorId: string) {
-  const u = await tx.user.findUnique({ where: { id: creatorId }, select: { status: true } });
-  return u?.status === 'ACTIVE';
+  return creatorMayBePaidById(tx, creatorId);
+}
+
+/**
+ * Does this listing have something to deliver? A DIGITAL listing's product
+ * is its media (core/access.ts canViewListing), so at least one attached
+ * item must be READY -- still uploading, never completed, or REJECTED by
+ * transcode/moderation all mean a buyer would pay for nothing. Physical
+ * items ship; their media is optional.
+ */
+export async function hasDeliverable(tx: Tx, listing: { id: string; kind: string }) {
+  if (listing.kind === 'PHYSICAL') return true;
+  return (await tx.media.count({ where: { listingId: listing.id, status: 'READY' } })) > 0;
 }
 
 export async function placeBid(
@@ -74,6 +91,8 @@ export async function placeBid(
   // A suspended or banned seller's auctions stay up only so the close can
   // release holds -- nobody new gets their money tied up in one.
   if (!(await sellerActive(tx, listing.creatorId))) throw statusCode('not_available', 400);
+  // Nobody ties money up bidding on an item with nothing to deliver.
+  if (!(await hasDeliverable(tx, listing))) throw statusCode('no_deliverable', 409);
   // Same gate as the fixed-price buy route: the first-look window is only
   // real if it holds for someone who has the id, not just for the listing.
   if (listing.vipEarlyUntil && listing.vipEarlyUntil > new Date() && !(await isVip(tx, bidderId))) {
@@ -152,10 +171,13 @@ export async function closeAuction(tx: Tx, listingId: string) {
 
   const meetsReserve = listing.currentBidCents != null && (!listing.reserveCents || listing.currentBidCents >= listing.reserveCents);
   const active = await sellerActive(tx, listing.creatorId);
-  if (!listing.currentBidderId || !listing.currentBidCents || !meetsReserve || !active) {
+  // Media can be REJECTED (transcode, moderation) after bids were placed:
+  // the winner is not charged for an item that can no longer be delivered.
+  const deliverable = await hasDeliverable(tx, listing);
+  if (!listing.currentBidderId || !listing.currentBidCents || !meetsReserve || !active || !deliverable) {
     const held = heldNow(listing);
     if (listing.currentBidderId && held > 0) {
-      await post(tx, listing.currentBidderId, held, 'AUCTION_BID_RELEASE', listingId, { reserveNotMet: !meetsReserve, sellerInactive: !active }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
+      await post(tx, listing.currentBidderId, held, 'AUCTION_BID_RELEASE', listingId, { reserveNotMet: !meetsReserve, sellerInactive: !active, noDeliverable: !deliverable }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
     }
     // Clear the lead exactly like cancelAuction: with currentHoldCents null
     // heldNow() falls back to currentBidCents, so leaving the bid set would

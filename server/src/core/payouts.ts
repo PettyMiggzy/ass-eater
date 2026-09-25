@@ -46,3 +46,41 @@ export async function markPayoutSent(tx: Tx, payoutId: string, from: PayoutStatu
   });
   return r.count > 0;
 }
+
+/**
+ * Claims a payout for settlement BY HAND (POST /admin/payouts/:id/resolve
+ * {action:'hold'}), BEFORE the admin sends anything from the treasury.
+ *
+ * PENDING -> HELD: the worker's claim (PENDING -> PROCESSING) then no-ops,
+ * so it can never broadcast its own transfer alongside the admin's.
+ * FAILED -> HELD: the reconciler only ever looks at PROCESSING / FAILED, so
+ * it can no longer "prove" the payout never sent -- a hand-sent treasury
+ * transfer takes the same nonce the failed one held -- and refund it on top
+ * of the manual payment.
+ *
+ * Guarded update; false (nothing changed) when the payout is no longer in
+ * one of those states.
+ */
+export async function holdForManualSettlement(tx: Tx, payoutId: string, by: string): Promise<boolean> {
+  const r = await tx.payout.updateMany({
+    where: { id: payoutId, status: { in: ['PENDING', 'FAILED'] } },
+    data: { status: 'HELD', error: `held for manual settlement by admin ${by}`.slice(0, 500) },
+  });
+  return r.count > 0;
+}
+
+/**
+ * Is `tx` the worker's own nonce-cancel for a payout at `nonce`: a
+ * zero-value transfer from the treasury to itself at exactly that nonce?
+ * Only then does "the nonce is consumed and the original is unknown" prove
+ * that no money moved (workers/payout-worker.ts provablyNeverSent).
+ */
+export function isOwnNonceCancel(
+  tx: { from: string; to: string | null; value: bigint; nonce: number } | null,
+  treasury: string,
+  nonce: number,
+): boolean {
+  if (!tx) return false;
+  const me = treasury.toLowerCase();
+  return tx.from.toLowerCase() === me && (tx.to ?? '').toLowerCase() === me && tx.value === 0n && tx.nonce === nonce;
+}

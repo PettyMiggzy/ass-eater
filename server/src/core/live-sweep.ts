@@ -17,8 +17,9 @@ const NEW_STREAM_GRACE_MS = 2 * 60_000;
  *     booked every later ordinary tip at the 20% live rate (modules/tips.ts)
  *     and made /live/start answer 409 already_live.
  *  2. On a per-minute stream, every viewer whose paid time has lapsed (past
- *     PAY_GRACE_MS) is removed from the room. Joining is gated by /join
- *     charging the first minute; this is what makes the NEXT minutes owed.
+ *     PAY_GRACE_MS) is removed from the room, and on a ticketed stream every
+ *     viewer without a ticket. Joining is gated by /join charging the ticket
+ *     and the first minute; this is what makes the NEXT minutes owed.
  *
  * A LiveKit error on one stream is logged and skipped -- never treated as
  * "room gone", which would end a healthy stream on a network blip.
@@ -39,17 +40,52 @@ export async function sweepLive(rooms: RoomsLike, now = new Date(), log: (...a: 
       continue;
     }
 
-    if (s.perMinuteCents <= 0) continue;
+    if (s.perMinuteCents <= 0 && s.ticketPriceCents <= 0) continue;
     let participants;
     try { participants = await rooms.listParticipants(s.roomName); } catch (e) { log('live-sweep listParticipants', s.id, e); continue; }
     for (const p of participants) {
       if (!p.identity || p.identity === s.creatorId) continue;
-      const through = await paidThrough(p.identity, s.id);
-      if (through && through.getTime() + PAY_GRACE_MS > now.getTime()) continue;
+      if (!(await lacksEntitlement(s, p.identity, now))) continue;
       try { await rooms.removeParticipant(s.roomName, p.identity); removed++; } catch (e) { log('live-sweep removeParticipant', s.id, p.identity, e); }
     }
   }
   return { ended, removed };
+}
+
+/** Does this fan hold a ticket to this stream? */
+export async function hasTicket(fanId: string, streamId: string) {
+  return !!(await prisma.liveTicket.findUnique({ where: { fanId_streamId: { fanId, streamId } } }));
+}
+
+/**
+ * Why POST /live/:id/minute must refuse this fan, or null. That route hands
+ * out a room token, so it needs the same entitlement /join applies: a live,
+ * not-suspended creator, and -- on a ticketed stream -- a ticket already
+ * bought through /join. Paid minutes never stand in for the ticket.
+ */
+export async function minuteRefusal(fanId: string, s: { id: string; creatorId: string; ticketPriceCents: number }): Promise<'not_live' | 'ticket_required' | null> {
+  const creator = await prisma.user.findUnique({ where: { id: s.creatorId }, select: { status: true } });
+  if (creator?.status !== 'ACTIVE') return 'not_live';
+  if (s.ticketPriceCents > 0 && !(await hasTicket(fanId, s.id))) return 'ticket_required';
+  return null;
+}
+
+/**
+ * Should `identity` be removed from stream `s` right now? Two independent
+ * entitlements, both required where they apply:
+ *
+ *  - a ticketed stream needs a LiveTicket -- paid minutes do not stand in for
+ *    one (POST /live/:id/minute used to hand a room token to anyone who paid
+ *    for a minute, and this check, looking only at minutes, left them in);
+ *  - a per-minute stream needs paid time that has not lapsed (plus grace).
+ */
+async function lacksEntitlement(s: { id: string; ticketPriceCents: number; perMinuteCents: number }, identity: string, now: Date) {
+  if (s.ticketPriceCents > 0 && !(await hasTicket(identity, s.id))) return true;
+  if (s.perMinuteCents > 0) {
+    const through = await paidThrough(identity, s.id);
+    if (!through || through.getTime() + PAY_GRACE_MS <= now.getTime()) return true;
+  }
+  return false;
 }
 
 /**
@@ -87,8 +123,9 @@ export function viewerTokenTtlSeconds(perMinuteCents: number, through: Date | nu
 /**
  * LiveKit's participant_joined webhook: a viewer who joins (or rejoins with
  * a token LiveKit refreshed for them) is removed at once if they have no
- * paid time left on a per-minute stream, or if the stream's creator is no
- * longer ACTIVE. Returns true when the participant was removed.
+ * ticket on a ticketed stream, no paid time left on a per-minute stream, or
+ * if the stream's creator is no longer ACTIVE. Returns true when the
+ * participant was removed.
  */
 export async function checkViewerOnJoin(
   rooms: Pick<RoomsLike, 'removeParticipant'>,
@@ -99,14 +136,11 @@ export async function checkViewerOnJoin(
   if (!identity) return false;
   const s = await prisma.liveStream.findUnique({
     where: { roomName },
-    select: { id: true, creatorId: true, status: true, perMinuteCents: true, creator: { select: { user: { select: { status: true } } } } },
+    select: { id: true, creatorId: true, status: true, ticketPriceCents: true, perMinuteCents: true, creator: { select: { user: { select: { status: true } } } } },
   });
   if (!s || identity === s.creatorId) return false;
   let remove = s.status !== 'LIVE' || s.creator.user.status !== 'ACTIVE';
-  if (!remove && s.perMinuteCents > 0) {
-    const through = await paidThrough(identity, s.id);
-    remove = !through || through.getTime() + PAY_GRACE_MS <= now.getTime();
-  }
+  if (!remove) remove = await lacksEntitlement(s, identity, now);
   if (!remove) return false;
   await rooms.removeParticipant(roomName, identity);
   return true;

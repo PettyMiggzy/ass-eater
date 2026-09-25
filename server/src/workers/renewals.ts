@@ -5,6 +5,8 @@ import { charge, money, InsufficientFunds } from '../core/ledger.js';
 import { renewalQueue, publish, connection, redis } from '../lib/redis.js';
 import { PERIOD_MS } from '../modules/subscriptions.js';
 import { registerWorker } from './process-guards.js';
+import { CREATOR_STANDING_SELECT } from '../core/creator-standing.js';
+import { renewalShouldExpire } from '../core/renewal-policy.js';
 
 await renewalQueue.add('tick', {}, { repeat: { every: 5 * 60_000 }, jobId: 'renewals-tick', removeOnComplete: true });
 
@@ -28,9 +30,14 @@ registerWorker(new Worker('renewals', async () => {
   const held = randomUUID();
   if (!(await redis.set(TICK_LOCK, held, 'PX', TICK_LOCK_MS, 'NX'))) return;
   try {
-    const due = await prisma.subscription.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { status: true } } } });
+    // Which due rows are expired rather than charged: core/renewal-policy.ts
+    // (creator must still be payable -- not suspended/banned AND approved --
+    // and the FAN must be ACTIVE, since a suspended/banned fan cannot reach
+    // DELETE /subscriptions to stop renewing). The fan keeps the access they
+    // already paid for until the period they paid for ended.
+    const due = await prisma.subscription.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: CREATOR_STANDING_SELECT }, fan: { select: { status: true } } } });
     for (const s of due) {
-      if (!s.autoRenew || s.status === 'CANCELLED' || s.creator.status !== 'ACTIVE') {
+      if (renewalShouldExpire(s)) {
         // Expire against the same snapshot the decision was made from, not by id
         // alone. `due` is read up to 500 rows earlier, and a fan who re-subscribed
         // (and paid) in between has a brand-new ACTIVE period sitting in this row
@@ -68,9 +75,9 @@ registerWorker(new Worker('renewals', async () => {
     }
 
     // Token-lock perks renew the same way -- see modules/stake.ts
-    const dueLocks = await prisma.tokenLock.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { status: true, creator: { select: { stakePerkEnabled: true } } } } } });
+    const dueLocks = await prisma.tokenLock.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { ...CREATOR_STANDING_SELECT, creator: { select: { stakePerkEnabled: true } } } }, fan: { select: { status: true } } } });
     for (const l of dueLocks) {
-      if (!l.autoRenew || l.status === 'CANCELLED' || l.creator.status !== 'ACTIVE' || !l.creator.creator?.stakePerkEnabled) {
+      if (renewalShouldExpire({ ...l, perkEnabled: !!l.creator.creator?.stakePerkEnabled })) {
         // Snapshot-guarded for the same reason the subscription loop above is.
         await prisma.tokenLock.updateMany({ where: { id: l.id, status: l.status, currentPeriodEnd: l.currentPeriodEnd }, data: { status: 'EXPIRED' } }); continue;
       }
