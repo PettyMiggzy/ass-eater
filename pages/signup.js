@@ -47,7 +47,7 @@ export default function Signup({ open }) {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, role, ref: readReferralCookie() }),
+        body: JSON.stringify({ ...form, role, ref: readReferralCookie(), acceptedTerms: agreed === true }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Signup failed');
