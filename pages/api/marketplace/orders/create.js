@@ -8,7 +8,7 @@ import {
   isDemoListing,
   listingHasDeliverable,
 } from '../../../../lib/creators-store';
-import { createOrdersFromCredits } from '../../../../lib/orders-store';
+import { createOrdersFromCredits, ALREADY_OWNED } from '../../../../lib/orders-store';
 import {
   getBalanceCents,
   accountStanding,
@@ -40,6 +40,8 @@ function isIntOrNull(v) {
  * mismatch. On any mismatch: 409 { code: 'PRICE_CHANGED', items: [{
  * listingId, title, priceCents, shippingCents, kind }] } and nothing is
  * charged; the cart updates itself and asks the fan to confirm again.
+ * A digital listing the fan already bought: 409 { code: 'ALREADY_OWNED',
+ * listingId, error } and nothing is charged.
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -204,6 +206,9 @@ export default async function handler(req, res) {
     if (err.code === INSUFFICIENT_BALANCE) return res.status(402).json({ error: 'Not enough credits' });
     if (err.code === 'LISTING_UNAVAILABLE') return res.status(409).json({ error: err.message, listingId: err.listingId != null ? String(err.listingId) : undefined });
     if (err.code === 'PRICE_CHANGED') return res.status(409).json({ code: 'PRICE_CHANGED', error: err.message, listingId: String(err.listingId) });
+    // The fan already owns this digital item: nothing was charged. `code` and
+    // `listingId` let the cart drop it.
+    if (err.code === ALREADY_OWNED) return res.status(409).json({ code: ALREADY_OWNED, error: err.message, listingId: String(err.listingId) });
     if (err.code === 'DUPLICATE_CHECKOUT') return res.status(409).json({ error: err.message });
     if (err.code === ACCOUNT_FROZEN) return res.status(403).json({ error: err.message });
     if (err.code === RECIPIENT_UNAVAILABLE) return res.status(409).json({ error: 'A creator in your cart can’t be paid right now -- remove their item and try again.' });

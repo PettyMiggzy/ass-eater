@@ -8,10 +8,10 @@ import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, toPublicListing, isPubliclyVisible, listingHasDeliverable } from '../lib/creator-status';
 import { byPlacement, isFoundingCreator } from '../lib/founding';
 import { getListings } from '../lib/listings-store';
-import { SolidIcons } from '../components/Brand';
 import ListingPreview from '../components/public/ListingPreview';
 import DemoBadge from '../components/public/DemoBadge';
-import { toCreatorCard, isDemoListing, DEMO_LABEL } from '../components/public/cards';
+import PremiumBadge from '../components/public/PremiumBadge';
+import { toCreatorCard, isDemoListing, DEMO_LABEL, marketplaceHrefFor } from '../components/public/cards';
 
 const str = (v) => (typeof v === 'string' ? v : '');
 
@@ -150,8 +150,9 @@ export default function Search({ q, tag, creators, listings, allTags, sessionUse
                         <div className="p-2">
                           <p className="text-sm font-bold truncate flex items-center gap-1">
                             {c.name}
-                            {c.premium && <SolidIcons.verified className="h-3.5 w-3.5 text-brand-pink" />}
+                            {c.premium && <PremiumBadge />}
                           </p>
+                          {c.demo && <DemoBadge short className="mt-1" />}
                         </div>
                       </a>
                     ))}
@@ -164,7 +165,7 @@ export default function Search({ q, tag, creators, listings, allTags, sessionUse
                   <h2 className="text-sm font-bold text-brand-gold uppercase tracking-wide mb-4">Marketplace</h2>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {listings.map((l) => (
-                      <a key={l.id} href="/marketplace" className="premium-card border border-brand-gold/20 overflow-hidden block">
+                      <a key={l.id} href={marketplaceHrefFor(l)} className="premium-card border border-brand-gold/20 overflow-hidden block">
                         <div className="aspect-square relative">
                           <ListingPreview media={l.media} />
                           {l.demo && <DemoBadge short className="absolute top-2 left-2" />}

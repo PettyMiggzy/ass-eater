@@ -53,3 +53,17 @@ export function toCreatorCard(pub) {
     demo: isDemoCreator(pub),
   };
 }
+
+/**
+ * Where a listing tile (a creator's Marketplace tab, /search results) links:
+ * the marketplace scoped to that creator and scrolled to the item, rather
+ * than the unfiltered founding-first marketplace with no way to find it.
+ * pages/marketplace.js reads both params server-side.
+ */
+export function marketplaceHrefFor(listing) {
+  const params = new URLSearchParams();
+  if (listing?.creatorId != null) params.set('creator', String(listing.creatorId));
+  if (listing?.id != null) params.set('listing', String(listing.id));
+  const qs = params.toString();
+  return qs ? `/marketplace?${qs}` : '/marketplace';
+}

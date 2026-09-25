@@ -4,8 +4,8 @@ import { getVerifiedSessionUserId } from '../lib/session';
 import { getCreators } from '../lib/creators-store';
 import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { getFavoriteCreatorIds } from '../lib/favorites-store';
-import { SolidIcons } from '../components/Brand';
 import DemoBadge from '../components/public/DemoBadge';
+import PremiumBadge from '../components/public/PremiumBadge';
 import { toCreatorCard } from '../components/public/cards';
 
 export async function getServerSideProps({ req }) {
@@ -46,7 +46,7 @@ export default function Favorites({ creators }) {
                   <div className="p-2">
                     <p className="text-sm font-bold truncate flex items-center gap-1">
                       {c.name}
-                      {c.premium && <SolidIcons.verified className="h-3.5 w-3.5 text-brand-pink" />}
+                      {c.premium && <PremiumBadge />}
                     </p>
                     {c.demo && <DemoBadge short className="mt-1" />}
                   </div>

@@ -4,14 +4,16 @@ import { sweepOrphanedMedia, blobConfigured } from '../../../lib/media';
 /**
  * POST /api/admin/media-sweep -- reap orphaned media files now.
  * Header x-admin-key. JSON { limit? } (1..500, default 200)
- *   -> 200 { ok: true, checked, deleted, kept, failed }
+ *   -> 200 { ok: true, checked, deleted, kept, failed, remaining }
  *
  * Deletes files that were uploaded with a token but never finalized, and
  * retries deletions that failed earlier, once they are over an hour old and
  * no creator or listing record references them (lib/media.js
  * sweepOrphanedMedia). The same sweep runs in small batches on every upload
  * token request; this is for running it in full, e.g. after a quiet spell or
- * from a scheduled job. Safe to call repeatedly.
+ * from a scheduled job. Safe to call repeatedly: it stops at a time budget
+ * rather than being killed part-way, and `remaining` counts rows it claimed
+ * but handed back unprocessed -- call again while it is above 0.
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });

@@ -4,7 +4,7 @@ import Head from 'next/head';
 // describe what the code actually collects and sets; when a feature adds a
 // field, a cookie, or a new recipient of someone's data, this file changes
 // in the same release.
-const LAST_UPDATED = 'September 24, 2026';
+const LAST_UPDATED = 'September 25, 2026';
 
 export default function Privacy() {
   return (
@@ -81,9 +81,10 @@ export default function Privacy() {
                 <li>
                   <strong>Launch notification signup.</strong> If you ask to be notified when we launch,
                   we store the email address you give us, whether you said you were joining as a fan or
-                  a creator, which page you signed up from, and (if we can tell) the US state you were
-                  in — the last one only so we can tell you when your state opens, since some states are
-                  currently blocked entirely. That list is used for nothing but telling you about the
+                  a creator, which page you signed up from, and — only if you are in the US and we can
+                  tell — the US state you were in, so we can tell you when your state opens, since some
+                  states are currently blocked entirely. We do not record your country, or any region
+                  outside the US. That list is used for nothing but telling you about the
                   launch. We never sell or share it, and you can be removed at any time by emailing{' '}
                   <a href="mailto:team@onlyone1.fun" className="text-brand-gold underline">team@onlyone1.fun</a>.
                   You do not need an account to sign up, and signing up does not create one.
@@ -91,8 +92,12 @@ export default function Privacy() {
                 <li>
                   <strong>Content-report info.</strong> If you submit our{' '}
                   <a href="/report-content" className="text-brand-gold underline">Report Non-Consensual Content</a>{' '}
-                  form (no account needed to do so), we collect the name and contact info you provide and
-                  what you tell us about the content, solely to review and act on that report.
+                  form (no account needed to do so), we collect the name and contact info you provide,
+                  whether you are reporting content of yourself, of someone else, or content you believe
+                  shows a minor, which statement you confirmed, and what you tell us about the content,
+                  solely to review and act on that report. Content that shows a minor is reported to the
+                  National Center for Missing &amp; Exploited Children and law enforcement as the law
+                  requires; your report may be included in that referral.
                 </li>
               </ul>
             </Section>

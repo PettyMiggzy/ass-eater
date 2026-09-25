@@ -37,7 +37,13 @@ export default function AdminPanel() {
   const [baseline, setBaseline] = useState(null);
   const [othersAppear, setOthersAppear] = useState(null);
   const [coPerformerIds, setCoPerformerIds] = useState([]);
+  // The same §2257 answer for the profile photo, asked separately from the
+  // gallery's: /api/admin/avatar refuses a finalize without it.
+  const [avatarOthersAppear, setAvatarOthersAppear] = useState(null);
+  const [avatarCoPerformerIds, setAvatarCoPerformerIds] = useState([]);
   const [recordOptions, setRecordOptions] = useState(null);
+  const [recordOptionsLoading, setRecordOptionsLoading] = useState(false);
+  const [alertsStatus, setAlertsStatus] = useState(null);
   const selectSeq = useRef(0);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
@@ -91,6 +97,17 @@ export default function AdminPanel() {
     }
   };
 
+  // Whether a new takedown filing alerts anyone out of band
+  // (NCII_ALERT_WEBHOOK_URL). Shown as a banner until it is configured.
+  const loadAlertsStatus = async (key) => {
+    try {
+      const { res, data } = await adminGet(key ?? adminKey, '/api/admin/alerts-status');
+      if (res.ok) setAlertsStatus(data);
+    } catch {
+      // Unknown is shown as nothing, not as a false "configured".
+    }
+  };
+
   const checkKey = async () => {
     const key = adminKey.trim();
     if (!key) return;
@@ -98,6 +115,7 @@ export default function AdminPanel() {
     if (!ok) return;
     await startMediaSession(key);
     loadNciiSummary(key);
+    loadAlertsStatus(key);
     setStatus('');
     setUnlocked(true);
   };
@@ -160,6 +178,8 @@ export default function AdminPanel() {
     if (snap) { setDraft(draftFrom(snap)); setBaseline(draftFrom(snap)); }
     setOthersAppear(null);
     setCoPerformerIds([]);
+    setAvatarOthersAppear(null);
+    setAvatarCoPerformerIds([]);
     try {
       const roster = await fetchRoster();
       if (!roster || seq !== selectSeq.current) return;
@@ -221,6 +241,7 @@ export default function AdminPanel() {
       if (now && effectiveCreatorStatus(now) === 'suspended' && now.suspendedUntil) {
         notes.push(`Suspended until ${new Date(now.suspendedUntil).toLocaleDateString()}.`);
       }
+      if (built.fields.status === 'banned') notes.push('Their unsold listings are taken down.');
       setStatus(['Saved.', ...notes].join(' '));
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -229,9 +250,20 @@ export default function AdminPanel() {
     }
   };
 
+  // Answer-first, like the gallery: §2257 applies to the profile photo too
+  // (it is the most public image on the site), and /api/admin/avatar refuses
+  // and deletes an upload finalized without the answer.
   const uploadAvatar = async (file) => {
     if (!file) return;
     const creatorId = selectedId;
+    if (avatarOthersAppear === null) {
+      setStatus('Error: answer "Does anyone besides this creator appear in the photo?" before uploading.');
+      return;
+    }
+    if (avatarOthersAppear && !avatarCoPerformerIds.length) {
+      setStatus('Error: pick the §2257 record of every other person in the photo, or add their record in the Records tab first.');
+      return;
+    }
     setBusy(true);
     setStatus('Uploading avatar...');
     try {
@@ -240,10 +272,48 @@ export default function AdminPanel() {
         creatorId,
         purpose: 'avatar',
         file,
+        othersAppear: avatarOthersAppear,
+        coPerformerRecordIds: avatarOthersAppear ? avatarCoPerformerIds : undefined,
         onProgress: (p) => setStatus(`Uploading avatar... ${Math.round(p)}%`),
       });
       applyCreator(data.creator);
+      setAvatarOthersAppear(null);
+      setAvatarCoPerformerIds([]);
       setStatus('Avatar updated.');
+    } catch (err) {
+      setStatus(`Error: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Re-runs a banned creator's listing takedown on its own: posts just
+  // { status: 'banned' }, which /api/admin/profile answers by taking every
+  // listing down again (already-removed ones are skipped). For a ban whose
+  // takedown failed part-way -- by hand or from the takedown-request ladder --
+  // without touching any other field. Re-reads the creator first and refuses
+  // unless they are STILL banned, so a stale panel cannot re-ban someone
+  // another admin has since reinstated.
+  const retryTakedown = async () => {
+    if (!selected || selectedStatus !== 'banned') return;
+    setBusy(true);
+    setStatus('Retrying listing takedown...');
+    try {
+      const roster = await fetchRoster();
+      if (!roster) return;
+      const current = roster.find((c) => String(c.id) === String(selectedId));
+      if (!current || effectiveCreatorStatus(current) !== 'banned') {
+        if (current) applyCreator(current, { resyncDraft: true });
+        setStatus('Nothing was done -- this creator is no longer banned (the editor now shows their current status).');
+        return;
+      }
+      const { res, data } = await adminPost(adminKey, '/api/admin/profile', {
+        creatorId: selectedId,
+        fields: { status: 'banned', suspendedUntil: null },
+      });
+      if (data.creator) applyCreator(data.creator, { resyncDraft: true });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'The takedown failed'));
+      setStatus('Listing takedown done: every listing of this banned creator is off sale.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -272,7 +342,11 @@ export default function AdminPanel() {
   // The §2257 records a co-performer can be picked from: non-archived, with an
   // ID attached or held offline (the same rule lib/performer-attestation.js
   // enforces on the finalize). Loaded when the admin says someone else appears.
+  // Re-read every time someone answers "yes" (and on Refresh): the panel
+  // tells the admin to add a missing record in the Records tab, so a list
+  // cached from the first answer would never show it.
   const loadRecordOptions = async () => {
+    setRecordOptionsLoading(true);
     try {
       const { res, data } = await adminGet(adminKey, '/api/admin/performer-records');
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not load §2257 records'));
@@ -280,8 +354,10 @@ export default function AdminPanel() {
         .filter((r) => r.status !== 'archived' && (r.document || r.documentLocation === 'offline'));
       setRecordOptions(usable);
     } catch (err) {
-      setRecordOptions([]);
+      setRecordOptions((prev) => prev ?? []);
       setStatus(`Error: ${err.message}`);
+    } finally {
+      setRecordOptionsLoading(false);
     }
   };
 
@@ -496,6 +572,7 @@ export default function AdminPanel() {
     { key: 'records', label: '§2257 RECORDS' },
     { key: 'waitlist', label: 'WAITLIST' },
     { key: 'payouts', label: 'PAYOUTS' },
+    { key: 'accounts', label: 'ACCOUNTS' },
   ];
 
   const gateLive = tokenGateLive();
@@ -563,6 +640,14 @@ export default function AdminPanel() {
             </button>
           )}
 
+          {alertsStatus && alertsStatus.nciiWebhookConfigured === false && (
+            <div className="mb-4 px-4 py-3 rounded-md bg-red-900/30 border border-red-500/50 text-red-200 text-sm">
+              Takedown alerts are NOT configured: a new TAKE IT DOWN request alerts nobody -- it only shows up here, while
+              its 48-hour legal clock runs. Set NCII_ALERT_WEBHOOK_URL (a Slack, Discord or relay webhook) in the
+              production environment and redeploy.
+            </div>
+          )}
+
           {!mediaSessionOk && (
             <div className="mb-4 px-4 py-3 rounded-md bg-yellow-900/20 border border-yellow-500/40 text-yellow-200 text-sm">
               Uploaded photos and videos may not display in this panel (the private-media session could not be started).
@@ -603,6 +688,7 @@ export default function AdminPanel() {
               creators={creators}
               onSummary={setNciiSummary}
               onCreatorChanged={(c) => applyCreator(c, { resyncDraft: true })}
+              alertsConfigured={alertsStatus ? alertsStatus.nciiWebhookConfigured : null}
             />
           ) : page === 'records' ? (
             <PerformerRecordsPanel adminKey={adminKey} creators={creators} />
@@ -610,6 +696,8 @@ export default function AdminPanel() {
             <WaitlistPanel adminKey={adminKey} />
           ) : page === 'payouts' ? (
             <PayoutsPanel adminKey={adminKey} />
+          ) : page === 'accounts' ? (
+            <AccountsPanel adminKey={adminKey} creators={creators} onOpenCreator={(id) => { setPage('creators'); selectCreator(id); }} />
           ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
@@ -670,13 +758,16 @@ export default function AdminPanel() {
                   <div className="flex items-center gap-4">
                     <img src={selected.img} alt={selected.name} className="w-20 h-20 rounded-full object-cover object-top border-2 border-brand-gold" />
                     <div>
-                      <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <label
+                        className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy || avatarOthersAppear === null || (avatarOthersAppear && !avatarCoPerformerIds.length) ? 'opacity-50 pointer-events-none' : ''}`}
+                        title={avatarOthersAppear === null ? 'Answer the question below first' : undefined}
+                      >
                         Change PFP
                         <input
                           type="file"
                           accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
                           className="hidden"
-                          disabled={busy}
+                          disabled={busy || avatarOthersAppear === null || (avatarOthersAppear && !avatarCoPerformerIds.length)}
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             e.target.value = '';
@@ -685,6 +776,17 @@ export default function AdminPanel() {
                         />
                       </label>
                       <p className="text-[10px] text-gray-500 mt-1">JPEG, PNG, WebP, GIF or AVIF, up to 10MB. The old photo is deleted.</p>
+                      <PerformerAttestation
+                        name="avatarOthersAppear"
+                        question="Does anyone besides this creator appear in the new photo?"
+                        value={avatarOthersAppear}
+                        onChange={(v) => { setAvatarOthersAppear(v); setAvatarCoPerformerIds([]); if (v) loadRecordOptions(); }}
+                        ids={avatarCoPerformerIds}
+                        onIds={setAvatarCoPerformerIds}
+                        recordOptions={recordOptions}
+                        loading={recordOptionsLoading}
+                        onRefresh={loadRecordOptions}
+                      />
                       {typeof selected.img === 'string' && !selected.img.endsWith('/avatar-placeholder.png') && (
                         <button
                           onClick={removeAvatar}
@@ -891,6 +993,21 @@ export default function AdminPanel() {
                     </label>
                   </div>
 
+                  {selectedStatus === 'banned' && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        onClick={retryTakedown}
+                        disabled={busy}
+                        className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                      >
+                        Retry listing takedown
+                      </button>
+                      <span className="text-[11px] text-gray-500">
+                        Use this if a ban reported that taking their listings down failed. Saving this banned
+                        creator also retries it.
+                      </span>
+                    </div>
+                  )}
                   {draft.status === 'banned' && selectedStatus !== 'banned' && (
                     <p className="text-xs text-red-400">
                       Banning takes down every unsold listing, deletes its media and freezes their credit balance and any
@@ -963,53 +1080,17 @@ export default function AdminPanel() {
                     {/* §2257 attestation, required on every finalize
                         (lib/performer-attestation.js). Asked per upload and
                         reset after each one, never remembered. */}
-                    <div className="mb-3 text-xs text-gray-300">
-                      <p className="mb-1">Does anyone besides this creator appear in the next upload?</p>
-                      <div className="flex gap-4">
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <input type="radio" name="othersAppear" checked={othersAppear === false} onChange={() => { setOthersAppear(false); setCoPerformerIds([]); }} />
-                          No, only them
-                        </label>
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="othersAppear"
-                            checked={othersAppear === true}
-                            onChange={() => { setOthersAppear(true); if (recordOptions === null) loadRecordOptions(); }}
-                          />
-                          Yes, someone else too
-                        </label>
-                      </div>
-                      {othersAppear === true && (
-                        <div className="mt-2">
-                          <p className="text-[11px] text-gray-500 mb-1">
-                            Tick the §2257 record of EVERY other person in the file. Only records with an ID attached or
-                            held offline are listed; add a missing one in the Records tab first.
-                          </p>
-                          {recordOptions === null ? (
-                            <p className="text-[11px] text-gray-500">Loading records…</p>
-                          ) : recordOptions.length === 0 ? (
-                            <p className="text-[11px] text-yellow-400/90">No usable §2257 records yet.</p>
-                          ) : (
-                            <div className="max-h-40 overflow-y-auto space-y-1">
-                              {recordOptions.map((r) => (
-                                <label key={r.id} className="flex items-center gap-2 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={coPerformerIds.includes(String(r.id))}
-                                    onChange={(e) => setCoPerformerIds((prev) => (e.target.checked
-                                      ? [...new Set([...prev, String(r.id)])]
-                                      : prev.filter((x) => x !== String(r.id))))}
-                                  />
-                                  #{String(r.id)} {r.unreadable ? '(unreadable record)' : String(r.legalName || '')}
-                                  {Array.isArray(r.aliases) && r.aliases.length > 0 && <span className="text-gray-500">— {r.aliases.join(', ')}</span>}
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                    <PerformerAttestation
+                      name="othersAppear"
+                      question="Does anyone besides this creator appear in the next upload?"
+                      value={othersAppear}
+                      onChange={(v) => { setOthersAppear(v); setCoPerformerIds([]); if (v) loadRecordOptions(); }}
+                      ids={coPerformerIds}
+                      onIds={setCoPerformerIds}
+                      recordOptions={recordOptions}
+                      loading={recordOptionsLoading}
+                      onRefresh={loadRecordOptions}
+                    />
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                       {(selected.gallery || []).map((item, i) => (
                         <div key={`${item.src}-${i}`} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
@@ -1054,6 +1135,65 @@ function Field({ label, value, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
       />
+    </div>
+  );
+}
+
+/**
+ * The §2257 answer every admin upload carries (lib/performer-attestation.js):
+ * does anyone besides the creator appear, and if so, the record of every
+ * other person. Asked per upload and reset after each one, never remembered.
+ * The record list is re-read each time "yes" is picked and on Refresh -- the
+ * admin is told to add a missing record in the Records tab, so a list cached
+ * from the first answer would never show it.
+ */
+function PerformerAttestation({ name, question, value, onChange, ids, onIds, recordOptions, loading, onRefresh }) {
+  return (
+    <div className="mt-3 mb-3 text-xs text-gray-300">
+      <p className="mb-1">{question}</p>
+      <div className="flex gap-4">
+        <label className="flex items-center gap-1 cursor-pointer">
+          <input type="radio" name={name} checked={value === false} onChange={() => onChange(false)} />
+          No, only them
+        </label>
+        <label className="flex items-center gap-1 cursor-pointer">
+          <input type="radio" name={name} checked={value === true} onChange={() => onChange(true)} />
+          Yes, someone else too
+        </label>
+      </div>
+      {value === true && (
+        <div className="mt-2">
+          <p className="text-[11px] text-gray-500 mb-1">
+            Tick the §2257 record of EVERY other person in the file. Only records with an ID attached or
+            held offline are listed; add a missing one in the Records tab first, then{' '}
+            <button type="button" onClick={onRefresh} disabled={loading} className="underline text-gray-300 disabled:opacity-50">
+              refresh this list
+            </button>
+            .
+          </p>
+          {recordOptions === null || (loading && !recordOptions.length) ? (
+            <p className="text-[11px] text-gray-500">Loading records…</p>
+          ) : recordOptions.length === 0 ? (
+            <p className="text-[11px] text-yellow-400/90">No usable §2257 records yet.</p>
+          ) : (
+            <div className="max-h-40 overflow-y-auto space-y-1">
+              {recordOptions.map((r) => (
+                <label key={r.id} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={ids.includes(String(r.id))}
+                    onChange={(e) => onIds((prev) => (e.target.checked
+                      ? [...new Set([...prev, String(r.id)])]
+                      : prev.filter((x) => x !== String(r.id))))}
+                  />
+                  #{String(r.id)} {r.unreadable ? '(unreadable record)' : String(r.legalName || '')}
+                  {Array.isArray(r.aliases) && r.aliases.length > 0 && <span className="text-gray-500">— {r.aliases.join(', ')}</span>}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1365,7 +1505,41 @@ function ViolationsPanel({ adminKey }) {
  * These carry a legal 48-hour handling clock, so they're sorted oldest
  * first and flag how much time has passed instead of just a timestamp.
  */
-function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
+const NCII_CATEGORY_LABELS = {
+  self: 'Filed by the person shown',
+  third_party: 'Filed by someone else',
+  minor: 'POSSIBLE MINOR',
+};
+
+/**
+ * What the enforcement ladder actually did, read from the creator record the
+ * resolve returned (lib/creators-store.js applyContentViolation) and the
+ * roster copy from before it -- never assumed. A pending applicant stays
+ * pending (never suspended), a creator already banned stays banned, and the
+ * count is the real one, not "1st"/"2nd" inferred from the status.
+ */
+function ladderOutcome(after, before) {
+  const n = Number(after?.contentViolationCount) || 0;
+  const name = after?.name || `Creator #${after?.id}`;
+  const status = effectiveCreatorStatus(after);
+  const wasBanned = !!before && effectiveCreatorStatus(before) === 'banned';
+  const count = `${n} confirmed violation${n === 1 ? '' : 's'} on record`;
+  if (status === 'pending') {
+    return `Violation recorded against ${name} (${count}). They remain a PENDING applicant -- not suspended -- and must not be approved without review.`;
+  }
+  if (status === 'suspended') {
+    const until = after.suspendedUntil ? new Date(after.suspendedUntil).toLocaleDateString() : 'further notice';
+    return `${name} suspended until ${until} (${count}).`;
+  }
+  if (status === 'banned') {
+    return wasBanned
+      ? `${name} was already banned; the violation is recorded (${count}).`
+      : `${name} has been permanently banned (${count}).`;
+  }
+  return `Violation recorded against ${name} (${count}); account status is now ${status || 'unknown'}.`;
+}
+
+function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, alertsConfigured }) {
   const [statusFilter, setStatusFilter] = useState('open');
   const [reports, setReports] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -1395,11 +1569,29 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
 
   useEffect(() => { load(statusFilter); }, [statusFilter]);
 
+  // action 'removed_ban' (possible-minor reports) is sent as 'removed'. The
+  // server reads the report's stored category and, for a POSSIBLE MINOR
+  // report attributed to a creator, bans them outright in the resolve's own
+  // transaction and takes down ALL their listings, paid ones included
+  // (lib/ncii-reports-store.js resolveNciiReport). One request: there is no
+  // second ban call from here that could half-fail.
   const resolve = async (id, action) => {
     const creatorId = attributed[id] || null;
-    if (action === 'removed') {
+    const banAfter = action === 'removed_ban';
+    const apiAction = banAfter ? 'removed' : action;
+    const before = creatorId ? (creators || []).find((c) => String(c.id) === String(creatorId)) : null;
+    if (banAfter) {
+      const banNote = creatorId
+        ? ' The selected creator will be PERMANENTLY BANNED and all their listings taken down, including files earlier buyers paid for.'
+        : ' No creator selected -- nobody is banned. If a creator posted it, pick them first.';
+      if (!confirm(
+        `Confirm you have already removed the reported content before marking this resolved.${banNote}\n\n`
+        + 'Content that shows a minor must also be reported to the NCMEC CyberTipline (report.cybertip.org). '
+        + 'Preserve what you removed for that report; do not share it.',
+      )) return;
+    } else if (action === 'removed') {
       const violationNote = creatorId
-        ? ' This will also count as a confirmed content violation against the selected creator (30-day suspension on the 1st, permanent ban on the 2nd).'
+        ? ' This will also count as a confirmed content violation against the selected creator (30-day suspension on the 1st, permanent ban on the 2nd; a pending applicant stays pending).'
         : ' No creator selected -- this will be logged as removed without counting toward any account\'s violation record.';
       if (!confirm(`Confirm you have already removed the reported content before marking this resolved.${violationNote}`)) return;
     }
@@ -1407,7 +1599,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
     setError('');
     setNotice('');
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/ncii-reports-resolve', { id, action, creatorId });
+      const { res, data } = await adminPost(adminKey, '/api/admin/ncii-reports-resolve', { id, action: apiAction, creatorId });
       if (res.status === 409) {
         // Someone else resolved it first -- re-read rather than keep a stale row.
         setNotice(errorFrom(res, data, 'That report was already resolved.'));
@@ -1416,18 +1608,22 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
       const messages = [`Report #${id} resolved.`];
-      if (data.creator) {
-        if (onCreatorChanged) onCreatorChanged(data.creator);
-        messages.push(
-          data.creator.status === 'banned'
-            ? `${data.creator.name} has been permanently banned (2nd confirmed violation).`
-            : `${data.creator.name} suspended until ${data.creator.suspendedUntil ? new Date(data.creator.suspendedUntil).toLocaleDateString() : 'further notice'} (1st confirmed violation).`,
-        );
+      const creator = data.creator || null;
+      if (creator) {
+        if (onCreatorChanged) onCreatorChanged(creator);
+        messages.push(ladderOutcome(creator, before));
       }
+      if (banAfter && creator && !data.outrightBan && effectiveCreatorStatus(creator) !== 'banned') {
+        // Only reachable if the stored report is not a possible-minor filing
+        // (the button is shown for those only) -- say so rather than imply a ban.
+        setError('The report is resolved, but the server did not treat it as a possible-minor report, so no outright ban was applied. Ban the creator from their record in the Creators tab if needed.');
+      }
+      if (banAfter) messages.push('Remember: report it to the NCMEC CyberTipline (report.cybertip.org).');
       setNotice(messages.join(' '));
-      // The ban itself stands even when this is present; the takedown of the
-      // creator's listings needs a retry (re-save the ban from their record).
-      if (data.warning) setError(String(data.warning));
+      // A ban (ladder or possible-minor) and its listing takedown run inside
+      // the resolve's own transaction (lib/ncii-reports-store.js
+      // resolveNciiReport); a failure rolls the whole resolve back and the
+      // report stays open to retry. There is no after-commit takedown warning.
       await load(statusFilter);
     } catch (err) {
       setError(err.message);
@@ -1437,6 +1633,8 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
   };
 
   const hoursOpen = (r) => Math.floor((Date.now() - new Date(r.createdAt).getTime()) / (1000 * 60 * 60));
+  // Possible-minor reports first; otherwise the server's oldest-first order.
+  const ordered = [...reports].sort((a, b) => (b.category === 'minor') - (a.category === 'minor'));
   const openCount = Number(summary?.open) || 0;
   const oldestHours = summary?.oldestOpenCreatedAt
     ? Math.floor((Date.now() - new Date(summary.oldestOpenCreatedAt).getTime()) / (1000 * 60 * 60))
@@ -1446,8 +1644,16 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
     <div>
       <p className="text-xs text-gray-500 mb-4">
         Filed via /report-content, no login required. Legally required to be reviewed and, if valid, the content
-        removed within 48 hours of submission.
+        removed within 48 hours of submission. Reports of a POSSIBLE MINOR are listed first: confirmed ones are
+        removed, the creator is banned outright (not the 30-day ladder), and the content is reported to the NCMEC
+        CyberTipline.
       </p>
+      {alertsConfigured === false && (
+        <p className="text-xs text-red-300 mb-4">
+          New filings alert nobody: NCII_ALERT_WEBHOOK_URL is not set in production. Until it is, check this tab at
+          least daily.
+        </p>
+      )}
       {summary && (
         <p className={`text-sm font-bold mb-4 ${openCount === 0 ? 'text-gray-500' : oldestHours !== null && oldestHours >= 36 ? 'text-red-400' : 'text-yellow-400'}`}>
           {openCount === 0
@@ -1476,26 +1682,34 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
         <p className="text-sm text-gray-500">No {statusFilter === 'all' ? '' : statusFilter} takedown requests.</p>
       ) : (
         <div className="space-y-3">
-          {reports.map((r) => {
+          {ordered.map((r) => {
             const hrs = hoursOpen(r);
+            const minor = r.category === 'minor';
             const overdue = r.status === 'open' && hrs >= 48;
             const dueSoon = r.status === 'open' && hrs >= 36 && hrs < 48;
             return (
-              <div key={r.id} className={`premium-card border p-4 ${overdue ? 'border-red-500' : dueSoon ? 'border-yellow-500/60' : 'border-brand-purple/20'}`}>
+              <div key={r.id} className={`premium-card border p-4 ${overdue || (minor && r.status === 'open') ? 'border-red-500' : dueSoon ? 'border-yellow-500/60' : 'border-brand-purple/20'}`}>
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs font-bold text-brand-gold">Report #{r.id} — {r.reporterName}</p>
+                  <p className="text-xs font-bold text-brand-gold">
+                    Report #{String(r.id)} — {String(r.reporterName ?? '')}
+                    <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full font-bold ${minor ? 'bg-red-600 text-white' : 'bg-white/10 text-gray-300'}`}>
+                      {NCII_CATEGORY_LABELS[r.category] || NCII_CATEGORY_LABELS.self}
+                    </span>
+                  </p>
                   <p className={`text-[10px] font-bold ${overdue ? 'text-red-400' : dueSoon ? 'text-yellow-400' : 'text-gray-600'}`}>
                     {r.status === 'open' ? `${hrs}h open${overdue ? ' — OVERDUE (48h)' : ''}` : `${r.status} by ${r.resolvedBy}`}
                   </p>
                 </div>
-                <p className="text-xs text-gray-500 mb-1">Contact: {r.reporterContact}</p>
-                <p className="text-sm text-gray-300 mb-1"><span className="text-gray-500">Content:</span> {r.contentLocation}</p>
-                {r.description && <p className="text-sm text-gray-400 mb-3">{r.description}</p>}
+                <p className="text-xs text-gray-500 mb-1">Contact: {String(r.reporterContact ?? '')}</p>
+                <p className="text-sm text-gray-300 mb-1 whitespace-pre-wrap break-words"><span className="text-gray-500">Content:</span> {String(r.contentLocation ?? '')}</p>
+                {r.description && <p className="text-sm text-gray-400 mb-3 whitespace-pre-wrap break-words">{String(r.description)}</p>}
                 {r.status === 'open' && (
                   <>
                     <div className="mb-2">
                       <label className="block text-[10px] text-gray-500 mb-1">
-                        Which creator posted this? (attributing it applies the violation ladder on resolve)
+                        {minor
+                          ? 'Which creator posted this? (attributing it bans them outright on "Remove & ban")'
+                          : 'Which creator posted this? (attributing it applies the violation ladder on resolve)'}
                       </label>
                       <select
                         value={attributed[r.id] || ''}
@@ -1518,13 +1732,23 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
                       >
                         Dismiss (invalid)
                       </button>
-                      <button
-                        onClick={() => resolve(r.id, 'removed')}
-                        disabled={busyId === r.id}
-                        className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
-                      >
-                        Mark Removed & Resolve
-                      </button>
+                      {minor ? (
+                        <button
+                          onClick={() => resolve(r.id, 'removed_ban')}
+                          disabled={busyId === r.id}
+                          className="text-xs px-3 py-1.5 rounded-md border border-red-500 bg-red-600/20 text-red-300 hover:bg-red-600/30 transition disabled:opacity-50"
+                        >
+                          Remove &amp; ban creator
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => resolve(r.id, 'removed')}
+                          disabled={busyId === r.id}
+                          className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
+                        >
+                          Mark Removed & Resolve
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -1536,6 +1760,10 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged }) {
     </div>
   );
 }
+
+// lib/performer-records-store.js RECORD_REQUIRED_BY_LIVE_CREATOR (not
+// imported: that module pulls in the database driver and encryption).
+const RECORD_REQUIRED_CODE = 'record_required_by_live_creator';
 
 const BLANK_RECORD = {
   legalName: '', dateOfBirth: '', aliases: '', idType: 'Driver’s licence',
@@ -2036,6 +2264,23 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   const [busyId, setBusyId] = useState(null);
   // Per-record edit: { id, creatorId, aliases, contentUrls, notes } while open.
   const [editing, setEditing] = useState(null);
+  // Ids the server matched for a URL search (see urlSearch below).
+  const [serverMatches, setServerMatches] = useState(null);
+
+  useEffect(() => {
+    const term = search.trim();
+    if (!/\/creator\/|\/api\/media\//i.test(term)) { setServerMatches(null); return undefined; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const { res, data } = await adminGet(adminKey, `/api/admin/performer-records?q=${encodeURIComponent(term.slice(0, 500))}`);
+        if (!cancelled && res.ok) setServerMatches(new Set((Array.isArray(data.records) ? data.records : []).map((r) => String(r.id))));
+      } catch {
+        if (!cancelled) setServerMatches(null);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [search, adminKey]);
 
   const load = async () => {
     setLoading(true);
@@ -2111,12 +2356,28 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   // the link to a creator, aliases, content URLs, notes and documentLocation.
   // Identity (legal name, DOB, ID number) is never editable: a wrong one is
   // archived with a reason and re-entered, so the history shows it.
+  // Unlinking (or archiving) the only usable record of a creator who is live
+  // would leave them live with no §2257 record. The API refuses that with 409
+  // RECORD_REQUIRED_BY_LIVE_CREATOR; going ahead anyway is its own explicit
+  // confirmation, resent with confirmUnrecordedLiveCreator: true.
+  const confirmUnrecorded = (data) => confirm(
+    `${data.error || 'This is the only usable §2257 record of a creator who is live.'}\n\n`
+    + 'The right way to correct a record: add the corrected record first, then archive the old one -- the creator '
+    + 'stays covered throughout.\n\nGo ahead anyway and leave that creator live WITHOUT a usable record?',
+  );
+
   const updateRecord = async (id, fields, doneMessage) => {
     setBusyId(id);
     setError('');
     setNotice('');
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/performer-records', { action: 'update', id, fields });
+      let { res, data } = await adminPost(adminKey, '/api/admin/performer-records', { action: 'update', id, fields });
+      if (res.status === 409 && data.code === RECORD_REQUIRED_CODE) {
+        if (!confirmUnrecorded(data)) { setNotice('Nothing was changed.'); return; }
+        ({ res, data } = await adminPost(adminKey, '/api/admin/performer-records', {
+          action: 'update', id, fields, confirmUnrecordedLiveCreator: true,
+        }));
+      }
       if (!res.ok || !data.record) throw new Error(errorFrom(res, data, 'Could not update that record'));
       setNotice(doneMessage);
       setEditing(null);
@@ -2208,12 +2469,21 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   };
 
   const archive = async (id) => {
-    const reason = window.prompt('Why is this record being archived? (kept on the record)');
+    const reason = window.prompt('Why is this record being archived? (kept on the record)\n\nCorrecting a record? Add the corrected record first, then archive the old one.');
     if (reason === null) return;
     setBusyId(id);
+    setError('');
+    setNotice('');
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/performer-records', { action: 'archive', id, reason });
+      let { res, data } = await adminPost(adminKey, '/api/admin/performer-records', { action: 'archive', id, reason });
+      if (res.status === 409 && data.code === RECORD_REQUIRED_CODE) {
+        if (!confirmUnrecorded(data)) { setNotice('Nothing was archived.'); return; }
+        ({ res, data } = await adminPost(adminKey, '/api/admin/performer-records', {
+          action: 'archive', id, reason, confirmUnrecordedLiveCreator: true,
+        }));
+      }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not archive that record'));
+      setNotice(`Record #${id} archived (kept, not deleted).`);
       await load();
     } catch (err) {
       setError(err.message);
@@ -2223,9 +2493,14 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   };
 
   const q = search.trim().toLowerCase();
+  // A pasted creator-page or media URL is resolved by the server (?q=) to the
+  // records linked to that creator plus the co-performers attested on that
+  // exact item -- a plain text match against contentUrls would miss both.
+  const urlSearch = /\/creator\/|\/api\/media\//.test(q);
   const visible = records
     .filter((r) => (showArchived ? r.status === 'archived' : r.status !== 'archived'))
     .filter((r) => !q
+      || (urlSearch && serverMatches && serverMatches.has(String(r.id)))
       || (r.aliases || []).some((a) => a.includes(q))
       || (r.contentUrls || []).some((u) => u.toLowerCase().includes(q))
       || String(r.legalName || '').toLowerCase().includes(q));
@@ -2367,7 +2642,7 @@ function PerformerRecordsPanel({ adminKey, creators }) {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by stage name, legal name or URL…"
+            placeholder="Search by stage name, legal name or URL (/creator/<id> and /api/media/… links work)…"
             className="flex-1 min-w-[240px] px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
           />
           <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
@@ -2485,8 +2760,8 @@ function PerformerRecordsPanel({ adminKey, creators }) {
                 {editing?.id === r.id && (
                   <div className="mt-3 p-3 rounded-md bg-black/30 border border-white/10 space-y-3">
                     <p className="text-[11px] text-gray-500">
-                      Legal name, date of birth and ID number cannot be edited. If one is wrong, archive this record with
-                      the reason and add a corrected one.
+                      Legal name, date of birth and ID number cannot be edited. If one is wrong, add the corrected record
+                      first (linked to the same creator), then archive this one with the reason.
                     </p>
                     <label className="block">
                       <span className="block text-xs text-gray-400 mb-1">Linked creator account</span>
@@ -2526,6 +2801,213 @@ function PerformerRecordsPanel({ adminKey, creators }) {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Account tools that don't belong to one creator record:
+ *  - Find the account a leaked screenshot came off, from the viewer mark tiled
+ *    over private media (POST /api/admin/viewer-mark; lib/viewer-mark.js).
+ *  - Suspend, ban or clear a FAN account (GET/POST /api/admin/user-moderation).
+ *    A creator's standing is set on their creator record instead; the API
+ *    refuses creator accounts here.
+ */
+function AccountsPanel({ adminKey, creators, onOpenCreator }) {
+  const [mark, setMark] = useState('');
+  const [markBusy, setMarkBusy] = useState(false);
+  const [markResult, setMarkResult] = useState(null);
+  const [markError, setMarkError] = useState('');
+
+  const [userId, setUserId] = useState('');
+  const [account, setAccount] = useState(null);
+  const [days, setDays] = useState('30');
+  const [reason, setReason] = useState('');
+  const [modBusy, setModBusy] = useState(false);
+  const [modError, setModError] = useState('');
+  const [modNotice, setModNotice] = useState('');
+
+  const lookupMark = async () => {
+    setMarkBusy(true);
+    setMarkError('');
+    setMarkResult(null);
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/viewer-mark', { code: mark });
+      if (res.status === 404) { setMarkError(data.error || 'No account produces that mark.'); return; }
+      if (!res.ok || !data.match) throw new Error(errorFrom(res, data, 'Lookup failed'));
+      setMarkResult(data.match);
+    } catch (err) {
+      setMarkError(err.message);
+    } finally {
+      setMarkBusy(false);
+    }
+  };
+
+  const loadAccount = async (id) => {
+    const target = String(id ?? userId).trim();
+    if (!target) return;
+    setModBusy(true);
+    setModError('');
+    setModNotice('');
+    setAccount(null);
+    try {
+      const { res, data } = await adminGet(adminKey, `/api/admin/user-moderation?userId=${encodeURIComponent(target)}`);
+      if (!res.ok || !data.user) throw new Error(errorFrom(res, data, 'Could not load that account'));
+      setUserId(target);
+      setAccount(data.user);
+    } catch (err) {
+      setModError(err.message);
+    } finally {
+      setModBusy(false);
+    }
+  };
+
+  const moderate = async (action) => {
+    if (!account) return;
+    const n = Number(days);
+    if (action === 'suspend' && (!Number.isInteger(n) || n < 1 || n > 365)) {
+      setModError('Days must be a whole number from 1 to 365.');
+      return;
+    }
+    const verb = action === 'ban' ? 'BAN (signs them out everywhere, refuses every future sign-in)'
+      : action === 'suspend' ? `suspend for ${n} day(s) (read-only: no posts, messages, reports, purchases)`
+        : 'clear any suspension or ban on';
+    if (!confirm(`${verb.charAt(0).toUpperCase()}${verb.slice(1)} account ${account.userId}?`)) return;
+    setModBusy(true);
+    setModError('');
+    setModNotice('');
+    try {
+      const body = { userId: account.userId, action, ...(action === 'suspend' ? { days: n } : {}), ...(reason.trim() ? { reason: reason.trim() } : {}) };
+      const { res, data } = await adminPost(adminKey, '/api/admin/user-moderation', body);
+      if (!res.ok || !data.user) throw new Error(errorFrom(res, data, 'Could not change that account'));
+      setAccount(data.user);
+      setModNotice(`Account ${data.user.userId} is now ${data.user.status || 'in good standing'}.`);
+    } catch (err) {
+      setModError(err.message);
+    } finally {
+      setModBusy(false);
+    }
+  };
+
+  const creatorFor = (id) => (creators || []).find((c) => String(c.id) === String(id));
+
+  return (
+    <div className="space-y-8">
+      <div className="premium-card p-5">
+        <p className="font-bold text-white mb-1">Find an account by viewer mark</p>
+        <p className="text-xs text-gray-500 mb-3">
+          Private media carries a mark (like A3F9-21C4) tied to the signed-in viewer. Type the one from a leaked
+          screenshot to find the account it came from. Lookups are rate-limited and logged.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={mark}
+            onChange={(e) => setMark(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && mark.trim() && lookupMark()}
+            placeholder="A3F9-21C4"
+            className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm font-mono w-48"
+          />
+          <button onClick={lookupMark} disabled={markBusy || !mark.trim()} className="premium-button text-sm disabled:opacity-50">
+            {markBusy ? 'Searching…' : 'Look up'}
+          </button>
+        </div>
+        {markError && <p className="text-sm text-red-400 mt-3">{markError}</p>}
+        {markResult && (
+          <div className="mt-3 text-sm text-gray-300 space-y-1">
+            <p>
+              Account <span className="font-mono text-white">{String(markResult.userId)}</span>
+              {markResult.role ? ` (${String(markResult.role)})` : ''}
+              {markResult.creatorId && (() => {
+                const c = creatorFor(markResult.creatorId);
+                return ` — creator ${c ? `${c.name} (${c.handle || `#${c.id}`})` : `#${String(markResult.creatorId)}`}`;
+              })()}
+            </p>
+            <div className="flex gap-3">
+              {markResult.creatorId ? (
+                <button onClick={() => onOpenCreator(String(markResult.creatorId))} className="text-xs underline text-brand-gold">
+                  Open creator record
+                </button>
+              ) : (
+                <button onClick={() => loadAccount(markResult.userId)} className="text-xs underline text-brand-gold">
+                  Moderate this account
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="premium-card p-5">
+        <p className="font-bold text-white mb-1">Fan account moderation</p>
+        <p className="text-xs text-gray-500 mb-3">
+          By user id (shown on wall-comment reports and violations). A suspension makes the account read-only until it
+          lapses; a ban signs it out everywhere and refuses every future sign-in. Creators are suspended or banned from
+          their creator record instead.
+        </p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          <input
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && userId.trim() && loadAccount()}
+            placeholder="User id"
+            className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm font-mono w-72 max-w-full"
+          />
+          <button onClick={() => loadAccount()} disabled={modBusy || !userId.trim()} className="premium-button text-sm disabled:opacity-50">
+            Load
+          </button>
+        </div>
+        {modError && <p className="text-sm text-red-400 mb-3">{modError}</p>}
+        {modNotice && <p className="text-sm text-green-400 mb-3">{modNotice}</p>}
+        {account && (
+          <div className="space-y-3 text-sm text-gray-300">
+            <p>
+              Account <span className="font-mono text-white">{String(account.userId)}</span>
+              {account.role ? ` (${String(account.role)})` : ''} — status:{' '}
+              <span className={account.status && account.status !== 'active' ? 'text-red-400 font-bold' : 'text-green-400'}>
+                {String(account.status || 'active')}
+              </span>
+              {account.moderationUntil && ` until ${new Date(account.moderationUntil).toLocaleString()}`}
+              {account.moderationReason && ` — ${String(account.moderationReason)}`}
+            </p>
+            {account.role === 'creator' ? (
+              <p className="text-xs text-yellow-400/90">This is a creator account: change its standing from its creator record (Status).</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Reason (kept on the account)"
+                    className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs w-72 max-w-full"
+                  />
+                  <label className="flex items-center gap-1 text-xs text-gray-400">
+                    Days
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={days}
+                      onChange={(e) => setDays(e.target.value)}
+                      className="w-20 px-2 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
+                    />
+                  </label>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => moderate('suspend')} disabled={modBusy} className="text-xs px-3 py-1.5 rounded-md border border-yellow-500/50 text-yellow-300 hover:bg-yellow-500/10 transition disabled:opacity-50">
+                    Suspend
+                  </button>
+                  <button onClick={() => moderate('ban')} disabled={modBusy} className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50">
+                    Ban
+                  </button>
+                  <button onClick={() => moderate('clear')} disabled={modBusy} className="text-xs px-3 py-1.5 rounded-md border border-white/15 text-gray-300 hover:text-white transition disabled:opacity-50">
+                    Clear
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

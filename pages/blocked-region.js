@@ -13,12 +13,18 @@ import WaitlistForm from '../components/WaitlistForm';
 
 // Pages the "come back here afterwards" link must never point at: the gate
 // pages themselves (a loop) -- verify-age.js refuses them too.
+//
+// '/' is deliberately NOT excluded. On the default hosts '/' is the ungated
+// landing page and never reaches this page at all; the only time it does is
+// on the marketplace hosts (shoponeonly.com, onlyass.shop), where proxy.js
+// serves '/' as /marketplace and gates it. Dropping next=/ there sent a
+// verified shopper to /home instead of back to the shop they came to.
 const GATE_PATHS = ['/blocked-region', '/verify-age'];
 
 function verifyHrefFor(pathWithQuery) {
   if (typeof pathWithQuery !== 'string' || !pathWithQuery.startsWith('/')) return '/verify-age';
   const pathname = pathWithQuery.split(/[?#]/)[0];
-  if (pathname === '/' || GATE_PATHS.includes(pathname)) return '/verify-age';
+  if (GATE_PATHS.includes(pathname)) return '/verify-age';
   return `/verify-age?next=${encodeURIComponent(pathWithQuery)}`;
 }
 

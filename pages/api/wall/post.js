@@ -8,6 +8,7 @@ import { createNotification } from '../../../lib/notifications-store';
 import { screenPublicText } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
+import { userWriteRestriction } from '../../../lib/user-moderation';
 
 // Per author. A wall is public, so this is the surface where flooding is
 // most visible to everyone else.
@@ -44,6 +45,11 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Account-level moderation first (any login, fans included --
+    // lib/user-moderation.js): a fan an admin suspended can't keep posting
+    // while moderators delete one comment at a time.
+    const accountRestricted = userWriteRestriction(user);
+    if (accountRestricted) return res.status(403).json({ error: accountRestricted });
     // A suspended or banned creator can't post anywhere (Terms section 7),
     // not just edit their own profile.
     if (user.creatorId) {

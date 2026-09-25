@@ -45,6 +45,9 @@ export default function CartPage({ sessionUser }) {
   const [tosAccepted, setTosAccepted] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState(null);
+  // Set with payError when the refusal is "you already own this": the fix is
+  // in /orders, so the message links there.
+  const [payErrorOwned, setPayErrorOwned] = useState(false);
   const [paidOrders, setPaidOrders] = useState(null);
 
   useEffect(() => {
@@ -66,6 +69,7 @@ export default function CartPage({ sessionUser }) {
 
   const pay = async () => {
     setPayError(null);
+    setPayErrorOwned(false);
     setPaying(true);
     try {
       const res = await fetch('/api/marketplace/orders/create', {
@@ -93,6 +97,14 @@ export default function CartPage({ sessionUser }) {
         if (Array.isArray(data.items)) cart.applyChanges(data.items);
         setIdempotencyKey(newIdempotencyKey());
         throw new Error(data.error || 'Something in your cart changed. Review the new total and confirm again.');
+      }
+      if (res.status === 409 && data.code === 'ALREADY_OWNED') {
+        // A digital item this account already bought. Nothing was charged;
+        // take it out of the cart and point at where the fan already has it.
+        if (data.listingId != null) cart.remove(data.listingId);
+        setIdempotencyKey(newIdempotencyKey());
+        setPayErrorOwned(true);
+        throw new Error('You already own one of these items, so it was taken out of your cart. Nothing was charged.');
       }
       if ((res.status === 404 || res.status === 409) && data.listingId) {
         // That listing is gone (sold, removed, or its creator can't sell
@@ -258,7 +270,14 @@ export default function CartPage({ sessionUser }) {
                 </div>
               )}
 
-              {payError && <p className="text-xs text-red-400 text-center mb-3">{payError}</p>}
+              {payError && (
+                <p className="text-xs text-red-400 text-center mb-3">
+                  {payError}
+                  {payErrorOwned && (
+                    <> <a href="/orders" className="underline text-brand-pink">Find it in your orders</a></>
+                  )}
+                </p>
+              )}
 
               <button
                 onClick={pay}

@@ -71,6 +71,13 @@ export default function Inbox({ currentUserId, isCreator }) {
   const [sendNote, setSendNote] = useState('');
   const pendingIdRef = useRef(null);
   const threadRequest = useRef(0);
+  // The thread on screen right now. The poll's interval closure and an
+  // in-flight send() both outlive the render they were created in, so they
+  // read this rather than their own stale copy of `open`.
+  const openRef = useRef(null);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   const loadFirstPage = async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
@@ -91,12 +98,58 @@ export default function Inbox({ currentUserId, isCreator }) {
     }
   };
 
+  /**
+   * Re-fetches the newest page of the thread that is open, so a reply that
+   * arrives while it is on screen actually shows up (and the creator's price
+   * and canSend stay current). Merged onto what is loaded; the draft, send
+   * error and pending clientMessageId are left alone. A thread switch or a
+   * load of older messages while this is in flight wins: the result is
+   * dropped unless the same thread is still open and no other thread
+   * request started meanwhile.
+   */
+  const refreshOpenThread = async () => {
+    const current = openRef.current;
+    if (!current?.other?.userId) return;
+    const target = current.conversationId;
+    const requestAtStart = threadRequest.current;
+    try {
+      const { res, data } = await getJson(`/api/messages/with/${encodeURIComponent(current.other.userId)}`);
+      if (!res.ok) return;
+      if (threadRequest.current !== requestAtStart || openRef.current?.conversationId !== target) return;
+      const latest = Array.isArray(data?.conversation?.messages) ? data.conversation.messages : [];
+      setOpen((prev) => {
+        if (!prev || prev.conversationId !== target) return prev;
+        const have = new Set(prev.messages.map((m) => String(m.id)));
+        // More arrived than one page holds: merging would leave a silent gap
+        // between what was loaded and this page, so show the newest page and
+        // let "Load earlier messages" walk back from it.
+        const gap = latest.length > 0 && prev.messages.length > 0 && !latest.some((m) => have.has(String(m.id))) && !!data?.conversation?.hasMore;
+        return {
+          ...prev,
+          messages: gap ? mergeMessages(null, latest, null) : mergeMessages(null, prev.messages, latest),
+          hasMore: gap ? true : prev.hasMore,
+          dmPriceCents: Number.isInteger(data?.dmPriceCents) ? data.dmPriceCents : prev.dmPriceCents,
+          canSend: data?.canSend !== false,
+          cannotSendReason: typeof data?.cannotSendReason === 'string' ? data.cannotSendReason : null,
+        };
+      });
+      // The GET just marked this thread read server-side.
+      setConversations((list) => list.map((c) => (c.id === target ? { ...c, unreadCount: 0 } : c)));
+    } catch {
+      // Quiet: the next poll tries again.
+    }
+  };
+
   useEffect(() => {
     loadFirstPage();
     // New messages also bump the NotificationBell; this keeps the list itself
-    // current while the dashboard stays open.
-    const timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') loadFirstPage({ quiet: true });
+    // -- and the thread that is open -- current while the dashboard stays open.
+    const timer = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      // The thread first: its GET marks it read, so the list reloaded after it
+      // does not badge the conversation being read as unread.
+      await refreshOpenThread();
+      loadFirstPage({ quiet: true });
     }, POLL_MS);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -145,8 +198,10 @@ export default function Inbox({ currentUserId, isCreator }) {
         return;
       }
       // The `before` message aged out of storage, so there is no "older than
-      // it" any more: reload from the newest page and merge, rather than
-      // prepending an empty page and leaving a gap.
+      // it" any more. Show the newest page on its own -- replacing, not
+      // merging: keeping the aged-out messages on top would make the next
+      // "Load earlier messages" send the same aged-out id as `before` again,
+      // forever. hasMore then walks back from a message that still exists.
       if (before && data?.conversation?.stale) {
         const again = await getJson(`/api/messages/with/${encodeURIComponent(other.userId)}`);
         if (threadRequest.current !== id) return;
@@ -155,7 +210,9 @@ export default function Inbox({ currentUserId, isCreator }) {
           return;
         }
         const latest = Array.isArray(again.data?.conversation?.messages) ? again.data.conversation.messages : [];
-        setOpen((prev) => (prev ? { ...prev, messages: mergeMessages(null, prev.messages, latest), hasMore: !!again.data?.conversation?.hasMore } : prev));
+        setOpen((prev) => (prev && prev.conversationId === conversation.id
+          ? { ...prev, messages: mergeMessages(null, latest, null), hasMore: !!again.data?.conversation?.hasMore }
+          : prev));
         return;
       }
       const page = Array.isArray(data?.conversation?.messages) ? data.conversation.messages : [];
@@ -188,6 +245,12 @@ export default function Inbox({ currentUserId, isCreator }) {
       return;
     }
     if (!pendingIdRef.current) pendingIdRef.current = newClientMessageId();
+    // The thread this message belongs to. The user can switch threads while
+    // the request is in flight; everything below only touches the pane,
+    // draft and errors if this thread is still the one on screen.
+    const target = open.conversationId;
+    const targetName = open.other?.name;
+    const stillOpen = () => openRef.current?.conversationId === target;
     setSending(true);
     setSendError('');
     setSendNote('');
@@ -200,14 +263,23 @@ export default function Inbox({ currentUserId, isCreator }) {
         // charged) if it is missing or the creator's price has changed.
         expectedPriceCents: open.dmPriceCents,
       });
+      if (!stillOpen()) {
+        // Sent (or refused) for a thread that is no longer on screen. Its
+        // price, page and errors belong to that thread, not this one; the
+        // list reload shows where it landed, and reopening it shows the rest.
+        // The draft and clientMessageId now belong to the thread on screen,
+        // which openThread() already reset.
+        loadFirstPage({ quiet: true });
+        return;
+      }
       if (res.status === 409 && data?.code === 'dm_price_changed' && Number.isInteger(data?.currentPriceCents)) {
         // Nothing was charged. Show the new price; pressing Send again is the
         // confirmation (it now carries the new expectedPriceCents).
         const next = data.currentPriceCents;
-        setOpen((prev) => (prev ? { ...prev, dmPriceCents: next } : prev));
+        setOpen((prev) => (prev && prev.conversationId === target ? { ...prev, dmPriceCents: next } : prev));
         setSendError(
           next > 0
-            ? `The price to message ${open.other?.name || 'this creator'} is now ${formatCredits(next)}. Nothing was charged — press Send again to send at the new price.`
+            ? `The price to message ${targetName || 'this creator'} is now ${formatCredits(next)}. Nothing was charged — press Send again to send at the new price.`
             : 'This message is now free to send. Nothing was charged — press Send again.',
         );
         return;
@@ -226,13 +298,13 @@ export default function Inbox({ currentUserId, isCreator }) {
       // Merged, not replaced: the send answers with the LATEST page, and
       // replacing dropped every earlier message the user had loaded.
       const page = Array.isArray(data?.conversation?.messages) ? data.conversation.messages : null;
-      if (page) setOpen((prev) => (prev ? { ...prev, messages: mergeMessages(null, prev.messages, page) } : prev));
+      if (page) setOpen((prev) => (prev && prev.conversationId === target ? { ...prev, messages: mergeMessages(null, prev.messages, page) } : prev));
       if (Number.isInteger(data?.chargedCents) && data.chargedCents > 0 && !data.duplicate) {
         setSendNote(`Sent — ${formatCredits(data.chargedCents)} charged.`);
       }
       loadFirstPage({ quiet: true });
     } catch {
-      setSendError('Could not reach the server. Your message may not have sent — press Send again to retry safely.');
+      if (stillOpen()) setSendError('Could not reach the server. Your message may not have sent — press Send again to retry safely.');
     } finally {
       setSending(false);
     }

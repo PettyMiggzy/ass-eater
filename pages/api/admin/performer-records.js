@@ -4,6 +4,8 @@ import {
   createPerformerRecord,
   updatePerformerRecord,
   archivePerformerRecord,
+  searchPerformerRecords,
+  RECORD_REQUIRED_BY_LIVE_CREATOR,
   RecordsNotConfigured,
   UnderagePerformerRecord,
 } from '../../../lib/performer-records-store';
@@ -30,27 +32,32 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      return res.status(200).json({ records: await getPerformerRecords() });
+      // ?q= searches server-side: aliases, legal name, recorded URLs, and a
+      // pasted creator-page or media URL resolved to the records linked to
+      // that creator plus the co-performers attested on that exact item.
+      const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 500) : '';
+      return res.status(200).json({ records: q.trim() ? await searchPerformerRecords(q) : await getPerformerRecords() });
     }
 
     if (req.method === 'POST') {
       const { action } = req.body || {};
 
       if (action === 'archive') {
-        const { id, reason } = req.body || {};
+        const { id, reason, confirmUnrecordedLiveCreator } = req.body || {};
         if (!id) return res.status(400).json({ error: 'Missing record id' });
-        const record = await archivePerformerRecord(id, reason);
+        const record = await archivePerformerRecord(id, reason, { confirmUnrecordedLiveCreator: confirmUnrecordedLiveCreator === true });
         if (!record) return res.status(409).json({ error: 'That record is already archived.' });
         return res.status(200).json({ ok: true, record });
       }
 
       if (action === 'update') {
-        const { id, fields } = req.body || {};
+        const { id, fields, confirmUnrecordedLiveCreator } = req.body || {};
         if (!id) return res.status(400).json({ error: 'Missing record id' });
         if (fields !== undefined && (fields === null || typeof fields !== 'object' || Array.isArray(fields))) {
           return res.status(400).json({ error: 'Invalid fields' });
         }
-        return res.status(200).json({ ok: true, record: await updatePerformerRecord(id, fields || {}) });
+        const record = await updatePerformerRecord(id, fields || {}, { confirmUnrecordedLiveCreator: confirmUnrecordedLiveCreator === true });
+        return res.status(200).json({ ok: true, record });
       }
 
       return res.status(200).json({ ok: true, record: await createPerformerRecord(req.body || {}) });
@@ -64,6 +71,11 @@ export default async function handler(req, res) {
     // thing to hand back.
     if (err instanceof RecordsNotConfigured) return res.status(503).json({ error: err.message });
     if (err instanceof UnderagePerformerRecord) return res.status(400).json({ error: err.message });
+    // Would leave a live creator with no §2257 record: the panel shows this
+    // and can resend with confirmUnrecordedLiveCreator: true.
+    if (err && err.code === RECORD_REQUIRED_BY_LIVE_CREATOR) {
+      return res.status(409).json({ error: err.message, code: err.code, creatorId: err.creatorId });
+    }
     if (err instanceof Error && SAFE_MESSAGES.has(err.message)) {
       return res.status(400).json({ error: err.message });
     }

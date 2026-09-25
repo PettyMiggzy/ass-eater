@@ -5,6 +5,7 @@ import {
   NCII_REPORT_NOT_FOUND,
 } from '../../../lib/ncii-reports-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
+import { pushCreatorStatus, reportPushFailure } from '../../../lib/server-api';
 
 const POSITIVE_INT = /^[1-9]\d{0,17}$/;
 
@@ -36,15 +37,14 @@ export default async function handler(req, res) {
     // runs exactly once per resolved report -- never twice from a
     // concurrent double-resolve, and never zero times because the second
     // half failed after the first had committed.
-    const { report, creator, listingTakedownFailed } = await resolveNciiReport(id, action, { creatorId });
-    return res.status(200).json({
-      ok: true,
-      report,
-      creator,
-      ...(listingTakedownFailed
-        ? { warning: 'The creator is banned, but taking their listings down failed. They cannot sell while banned; retry the takedown from the creator record.' }
-        : {}),
-    });
+    // A report filed as a POSSIBLE MINOR bans the attributed creator outright
+    // in that same transaction (the category comes from the stored report,
+    // not from this request); `outrightBan` says it happened.
+    const { report, creator, outrightBan } = await resolveNciiReport(id, action, { creatorId });
+    // A suspension or ban reaches the creator's server/ account too
+    // (subscriptions, payouts, live) -- after the commit, best effort.
+    if (creator) reportPushFailure(await pushCreatorStatus(creator.id), `ncii report ${id}`);
+    return res.status(200).json({ ok: true, report, creator, outrightBan: !!outrightBan });
   } catch (err) {
     if (err.code === NCII_REPORT_NOT_FOUND) return res.status(404).json({ error: 'Report not found' });
     if (err.code === NCII_ALREADY_RESOLVED) return res.status(409).json({ error: 'That report was already resolved.' });

@@ -62,15 +62,17 @@ export async function adminGet(adminKey, url) {
  * purpose: 'avatar' | 'gallery'. Returns the finalize response body
  * ({ ok, creator, item? }). Throws an Error with a readable message.
  *
- * A gallery finalize must say whether anyone besides the creator appears in
- * the file (othersAppear: boolean); when true, coPerformerRecordIds lists the
- * §2257 record of every other person (lib/performer-attestation.js). Checked
- * here BEFORE the token is requested, so a missing answer doesn't leave an
- * uploaded file behind with nothing to finalize it.
+ * Every finalize -- gallery AND avatar -- must say whether anyone besides the
+ * creator appears in the file (othersAppear: boolean); when true,
+ * coPerformerRecordIds lists the §2257 record of every other person
+ * (lib/performer-attestation.js). /api/admin/avatar refuses a finalize
+ * without the answer and deletes the upload. Checked here BEFORE the token
+ * is requested, so a missing answer doesn't leave an uploaded file behind
+ * with nothing to finalize it.
  */
 export async function adminUploadMedia({ adminKey, creatorId, purpose, file, aiGenerated = false, othersAppear, coPerformerRecordIds, onProgress }) {
   if (!file) throw new Error('No file selected.');
-  if (purpose === 'gallery') {
+  if (purpose === 'gallery' || purpose === 'avatar') {
     if (othersAppear !== true && othersAppear !== false) {
       throw new Error('Say whether anyone besides this creator appears in the file before uploading.');
     }
@@ -112,15 +114,13 @@ export async function adminUploadMedia({ adminKey, creatorId, purpose, file, aiG
   }
 
   const finalizeUrl = purpose === 'avatar' ? '/api/admin/avatar' : '/api/admin/upload';
+  const attestation = {
+    othersAppear,
+    ...(othersAppear ? { coPerformerRecordIds: coPerformerRecordIds.map(String) } : {}),
+  };
   const body = purpose === 'avatar'
-    ? { creatorId: String(creatorId), pathname }
-    : {
-      creatorId: String(creatorId),
-      pathname,
-      aiGenerated: aiGenerated === true,
-      othersAppear,
-      ...(othersAppear ? { coPerformerRecordIds: coPerformerRecordIds.map(String) } : {}),
-    };
+    ? { creatorId: String(creatorId), pathname, ...attestation }
+    : { creatorId: String(creatorId), pathname, aiGenerated: aiGenerated === true, ...attestation };
   const done = await adminPost(adminKey, finalizeUrl, body);
   if (!done.res.ok || !done.data.creator) {
     throw new Error(errorFrom(done.res, done.data, 'The file uploaded but could not be saved to the profile.'));

@@ -102,7 +102,7 @@ function parseDmPrice(dmPrice) {
  * used by tests of the full mapping).
  *
  * Coupled fields travel together: status with suspendedUntil, locked with
- * gateTokens.
+ * gateTokens. A banned creator's status is always sent (see below).
  */
 export function fieldsFromDraft(draft, baseline) {
   const all = !baseline;
@@ -115,9 +115,19 @@ export function fieldsFromDraft(draft, baseline) {
     fields.locked = !!draft.locked;
     fields.gateTokens = draft.gateTokens;
   }
-  if (changed('status')) {
+  // A banned creator's save always carries status: 'banned', changed or not.
+  // /api/admin/profile takes a banned creator's listings down on every save
+  // that says 'banned', and that is the ONLY way to retry a takedown that
+  // failed part-way ("The ban was saved, but taking their listings down
+  // failed. Save again to retry."). With diff-only saves the retry used to
+  // send nothing ("Nothing to save"), so the listings stayed up for good.
+  // Only when the baseline (the stored record) is banned too: rebaseDraft has
+  // already replaced an untouched status with the current one, so a creator
+  // reinstated elsewhere since the draft was opened is never re-banned.
+  const reBan = !all && draft.status === 'banned' && baseline.status === 'banned';
+  if (changed('status') || reBan) {
     fields.status = draft.status;
-    fields.suspendedUntil = draft.suspendedUntil ?? null;
+    fields.suspendedUntil = reBan ? null : draft.suspendedUntil ?? null;
   }
   if (changed('dmPrice')) {
     const parsed = parseDmPrice(draft.dmPrice);

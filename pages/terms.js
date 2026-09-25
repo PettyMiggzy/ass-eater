@@ -16,7 +16,7 @@ import { MIN_PAYOUT_CENTS } from '../lib/fees';
 // Section 6 is the Marketplace terms a buyer accepts at checkout
 // (CURRENT_TOS_VERSION in lib/orders-store.js); a material change to it
 // should bump that version too.
-const LAST_UPDATED = 'September 24, 2026';
+const LAST_UPDATED = 'September 25, 2026';
 const DM_FLOOR = `$${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)}`;
 const MIN_PAYOUT = `$${(MIN_PAYOUT_CENTS / 100).toFixed(2)}`;
 
@@ -140,7 +140,10 @@ export default function Terms() {
                   <strong>Platform fees.</strong> On each sale to a Fan, the Platform keeps a{' '}
                   {PLATFORM_FEE_PCT}% platform fee and credits the rest to the Creator. Marketplace sales
                   carry an additional {LISTING_FEE_PCT}% listing fee, so the Platform keeps{' '}
-                  {MARKETPLACE_FEE_PCT}% of a Marketplace sale in total. Creators accepted into the{' '}
+                  {MARKETPLACE_FEE_PCT}% of a Marketplace sale in total. For a physical item that total
+                  is the whole amount the Fan pays — the item price <strong>plus the shipping charge</strong>{' '}
+                  the Creator set — so the {MARKETPLACE_FEE_PCT}% is also taken from shipping; a Creator
+                  who wants shipping to cover their postage in full should price it accordingly. Creators accepted into the{' '}
                   <a href="/founding-creator" className="text-brand-gold underline">Founding Creator programme</a>{' '}
                   pay no platform fee and no listing fee on what Fans spend with them (Marketplace sales and
                   paid messages) for {FEE_WAIVER_DAYS} days, counted from the later of the day they were
@@ -201,7 +204,8 @@ export default function Terms() {
                 </li>
                 <li>
                   When a purchase completes, its price in credits is taken from the Fan&apos;s balance and
-                  the Creator&apos;s share (the price less the fees in Section 5) is credited to the
+                  the Creator&apos;s share (the price plus any shipping charge, less the fees in Section 5,
+                  which apply to both) is credited to the
                   Creator&apos;s Platform balance at that moment, to be paid out on request as Section 5
                   describes. Purchases are final. The Platform does not hold the purchase price pending
                   delivery, does not guarantee delivery, and has no obligation to investigate, mediate,
@@ -290,6 +294,19 @@ export default function Terms() {
                 also make reasonable efforts to locate and remove additional known copies of reported content
                 on the Platform.
               </p>
+              <p className="mt-3" id="report-minor">
+                <strong>You do not have to be the person shown to report.</strong> The same form takes
+                reports from anyone who believes content on the Platform was posted without the consent of
+                the person in it, and from anyone who believes content shows a person under 18. Those
+                reports ask only for a good-faith statement, not a statement that you are the person
+                shown. Reports of possible minors are reviewed ahead of everything else. Content confirmed
+                to show a minor is removed, the account that posted it is banned permanently (not the
+                30-day suspension in Section 7), and it is reported to the National Center for Missing
+                &amp; Exploited Children and law enforcement as the law requires. If you believe a child is
+                in immediate danger, contact law enforcement first; you can also report directly to the
+                NCMEC CyberTipline at{' '}
+                <a href="https://report.cybertip.org" className="text-brand-gold underline" rel="noopener noreferrer" target="_blank">report.cybertip.org</a>.
+              </p>
             </Section>
 
             <Section title="9. Termination">
@@ -338,7 +355,8 @@ export default function Terms() {
               </p>
               <p className="mt-3">
                 Two kinds of complaint have their own faster route and should use it instead:
-                content you appear in that you did not consent to goes through{' '}
+                non-consensual content (whether it shows you or someone else) and content that may show
+                a person under 18 go through{' '}
                 <a href="/report-content" className="text-brand-pink hover:underline">our takedown form</a>,
                 which carries a 48-hour deadline under the federal TAKE IT DOWN Act; copyright
                 complaints are covered in Section 8.

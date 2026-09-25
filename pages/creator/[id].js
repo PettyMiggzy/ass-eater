@@ -16,10 +16,11 @@ import { DM_PRICE_FLOOR_CENTS, formatCredits } from '../../lib/brand';
 import { FoundingBadge, Icons, SolidIcons, Tagline, pickTagline } from '../../components/Brand';
 import SiteNav from '../../components/SiteNav';
 import DemoBadge from '../../components/public/DemoBadge';
+import PremiumBadge from '../../components/public/PremiumBadge';
 import ListingPreview from '../../components/public/ListingPreview';
 import MediaLightbox from '../../components/public/MediaLightbox';
 import TokenUnlockPanel from '../../components/public/TokenUnlockPanel';
-import { isDemoCreator, isDemoListing, DEMO_LABEL } from '../../components/public/cards';
+import { isDemoCreator, isDemoListing, DEMO_LABEL, marketplaceHrefFor } from '../../components/public/cards';
 
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
@@ -396,9 +397,7 @@ export default function CreatorProfile({
               <div className="flex-1 sm:pb-2">
                 <h1 className="text-3xl font-black flex items-center gap-2 flex-wrap">
                   {creator.name}
-                  {creator.premium && (
-                    <SolidIcons.verified className="h-6 w-6 text-brand-pink" title="Verified creator" />
-                  )}
+                  {creator.premium && <PremiumBadge />}
                   {creator.founding && (
                     <span
                       title="One of the first 100 creators on OnlyOne"
@@ -720,7 +719,7 @@ export default function CreatorProfile({
                 ) : (
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {listings.map((l) => (
-                      <a key={l.id} href="/marketplace"
+                      <a key={l.id} href={marketplaceHrefFor(l)}
                          className="group relative aspect-square rounded-xl overflow-hidden border border-white/10 hover:border-brand-pink/60 transition">
                         <ListingPreview media={l.media} />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent pointer-events-none" />

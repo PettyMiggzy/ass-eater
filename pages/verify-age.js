@@ -13,8 +13,10 @@ const API_KEY = process.env.NEXT_PUBLIC_AGECHECKER_KEY;
 // Where to go once verified: back to the page the visitor was trying to open
 // (/blocked-region passes it as ?next=), through safeRedirectPath so only a
 // same-origin path is ever followed. Never back to a gate page (a loop).
-// Falls back to /home, the browse page -- '/' is the ungated landing page,
-// which a just-verified visitor has no reason to be sent to.
+// With no ?next= it falls back to /home, the browse page. next=/ IS honoured:
+// /blocked-region only ever sends it from a host whose root proxy.js serves
+// as a gated page (shoponeonly.com / onlyass.shop -> /marketplace), and going
+// back to '/' there is going back to the shop.
 function afterVerifyPath(search) {
   let next = null;
   try {
@@ -65,7 +67,12 @@ export default function VerifyAge() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Verification could not be confirmed');
-            router.push(afterVerifyPath(window.location.search));
+            const destination = afterVerifyPath(window.location.search);
+            // A host root is whatever proxy.js rewrites it to on THIS host
+            // (the marketplace on the shop domains), so load it as a real
+            // request rather than a client-side transition to the index page.
+            if (destination.split(/[?#]/)[0] === '/') window.location.assign(destination);
+            else router.push(destination);
           } catch (err) {
             setStatus('error');
             setError(err.message);

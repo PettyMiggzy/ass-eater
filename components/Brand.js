@@ -121,7 +121,19 @@ const STROKE = {
   strokeLinejoin: 'round',
 };
 
-function Svg({ children, className }) {
+// Decorative by default (aria-hidden). With a `title` the icon is the only
+// label for something (the admin roster's premium mark), so it becomes an
+// image with that title as its accessible name and hover tooltip -- the prop
+// used to be accepted and silently dropped.
+function Svg({ children, className, title }) {
+  if (typeof title === 'string' && title) {
+    return (
+      <svg viewBox="0 0 24 24" className={className} role="img" aria-label={title}>
+        <title>{title}</title>
+        {children}
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
       {children}
@@ -359,10 +371,11 @@ export const SolidIcons = {
       <rect x="4.4" y="10" width="15.2" height="10.4" rx="2.6" fill="currentColor" />
     </Svg>
   ),
-  // The verified/premium seal, replacing a generic check PNG that was doing
-  // this job at eight call sites. A scalloped rosette reads as a badge at
-  // 14px where a bare tick reads as a to-do item -- and it is drawn from one
-  // rotated point so every lobe matches exactly.
+  // A scalloped rosette with a check, drawn from one rotated point so every
+  // lobe matches exactly. Not for `creator.premium` on public pages: that flag
+  // is only a content-slot tier, and a verification-style seal next to a
+  // creator's name reads as an identity/age check -- public surfaces use
+  // components/public/PremiumBadge.js (a plain text label) instead.
   verified: (p) => (
     <Svg {...p}>
       <path

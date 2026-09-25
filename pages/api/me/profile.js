@@ -2,7 +2,7 @@ import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { updateCreatorProfile, sanitizeSocials, sanitizeTags, sanitizeAge, sanitizeLocation, UnderageProfile } from '../../../lib/creators-store';
 import { screenPublicText, publicProfileTextEntries, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
-import { sanitizeGateTokens } from '../../../lib/token-gate';
+import { sanitizeGateTokens, refusesUnenforceableGate } from '../../../lib/token-gate';
 import {
   validateTextFields,
   normalizeHandle,
@@ -106,6 +106,10 @@ export default async function handler(req, res) {
   if (fields && 'socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if (fields && 'tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
   if (fields && 'gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);
+  // A gate over media that is served as public files would lock nothing (see
+  // lib/token-gate.js gateEnforceable).
+  const gateRefusal = refusesUnenforceableGate(ctx.creator, safeFields);
+  if (gateRefusal) return res.status(400).json({ error: gateRefusal });
   if (fields && 'location' in fields) safeFields.location = sanitizeLocation(fields.location);
   if (fields && 'age' in fields) {
     try {

@@ -1,5 +1,6 @@
 import { deleteCreator, CREATOR_HAS_OBLIGATIONS } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
+import { pushUserStanding, reportPushFailure } from '../../../lib/server-api';
 
 /**
  * POST /api/admin/delete
@@ -26,7 +27,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { creators, stranded } = await deleteCreator(String(creatorId), { force: force === true });
+    const { creators, stranded, removedUserIds } = await deleteCreator(String(creatorId), { force: force === true });
+    // The deleted login's server/ account is stopped too (after the commit;
+    // best effort, never fails the delete). With the site user gone, nothing
+    // would ever tell server/ otherwise.
+    for (const uid of removedUserIds) {
+      reportPushFailure(await pushUserStanding(uid, 'banned'), `delete creator ${creatorId}`);
+    }
     return res.status(200).json({ ok: true, creators, stranded });
   } catch (err) {
     if (err.code === CREATOR_HAS_OBLIGATIONS) {

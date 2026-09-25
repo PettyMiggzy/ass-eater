@@ -1,7 +1,7 @@
 import { getSessionUser } from '../../../lib/session';
 import { getCreatorById, isPubliclyVisible } from '../../../lib/creators-store';
 import { getListingById } from '../../../lib/listings-store';
-import { isTokenGated } from '../../../lib/token-gate';
+import { gateConfigured } from '../../../lib/token-gate';
 import {
   parseMediaPathname,
   mediaSrc,
@@ -104,7 +104,10 @@ export default async function handler(req, res) {
         allowed =
           inGallery &&
           isPubliclyVisible(creator) &&
-          (!isTokenGated(creator) || (await canViewGatedCreatorMedia(req, creator)));
+          // The raw setting, never isTokenGated (display only): a gated
+          // creator with one legacy public-file src must not have every
+          // private upload served to non-holders (fails closed).
+          (!gateConfigured(creator) || (await canViewGatedCreatorMedia(req, creator)));
       }
     }
     if (!allowed) return notFound(res);

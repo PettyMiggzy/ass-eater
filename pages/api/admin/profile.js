@@ -15,7 +15,7 @@ import { FOUNDING_LIMIT, isFoundingCreator, profileQualifiesForFounding } from '
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { screenPublicText, publicProfileTextEntries, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
-import { sanitizeGateTokens } from '../../../lib/token-gate';
+import { sanitizeGateTokens, refusesUnenforceableGate } from '../../../lib/token-gate';
 import {
   validateTextFields,
   normalizeHandle,
@@ -28,6 +28,7 @@ import {
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
 import { performerRecordStatusForCreator } from '../../../lib/performer-records-store';
 import { getAddress } from 'viem';
+import { pushCreatorStatus, reportPushFailure } from '../../../lib/server-api';
 
 const FIELD_LABELS = {
   name: 'Display name',
@@ -153,6 +154,11 @@ export default async function handler(req, res) {
   if ('socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if ('tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
   if ('gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);
+  // A gate over media served as public files (every seed/demo creator's
+  // /images/...) would lock nothing: refused rather than shown as padlocks
+  // over files anyone can load directly (lib/token-gate.js gateEnforceable).
+  const gateRefusal = refusesUnenforceableGate(existing, safeFields);
+  if (gateRefusal) return res.status(400).json({ error: gateRefusal });
   if ('location' in fields) safeFields.location = sanitizeLocation(fields.location);
   if ('age' in fields) {
     // Same refusal as the creator's own editor: an admin must not be able to
@@ -423,6 +429,15 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 
+  // A change of standing (suspend, ban, reinstate, approve, revert to
+  // pending) reaches the creator's server/ account too -- after the commit,
+  // best effort, never failing the save. Without it a site ban left the
+  // server/ account renewing subscriptions and paying out until the creator
+  // bridged again, which a banned creator never does.
+  if ((effectiveCreatorStatus(creator) ?? 'active') !== previousStatus) {
+    reportPushFailure(await pushCreatorStatus(existing.id), `admin status change ${existing.id}`);
+  }
+
   // A ban set by hand takes the creator's listings off sale: every listing --
   // including ones the creator had pulled themselves, which could otherwise
   // be reactivated if the ban were later lifted by hand -- is marked removed
@@ -441,8 +456,10 @@ export default async function handler(req, res) {
   // listing (reports / TAKE IT DOWN), which deletes everything.
   //
   // Runs on every save of a banned creator (the panel posts status every
-  // time); already-deleted files are not deleted again, and a takedown that
-  // failed part-way is retried by simply saving again.
+  // time), so a takedown whose UPDATE failed is retried by saving again. The
+  // files it deletes are recorded for the orphan sweep in the same commit as
+  // the takedown, so a deletion that fails after the commit is retried by
+  // the sweep, not by re-saving (already-deleted listings are skipped).
   if (safeFields.status === 'banned') {
     try {
       await removeListingsForCreator(String(existing.id), { moderation: true, keepPaid: true });

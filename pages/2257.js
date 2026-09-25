@@ -40,7 +40,7 @@ export default function Statement2257() {
         <SiteNav />
         <div className="max-w-3xl mx-auto px-6 py-14">
           <h1 className="text-3xl font-black premium-title mb-2">18 U.S.C. §2257 Statement</h1>
-          <p className="text-xs text-gray-500 mb-8">Last updated 2026-09-24</p>
+          <p className="text-xs text-gray-500 mb-8">Last updated 2026-09-25</p>
 
           <div className="space-y-6 text-sm text-gray-300 leading-relaxed">
             <p>
@@ -71,7 +71,8 @@ export default function Statement2257() {
             <p>
               These records are kept for seven years, indexed so that a record can be found from any
               name the performer uses or any URL on which the content appears, and are held
-              encrypted and accessible only to the records custodian.
+              encrypted and accessible only to the records custodian and authorized administrators of
+              the Platform.
             </p>
 
             <p>
@@ -109,8 +110,14 @@ export default function Statement2257() {
               If you believe any content on this Platform depicts a minor, or depicts anyone who did
               not consent to it, report it immediately using our{' '}
               <a href="/report-content" className="text-red-400 hover:underline font-semibold">takedown form</a>.
-              You do not need an account to file a report, and reports of this kind are reviewed
-              ahead of everything else.
+              You do not need an account, and you do not need to be the person shown: choose
+              &quot;I believe this content shows someone under 18&quot; (or the option for reporting
+              someone else) and you are asked only for a good-faith statement. Reports of a possible
+              minor are reviewed ahead of everything else; confirmed content is removed, the account is
+              banned, and it is reported to the National Center for Missing &amp; Exploited Children.
+              If a child is in immediate danger, contact law enforcement; you can also report directly
+              to the NCMEC CyberTipline at{' '}
+              <a href="https://report.cybertip.org" className="text-red-400 hover:underline" rel="noopener noreferrer" target="_blank">report.cybertip.org</a>.
             </p>
           </div>
 

@@ -138,7 +138,7 @@ export default async function handler(req, res) {
 
   // Bounded, and never allowed to fail the upload it rides along with.
   try {
-    await sweepOrphanedMedia({ limit: OPPORTUNISTIC_SWEEP });
+    await sweepOrphanedMedia({ limit: OPPORTUNISTIC_SWEEP, timeBudgetMs: 5000 });
   } catch (err) {
     console.error('[media/upload-token] orphan sweep failed:', err);
   }

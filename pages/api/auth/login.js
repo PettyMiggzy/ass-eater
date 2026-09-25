@@ -1,6 +1,7 @@
 import { findUserByEmail, verifyPassword } from '../../../lib/users-store';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
 import { checkRateLimit, clearFailures, clientIp, consumeAttempt, recordFailure } from '../../../lib/rate-limit';
+import { effectiveUserStatus } from '../../../lib/user-moderation';
 
 // Two brakes, and both of them are aimed at the host doing the guessing
 // rather than at the account being guessed at:
@@ -94,6 +95,12 @@ export default async function handler(req, res) {
     clearFailures(ipKey);
     clearFailures(accountKey);
     clearFailures(accountFromIpKey);
+
+    // A banned account cannot sign in (lib/user-moderation.js). Only said
+    // after a correct password, so it reveals nothing to a guesser.
+    if (effectiveUserStatus(user) === 'banned') {
+      return res.status(403).json({ error: 'This account has been banned and can no longer sign in.' });
+    }
 
     const token = createSessionToken(user.id, user.sessionVersion);
     setSessionCookie(res, token);

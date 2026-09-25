@@ -18,6 +18,7 @@ import {
 } from '../lib/brand';
 import { marketplaceVerificationLive } from '../lib/marketplace-payment-config';
 import DemoBadge from '../components/public/DemoBadge';
+import PremiumBadge from '../components/public/PremiumBadge';
 import { toCreatorCard } from '../components/public/cards';
 
 // Every fee quoted on this page comes from lib/brand.js (derived from
@@ -400,7 +401,7 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
                     <div className="p-4 text-center">
                       <p className="font-black text-lg text-white flex items-center justify-center gap-1">
                         {c.name}
-                        {c.premium && <SolidIcons.verified className="h-4 w-4 text-brand-pink" title="Premium" />}
+                        {c.premium && <PremiumBadge />}
                       </p>
                       <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
                       {/* Real count only -- there are no subscribers. */}

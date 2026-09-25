@@ -1,4 +1,5 @@
-import { getVerifiedSessionUserId } from '../../../lib/session';
+import { getSessionUser } from '../../../lib/session';
+import { userWriteRestriction } from '../../../lib/user-moderation';
 import { addReport, normalizeTargetId } from '../../../lib/reports-store';
 import { query } from '../../../lib/db';
 import { consumeAttempt } from '../../../lib/rate-limit';
@@ -15,8 +16,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const uid = await getVerifiedSessionUserId(req);
-  if (!uid) return res.status(401).json({ error: 'Log in to report a comment' });
+  const user = await getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Log in to report a comment' });
+  const uid = user.id;
+  // A suspended account (lib/user-moderation.js) can't file reports either:
+  // report spam is one of the ways an account abuses the moderation queue.
+  const accountRestricted = userWriteRestriction(user);
+  if (accountRestricted) return res.status(403).json({ error: accountRestricted });
 
   const { postId: rawPostId, reason } = req.body || {};
   // typeof, not just truthiness -- a truthy non-string reason (an object)

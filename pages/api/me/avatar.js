@@ -1,10 +1,17 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { setCreatorAvatar } from '../../../lib/creators-store';
-import { mediaSrc, parseMediaPathname, verifyUploadedBlob, MediaRejected } from '../../../lib/media';
+import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
+import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 
 /**
  * POST /api/me/avatar -- finalize an avatar upload.
- * JSON { pathname } -> 200 { ok: true, creator }
+ * JSON { pathname, othersAppear: false } -> 200 { ok: true, creator }
+ *
+ * `othersAppear` is required, exactly as on the gallery and marketplace
+ * finalize routes (lib/performer-attestation.js): the avatar is the most
+ * public image on the site, and /2257 says every upload asks. `true` is
+ * refused for a creator (the file is deleted) -- a photo showing someone else
+ * needs that person's §2257 record first, which is an admin step.
  *
  * Token from POST /api/media/upload-token { purpose: 'avatar', ... }. The
  * token route carries the rate limit (it is where a new file can be created);
@@ -27,8 +34,13 @@ export default async function handler(req, res) {
   }
 
   try {
+    const attested = await resolvePerformerAttestation(req.body);
+    if (attested.error) {
+      await deleteBlobQuietly(pathname);
+      return res.status(attested.status).json({ error: attested.error });
+    }
     await verifyUploadedBlob(pathname, 'avatar');
-    const creator = await setCreatorAvatar(ctx.creator.id, mediaSrc(pathname));
+    const creator = await setCreatorAvatar(ctx.creator.id, mediaSrc(pathname), { performers: attested.attestation });
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     if (err instanceof MediaRejected) return res.status(err.status).json({ error: err.message });

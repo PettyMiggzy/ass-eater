@@ -94,7 +94,7 @@ const BLOCKED_STATE_CODES = new Set([
 // and the waitlist, no creator content -- the same basis as "/". It was
 // already in PREVIEW_PUBLIC_PATHS and _app.js's NO_NOTICE_PATHS; leaving it
 // out of this list broke the rule that the three move together.
-const SFW_PATHS = new Set(['/', '/coming-soon', '/blocked-region', '/verify-age', '/owner', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257']);
+const SFW_PATHS = new Set(['/', '/coming-soon', '/blocked-region', '/verify-age', '/owner', '/gateway', '/token', '/report-content', '/founding-creator', '/terms', '/privacy', '/2257', '/get-crypto']);
 
 // Site plumbing files that are not pages and carry no content: the crawler
 // directives, the sitemap, the PWA manifest (which references only
@@ -197,6 +197,9 @@ const PREVIEW_PUBLIC_PATHS = new Set([
   // preview mode was ever re-armed. Same "exemption lists move together"
   // rule as everywhere else in this file.
   '/gateway', '/token',
+  // /get-crypto is /token's only link ("New to crypto?"): a wallet/USDC
+  // setup guide with no creator content. All three lists, together.
+  '/get-crypto',
   ...BRAND_ART_PATHS,
   ...PUBLIC_STATIC_FILES,
 ]);

@@ -1,6 +1,7 @@
 import { setCreatorAvatar, getCreatorById } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
+import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 
 const AVATAR_PLACEHOLDER = '/images/avatar-placeholder.png';
 
@@ -8,9 +9,12 @@ const AVATAR_PLACEHOLDER = '/images/avatar-placeholder.png';
  * POST /api/admin/avatar -- set or take down a creator's profile photo.
  * Header x-admin-key.
  *
- *   JSON { creatorId, pathname }       -> 200 { ok: true, creator }
+ *   JSON { creatorId, pathname, othersAppear, coPerformerRecordIds? } -> 200 { ok: true, creator }
  *     finalize an avatar upload (token from POST /api/media/upload-token with
- *     the admin key and { purpose: 'avatar', creatorId, ... }).
+ *     the admin key and { purpose: 'avatar', creatorId, ... }). The §2257
+ *     co-performer answer is required, with the admin rules: othersAppear
+ *     true must list a record id (with an ID on file) for every other person
+ *     (lib/performer-attestation.js).
  *   JSON { creatorId, remove: true }   -> 200 { ok: true, creator, removed }
  *     TAKE DOWN the current photo: resets it to the neutral placeholder and
  *     deletes the old file from storage. The avatar is the most public image
@@ -56,8 +60,13 @@ export default async function handler(req, res) {
       await deleteBlobQuietly(pathname);
       return res.status(404).json({ error: 'Creator not found' });
     }
+    const attested = await resolvePerformerAttestation(req.body, { admin: true });
+    if (attested.error) {
+      await deleteBlobQuietly(pathname);
+      return res.status(attested.status).json({ error: attested.error });
+    }
     await verifyUploadedBlob(pathname, 'avatar');
-    const creator = await setCreatorAvatar(String(creatorId), mediaSrc(pathname));
+    const creator = await setCreatorAvatar(String(creatorId), mediaSrc(pathname), { performers: attested.attestation });
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     if (err instanceof MediaRejected) return res.status(err.status).json({ error: err.message });

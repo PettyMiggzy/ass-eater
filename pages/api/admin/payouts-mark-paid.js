@@ -12,6 +12,19 @@ import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '.
 
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
+// The wallet payouts are SENT from. Optional, server-only, and deliberately
+// not defaulted to the receiving wallet (NEXT_PUBLIC_MARKETPLACE_PAYOUT_ADDRESS):
+// until the owner says which wallet pays creators, a wrong default would
+// refuse every genuine payout. When set, a hash only closes a payout if the
+// transfer came FROM it -- otherwise any transfer of the exact amount into
+// the creator's wallet (including one the creator sent to themselves)
+// passed as proof the platform paid.
+function payoutSenderAddress() {
+  const v = String(process.env.PAYOUT_SENDER_ADDRESS || '').trim();
+  if (!v) return null;
+  return isAddress(v, { strict: false }) ? v : false;
+}
+
 /**
  * Manual step, deliberately: the admin has ALREADY sent the real USDG by
  * hand before calling this -- it only records that it happened, requiring
@@ -28,8 +41,9 @@ const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
  *    -- "at least the amount" let a $100 transfer close a $40 request to the
  *    same wallet (and the unique hash index then stopped it closing the $100
  *    one), let an overpayment pass unnoticed, and accepted any older
- *    transfer into that wallet from anyone. (The sender is not checked: no
- *    payout treasury address is configured to check it against.)
+ *    transfer into that wallet. The SENDER is checked too when
+ *    PAYOUT_SENDER_ADDRESS is set (the payout treasury); while it is unset
+ *    a transfer from any wallet passes, so set it.
  *    `skipChainCheck: true` records without that check (e.g. the server's
  *    RPC is down) -- an explicit admin decision.
  *  - One hash closes one request (unique index; 409 if reused).
@@ -59,6 +73,11 @@ export default async function handler(req, res) {
     if (!isAddress(String(request.payout_wallet || ''), { strict: false })) {
       return res.status(400).json({ error: `This request's payout wallet (${request.payout_wallet || 'none'}) isn't a valid address, so it can't have been paid. Reject it instead.` });
     }
+    const sender = payoutSenderAddress();
+    if (sender === false) {
+      console.error('[admin/payouts-mark-paid] PAYOUT_SENDER_ADDRESS is not a valid address');
+      return res.status(500).json({ error: 'The payout treasury address (PAYOUT_SENDER_ADDRESS) is misconfigured, so the transfer cannot be checked. Fix it, or pass skipChainCheck to record without the check.' });
+    }
     const config = getMarketplaceVerificationConfig();
     if (!marketplaceVerificationLive(config)) {
       return res.status(501).json({ error: 'On-chain verification is not configured. Pass skipChainCheck to record without it.' });
@@ -75,8 +94,15 @@ export default async function handler(req, res) {
         payoutAddress: request.payout_wallet,
         exactAmount,
         notBefore: Number.isFinite(created) ? created : undefined,
+        ...(sender ? { expectedFrom: sender } : {}),
       });
     } catch (err) {
+      if (err.code === 'SENDER_MISMATCH') {
+        return res.status(400).json({
+          error: `That transfer was not sent from the payout treasury (${sender}), so it does not show the platform paid this request.`,
+          code: err.code,
+        });
+      }
       if (['BAD_HASH', 'NOT_CONFIRMED', 'TX_REVERTED', 'NO_MATCHING_TRANSFER', 'TX_TOO_OLD'].includes(err.code)) {
         return res.status(400).json({
           error: `That transaction doesn't show a transfer of exactly $${(Number(request.amount_cents) / 100).toFixed(2)} ${config.stableSymbol} to ${request.payout_wallet}, made after this request: ${err.message}`,

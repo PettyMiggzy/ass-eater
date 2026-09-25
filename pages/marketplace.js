@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
 import { getSessionUser } from '../lib/session';
@@ -26,7 +26,13 @@ const KINDS = [
   { value: 'physical', label: 'Merch' },
 ];
 
-export async function getServerSideProps({ req }) {
+// Ids are opaque strings (numeric seed ids, uuids for real rows). Anything
+// else in the query is ignored rather than trusted into a filter.
+function queryId(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
+}
+
+export async function getServerSideProps({ req, query }) {
   const sessionUser = publicUser(await getSessionUser(req));
   const [listings, creators] = await Promise.all([getListings(), getCreators()]);
   // A suspended or banned creator's listings come OFF the marketplace, not
@@ -74,7 +80,28 @@ export async function getServerSideProps({ req }) {
     for (const t of Array.isArray(l.tags) ? l.tags : []) tagCounts[t] = (tagCounts[t] || 0) + 1;
   }
   const allTags = Object.keys(tagCounts).sort();
-  return { props: { listings: active, allTags, sessionUser, paymentsLive: marketplacePaymentsLive(), stableSymbol: getMarketplacePaymentConfig().stableSymbol } };
+  // ?creator=<id>&listing=<id>: the links from a creator's profile and from
+  // /search land here scoped to that creator, scrolled to the item clicked.
+  // Read server-side so the first render is already filtered (no flash of the
+  // whole marketplace, no hydration mismatch). A creator or listing that isn't
+  // on sale here simply matches nothing and the filter can be cleared.
+  const focusCreatorId = queryId(query?.creator);
+  const focusListingId = queryId(query?.listing);
+  const focusCreatorName = focusCreatorId
+    ? (visible.get(focusCreatorId)?.name || null)
+    : null;
+  return {
+    props: {
+      listings: active,
+      allTags,
+      sessionUser,
+      paymentsLive: marketplacePaymentsLive(),
+      stableSymbol: getMarketplacePaymentConfig().stableSymbol,
+      focusCreatorId,
+      focusCreatorName,
+      focusListingId,
+    },
+  };
 }
 
 // Shared by the server-side counts above and the client-side filter below --
@@ -99,7 +126,16 @@ const SORTS = [
   { value: 'price-high', label: 'Price: High to Low' },
 ];
 
-export default function Marketplace({ listings, allTags, sessionUser, paymentsLive, stableSymbol }) {
+export default function Marketplace({
+  listings,
+  allTags,
+  sessionUser,
+  paymentsLive,
+  stableSymbol,
+  focusCreatorId = null,
+  focusCreatorName = null,
+  focusListingId = null,
+}) {
   const cart = useCart();
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
@@ -107,6 +143,10 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
   const [sending, setSending] = useState(false);
   const [q, setQ] = useState('');
   const [creatorQ, setCreatorQ] = useState('');
+  // Exact creator scope from a ?creator= link (by id, not by name: two
+  // creators can share a display name). Cleared with the chip above the grid.
+  const [creatorId, setCreatorId] = useState(focusCreatorId);
+  const [highlightId, setHighlightId] = useState(focusListingId);
   const [kind, setKind] = useState('all');
   const [tag, setTag] = useState('');
   const [sort, setSort] = useState('newest');
@@ -117,6 +157,15 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
     Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => (Number.isFinite(l.priceCents) ? l.priceCents : 0))),
   );
   const [maxPriceCents, setMaxPriceCents] = useState(maxCents);
+
+  // Bring the listing the fan clicked into view, and fade its highlight.
+  useEffect(() => {
+    if (!focusListingId || typeof document === 'undefined') return undefined;
+    const el = document.getElementById(`listing-${focusListingId}`);
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => setHighlightId(null), 4000);
+    return () => clearTimeout(t);
+  }, [focusListingId]);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -171,7 +220,9 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
   const matchesKind = (l, k) => k === 'all' || kindOf(l) === k;
   const matchesText = (l) =>
     !q.trim() || String(l.title || '').toLowerCase().includes(q.toLowerCase()) || (l.description || '').toLowerCase().includes(q.toLowerCase());
-  const matchesCreator = (l) => !creatorQ.trim() || String(l.creatorName || '').toLowerCase().includes(creatorQ.trim().toLowerCase());
+  const matchesCreator = (l) =>
+    (!creatorId || String(l.creatorId) === String(creatorId))
+    && (!creatorQ.trim() || String(l.creatorName || '').toLowerCase().includes(creatorQ.trim().toLowerCase()));
   const matchesTag = (l, t) => !t || (Array.isArray(l.tags) && l.tags.includes(t));
   const matchesPrice = (l) => (l.priceCents || 0) <= maxPriceCents;
 
@@ -407,6 +458,24 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
             </select>
           </div>
 
+          {creatorId && (
+            <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-brand-pink/40 bg-brand-pink/10 text-xs text-gray-200">
+              <span>
+                Showing listings from <span className="font-bold text-white">{focusCreatorName || 'this creator'}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setCreatorId(null);
+                  setHighlightId(null);
+                }}
+                className="text-brand-pink hover:underline font-bold"
+              >
+                Show all
+              </button>
+            </div>
+          )}
+
           {filtered.length === 0 ? (
             <div className="text-center py-24">
               <p className="text-gray-400">
@@ -425,7 +494,13 @@ export default function Marketplace({ listings, allTags, sessionUser, paymentsLi
               </p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {filtered.map((l) => (
-                  <div key={l.id} className="group rounded-2xl overflow-hidden bg-white/5 border border-white/5 hover:border-brand-pink/40 transition flex flex-col">
+                  <div
+                    key={l.id}
+                    id={`listing-${l.id}`}
+                    className={`group rounded-2xl overflow-hidden bg-white/5 border hover:border-brand-pink/40 transition flex flex-col ${
+                      highlightId && String(highlightId) === String(l.id) ? 'border-brand-pink ring-2 ring-brand-pink/60' : 'border-white/5'
+                    }`}
+                  >
                     <div className="aspect-square relative bg-black/40">
                       <ListingPreview media={l.media} />
 

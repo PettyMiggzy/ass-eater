@@ -52,12 +52,18 @@ export default async function handler(req, res) {
     // from the caller. The edge sets these itself from the real client IP
     // and overwrites anything the client sent, which is the only reason
     // they are worth recording at all.
+    //
+    // Only a US state is kept, and nothing else about location: its one
+    // purpose (the Privacy Policy, Section 1) is telling someone when their
+    // geoblocked state opens. A non-US visitor's region ('ON' for Ontario)
+    // and anyone's country were stored here without being disclosed.
+    const country = String(req.headers['x-vercel-ip-country'] || '').toUpperCase();
     await addToWaitlist({
       email,
       role,
       source,
-      state: req.headers['x-vercel-ip-country-region'],
-      country: req.headers['x-vercel-ip-country'],
+      state: country === 'US' ? req.headers['x-vercel-ip-country-region'] : null,
+      country: null,
     });
     return res.status(200).json({ ok: true });
   } catch (err) {

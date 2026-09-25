@@ -8,7 +8,7 @@ import { effectiveCreatorStatus, isPubliclyVisible, LISTING_LIMITS } from '../li
 import { getListings } from '../lib/listings-store';
 import { holderVerificationLive } from '../lib/holder-access';
 import { signupsOpen } from '../lib/signups';
-import { sanitizeGateTokens, MAX_GATE_TOKENS } from '../lib/token-gate';
+import { sanitizeGateTokens, MAX_GATE_TOKENS, gateUnenforceableReason } from '../lib/token-gate';
 import {
   feeWaiverActive,
   feeWaiverEndsAt,
@@ -19,6 +19,7 @@ import {
   FEE_WAIVER_DAYS,
 } from '../lib/founding';
 import { Icons, SolidIcons } from '../components/Brand';
+import PremiumBadge from '../components/public/PremiumBadge';
 import SiteNav from '../components/SiteNav';
 import Inbox from '../components/dashboard/Inbox';
 import CashOutPanel from '../components/dashboard/CashOutPanel';
@@ -132,6 +133,10 @@ export default function Dashboard({
   // control stays disabled until it is ticked, and it resets after each
   // successful upload so every file gets its own answer.
   const [nextUploadOnlyMe, setNextUploadOnlyMe] = useState(false);
+  // The same §2257 answer for the profile photo: /api/me/avatar refuses (and
+  // deletes) an avatar upload without `othersAppear`, and only "just me" can
+  // be sent from here. Resets after each successful upload.
+  const [avatarOnlyMe, setAvatarOnlyMe] = useState(false);
   const creatorStatus = creator ? effectiveCreatorStatus(creator) : null;
   const isRestricted = creatorStatus === 'suspended' || creatorStatus === 'banned';
   const isDemo = !!creator && (creator.seed === true || creator.demo === true);
@@ -179,8 +184,12 @@ export default function Dashboard({
 
   const progress = (label) => (pct) => setStatus(`${label} ${pct}%`);
 
-  const uploadAvatar = async (file) => {
+  const uploadAvatar = async (file, { onlyMe }) => {
     if (!file) return;
+    if (!onlyMe) {
+      setStatus('Error: Confirm that only you appear in this photo before uploading.');
+      return;
+    }
     setBusy(true);
     setStatus('Uploading avatar...');
     try {
@@ -188,9 +197,12 @@ export default function Dashboard({
         file,
         purpose: 'avatar',
         finalizeUrl: '/api/me/avatar',
+        // The creator's own attestation, from the "only I appear" checkbox.
+        finalizeBody: { othersAppear: false },
         onProgress: progress('Uploading avatar...'),
       });
       if (data.creator) setCreator(data.creator);
+      setAvatarOnlyMe(false);
       setStatus('Avatar updated.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -300,7 +312,7 @@ export default function Dashboard({
     }
   };
 
-  // Edits title, price, description, tags (and shipping for a physical item)
+  // Edits title, price, description, tags, the AI label (and shipping for a physical item)
   // through /api/marketplace/update, which re-validates and re-screens
   // everything. Resolves true when saved.
   const editListing = async (listingId, fields) => {
@@ -474,19 +486,29 @@ export default function Dashboard({
                 <div>
                   <p className="font-bold text-white flex items-center gap-1 mb-2">
                     {creator.name}
-                    {creator.premium && <SolidIcons.verified className="h-4 w-4 text-brand-pink" title="Premium" />}
+                    {creator.premium && <PremiumBadge />}
                   </p>
-                  <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy || isRestricted ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <label className="flex items-start gap-2 text-xs text-gray-400 mb-2 max-w-xs">
+                    <input
+                      type="checkbox"
+                      checked={avatarOnlyMe}
+                      disabled={busy || isRestricted}
+                      onChange={(e) => setAvatarOnlyMe(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>Only I appear in this photo. Photos with anyone else in them need that person&apos;s age/ID record on file first — email us.</span>
+                  </label>
+                  <label className={`premium-button inline-block cursor-pointer text-sm py-2 px-4 ${busy || isRestricted || !avatarOnlyMe ? 'opacity-50 pointer-events-none' : ''}`}>
                     Change PFP
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
                       className="hidden"
-                      disabled={busy || isRestricted}
+                      disabled={busy || isRestricted || !avatarOnlyMe}
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         e.target.value = '';
-                        uploadAvatar(file);
+                        uploadAvatar(file, { onlyMe: avatarOnlyMe });
                       }}
                     />
                   </label>
@@ -625,6 +647,16 @@ export default function Dashboard({
                   a gate, not a price. Your name, bio and marketplace listings stay visible to everyone, and you always
                   see your own page.
                 </p>
+                {/* The profile API refuses (400, nothing saved) to switch on or
+                    change a gate it could not enforce; say so before Save
+                    rather than only after. */}
+                {draft.locked && gateUnenforceableReason(creator) && (
+                  <p className="text-xs text-red-400 mt-2">
+                    {isDemo
+                      ? "Demo profiles can't be token-gated — saving a gate here will be refused."
+                      : "This profile has photos or video served as public site files, which a token gate can't hold back — saving a new gate will be refused. Only media you upload here can be gated."}
+                  </p>
+                )}
                 {draft.locked && (
                   <div className="mt-3">
                     <label className="block text-xs text-gray-400 mb-2">How many $ONLYONE must they hold?</label>
@@ -816,7 +848,7 @@ export default function Dashboard({
                       )}
                       {!creator.premium && (
                         <p className="text-xs text-gray-500 mb-3">
-                          Free accounts get 50 content slots. Premium creators get 200 and a gold check — contact us to upgrade.
+                          Free accounts get 50 content slots. Premium creators get 200 — contact us to upgrade.
                         </p>
                       )}
                       <p className="text-xs text-gray-500 mb-3">
@@ -1042,8 +1074,10 @@ function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, si
 const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false, tags: '' };
 
 /**
- * Inline edit form for one listing: title, price, description, tags, and for
- * a physical item its shipping fee. Posts only the fields that changed to
+ * Inline edit form for one listing: title, price, description, tags, the
+ * AI-generated label (Terms §7/§8 -- a creator who missed the box at creation
+ * must be able to correct it without rebuilding the listing), and for a
+ * physical item its shipping fee. Posts only the fields that changed to
  * /api/marketplace/update, which re-validates and re-screens them (the same
  * rules as creation). Client checks mirror LISTING_LIMITS so an obvious
  * mistake is caught before the round trip; the server's error is shown as-is
@@ -1056,6 +1090,7 @@ function ListingEditor({ listing, busy, onSave, onCancel }) {
     description: listing.description || '',
     tags: Array.isArray(listing.tags) ? listing.tags.join(', ') : '',
     shipping: listing.kind === 'physical' && Number.isFinite(listing.shippingCents) ? (listing.shippingCents / 100).toFixed(2) : '',
+    aiGenerated: !!listing.aiGenerated,
   }));
   const [err, setErr] = useState('');
 
@@ -1076,6 +1111,7 @@ function ListingEditor({ listing, busy, onSave, onCancel }) {
     if (f.description !== (listing.description || '')) fields.description = f.description;
     const tagsBefore = Array.isArray(listing.tags) ? listing.tags.join(', ') : '';
     if (f.tags.trim() !== tagsBefore) fields.tags = f.tags;
+    if (f.aiGenerated !== !!listing.aiGenerated) fields.aiGenerated = f.aiGenerated;
     if (listing.kind === 'physical') {
       const shippingCents = String(f.shipping).trim() === '' ? 0 : dollarsToCents(f.shipping);
       if (shippingCents === null || shippingCents > LISTING_LIMITS.maxShippingCents) {
@@ -1137,6 +1173,10 @@ function ListingEditor({ listing, busy, onSave, onCancel }) {
           className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
         />
       )}
+      <label className="sm:col-span-2 flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+        <input type="checkbox" checked={f.aiGenerated} onChange={(e) => setF({ ...f, aiGenerated: e.target.checked })} />
+        AI-generated or synthetic content (labeled &quot;AI&quot; wherever this listing shows)
+      </label>
       {err && <p className="sm:col-span-2 text-xs text-red-400">{err}</p>}
       <div className="sm:col-span-2 flex gap-2">
         <button type="submit" disabled={busy} className="premium-button text-xs py-2 px-4 disabled:opacity-50">Save changes</button>

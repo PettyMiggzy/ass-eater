@@ -58,6 +58,9 @@ const NO_NOTICE_PATHS = new Set([
   // Exactly the failure this comment already warns about, just in two spots
   // nobody had gotten to yet.
   '/gateway', '/token',
+  // /get-crypto: the wallet setup guide /token links to. No creator content;
+  // exempt in proxy.js SFW_PATHS and PREVIEW_PUBLIC_PATHS in the same change.
+  '/get-crypto',
 ]);
 
 function MyApp({ Component, pageProps }) {
