@@ -46,6 +46,7 @@ cp .env.example .env
 nano .env            # API + shared settings
 nano .env.workers    # ONLY the two signing secrets below
 chmod 600 .env .env.workers
+chown root:root .env.workers   # app-setup.sh enforces this too: no app user may read it
 ```
 
 `.env` (loaded by both units) -- every variable name in `.env.example` is
@@ -220,6 +221,7 @@ sudo -u onlyone node dist/scripts/derive-deposit-xpub.js < /dev/tty   # paste th
 # add the printed DEPOSIT_XPUB=... line to .env
 # cut the TREASURY_PRIVATE_KEY= and DEPOSIT_MNEMONIC= lines out of .env into .env.workers
 chmod 600 .env .env.workers
+chown root:root .env.workers   # app-setup.sh enforces this too: no app user may read it
 bash deploy/app-setup.sh
 ```
 

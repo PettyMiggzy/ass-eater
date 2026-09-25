@@ -17,6 +17,29 @@ import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store
 import { findCircumventionInTags } from '../../../lib/listings-store';
 import { PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { getAddress } from 'viem';
+import { parseCategoriesInput } from '../../../lib/categories';
+
+const FIELD_LABELS = {
+  name: 'Display name',
+  handle: 'Handle',
+  bio: 'Bio',
+  location: 'Location',
+  price: 'Price',
+  tag: 'Tags',
+};
+
+// Which field a refusal is about, so the creator is not left guessing which
+// stored value tripped it.
+function fieldLabel(context) {
+  return FIELD_LABELS[context] || (context.startsWith('social_') ? `${context.slice(7)} link` : context);
+}
+
+// Whether a tags write is just the dashboard echoing the stored tags back.
+function sameTags(next, stored) {
+  const a = Array.isArray(next) ? next : [];
+  const b = Array.isArray(stored) ? stored : [];
+  return a.length === b.length && a.every((t, i) => t === b[i]);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -111,6 +134,13 @@ export default async function handler(req, res) {
 
   if (fields && 'socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if (fields && 'tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
+  // Browse categories (lib/categories.js): a closed list of keys, so there is
+  // no free text here to screen -- only the type and the 3-pick cap.
+  if (fields && 'categories' in fields) {
+    const { value, error } = parseCategoriesInput(fields.categories);
+    if (error) return res.status(400).json({ error, field: 'categories' });
+    safeFields.categories = value;
+  }
   if (fields && 'gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);
   // A gate over media that is served as public files would lock nothing (see
   // lib/token-gate.js gateEnforceable).
@@ -136,23 +166,41 @@ export default async function handler(req, res) {
   // saved as a location went straight out. Prohibited terms (lib/
   // prohibited-terms.js) ride the same loop: a "teen" tag is public the
   // moment it saves.
-  const entries = publicProfileTextEntries(safeFields);
-  if (fields && 'tags' in fields) for (const raw of rawTagItems(fields.tags)) entries.push(['tag', raw]);
+  //
+  // Only text this save INTRODUCES is screened, exactly as on the admin
+  // editor (pages/api/admin/profile.js): the dashboard posts every field on
+  // every save, so re-screening stored text meant that once the filter got
+  // stricter, a creator whose previously accepted bio now matched could not
+  // save anything at all -- not even a payout wallet -- and logged a fresh
+  // violation on every retry. Stored text is still re-screened in full when
+  // an admin makes the creator live (the go-live check there).
+  const storedTags = new Set(Array.isArray(ctx.creator.tags) ? ctx.creator.tags : []);
+  const storedSocials = ctx.creator.socials && typeof ctx.creator.socials === 'object' ? ctx.creator.socials : {};
+  const unchanged = (context, value) => {
+    if (context === 'tag') return storedTags.has(value);
+    if (context.startsWith('social_')) return String(storedSocials[context.slice(7)] ?? '') === String(value ?? '');
+    return String(ctx.creator[context] ?? '') === String(value ?? '');
+  };
+  const tagsUnchanged = fields && 'tags' in fields && sameTags(safeFields.tags, ctx.creator.tags);
+  let entries = publicProfileTextEntries(safeFields);
+  if (fields && 'tags' in fields && !tagsUnchanged) for (const raw of rawTagItems(fields.tags)) entries.push(['tag', raw]);
+  entries = entries.filter(([context, value]) => !unchanged(context, value));
   for (const [context, value] of entries) {
     const hit = screenPublicText(value);
     if (hit) {
       await addViolation({ userId: ctx.user.id, context, reasons: hit.reasons, snippet: value });
-      return res.status(400).json({ error: hit.message });
+      return res.status(400).json({ error: `${fieldLabel(context)}: ${hit.message}`, field: context });
     }
   }
   // Each tag was screened on its own above; this also screens them JOINED, so a handle or
   // phone number split across two tags ("venmo", "@janedoe") is caught the
-  // same way it is on a marketplace listing.
-  if (fields && 'tags' in fields) {
+  // same way it is on a marketplace listing. Skipped when the tags are just
+  // the stored ones echoed back.
+  if (fields && 'tags' in fields && !tagsUnchanged) {
     const tagHit = findCircumventionInTags(fields.tags);
     if (tagHit) {
       await addViolation({ userId: ctx.user.id, context: 'tags', reasons: tagHit.reasons, snippet: tagHit.snippet });
-      return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+      return res.status(400).json({ error: `Tags: ${PAYMENT_CIRCUMVENTION_MESSAGE}`, field: 'tags' });
     }
   }
 

@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { prisma } from '../lib/prisma.js';
-import { CHAIN_ID, depositAddressAt, TOKENS } from '../lib/chain.js';
+import { CHAIN_ID, depositAddressAt, TOKENS, publicClient } from '../lib/chain.js';
 import { getUsdPrice } from '../lib/price.js';
 import { page } from '../plugins/pagination.js';
 
@@ -8,6 +8,9 @@ import { page } from '../plugins/pagination.js';
 // allocation (see POST /deposit-address). Arbitrary -- it only has to not
 // collide with another advisory lock this app takes, and it doesn't take any.
 const ADDRESS_LOCK_NS = 84120;
+
+// issuedBlock is a BigInt, which JSON.stringify refuses; returned as a string.
+const publicAddr = <T extends { issuedBlock: bigint | null }>(a: T) => ({ ...a, issuedBlock: a.issuedBlock?.toString() ?? null });
 
 export const wallet: FastifyPluginAsync = async (app) => {
   app.get('/balance', { preHandler: app.auth }, async (req) => {
@@ -30,8 +33,16 @@ export const wallet: FastifyPluginAsync = async (app) => {
   /** One address per user per chain, derived deterministically. Accepts any allowlisted dollar stablecoin, ETH and $ONLYONE on that address. */
   app.post('/deposit-address', { preHandler: app.auth }, async (req) => {
     const existing = await prisma.depositAddress.findUnique({ where: { userId_chainId: { userId: req.user.id, chainId: CHAIN_ID } } });
-    if (existing) return existing;
-    return prisma.$transaction(async (tx) => {
+    if (existing) return publicAddr(existing);
+    // The block this address is issued at, so the deposit indexer's first run
+    // starts no later than it (workers/deposit-cursor.ts). Best effort and
+    // bounded: an unreachable RPC stores null (the indexer then needs
+    // DEPOSIT_START_BLOCK) rather than blocking a fan from getting an address.
+    const issuedBlock = await Promise.race([
+      publicClient.getBlockNumber().catch(() => null),
+      new Promise<null>((r) => { setTimeout(() => r(null), 3000).unref(); }),
+    ]);
+    return publicAddr(await prisma.$transaction(async (tx) => {
       // MAX+1 on its own is a read-then-write race: two allocations that read
       // the same MAX derive the *same* HD address and hand it to two different
       // users, so one user's incoming deposits get credited to the other. The
@@ -45,8 +56,8 @@ export const wallet: FastifyPluginAsync = async (app) => {
       if (mine) return mine;
       const [{ next }] = await tx.$queryRaw<{ next: number }[]>`SELECT COALESCE(MAX("derivationIndex"),0)+1 AS next FROM "DepositAddress" WHERE "chainId"=${CHAIN_ID}`;
       const address = depositAddressAt(Number(next));
-      return tx.depositAddress.create({ data: { userId: req.user.id, chainId: CHAIN_ID, address, derivationIndex: Number(next) } });
-    });
+      return tx.depositAddress.create({ data: { userId: req.user.id, chainId: CHAIN_ID, address, derivationIndex: Number(next), issuedBlock } });
+    }));
   });
 
   app.get('/deposits', { preHandler: app.auth }, async (req) => {

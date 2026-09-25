@@ -11,6 +11,10 @@
 // seeded into a database before this flag existed are labelled anyway:
 // toPublicCreator (lib/creator-status.js) marks every seed creator's gallery
 // items aiGenerated at projection time.
+//
+// `categories` (lib/categories.js) only applies to a database seeded from
+// this file for the first time; rows already in production are updated
+// separately.
 export const creators = [
   {
     id: 1,
@@ -24,6 +28,7 @@ export const creators = [
     trending: true,
     bio: "This is a demo profile, not a real creator -- free to browse so you can see exactly what a page looks like before you sign up. Real creators set their own price, post their own content, and keep what they earn.",
     tags: ['demo', 'how-it-works'],
+    categories: ['women'],
     gallery: [
       { type: 'image', src: '/images/demo_female_1.jpg', aiGenerated: true },
       { type: 'image', src: '/images/demo_female_2.jpg', aiGenerated: true },
@@ -41,6 +46,7 @@ export const creators = [
     trending: false,
     bio: "Another demo profile, same reason as Ava's -- free, not a real account, just here so you know what to expect. Creators of any gender are welcome here.",
     tags: ['demo', 'how-it-works'],
+    categories: ['men'],
     gallery: [
       { type: 'image', src: '/images/demo_male_1.jpg', aiGenerated: true },
       { type: 'image', src: '/images/demo_male_2.jpg', aiGenerated: true },

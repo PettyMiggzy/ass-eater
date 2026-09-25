@@ -1,7 +1,7 @@
 import { getSessionUser } from '../../../lib/session';
 import { userWriteRestriction } from '../../../lib/user-moderation';
 import { findConversationMessage } from '../../../lib/messages-store';
-import { addReport, validateReportInput } from '../../../lib/reports-store';
+import { addReport, validateReportInput, snapshotMessage, reporterView } from '../../../lib/reports-store';
 import { sendReportAlert } from '../../../lib/alerts';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
@@ -55,9 +55,14 @@ export default async function handler(req, res) {
       reporterId: user.id,
       reason: input.reason,
       category: input.category,
+      // A copy of the message as it stands now (text, sender, time): the
+      // sender can delete their account, and the conversation keeps only its
+      // newest 500 messages, so the reported one can be gone before anyone
+      // looks.
+      reportedContent: await snapshotMessage(found.message, { conversationId: found.conversationId, participantIds: found.participantIds }),
     });
     await sendReportAlert(report);
-    return res.status(200).json({ ok: true, report });
+    return res.status(200).json({ ok: true, report: reporterView(report) });
   } catch (err) {
     console.error('[messages/report] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });

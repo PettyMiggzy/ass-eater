@@ -33,6 +33,7 @@ import {
   responseErrorMessage,
 } from '../components/dashboard/helpers';
 import { TAG_GROUPS, LISTING_TAG_GROUPS } from '../lib/tag-taxonomy';
+import { CATEGORIES, MAX_CATEGORIES } from '../lib/categories';
 import {
   PLATFORM_FEE_PCT,
   MARKETPLACE_FEE_PCT,
@@ -126,6 +127,11 @@ export default function Dashboard({
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
+  // The profile field a save was refused over (/api/me/profile answers 400
+  // with `field`: 'name', 'handle', 'bio', 'price', 'location', 'tags'/'tag', 'categories',
+  // or 'social_<key>'), outlined in red until the next save.
+  const [errorField, setErrorField] = useState('');
+  const fieldBorder = (key) => (errorField === key ? 'border-red-500' : 'border-brand-purple/30');
   // §2257: every gallery upload carries the creator's answer to "does anyone
   // besides you appear in this?" (lib/performer-attestation.js). Only "just
   // me" can be sent from here -- content with anyone else in it needs an
@@ -165,11 +171,21 @@ export default function Dashboard({
     }
     setBusy(true);
     setStatus('Saving...');
+    setErrorField('');
     try {
       // No `img` here: the avatar is set only by the avatar upload, and the
       // server ignores one posted with the profile.
       const { res, data } = await postJson('/api/me/profile', { fields: built.fields });
-      if (!res.ok || !data?.creator) throw new Error(responseErrorMessage(res.status, data, 'Save failed'));
+      if (!res.ok || !data?.creator) {
+        // The message already starts with the field's label; also outline
+        // the field itself and move focus to it.
+        const field = typeof data?.field === 'string' ? (data.field === 'tag' ? 'tags' : data.field) : '';
+        if (field) {
+          setErrorField(field);
+          try { document.querySelector(`[data-profile-field="${field}"]`)?.focus(); } catch { /* ignore */ }
+        }
+        throw new Error(responseErrorMessage(res.status, data, 'Save failed'));
+      }
       setCreator(data.creator);
       // Resync every field to what was actually stored (normalised handle,
       // cleaned tags, clamped gate amount, trimmed wallet...).
@@ -524,15 +540,15 @@ export default function Dashboard({
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Display Name</label>
-                  <input value={draft.name} maxLength={80} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <input data-profile-field="name" aria-invalid={errorField === 'name'} value={draft.name} maxLength={80} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={`w-full px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('name')} text-white`} />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Handle</label>
-                  <input value={draft.handle} maxLength={40} onChange={(e) => setDraft({ ...draft, handle: e.target.value })} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <input data-profile-field="handle" aria-invalid={errorField === 'handle'} value={draft.handle} maxLength={40} onChange={(e) => setDraft({ ...draft, handle: e.target.value })} className={`w-full px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('handle')} text-white`} />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Price text on your profile</label>
-                  <input value={draft.price} maxLength={40} onChange={(e) => setDraft({ ...draft, price: e.target.value })} placeholder="e.g. Free" className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                  <input data-profile-field="price" aria-invalid={errorField === 'price'} value={draft.price} maxLength={40} onChange={(e) => setDraft({ ...draft, price: e.target.value })} placeholder="e.g. Free" className={`w-full px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('price')} text-white`} />
                   <p className="text-[11px] text-gray-500 mt-1">
                     Display text only — subscriptions aren&apos;t sold on OnlyOne yet, so nobody is charged this.
                   </p>
@@ -556,16 +572,61 @@ export default function Dashboard({
 
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Bio</label>
-                <textarea value={draft.bio} maxLength={1000} onChange={(e) => setDraft({ ...draft, bio: e.target.value })} rows={3} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                <textarea data-profile-field="bio" aria-invalid={errorField === 'bio'} value={draft.bio} maxLength={1000} onChange={(e) => setDraft({ ...draft, bio: e.target.value })} rows={3} className={`w-full px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('bio')} text-white`} />
+              </div>
+
+              {/* Browse categories: the fixed taxonomy behind the Categories
+                  sidebar on /creators and /marketplace (lib/categories.js).
+                  Toggle chips, at most MAX_CATEGORIES -- the server refuses
+                  more, so a fourth chip stays disabled rather than failing
+                  the save. */}
+              <div data-profile-field="categories" tabIndex={-1}>
+                <label className="block text-sm text-gray-400 mb-2">
+                  Categories (pick up to {MAX_CATEGORIES} — where fans find you in Explore and the Marketplace)
+                </label>
+                <div
+                  role="group"
+                  aria-invalid={errorField === 'categories'}
+                  className={`flex flex-wrap gap-1.5 ${errorField === 'categories' ? 'p-2 rounded-md border border-red-500' : ''}`}
+                >
+                  {CATEGORIES.map((c) => {
+                    const current = Array.isArray(draft.categories) ? draft.categories : [];
+                    const active = current.includes(c.key);
+                    const full = !active && current.length >= MAX_CATEGORIES;
+                    return (
+                      <button
+                        type="button"
+                        key={c.key}
+                        aria-pressed={active}
+                        disabled={full}
+                        onClick={() =>
+                          setDraft({
+                            ...draft,
+                            categories: active ? current.filter((k) => k !== c.key) : [...current, c.key],
+                          })
+                        }
+                        className={`text-xs px-3 py-1.5 rounded-full border transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                          active
+                            ? 'bg-brand-pink border-brand-pink text-white font-bold'
+                            : 'border-white/15 text-gray-300 hover:border-brand-pink/50 hover:text-white'
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Tags (up to 8 — how fans find you when browsing)</label>
                 <input
+                  data-profile-field="tags"
+                  aria-invalid={errorField === 'tags'}
                   value={draft.tags}
                   onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
                   placeholder="e.g. cosplay, gym, redhead, asmr"
-                  className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+                  className={`w-full px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('tags')} text-white`}
                 />
                 {/* Click-to-add suggestions, grouped. The free-text box above
                     still takes anything -- this exists so two creators who
@@ -618,18 +679,22 @@ export default function Dashboard({
                   ].map(([key, placeholder]) => (
                     <input
                       key={key}
+                      data-profile-field={`social_${key}`}
+                      aria-invalid={errorField === `social_${key}`}
                       value={draft.socials[key]}
                       onChange={(e) => setDraft({ ...draft, socials: { ...draft.socials, [key]: e.target.value } })}
                       placeholder={placeholder}
-                      className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                      className={`w-full px-4 py-3 rounded-md bg-black/40 border ${fieldBorder(`social_${key}`)} text-white text-sm`}
                     />
                   ))}
                 </div>
                 <input
+                  data-profile-field="social_website"
+                  aria-invalid={errorField === 'social_website'}
                   value={draft.socials.website}
                   onChange={(e) => setDraft({ ...draft, socials: { ...draft.socials, website: e.target.value } })}
                   placeholder="Website (https://...)"
-                  className="w-full mt-3 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                  className={`w-full mt-3 px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('social_website')} text-white text-sm`}
                 />
               </div>
 
@@ -712,11 +777,13 @@ export default function Dashboard({
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Location</label>
                   <input
+                    data-profile-field="location"
+                    aria-invalid={errorField === 'location'}
                     value={draft.location}
                     maxLength={80}
                     onChange={(e) => setDraft({ ...draft, location: e.target.value })}
                     placeholder="e.g. Los Angeles, CA"
-                    className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                    className={`w-full px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('location')} text-white text-sm`}
                   />
                 </div>
               </div>

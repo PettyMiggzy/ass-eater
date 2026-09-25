@@ -92,9 +92,13 @@ function ChangePassword() {
 
 /**
  * Delete account (fans only): POST /api/auth/delete-account { password,
- * acknowledgeForfeit? }. Credits are closed-loop and never refunded, so a
- * remaining balance comes back as 409 BALANCE_FORFEIT and needs an explicit
- * second confirmation naming the amount before anything is deleted.
+ * acknowledgeForfeit?, expectedForfeitCents?, expectedDigitalPurchases? }.
+ * The confirmation is bound to the amounts it showed. Credits are closed-loop and never refunded, and the
+ * digital items a fan bought stop being viewable once the account is gone,
+ * so either comes back as 409 BALANCE_FORFEIT ({ balanceCents,
+ * digitalPurchases }) and needs an explicit second confirmation naming both
+ * before anything is deleted. A physical order that hasn't shipped is a
+ * refusal (409 unshipped_orders), shown as the server words it.
  * Creators are deleted by support (their profile, listings and money go
  * through the admin path), and the server refuses them here too.
  */
@@ -102,7 +106,8 @@ function DeleteAccount({ isCreator }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [forfeitCents, setForfeitCents] = useState(null);
+  // null = no confirmation pending; else { cents, purchases, changed } from the 409.
+  const [forfeit, setForfeit] = useState(null);
   const [deleted, setDeleted] = useState(false);
 
   if (isCreator) {
@@ -123,16 +128,26 @@ function DeleteAccount({ isCreator }) {
     setBusy(true);
     setError('');
     try {
-      const { res, data } = await postJson('/api/auth/delete-account', { password, acknowledgeForfeit: acknowledgeForfeit === true });
+      // The confirmation names the exact amounts it was shown for: the server
+      // refuses (and re-prompts) if the balance or purchases changed since.
+      const body =
+        acknowledgeForfeit === true && forfeit
+          ? { password, acknowledgeForfeit: true, expectedForfeitCents: forfeit.cents, expectedDigitalPurchases: forfeit.purchases }
+          : { password };
+      const { res, data } = await postJson('/api/auth/delete-account', body);
       if (res.status === 409 && data.code === 'BALANCE_FORFEIT') {
-        setForfeitCents(Number.isFinite(data.balanceCents) ? data.balanceCents : 0);
+        setForfeit({
+          cents: Number.isFinite(data.balanceCents) ? data.balanceCents : 0,
+          purchases: Number.isFinite(data.digitalPurchases) ? data.digitalPurchases : 0,
+          changed: data.changed === true,
+        });
         return;
       }
       if (!res.ok) throw new Error(data.error || 'Could not delete your account.');
       setPassword('');
       setDeleted(true);
     } catch (err) {
-      setForfeitCents(null);
+      setForfeit(null);
       setError(err instanceof TypeError ? 'Could not reach the server. Nothing was deleted — check your connection.' : err.message);
     } finally {
       setBusy(false);
@@ -157,31 +172,45 @@ function DeleteAccount({ isCreator }) {
       <h2 className="font-bold">Delete account</h2>
       <p className="text-sm text-gray-400">
         This removes your login, your wall comments, the messages you sent, your saved creators and your notifications.
-        It can&apos;t be undone. Records of purchases and moderation are kept as our{' '}
+        It can&apos;t be undone. Digital items you bought can only be viewed while signed in, so they become unavailable
+        once the account is gone. Records of purchases and moderation are kept as our{' '}
         <a href="/privacy" className="underline text-brand-pink">Privacy Policy</a> describes. Credits are never refunded,
-        so any balance left is lost.
+        so any balance left is lost. If a physical order hasn&apos;t shipped yet, you can delete the account once it has.
       </p>
       <input
         type="password"
         autoComplete="current-password"
         value={password}
-        onChange={(e) => { setPassword(e.target.value); setForfeitCents(null); }}
+        onChange={(e) => { setPassword(e.target.value); setForfeit(null); }}
         placeholder="Your password"
         className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-red-400/60"
       />
       {error && <p className="text-xs text-red-400">{error}</p>}
-      {forfeitCents !== null ? (
+      {forfeit !== null ? (
         <div className="rounded-lg border border-red-500/30 bg-black/30 p-3 space-y-3">
-          <p className="text-sm text-red-300">
-            You still have {formatCredits(forfeitCents)}. Deleting your account loses them for good — credits are never
-            refunded or cashed out.
-          </p>
+          {forfeit.changed && (
+            <p className="text-sm text-yellow-300">
+              Your balance or purchases changed since you last confirmed, so nothing was deleted. Check the amounts below.
+            </p>
+          )}
+          {forfeit.cents > 0 && (
+            <p className="text-sm text-red-300">
+              You still have {formatCredits(forfeit.cents)}. Deleting your account loses them for good — credits are never
+              refunded or cashed out.
+            </p>
+          )}
+          {forfeit.purchases > 0 && (
+            <p className="text-sm text-red-300">
+              You will lose access to the {forfeit.purchases} digital item{forfeit.purchases === 1 ? '' : 's'} you bought —
+              they can only be viewed from your account.
+            </p>
+          )}
           <div className="flex gap-2">
-            <button type="button" onClick={() => setForfeitCents(null)} disabled={busy} className="flex-1 px-4 py-2 rounded-full border border-white/15 text-sm text-gray-300 hover:bg-white/5 transition disabled:opacity-50">
+            <button type="button" onClick={() => setForfeit(null)} disabled={busy} className="flex-1 px-4 py-2 rounded-full border border-white/15 text-sm text-gray-300 hover:bg-white/5 transition disabled:opacity-50">
               Keep my account
             </button>
             <button type="button" onClick={() => run(true)} disabled={busy} className="flex-1 px-4 py-2 rounded-full bg-red-600 hover:bg-red-700 text-sm font-bold transition disabled:opacity-50">
-              {busy ? 'Deleting…' : 'Lose credits & delete'}
+              {busy ? 'Deleting…' : forfeit.cents > 0 ? 'Lose credits & delete' : 'Delete anyway'}
             </button>
           </div>
         </div>

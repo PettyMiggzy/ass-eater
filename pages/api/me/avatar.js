@@ -1,6 +1,6 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { setCreatorAvatar } from '../../../lib/creators-store';
-import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
+import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 
 /**
@@ -10,7 +10,8 @@ import { resolvePerformerAttestation } from '../../../lib/performer-attestation'
  * `othersAppear` is required, exactly as on the gallery and marketplace
  * finalize routes (lib/performer-attestation.js): the avatar is the most
  * public image on the site, and /2257 says every upload asks. `true` is
- * refused for a creator (the file is deleted) -- a photo showing someone else
+ * refused for a creator (the upload is thrown away, if it is still an
+ * unfinalized one -- lib/media.js deleteUnfinalizedUpload) -- a photo showing someone else
  * needs that person's §2257 record first, which is an admin step.
  *
  * Token from POST /api/media/upload-token { purpose: 'avatar', ... }. The
@@ -36,7 +37,7 @@ export default async function handler(req, res) {
   try {
     const attested = await resolvePerformerAttestation(req.body);
     if (attested.error) {
-      await deleteBlobQuietly(pathname);
+      await deleteUnfinalizedUpload(pathname);
       return res.status(attested.status).json({ error: attested.error });
     }
     await verifyUploadedBlob(pathname, 'avatar');

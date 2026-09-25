@@ -1,8 +1,8 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 import { prisma } from '../lib/prisma.js';
-import { charge, money, isVip, FEES, zeroOrAtLeast } from '../core/ledger.js';
+import { charge, money, isVip, FEES, zeroOrAtLeast, type Tx } from '../core/ledger.js';
 import { canViewMessage, isSubscribed, creatorMayOperate } from '../core/access.js';
 import { publish, broadcastQueue } from '../lib/redis.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
@@ -11,6 +11,15 @@ import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
+
+/**
+ * Deterministic broadcast id for one creator's request key: the same request
+ * retried always yields the same id, two creators' identical keys never
+ * collide. Hex only -- it becomes part of a BullMQ jobId, which must not
+ * contain ':'.
+ */
+export const broadcastIdFor = (creatorId: string, requestId: string) =>
+  createHash('sha256').update(`broadcast\0${creatorId}\0${requestId}`).digest('hex').slice(0, 32);
 
 /**
  * Charges a fan for a priced message and records the unlock. Exported (not
@@ -26,6 +35,14 @@ const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, b
 export async function unlockMessage(fanId: string, message: { id: string; senderId: string; priceCents: number }) {
   try {
     return await money(prisma, async (tx) => {
+      // Nothing is sold unless something viewable is behind the paywall --
+      // the same rule as a PPV post (posts.ts postHasDeliverable) and a
+      // listing (core/auctions.ts hasDeliverable). Re-read inside the
+      // charge's transaction, never trusted from the caller's copy: a
+      // takedown REJECTs a broadcast's media on every subscriber's copy and a
+      // report resolve blanks a message, and neither touched the price, so
+      // fans paid full price for an empty message.
+      if (!(await messageHasDeliverable(tx, message.id))) throw Object.assign(new Error('no_deliverable'), { statusCode: 409 });
       await tx.messageUnlock.create({ data: { fanId, messageId: message.id } });
       const r = await charge(tx, { fanId, creatorId: message.senderId, grossCents: message.priceCents, type: 'MESSAGE_UNLOCK', refId: message.id });
       return { ok: true, ...r };
@@ -36,6 +53,18 @@ export async function unlockMessage(fanId: string, message: { id: string; sender
     if (!bought) throw e;
     return { ok: true, already: true };
   }
+}
+
+/**
+ * Is there something a buyer of this priced message would actually get?
+ * Every attached media item must be READY (canViewMedia refuses anything
+ * else), and a message with no media must have text.
+ */
+export async function messageHasDeliverable(tx: Tx, messageId: string) {
+  const m = await tx.message.findUnique({ where: { id: messageId }, select: { text: true, priceCents: true, media: { select: { status: true } } } });
+  if (!m || m.priceCents <= 0) return false;
+  if (m.media.some((x) => x.status !== 'READY')) return false;
+  return m.media.length > 0 || m.text.trim().length > 0;
 }
 
 const SENT_INCLUDE = { media: { select: { id: true, mime: true, previewKey: true } }, conversation: { select: { aId: true, bId: true } } } as const;
@@ -60,10 +89,20 @@ export async function sendDirectMessage(
   // not answer price_changed for a message that was delivered and paid for.
   if (b.requestId) {
     const prior = await prisma.dmSendRequest.findUnique({ where: { senderId_key: { senderId, key: b.requestId } } });
-    if (prior) return { msg: await prisma.message.findUniqueOrThrow({ where: { id: prior.messageId }, include: SENT_INCLUDE }), already: true };
+    if (prior?.messageId) return { msg: await prisma.message.findUniqueOrThrow({ where: { id: prior.messageId }, include: SENT_INCLUDE }), already: true };
   }
   try {
     const msg = await money(prisma, async (tx) => {
+      // The idempotency row goes in FIRST, before the price check, the
+      // charge and the media re-homing. A concurrent duplicate (a double-tap,
+      // or a retry while the first is still in flight) then always collides
+      // on its primary key and takes the replay path below. Inserted last,
+      // the duplicate blocked on the fan's Account row instead, lost the
+      // serialization race, and money() re-ran it against the committed
+      // state -- where it failed with insufficient_funds (the first send had
+      // spent the balance) or bad_media (the photo was now on the first
+      // message) for a message that had in fact been delivered and paid for.
+      if (b.requestId) await tx.dmSendRequest.create({ data: { senderId, key: b.requestId, messageId: null } });
       // The price is read INSIDE this transaction and compared with the one
       // the fan confirmed, so nothing that moves it between their click and
       // this charge can make them pay a price they didn't see.
@@ -107,10 +146,9 @@ export async function sendDirectMessage(
         const r = await tx.media.updateMany({ where: { id: { in: ids }, ownerId: senderId, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: 'READY' }, data: { messageId: m.id } });
         if (r.count !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
-      // Keyed on (sender, requestId): a retried or double-clicked send
-      // collides on the primary key and this whole transaction -- charge
-      // included -- rolls back.
-      if (b.requestId) await tx.dmSendRequest.create({ data: { senderId, key: b.requestId, messageId: m.id } });
+      // Keyed on (sender, requestId) -- inserted at the top of this
+      // transaction; the message it produced is recorded now.
+      if (b.requestId) await tx.dmSendRequest.update({ where: { senderId_key: { senderId, key: b.requestId } }, data: { messageId: m.id } });
       return tx.message.findUniqueOrThrow({ where: { id: m.id }, include: SENT_INCLUDE });
     });
     return { msg, already: false };
@@ -121,7 +159,7 @@ export async function sendDirectMessage(
     // rolled-back transaction.
     if (e?.code !== 'P2002' || !b.requestId) throw e;
     const prior = await prisma.dmSendRequest.findUnique({ where: { senderId_key: { senderId, key: b.requestId } } });
-    if (!prior) throw e;
+    if (!prior?.messageId) throw e;
     const msg = await prisma.message.findUniqueOrThrow({ where: { id: prior.messageId }, include: SENT_INCLUDE });
     return { msg, already: true };
   }
@@ -205,6 +243,10 @@ export const messages: FastifyPluginAsync = async (app) => {
     // Any message can be priced -- plain text included, not just media
     // attachments -- as long as the sender is a KYC'd creator.
     if (b.priceCents > 0 && !isCreator) return reply.code(400).send({ error: 'only_creators_can_price_messages' });
+    // A priced message must have something in it -- same rule as POST
+    // /broadcast and a PPV post. (unlockMessage refuses an empty one at
+    // unlock time too; this stops it being sent at all.)
+    if (b.priceCents > 0 && !b.mediaIds.length && !b.text.trim()) return reply.code(400).send({ error: 'empty_message' });
     // fans may only DM creators they subscribe to; creators may DM their subscribers
     const allowed = isCreator ? await isSubscribed(to, req.user.id) : await isSubscribed(req.user.id, to);
     if (!allowed) return reply.code(403).send({ error: 'subscription_required' });
@@ -307,7 +349,15 @@ export const messages: FastifyPluginAsync = async (app) => {
 
   // Mass DM to all active subscribers (huge OF revenue feature: paid mass PPV drops)
   app.post('/broadcast', { preHandler: app.creatorOk }, async (req, reply) => {
-    const b = z.object({ text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).refine(zeroOrAtLeast(FEES.MIN_PRICED_MESSAGE_CENTS), 'message_min_price').default(0) }).parse(req.body);
+    const b = z.object({
+      text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]),
+      priceCents: z.number().int().min(0).max(50_000).refine(zeroOrAtLeast(FEES.MIN_PRICED_MESSAGE_CENTS), 'message_min_price').default(0),
+      // A fresh uuid per broadcast the creator intends, REUSED on any retry
+      // of it (same contract as a DM's requestId). Required: a random
+      // server-side id made every double-tap a second job, and every
+      // subscriber got two identical priced messages, each chargeable.
+      requestId: z.string().uuid(),
+    }).parse(req.body);
     // Every requested attachment must exist, belong to this creator, be an
     // original (not someone's broadcast copy), not be a marketplace listing's
     // product (listingId -- copying a sold one-of-a-kind item out to every
@@ -327,8 +377,15 @@ export const messages: FastifyPluginAsync = async (app) => {
     // broadcastId makes the job resumable: workers/broadcast.ts writes it on
     // every message it sends and a retry skips fans that already have it, so
     // attempts > 1 can never double-send (or double-charge) a PPV drop.
-    const broadcastId = randomUUID();
-    await broadcastQueue.add('broadcast', { creatorId: req.user.id, broadcastId, ...b }, {
+    //
+    // Derived from (creator, requestId), never random: a repeated request
+    // maps to the same broadcastId, so BullMQ drops it while the first job
+    // exists (same jobId) and, after that job is gone, the worker's
+    // (conversationId, broadcastId) unique index skips every fan it already
+    // reached.
+    const { requestId, ...content } = b;
+    const broadcastId = broadcastIdFor(req.user.id, requestId);
+    await broadcastQueue.add('broadcast', { creatorId: req.user.id, broadcastId, ...content }, {
       jobId: `broadcast-${broadcastId}`, attempts: 5, backoff: { type: 'exponential', delay: 10_000 },
       removeOnComplete: true, removeOnFail: 100,
     });

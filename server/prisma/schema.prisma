@@ -185,6 +185,12 @@ model User {
   // still holds (lib/bridge.ts siteMayLift).
   siteAccountStatus   String?
   siteAccountStatusAt DateTime?
+  // When a site-applied suspension lapses by itself, per dimension (the
+  // site's `suspendedUntil`): creator ladder / account moderation. Null
+  // unless that dimension's recorded site standing is 'suspended' with an
+  // end. lib/bridge.ts liftLapsedSiteSuspensions lifts it once passed.
+  siteSuspendedUntil        DateTime?
+  siteAccountSuspendedUntil DateTime?
   kycStatus    KycStatus  @default(NONE)
   kycRef       String? // provider applicant id (2257-adjacent record pointer)
   referredById String?
@@ -204,6 +210,9 @@ model User {
   locksAsCreator TokenLock[]      @relation("CreatorLocks")
   purchases      ListingOrder[]
   bids           Bid[]
+
+  @@index([siteSuspendedUntil])
+  @@index([siteAccountSuspendedUntil])
 }
 
 model RefreshToken {
@@ -618,6 +627,11 @@ model DepositAddress {
   chainId         Int
   address         String
   derivationIndex Int
+  // Chain head when the address was handed out (null if the RPC could not be
+  // asked). The deposit indexer's first run starts no later than the
+  // earliest of these (workers/deposit-cursor.ts), never at the head.
+  issuedBlock     BigInt?
+  createdAt       DateTime @default(now())
 
   @@unique([chainId, address])
   @@unique([userId, chainId])
@@ -723,7 +737,7 @@ model ChainCursor {
 model DmSendRequest {
   senderId  String
   key       String // client-generated uuid, one per message the sender intends
-  messageId String
+  messageId String? // null only inside the send's own transaction: the row is claimed before the message exists
   createdAt DateTime @default(now())
 
   @@id([senderId, key])
@@ -736,6 +750,10 @@ model TipRequest {
   fanId     String
   key       String // client-generated uuid, one per tip the fan intends
   tipId     String
+  // What the key was used for, so a key reused for a different tip is
+  // refused rather than answered "already sent". Null on rows from before.
+  creatorId   String?
+  amountCents Int?
   createdAt DateTime @default(now())
 
   @@id([fanId, key])

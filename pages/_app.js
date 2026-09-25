@@ -74,10 +74,17 @@ function MyApp({ Component, pageProps }) {
     captureReferralFromQuery(router.query);
   }, [router.query]);
 
+  // Browser storage can throw (site data blocked, DOM storage disabled in a
+  // webview, quota errors in private modes). An unguarded read here threw
+  // during commit and replaced every page with Next's "Application error";
+  // an unguarded write made "Enter" do nothing. A storage failure means "not
+  // yet acknowledged" on read, and "acknowledged for this session" on write.
+  // This is the 18+ content notice, not the real age gate (proxy.js).
   useEffect(() => {
-    const verified = localStorage.getItem('onlyone-age-notice');
-    if (verified === 'true') {
-      setIsVerified(true);
+    try {
+      if (window.localStorage.getItem('onlyone-age-notice') === 'true') setIsVerified(true);
+    } catch {
+      // treat as not yet acknowledged
     }
     setIsLoading(false);
   }, []);
@@ -94,7 +101,11 @@ function MyApp({ Component, pageProps }) {
 
   if (!isVerified) {
     return <AgeGate onVerify={() => {
-      localStorage.setItem('onlyone-age-notice', 'true');
+      try {
+        window.localStorage.setItem('onlyone-age-notice', 'true');
+      } catch {
+        // could not persist -- dismissed for this session only
+      }
       setIsVerified(true);
     }} />;
   }

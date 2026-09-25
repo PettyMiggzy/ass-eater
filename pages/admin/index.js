@@ -15,6 +15,7 @@ import {
   describeObligation,
 } from '../../components/admin/adminApi';
 import { draftFrom, fieldsFromDraft, rebaseDraft, fieldName } from '../../components/admin/creatorDraft';
+import { CATEGORIES, MAX_CATEGORIES } from '../../lib/categories';
 
 // The oa_admin_media cookie (POST /api/admin/media-session) lasts 2 hours;
 // refreshed well inside that so a panel left open keeps loading private media.
@@ -56,10 +57,14 @@ export default function AdminPanel() {
   const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
   const [mediaSessionOk, setMediaSessionOk] = useState(true);
   const [nciiSummary, setNciiSummary] = useState(null);
-  // A takedown request the next gallery/avatar removal is QUARANTINED for
-  // (content reported as possibly showing a minor): 18 U.S.C. 2258A needs it
-  // preserved, not deleted. Blank = a normal removal that deletes the file.
+  // A takedown request the next gallery/avatar removals are recorded against
+  // (so the request can be resolved as removed), and whether they are
+  // QUARANTINED for it instead of deleted (content reported as possibly
+  // showing a minor: 18 U.S.C. 2258A needs it preserved). The server also
+  // quarantines on its own for a request filed as a possible minor. Blank = a
+  // normal removal that deletes the file.
   const [preserveReportId, setPreserveReportId] = useState('');
+  const [quarantineRemovals, setQuarantineRemovals] = useState(false);
 
   // Live off the loaded roster, so the counter and the cap agree with what
   // the server will decide on save.
@@ -210,6 +215,7 @@ export default function AdminPanel() {
     if (snap) { setDraft(draftFrom(snap)); setBaseline(draftFrom(snap)); }
     resetUploadAttestations();
     setPreserveReportId('');
+    setQuarantineRemovals(false);
     try {
       const roster = await fetchRoster();
       if (!roster || seq !== selectSeq.current) return;
@@ -354,30 +360,34 @@ export default function AdminPanel() {
   // Takes a reported or unwanted profile photo down: resets it to the
   // placeholder and deletes the file (pages/api/admin/avatar.js remove:true).
   const removeAvatar = async () => {
-    const preserveFor = preserveReportId.trim();
-    if (preserveFor && !/^[1-9][0-9]{0,17}$/.test(preserveFor)) {
+    const requestId = preserveReportId.trim();
+    if (requestId && !/^[1-9][0-9]{0,17}$/.test(requestId)) {
       setStatus('Error: the takedown request number must be a plain number like 12 (or leave it blank).');
       return;
     }
+    const preserveFor = requestId && quarantineRemovals ? requestId : '';
     if (!confirm(preserveFor
       ? `Remove this creator's profile photo and QUARANTINE it as evidence for takedown request #${preserveFor}? It is replaced with the placeholder, never served again, and kept (not deleted) for the NCMEC report.`
-      : "Remove this creator's profile photo? It is replaced with the neutral placeholder and the file is deleted from storage.")) return;
+      : requestId
+        ? `Remove this creator's profile photo for takedown request #${requestId}? It is replaced with the placeholder and the file is deleted (quarantined instead if that request was filed as a possible minor). The removal is recorded on the request.`
+        : "Remove this creator's profile photo? It is replaced with the neutral placeholder and the file is deleted from storage.")) return;
     setBusy(true);
     setStatus('Removing photo...');
     try {
       const { res, data } = await adminPost(adminKey, '/api/admin/avatar', {
         creatorId: String(selectedId),
         remove: true,
-        ...(preserveFor ? { preserveForNciiReportId: preserveFor } : {}),
+        ...(preserveFor ? { preserveForNciiReportId: preserveFor } : requestId ? { nciiReportId: requestId } : {}),
       });
       if (!res.ok || !data.creator) throw new Error(errorFrom(res, data, 'Could not remove the photo'));
       applyCreator(data.creator);
+      const recorded = requestId ? ` Recorded on takedown request #${requestId}.` : '';
       setStatus(
-        data.preserved
-          ? `Photo removed and quarantined as evidence for takedown request #${preserveFor} (Evidence tab).`
+        (data.preserved
+          ? `Photo removed and quarantined as evidence for takedown request #${requestId} (Evidence tab).`
           : data.removed
             ? 'Photo removed and the file deleted.'
-            : 'Photo reset to the placeholder (there was no uploaded file to delete).',
+            : 'Photo reset to the placeholder (there was no uploaded file to delete).') + (data.preserved ? '' : recorded),
       );
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -437,6 +447,7 @@ export default function AdminPanel() {
       applyCreator(data.creator);
       setOthersAppear(null);
       setCoPerformerIds([]);
+      setNextUploadIsAi(false);
       setStatus('Content added.');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -451,13 +462,17 @@ export default function AdminPanel() {
   // clicked or nothing at all (409), never whatever now sits at that index.
   const deleteGalleryItem = async (item, index) => {
     if (!item || typeof item.src !== 'string') return;
-    const preserveFor = preserveReportId.trim();
-    if (preserveFor && !/^[1-9][0-9]{0,17}$/.test(preserveFor)) {
+    const requestId = preserveReportId.trim();
+    if (requestId && !/^[1-9][0-9]{0,17}$/.test(requestId)) {
       setStatus('Error: the takedown request number must be a plain number like 12 (or leave it blank).');
       return;
     }
+    const preserveFor = requestId && quarantineRemovals ? requestId : '';
     if (preserveFor && !confirm(
       `Remove this item and QUARANTINE it as evidence for takedown request #${preserveFor}? It is never served again and is kept (not deleted) for the NCMEC report.`,
+    )) return;
+    if (!preserveFor && requestId && !confirm(
+      `Remove this item for takedown request #${requestId}? The file is deleted (quarantined instead if that request was filed as a possible minor), and the removal is recorded on the request.`,
     )) return;
     setBusy(true);
     setStatus('Removing...');
@@ -466,7 +481,7 @@ export default function AdminPanel() {
         creatorId: selectedId,
         src: item.src,
         index,
-        ...(preserveFor ? { preserveForNciiReportId: preserveFor } : {}),
+        ...(preserveFor ? { preserveForNciiReportId: preserveFor } : requestId ? { nciiReportId: requestId } : {}),
       });
       if (res.status === 409) {
         await loadCreators();
@@ -476,8 +491,8 @@ export default function AdminPanel() {
       if (!res.ok) throw new Error(errorFrom(res, data, 'Delete failed'));
       applyCreator(data.creator);
       setStatus(data.preserved
-        ? `Removed and quarantined as evidence for takedown request #${preserveFor} (Evidence tab).`
-        : 'Removed (the file is deleted from storage too).');
+        ? `Removed and quarantined as evidence for takedown request #${requestId} (Evidence tab).`
+        : `Removed (the file is deleted from storage too).${requestId ? ` Recorded on takedown request #${requestId}.` : ''}`);
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -941,6 +956,42 @@ export default function AdminPanel() {
                       Letters, numbers, spaces and hyphens only. Clearing this removes every tag.
                     </p>
                   </div>
+                  {/* Browse categories (lib/categories.js): the Categories
+                      sidebar on /creators and /marketplace. Same chips and
+                      the same cap as the creator's own dashboard. */}
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">
+                      Categories (up to {MAX_CATEGORIES} -- the browse sidebar on Explore and Marketplace)
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {CATEGORIES.map((c) => {
+                        const current = Array.isArray(draft.categories) ? draft.categories : [];
+                        const active = current.includes(c.key);
+                        const full = !active && current.length >= MAX_CATEGORIES;
+                        return (
+                          <button
+                            type="button"
+                            key={c.key}
+                            aria-pressed={active}
+                            disabled={full}
+                            onClick={() =>
+                              setDraft({
+                                ...draft,
+                                categories: active ? current.filter((k) => k !== c.key) : [...current, c.key],
+                              })
+                            }
+                            className={`text-xs px-3 py-1.5 rounded-full border transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                              active
+                                ? 'bg-brand-pink border-brand-pink text-white font-bold'
+                                : 'border-white/15 text-gray-300 hover:border-brand-pink/50 hover:text-white'
+                            }`}
+                          >
+                            {c.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                   {/* No Subscribers / Posts / Likes: the site has no such
                       counters. Posts shown publicly is the real gallery size;
                       the other two are not published. */}
@@ -1192,8 +1243,10 @@ export default function AdminPanel() {
                             const file = e.target.files?.[0];
                             e.target.value = '';
                             if (!file) return;
+                            // The AI label is cleared by uploadGalleryItem only
+                            // after a successful finalize, like the §2257
+                            // answer: a failed upload keeps it for the retry.
                             uploadGalleryItem(file, nextUploadIsAi);
-                            setNextUploadIsAi(false);
                           }}
                         />
                       </label>
@@ -1227,19 +1280,36 @@ export default function AdminPanel() {
                     />
                     <div className="mb-3 px-3 py-2 rounded-md bg-red-900/10 border border-red-500/30 text-xs text-gray-300">
                       <label className="flex flex-wrap items-center gap-2">
-                        Removing content reported as possibly showing a MINOR? Quarantine it for takedown request #
+                        Removing content for a TAKE IT DOWN request? Request #
                         <input
                           value={preserveReportId}
-                          onChange={(e) => setPreserveReportId(e.target.value.replace(/[^0-9]/g, '').slice(0, 18))}
+                          onChange={(e) => {
+                            const next = e.target.value.replace(/[^0-9]/g, '').slice(0, 18);
+                            // The quarantine answer belongs to one request: a
+                            // different (or cleared) number has to be decided again.
+                            if (next !== preserveReportId) setQuarantineRemovals(false);
+                            setPreserveReportId(next);
+                          }}
                           placeholder="e.g. 12"
                           inputMode="numeric"
                           className="w-24 px-2 py-1 rounded-md bg-black/40 border border-red-500/40 text-white text-xs"
                         />
                       </label>
+                      <label className="flex items-center gap-2 mt-1">
+                        <input
+                          type="checkbox"
+                          checked={quarantineRemovals}
+                          disabled={!preserveReportId}
+                          onChange={(e) => setQuarantineRemovals(e.target.checked)}
+                        />
+                        Possibly shows a MINOR: quarantine as evidence instead of deleting
+                      </label>
                       <p className="text-[10px] text-gray-500 mt-1">
-                        With a request number, the next removals here (gallery items and the profile photo) are kept as
-                        evidence instead of deleted -- never served, listed in the Evidence tab -- as 18 U.S.C. 2258A
-                        requires. Leave blank for an ordinary removal, which deletes the file.
+                        With a request number, the next removals here (gallery items and the profile photo) are recorded
+                        on that request, so it can be resolved as removed. Quarantined files are kept as evidence instead
+                        of deleted -- never served, listed in the Evidence tab -- as 18 U.S.C. 2258A requires; a request
+                        filed as a possible minor is always quarantined. Leave blank for an ordinary removal, which
+                        deletes the file.
                       </p>
                     </div>
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
@@ -1393,6 +1463,7 @@ function ReportsPanel({ adminKey }) {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const load = async (status) => {
     setLoading(true);
@@ -1412,27 +1483,65 @@ function ReportsPanel({ adminKey }) {
 
   const resolve = async (r, action) => {
     const minorReport = r.category === 'minor';
+    const serious = minorReport || r.category === 'non_consensual';
+    let reason = null;
     if (action === 'remove_content') {
       const what = r.targetType === 'listing'
-        ? (minorReport ? 'take this listing down and QUARANTINE its media as evidence (kept, never served)' : 'take this listing down (and delete its media)')
+        ? (minorReport ? 'take this listing down and QUARANTINE its media as evidence (kept, never served)' : 'take this listing down (and delete its media, including files buyers paid for)')
         : r.targetType === 'message' ? 'delete this direct message' : 'delete this comment';
-      const keep = minorReport || r.category === 'non_consensual' ? ' A copy of the text is kept on the report as evidence.' : '';
-      if (!confirm(`Remove the reported content? This will ${what}.${keep}`)) return;
-    } else if (action === 'dismiss' && (minorReport || r.category === 'non_consensual')) {
-      if (!confirm(`Dismiss this report filed as ${minorReport ? 'showing a POSSIBLE MINOR' : 'NON-CONSENSUAL content'}? The content stays up.`)) return;
+      const keep = serious ? ' A copy of the text is kept on the report as evidence.' : '';
+      const gone = r.target?.exists === false ? ' (It already looks deleted -- this records the report as actioned.)' : '';
+      if (!confirm(`Remove the reported content? This will ${what}.${keep}${gone}`)) return;
+    } else if (action === 'dismiss' && serious) {
+      // The server refuses to dismiss these without a reason (400
+      // reason_required); it is kept on the report and in its history.
+      reason = window.prompt(
+        `Dismiss this report filed as ${minorReport ? 'showing a POSSIBLE MINOR' : 'NON-CONSENSUAL content'}? The content stays up.\n\nWhy is it invalid? (kept on the report)`,
+      );
+      if (reason === null) return;
+      if (!reason.trim()) {
+        setError('A reason is required to dismiss this report. Nothing was changed.');
+        return;
+      }
+    } else if (action === 'reopen') {
+      reason = window.prompt(`Reopen report #${r.id}? It goes back into the open queue.\n\nWhy is it being reopened? (kept on the report)`);
+      if (reason === null) return;
+      if (!reason.trim()) {
+        setError('A reason is required to reopen a report. Nothing was changed.');
+        return;
+      }
     }
     setBusyId(r.id);
     setError('');
+    setNotice('');
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/reports-resolve', { id: r.id, action });
+      const { res, data } = await adminPost(adminKey, '/api/admin/reports-resolve', {
+        id: r.id,
+        action,
+        ...(reason !== null ? { reason: reason.trim() } : {}),
+      });
       if (res.status === 409) {
-        // Someone else resolved it first -- re-read rather than keep a stale row.
+        // already_resolved: someone else (or another tab) resolved it first;
+        // not_reopenable: it is no longer dismissed. Either way nothing was
+        // changed -- re-read rather than keep a stale row.
         setError(errorFrom(res, data, 'That report was already resolved.'));
         await load(statusFilter);
         return;
       }
-      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
-      setReports((prev) => prev.filter((x) => String(x.id) !== String(r.id)));
+      if (!res.ok) throw new Error(errorFrom(res, data, action === 'reopen' ? 'Could not reopen that report' : 'Failed to resolve report'));
+      if (action === 'reopen') {
+        setNotice(`Report #${r.id} reopened and back in the open queue.`);
+      } else if (action === 'remove_content') {
+        setNotice(data.content === 'already_gone'
+          ? `Report #${r.id} actioned -- the item was already gone.`
+          : `Report #${r.id} actioned -- the content was removed${data.preserved ? ` and ${data.preserved} file(s) quarantined as evidence (Evidence tab)` : ''}.`);
+      } else {
+        setNotice(`Report #${r.id} dismissed.${reason !== null ? ' Reason recorded; it can be reopened from the Dismissed list.' : ''}`);
+      }
+      // Out of the Open list at once; any other view is re-read so the row
+      // shows its new status and history.
+      if (statusFilter === 'open') setReports((prev) => prev.filter((x) => String(x.id) !== String(r.id)));
+      else await load(statusFilter);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1460,6 +1569,7 @@ function ReportsPanel({ adminKey }) {
         </select>
       </div>
 
+      {notice && <p className="text-sm text-green-400 mb-4">{notice}</p>}
       {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
       {loading ? (
         <p className="text-sm text-gray-500">Loading...</p>
@@ -1494,6 +1604,19 @@ function ReportsPanel({ adminKey }) {
                   <p className="whitespace-pre-wrap break-words">"{String(r.removedContent.text ?? '')}"</p>
                 </div>
               )}
+              {r.dismissReason && (
+                <p className="text-xs text-gray-400 mb-2">Dismissal reason: {String(r.dismissReason)}</p>
+              )}
+              {Array.isArray(r.history) && r.history.length > 0 && (
+                <ul className="mb-2 text-[11px] text-gray-500 space-y-0.5">
+                  {r.history.map((h, i) => (
+                    <li key={i}>
+                      {h?.at ? new Date(h.at).toLocaleString() : ''} — {String(h?.action ?? '')} by {String(h?.by ?? 'admin')}
+                      {h?.reason ? `: ${String(h.reason)}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {r.status === 'open' ? (
                 <div className="flex gap-2">
                   <button
@@ -1501,18 +1624,37 @@ function ReportsPanel({ adminKey }) {
                     disabled={busyId === r.id}
                     className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
                   >
-                    Dismiss
+                    {r.category === 'minor' || r.category === 'non_consensual' ? 'Dismiss…' : 'Dismiss'}
                   </button>
+                  {/* Enabled while the live item still exists OR a copy of it
+                      was kept: a snapshot means the report is about something
+                      real, and the server answers already_gone for the live
+                      target and records the report as actioned. */}
                   <button
                     onClick={() => resolve(r, 'remove_content')}
-                    disabled={busyId === r.id || r.target?.exists === false}
+                    disabled={busyId === r.id || (r.target?.exists === false && !r.target?.fromSnapshot)}
                     className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
                   >
                     Remove Content
                   </button>
                 </div>
               ) : (
-                <p className="text-xs text-gray-500">{r.status} by {r.resolvedBy}</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="text-xs text-gray-500">
+                    {String(r.status ?? '')} by {String(r.resolvedBy ?? 'admin')}
+                    {r.resolvedAt ? `, ${new Date(r.resolvedAt).toLocaleString()}` : ''}
+                    {r.contentOutcome ? ` (${r.contentOutcome === 'already_gone' ? 'item was already gone' : 'content removed'})` : ''}
+                  </p>
+                  {r.status === 'dismissed' && (
+                    <button
+                      onClick={() => resolve(r, 'reopen')}
+                      disabled={busyId === r.id}
+                      className="text-xs px-3 py-1.5 rounded-md border border-yellow-500/50 text-yellow-300 hover:bg-yellow-500/10 transition disabled:opacity-50"
+                    >
+                      Reopen
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           ))}
@@ -1536,15 +1678,23 @@ const REPORT_CATEGORY_LABELS = {
  */
 function ReportTarget({ report }) {
   const t = report?.target;
-  if (!t || t.exists === false) {
-    return <p className="text-xs text-gray-500 mb-3">The reported item no longer exists (already deleted).</p>;
+  if (!t || (t.exists === false && !t.fromSnapshot)) {
+    return <p className="text-xs text-gray-500 mb-3">The reported item no longer exists (already deleted), and no copy of it was kept.</p>;
   }
+  // The live item is gone (its author deleted it, an account deletion, a
+  // takedown) but the report carries the copy taken when it was filed.
+  const snapNote = t.fromSnapshot ? (
+    <p className="text-[10px] text-yellow-300 mb-1">
+      The item itself no longer exists -- this is the copy kept on the report{report?.reportedContent ? ' when it was filed' : ''}.
+    </p>
+  ) : null;
   const seller = t.creatorName ? `${t.creatorName}${t.creatorHandle ? ` (${t.creatorHandle})` : ''}` : t.creatorId ? `creator #${t.creatorId}` : 'unknown creator';
   if (report.targetType === 'wall_post') {
     return (
       <div className="mb-3 px-3 py-2 rounded-md bg-black/30 border border-white/10 text-xs text-gray-300">
+        {snapNote}
         <p className="text-gray-500 mb-1">
-          Comment by {String(t.authorName ?? 'someone')}{t.authorId ? ` (user #${t.authorId})` : ''} on {seller}'s wall
+          Comment by {String(t.authorName ?? 'someone')}{t.authorId ? ` (user #${t.authorId}${t.authorLogin ? `, ${String(t.authorLogin)}` : ''})` : ''} on {seller}'s wall
           {t.createdAt ? `, ${new Date(t.createdAt).toLocaleString()}` : ''}:
         </p>
         <p className="whitespace-pre-wrap break-words">"{String(t.text ?? '')}"</p>
@@ -1554,6 +1704,7 @@ function ReportTarget({ report }) {
   if (report.targetType === 'message') {
     return (
       <div className="mb-3 px-3 py-2 rounded-md bg-black/30 border border-white/10 text-xs text-gray-300">
+        {snapNote}
         <p className="text-gray-500 mb-1">
           Direct message from user #{String(t.senderId ?? '?')}
           {t.senderLogin ? ` (${String(t.senderLogin)}${t.senderRole ? `, ${String(t.senderRole)}` : ''})` : ''}
@@ -1567,10 +1718,11 @@ function ReportTarget({ report }) {
   if (report.targetType === 'listing') {
     return (
       <div className="mb-3 px-3 py-2 rounded-md bg-black/30 border border-white/10 text-xs text-gray-300">
+        {snapNote}
         <p className="font-bold text-white">{String(t.title ?? '(untitled)')}</p>
         <p className="text-gray-500 mb-1">
           by {seller} · {String(t.status ?? '')} · {String(t.kind ?? '')}
-          {Number.isFinite(Number(t.priceCents)) ? ` · ${dollars(t.priceCents)}` : ''} · {Number(t.mediaCount) || 0} media item(s)
+          {Number.isFinite(Number(t.priceCents)) ? ` · ${dollars(t.priceCents)}` : ''} · {Number(t.mediaCount) || (Array.isArray(t.media) ? t.media.length : 0)} media item(s)
         </p>
         {t.description && <p className="whitespace-pre-wrap break-words">{String(t.description)}</p>}
         {/* The reported files themselves, so "Remove Content" is decided on
@@ -1649,6 +1801,13 @@ function ViolationsPanel({ adminKey }) {
     setError('');
     try {
       const { res, data } = await adminPost(adminKey, '/api/admin/violations-resolve', { id, action });
+      if (res.status === 409) {
+        // Someone else resolved it first; the first decision stands. Re-read
+        // rather than keep a stale row that looks still open.
+        setError(errorFrom(res, data, 'That violation was already resolved.'));
+        await load(statusFilter);
+        return;
+      }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve violation'));
       setViolations((prev) => prev.filter((v) => String(v.id) !== String(id)));
     } catch (err) {
@@ -1788,6 +1947,9 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [attributed, setAttributed] = useState({});
+  // Per request: the admin's explicit "the content is already gone / was
+  // removed elsewhere" acknowledgement (sent as contentGone).
+  const [goneAck, setGoneAck] = useState({});
 
   const load = async (status) => {
     setLoading(true);
@@ -1821,12 +1983,12 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
     const apiAction = banAfter ? 'removed' : action;
     const before = creatorId ? (creators || []).find((c) => String(c.id) === String(creatorId)) : null;
     let reason = null;
+    const report = reports.find((x) => String(x.id) === String(id));
     if (action === 'dismiss') {
       // Dismissing takes a legally clocked request out of the open queue, and
       // it sits one tap from the removal buttons: confirm it (more strongly
       // for a possible minor) and require a reason, which is kept on the
       // report. A mistaken dismissal can be reopened from the Dismissed list.
-      const report = reports.find((x) => String(x.id) === String(id));
       const minorReport = report?.category === 'minor';
       reason = window.prompt(
         minorReport
@@ -1840,20 +2002,35 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       }
       if (minorReport && !confirm(`Last check: dismiss the POSSIBLE MINOR report #${id} with the reason "${reason.trim()}"?`)) return;
     }
+    // 'removed' is only recorded when the removal is on file: a takedown
+    // recorded against this request (the "Take down content" control, or a
+    // gallery/avatar removal attributed to it), the attributed creator being
+    // banned by this resolve, or the admin ticking "already gone / removed
+    // elsewhere" -- the server refuses otherwise (409 takedown_required).
+    // Only takedowns that actually removed something count: an entry whose
+    // result is 'already_gone' (e.g. a mistyped id that found nothing) says
+    // nothing about the reported content, and the server ignores it too.
+    const takedownCount = removedTakedownCount(report);
+    const contentGone = !!goneAck[id];
+    const basisNote = takedownCount
+      ? ` ${takedownCount} takedown(s) that removed content are recorded on this request.`
+      : contentGone
+        ? ' You confirmed the content is already gone or was removed elsewhere; that is recorded on the request.'
+        : '';
     if (banAfter) {
       const banNote = creatorId
-        ? ' The selected creator will be PERMANENTLY BANNED and all their listings taken down, including files earlier buyers paid for.'
+        ? ' The selected creator will be PERMANENTLY BANNED and all their listings taken down, including files earlier buyers paid for (their files are quarantined as evidence).'
         : ' No creator selected -- nobody is banned. If a creator posted it, pick them first.';
       if (!confirm(
-        `Confirm you have already removed the reported content before marking this resolved.${banNote}\n\n`
+        `Resolve request #${id} as removed?${basisNote}${banNote}\n\n`
         + 'Content that shows a minor must also be reported to the NCMEC CyberTipline (report.cybertip.org). '
-        + 'Preserve what you removed for that report; do not share it.',
+        + 'Use the quarantined copy (Evidence tab) for that report; do not share it.',
       )) return;
     } else if (action === 'removed') {
       const violationNote = creatorId
         ? ' This will also count as a confirmed content violation against the selected creator (30-day suspension on the 1st, permanent ban on the 2nd; a pending applicant stays pending).'
         : ' No creator selected -- this will be logged as removed without counting toward any account\'s violation record.';
-      if (!confirm(`Confirm you have already removed the reported content before marking this resolved.${violationNote}`)) return;
+      if (!confirm(`Resolve request #${id} as removed?${basisNote}${violationNote}`)) return;
     }
     setBusyId(id);
     setError('');
@@ -1863,8 +2040,14 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
         id,
         action: apiAction,
         creatorId: apiAction === 'removed' ? creatorId : null,
+        ...(apiAction === 'removed' && contentGone ? { contentGone: true } : {}),
         ...(reason !== null ? { reason: reason.trim() } : {}),
       });
+      if (res.status === 409 && data?.code === 'takedown_required') {
+        // Nothing was changed: no removal is on file for this request.
+        setError(`Request #${id} is still open: nothing records the content as removed. Take it down with "Take down content" below, remove the gallery item or photo from the creator's record with this request number, or tick "already gone / removed elsewhere" if it really is.`);
+        return;
+      }
       if (res.status === 409) {
         // Someone else resolved it first -- re-read rather than keep a stale row.
         setNotice(errorFrom(res, data, 'That report was already resolved.'));
@@ -1872,7 +2055,10 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
         return;
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
-      const messages = [action === 'dismiss' ? `Report #${id} dismissed (reason recorded). It can be reopened from the Dismissed list.` : `Report #${id} resolved.`];
+      const basis = { takedown: 'a recorded takedown', ban: 'the creator\'s ban', acknowledged: 'your confirmation that it was already gone' }[data.report?.removalBasis];
+      const messages = [action === 'dismiss'
+        ? `Report #${id} dismissed (reason recorded). It can be reopened from the Dismissed list.`
+        : `Report #${id} resolved as removed${basis ? `, on the basis of ${basis}` : ''}.`];
       const creator = data.creator || null;
       if (creator) {
         if (onCreatorChanged) onCreatorChanged(creator);
@@ -2017,8 +2203,21 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
                 {Array.isArray(r.preservedMedia) && r.preservedMedia.length > 0 && (
                   <p className="mb-2 text-[11px] text-red-300">{r.preservedMedia.length} file(s) quarantined as evidence for this report (Evidence tab).</p>
                 )}
+                <TakedownList report={r} />
+                {r.status === 'removed' && r.removalBasis && (
+                  <p className="mb-2 text-[11px] text-gray-400">
+                    Recorded as removed on the basis of {r.removalBasis === 'takedown' ? 'a recorded takedown' : r.removalBasis === 'ban' ? 'the creator\'s ban' : r.removalBasis === 'acknowledged' ? 'the admin\'s confirmation that it was already gone or removed elsewhere' : String(r.removalBasis)}.
+                  </p>
+                )}
                 {r.status === 'open' && (
                   <>
+                    <TakedownControl
+                      adminKey={adminKey}
+                      report={r}
+                      disabled={busyId === r.id}
+                      onDone={async (msg) => { setError(''); setNotice(msg); await load(statusFilter); }}
+                      onError={(msg) => { setNotice(''); setError(msg); }}
+                    />
                     <div className="mb-2">
                       <label className="block text-[10px] text-gray-500 mb-1">
                         {minor
@@ -2038,6 +2237,20 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
                         ))}
                       </select>
                     </div>
+                    {!removedTakedownCount(r) && (
+                      <label className="flex items-start gap-2 text-[11px] text-gray-400 mt-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!goneAck[r.id]}
+                          onChange={(e) => setGoneAck({ ...goneAck, [r.id]: e.target.checked })}
+                          className="mt-0.5"
+                        />
+                        <span>
+                          The content is already gone, or was removed some other way (it is not on this site any more).
+                          Only tick this after checking -- it is recorded on the request as the basis for "removed".
+                        </span>
+                      </label>
+                    )}
                     <div className="flex gap-2 mt-2">
                       <button
                         onClick={() => resolve(r.id, 'dismiss')}
@@ -2071,6 +2284,178 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+const TAKEDOWN_TYPE_LABELS = {
+  listing: 'Marketplace listing',
+  message: 'Direct message',
+  wall_post: 'Wall comment',
+  gallery_item: 'Gallery item',
+  avatar: 'Profile photo',
+};
+
+// Takedowns on a request that actually removed something (result 'removed').
+// Mirrors lib/ncii-reports-store.js resolveNciiReport: only these count as the
+// basis for resolving a request as 'removed'.
+function removedTakedownCount(report) {
+  const list = Array.isArray(report?.takedowns) ? report.takedowns : [];
+  return list.filter((t) => t && t.result === 'removed').length;
+}
+
+function takedownTargetText(t) {
+  const target = t?.target && typeof t.target === 'object' ? t.target : {};
+  if (t?.type === 'listing') return `listing #${String(target.listingId ?? '?')}`;
+  if (t?.type === 'wall_post') return `comment #${String(target.postId ?? '?')}`;
+  if (t?.type === 'message') return `message ${String(target.messageId ?? '?')} in conversation ${String(target.conversationId ?? '?')}`;
+  if (t?.type === 'gallery_item' || t?.type === 'avatar') return `creator #${String(target.creatorId ?? '?')}`;
+  return '';
+}
+
+/**
+ * The specific items taken down against a takedown request (report.takedowns,
+ * written by /api/admin/content-takedown and by gallery/avatar removals
+ * attributed to the request), with the copy kept of each text item.
+ */
+function TakedownList({ report }) {
+  const list = Array.isArray(report?.takedowns) ? report.takedowns : [];
+  if (!list.length) return null;
+  return (
+    <div className="mb-2 px-3 py-2 rounded-md bg-black/30 border border-white/10 text-[11px] text-gray-300">
+      <p className="text-gray-400 mb-1">Taken down for this request:</p>
+      <ul className="space-y-1">
+        {list.map((t, i) => {
+          const snap = t?.snapshot && typeof t.snapshot === 'object' ? t.snapshot : null;
+          return (
+            <li key={i}>
+              {t?.at ? `${new Date(t.at).toLocaleString()} — ` : ''}
+              {TAKEDOWN_TYPE_LABELS[t?.type] || String(t?.type ?? 'item')} {takedownTargetText(t)}:{' '}
+              <span className={t?.result === 'removed' ? 'text-red-300' : 'text-gray-500'}>
+                {t?.result === 'removed' ? 'removed' : t?.result === 'already_gone' ? 'was already gone' : String(t?.result ?? '')}
+              </span>
+              {Number(t?.preserved) > 0 ? ` · ${Number(t.preserved)} file(s) quarantined` : ''}
+              {snap && (snap.text || snap.title) ? (
+                <span className="block text-gray-500 whitespace-pre-wrap break-words">
+                  Copy kept: "{String(snap.title ?? snap.text ?? '')}"
+                  {snap.senderLogin || snap.authorLogin ? ` (by ${String(snap.senderLogin || snap.authorLogin)})` : ''}
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+const TAKEDOWN_ID_RE = /^[1-9][0-9]{0,17}$/;
+
+/**
+ * "Take down content" for one TAKE IT DOWN request: removes the one listing,
+ * direct message or wall comment the request names
+ * (POST /api/admin/content-takedown with nciiReportId). A listing comes down
+ * WITH the files buyers paid for. For a POSSIBLE MINOR request the files are
+ * always quarantined as evidence first (the server forces it too); for any
+ * other request the admin may choose to. Gallery items and profile photos are
+ * removed from the creator's record (Creators tab) with this request number.
+ */
+function TakedownControl({ adminKey, report, disabled, onDone, onError }) {
+  const minor = report?.category === 'minor';
+  const [type, setType] = useState('listing');
+  const [listingId, setListingId] = useState('');
+  const [conversationId, setConversationId] = useState('');
+  const [messageId, setMessageId] = useState('');
+  const [postId, setPostId] = useState('');
+  const [preserve, setPreserve] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    let target;
+    let what;
+    if (type === 'listing') {
+      const idv = listingId.trim();
+      if (!TAKEDOWN_ID_RE.test(idv)) { onError('Enter the listing number (e.g. 12 from /marketplace?listing=12).'); return; }
+      target = { type, listingId: idv };
+      what = `marketplace listing #${idv}, INCLUDING the files buyers paid for (they stop receiving it)`;
+    } else if (type === 'wall_post') {
+      const idv = postId.trim();
+      if (!TAKEDOWN_ID_RE.test(idv)) { onError('Enter the wall comment number.'); return; }
+      target = { type, postId: idv };
+      what = `wall comment #${idv}`;
+    } else {
+      const c = conversationId.trim();
+      const m = messageId.trim();
+      if (!c || !m || c.length > 300 || m.length > 100) { onError('Enter both the conversation id and the message id.'); return; }
+      target = { type, conversationId: c, messageId: m };
+      what = `message ${m} in conversation ${c}`;
+    }
+    const quarantine = minor || preserve;
+    if (!confirm(
+      `Take down ${what} for request #${report.id}?`
+      + (quarantine ? ' Its files are QUARANTINED as evidence first (kept, never served, listed in the Evidence tab).' : ' Its files are deleted.')
+      + ' A copy of the item is kept on the request and in the audit trail.',
+    )) return;
+    setBusy(true);
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/content-takedown', {
+        ...target,
+        nciiReportId: String(report.id),
+        ...(quarantine ? { preserve: true } : {}),
+      });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'The takedown failed'));
+      await onDone(data.result === 'removed'
+        ? `Took down ${what.split(',')[0]} for request #${report.id}${data.preserved ? `; ${data.preserved} file(s) quarantined as evidence` : ''}. It is recorded on the request -- you can now resolve it as removed.`
+        : `Nothing to take down: ${what.split(',')[0]} was already gone (or that id is wrong). That does NOT count as a removal: check the id and the content location, then take down the right item, or tick "already gone / removed elsewhere" if it really is.`);
+      setListingId(''); setConversationId(''); setMessageId(''); setPostId('');
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls = 'px-2 py-1 rounded-md bg-black/40 border border-red-500/40 text-white text-xs';
+  const off = disabled || busy;
+  return (
+    <div className="mb-2 px-3 py-2 rounded-md bg-red-900/10 border border-red-500/30 text-xs text-gray-300">
+      <p className="text-red-300 font-bold mb-1">Take down content</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={type} onChange={(e) => setType(e.target.value)} disabled={off} className={inputCls}>
+          <option value="listing">Marketplace listing</option>
+          <option value="message">Direct message</option>
+          <option value="wall_post">Wall comment</option>
+        </select>
+        {type === 'listing' && (
+          <input value={listingId} onChange={(e) => setListingId(e.target.value.replace(/[^0-9]/g, '').slice(0, 18))} placeholder="Listing #" inputMode="numeric" disabled={off} className={`${inputCls} w-28`} />
+        )}
+        {type === 'wall_post' && (
+          <input value={postId} onChange={(e) => setPostId(e.target.value.replace(/[^0-9]/g, '').slice(0, 18))} placeholder="Comment #" inputMode="numeric" disabled={off} className={`${inputCls} w-28`} />
+        )}
+        {type === 'message' && (
+          <>
+            <input value={conversationId} onChange={(e) => setConversationId(e.target.value.slice(0, 300))} placeholder="Conversation id" disabled={off} className={`${inputCls} w-44`} />
+            <input value={messageId} onChange={(e) => setMessageId(e.target.value.slice(0, 100))} placeholder="Message id" disabled={off} className={`${inputCls} w-36`} />
+          </>
+        )}
+        <button
+          onClick={submit}
+          disabled={off}
+          className="text-xs px-3 py-1 rounded-md border border-red-500 bg-red-600/20 text-red-300 hover:bg-red-600/30 transition disabled:opacity-50"
+        >
+          {busy ? 'Taking down…' : 'Take down'}
+        </button>
+      </div>
+      <label className="flex items-center gap-2 mt-2 text-[11px] text-gray-400">
+        <input type="checkbox" checked={minor || preserve} disabled={minor || off} onChange={(e) => setPreserve(e.target.checked)} />
+        {minor
+          ? 'Files are quarantined as evidence (always, for a possible-minor request).'
+          : 'Quarantine the files as evidence instead of deleting them.'}
+      </label>
+      <p className="text-[10px] text-gray-500 mt-1">
+        A gallery item or profile photo is removed from the creator's record in the Creators tab -- enter this request's
+        number (#{String(report.id)}) there so the removal is recorded here.
+      </p>
     </div>
   );
 }
@@ -2317,8 +2702,9 @@ function PayoutsPanel({ adminKey }) {
   // never a default:
   //  - 409 payout_frozen: the account is banned/suspended/no longer an active
   //    creator. Normal action is Reject; "pay anyway" re-posts override:true.
-  //  - 501/502: the on-chain check couldn't run. "Record without checking"
-  //    re-posts skipChainCheck:true.
+  //  - 501/502, or 503 chain_check_unavailable (PAYOUT_SENDER_ADDRESS is
+  //    misconfigured): the on-chain check couldn't run. "Record without
+  //    checking" re-posts skipChainCheck:true. A plain 500 never offers it.
   //  - 400 on-chain mismatch and 409 tx_hash_reused are shown as they are:
   //    the hash is wrong or already closes another request.
   const markPaid = async (r) => {
@@ -2348,7 +2734,9 @@ function PayoutsPanel({ adminKey }) {
           opts.override = true;
           continue;
         }
-        if ((res.status === 502 || res.status === 501) && !opts.skipChainCheck) {
+        const checkUnavailable = res.status === 502 || res.status === 501
+          || (res.status === 503 && data?.code === 'chain_check_unavailable');
+        if (checkUnavailable && !opts.skipChainCheck) {
           if (!confirm(
             `${data.error || 'The transaction could not be checked on-chain.'}\n\n`
             + 'Record it as paid WITHOUT the on-chain check? Only do this if you have confirmed the transfer on a block explorer yourself.',

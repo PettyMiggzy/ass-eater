@@ -2,7 +2,7 @@ import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { addListingMediaForOwner, MEDIA_CAP_EXCEEDED, LISTING_NOT_EDITABLE } from '../../../lib/listings-store';
 import { LISTING_LIMITS, isValidListingPreview } from '../../../lib/creator-status';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
-import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
+import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
 
 const MEDIA_CAP_MESSAGE = `Listings can have up to ${LISTING_LIMITS.maxMedia} items.`;
 
@@ -11,8 +11,11 @@ const MEDIA_CAP_MESSAGE = `Listings can have up to ${LISTING_LIMITS.maxMedia} it
  * JSON { listingId, pathname, othersAppear, preview?, aiGenerated? } -> 200 { ok: true, listing, item }
  *
  * `othersAppear` (required, boolean): does anyone besides the account holder
- * appear in this file? `true` is refused (403) and the file deleted -- see
- * lib/performer-attestation.js for the §2257 rule.
+ * appear in this file? `true` is refused (403) and the upload thrown away -- see
+ * lib/performer-attestation.js for the §2257 rule. Every refusal here deletes
+ * the file ONLY if it is still an unfinalized upload nothing references
+ * (lib/media.js deleteUnfinalizedUpload): a posted pathname can name a file a
+ * buyer paid for, or preserved evidence, and neither may be touched.
  *
  * Token from POST /api/media/upload-token { purpose: 'listing', listingId, ... }.
  * `preview` is the tiny blurred JPEG/WebP data URL (<= 16KB) the creator's
@@ -49,7 +52,7 @@ export default async function handler(req, res) {
   try {
     const attested = await resolvePerformerAttestation(req.body);
     if (attested.error) {
-      await deleteBlobQuietly(pathname);
+      await deleteUnfinalizedUpload(pathname);
       return res.status(attested.status).json({ error: attested.error });
     }
     const { kind } = await verifyUploadedBlob(pathname, 'listing');
@@ -65,7 +68,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, listing, item });
     } catch (err) {
       if (err.code === MEDIA_CAP_EXCEEDED || err.code === LISTING_NOT_EDITABLE || err.message === 'Listing not found') {
-        await deleteBlobQuietly(pathname);
+        await deleteUnfinalizedUpload(pathname);
         if (err.code === MEDIA_CAP_EXCEEDED) return res.status(403).json({ error: MEDIA_CAP_MESSAGE });
         if (err.code === LISTING_NOT_EDITABLE) return res.status(403).json({ error: 'This listing can no longer be edited.' });
         return res.status(404).json({ error: 'Listing not found' });

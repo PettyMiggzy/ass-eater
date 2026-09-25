@@ -166,6 +166,7 @@ export const auth: FastifyPluginAsync = async (app) => {
     if (!user) return { ok: true, known: false };
     const applied = await syncSiteStanding(user, claims.creatorStatus, {
       standingAt,
+      suspendedUntil: claims.suspendedUntil,
       ...(claims.role ? { fan: claims.role === 'FAN' } : {}),
     });
     return { ok: true, known: true, applied };

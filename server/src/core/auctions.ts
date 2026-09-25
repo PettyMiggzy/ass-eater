@@ -65,16 +65,31 @@ async function sellerActive(tx: Tx, creatorId: string) {
 }
 
 /**
- * Does this listing have something to deliver? A DIGITAL listing's product
- * is its media (core/access.ts canViewListing), so at least one attached
- * item must be READY -- still uploading, never completed, or REJECTED by
- * transcode/moderation all mean a buyer would pay for nothing. Physical
- * items ship; their media is optional.
+ * Does this listing have everything it promises to deliver? A DIGITAL
+ * listing's product is its media (core/access.ts canViewListing), so it
+ * needs at least one attached item and EVERY attached item READY -- the same
+ * rule as a PPV post (modules/posts.ts postHasDeliverable). "At least one
+ * READY" used to be enough, so a 5-video bundle sold at full price with two
+ * items that never finished uploading and one REJECTED by transcode, and the
+ * buyer got a 403 on three of the five. Physical items ship; their media is
+ * optional. Keep in step with `deliverableWhere` below.
  */
 export async function hasDeliverable(tx: Tx, listing: { id: string; kind: string }) {
   if (listing.kind === 'PHYSICAL') return true;
-  return (await tx.media.count({ where: { listingId: listing.id, status: 'READY' } })) > 0;
+  const [ready, notReady] = await Promise.all([
+    tx.media.count({ where: { listingId: listing.id, status: 'READY' } }),
+    tx.media.count({ where: { listingId: listing.id, status: { not: 'READY' } } }),
+  ]);
+  return ready > 0 && notReady === 0;
 }
+
+/** hasDeliverable as a Listing where-fragment, for browse and detail queries. */
+export const deliverableWhere = {
+  OR: [
+    { kind: 'PHYSICAL' as const },
+    { media: { some: { status: 'READY' as const }, none: { status: { not: 'READY' as const } } } },
+  ],
+};
 
 export async function placeBid(
   tx: Tx, listingId: string, bidderId: string, amountCents: number,

@@ -64,7 +64,30 @@ export async function sanitizeImage(input: Buffer | string, mime: string): Promi
  * animated GIF upload ended REJECTED after three attempts.
  */
 export function previewArgs(src: string, out: string, opts: { seekSeconds?: number } = {}): string[] {
+  const ss = opts.seekSeconds;
   return ['-y',
-    ...(opts.seekSeconds ? ['-ss', `00:00:${String(opts.seekSeconds).padStart(2, '0')}`] : []),
+    ...(ss ? ['-ss', Number.isInteger(ss) ? `00:00:${String(ss).padStart(2, '0')}` : ss.toFixed(3)] : []),
     '-i', src, '-frames:v', '1', '-vf', 'scale=480:-2,boxblur=20:5', out];
+}
+
+/** The source's duration in seconds (ffprobe), NaN when it cannot be read. */
+export async function probeDuration(src: string): Promise<number> {
+  try {
+    const { stdout } = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', src]);
+    return Number.parseFloat(stdout.trim());
+  } catch {
+    return Number.NaN;
+  }
+}
+
+/**
+ * Where to take a video's preview frame: 1 s in (past a black first frame),
+ * but never past the end. A clip shorter than a second used to be seeked to
+ * 00:00:01 anyway; ffmpeg's accurate seek then discarded every frame, wrote
+ * no preview.jpg and exited 0, the read of it threw ENOENT, and after three
+ * full re-transcodes the upload ended REJECTED. Unknown duration: no seek.
+ */
+export function previewSeekSeconds(durationSec: number): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return 0;
+  return Math.min(1, durationSec / 2);
 }

@@ -5,7 +5,7 @@ import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
-import { hasAudio, hlsArgs, sanitizeImage, previewArgs } from './transcode-steps.js';
+import { hasAudio, hlsArgs, sanitizeImage, previewArgs, probeDuration, previewSeekSeconds } from './transcode-steps.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -43,6 +43,22 @@ async function uploadDir(dir: string, prefix: string) {
     await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${prefix}/${f}`, Body: await readFile(join(dir, f)), ContentType: ct(f) }));
 }
 
+const exists = (f: string) => stat(f).then(() => true, () => false);
+
+/**
+ * The blurred preview frame of a video, seeked no further than the clip is
+ * long (previewSeekSeconds). ffmpeg can exit 0 having written nothing, so the
+ * file is checked: if it is missing the frame is retried from the very start,
+ * and if that writes nothing either the job fails with a clear error instead
+ * of an ENOENT from reading it.
+ */
+async function videoPreview(src: string, preview: string) {
+  await run('ffmpeg', previewArgs(src, preview, { seekSeconds: previewSeekSeconds(await probeDuration(src)) }));
+  if (await exists(preview)) return;
+  await run('ffmpeg', previewArgs(src, preview));
+  if (!(await exists(preview))) throw new Error('preview_not_written: ffmpeg produced no preview frame for this video');
+}
+
 /**
  * Media still PROCESSING? An admin takedown (DELETE /admin/media/:id) sets
  * REJECTED and deletes the objects while a job may be mid-flight. Every write
@@ -77,7 +93,7 @@ registerWorker(new Worker('transcode', async (job) => {
       const hls = join(work, 'hls'); await run('mkdir', ['-p', hls]);
       // 720p + 480p ladder, 6s segments, master playlist
       await run('ffmpeg', hlsArgs(src, hls, await hasAudio(src)), { timeout: 3_600_000 });
-      await run('ffmpeg', previewArgs(src, preview, { seekSeconds: 1 }));
+      await videoPreview(src, preview);
       if (!(await stillProcessing(m.id))) return;
       await uploadDir(hls, outPrefix + '/hls');
       await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${outPrefix}/preview.jpg`, Body: await readFile(preview), ContentType: 'image/jpeg' }));

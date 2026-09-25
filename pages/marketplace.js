@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import Head from 'next/head';
+import { useRouter } from 'next/router';
 import SiteNav from '../components/SiteNav';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
@@ -12,8 +13,9 @@ import { useCart } from '../lib/cart';
 import { marketplacePaymentsLive, getMarketplacePaymentConfig } from '../lib/marketplace-payment-config';
 import ListingPreview from '../components/public/ListingPreview';
 import DemoBadge from '../components/public/DemoBadge';
-import ReportModal, { postReport } from '../components/public/ReportModal';
+import ReportModal, { postReport, takedownFormHref } from '../components/public/ReportModal';
 import { isDemoListing, DEMO_LABEL } from '../components/public/cards';
+import { CATEGORIES, categoriesOf, categoryFromQuery, categoryLabel, countByCategory, withCategoryParam } from '../lib/categories';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
 // rewrite -- a relative href="/" there just re-renders this same page
@@ -55,10 +57,13 @@ export async function getServerSideProps({ req, query }) {
       // src. The paid files reach only buyers, through
       // /api/marketplace/orders/delivery (checked again by /api/media).
       return {
-        ...toPublicListing(l),
+        ...toPublicListing(l, creator),
         creatorName: creator.name,
         creatorImg: creator.img || '/images/avatar-placeholder.png',
         creatorFounding: isFoundingCreator(creator),
+        // A listing has no category of its own: it inherits its seller's
+        // (lib/categories.js), and the Categories sidebar filters on this.
+        creatorCategories: categoriesOf(creator),
         // The platform's own sample creators/listings: labelled, and never
         // given a buy button (checkout refuses them too).
         demo: isDemoListing(l, creator),
@@ -91,6 +96,9 @@ export async function getServerSideProps({ req, query }) {
   const focusCreatorName = focusCreatorId
     ? (visible.get(focusCreatorId)?.name || null)
     : null;
+  // ?category=women: read server-side like ?creator=, so a shared link renders
+  // already filtered. Only a known key filters; anything else is no filter.
+  const initialCategory = categoryFromQuery(query?.category);
   return {
     props: {
       listings: active,
@@ -101,6 +109,7 @@ export async function getServerSideProps({ req, query }) {
       focusCreatorId,
       focusCreatorName,
       focusListingId,
+      initialCategory,
     },
   };
 }
@@ -127,6 +136,12 @@ const SORTS = [
   { value: 'price-high', label: 'Price: High to Low' },
 ];
 
+// How a listing is named when prefilled into the takedown form.
+function listingReportRef(l) {
+  if (!l) return '';
+  return `Marketplace listing #${l.id} "${String(l.title || '').slice(0, 120)}" -- ${MAIN_SITE}/marketplace?creator=${encodeURIComponent(String(l.creatorId))}&listing=${encodeURIComponent(String(l.id))}`;
+}
+
 export default function Marketplace({
   listings,
   allTags,
@@ -136,7 +151,9 @@ export default function Marketplace({
   focusCreatorId = null,
   focusCreatorName = null,
   focusListingId = null,
+  initialCategory = null,
 }) {
+  const router = useRouter();
   const cart = useCart();
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
@@ -148,6 +165,9 @@ export default function Marketplace({
   const [highlightId, setHighlightId] = useState(focusListingId);
   const [kind, setKind] = useState('all');
   const [tag, setTag] = useState('');
+  // The Categories sidebar. Lives in the URL (?category=) so a filtered view
+  // is a shareable link; the state mirrors it.
+  const [category, setCategoryState] = useState(initialCategory);
   const [sort, setSort] = useState('newest');
   // Clamped to the listing price ceiling the create/update routes enforce,
   // so one legacy absurd price can't make the slider useless for everyone.
@@ -165,6 +185,31 @@ export default function Marketplace({
     const t = setTimeout(() => setHighlightId(null), 4000);
     return () => clearTimeout(t);
   }, [focusListingId]);
+
+  // Keep the state in step with the address bar (back/forward, or a client
+  // navigation to another ?category= link). Read from window.location rather
+  // than router.query: on onlyass.shop this page is served at '/' by a
+  // proxy.js rewrite, and the visible URL is the one that carries the param.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setCategoryState(categoryFromQuery(new URLSearchParams(window.location.search).get('category')));
+  }, [router.asPath]);
+
+  // Picking a category (or "All") rewrites ?category= in place -- shallow, so
+  // getServerSideProps does not re-run for a filter that is applied here. The
+  // href names the real page (router.pathname), the `as` URL keeps whatever
+  // path the visitor is on, so the onlyass.shop root stays '/'.
+  const setCategory = (key) => {
+    const next = categoryFromQuery(key);
+    setCategoryState(next);
+    if (typeof window === 'undefined') return;
+    const qs = withCategoryParam(window.location.search, next);
+    router.replace(
+      { pathname: router.pathname, query: Object.fromEntries(new URLSearchParams(qs)) },
+      `${window.location.pathname}${qs}`,
+      { shallow: true, scroll: false },
+    );
+  };
 
   const showToast = (msg) => {
     setToast(msg);
@@ -208,9 +253,11 @@ export default function Marketplace({
     && (!creatorQ.trim() || String(l.creatorName || '').toLowerCase().includes(creatorQ.trim().toLowerCase()));
   const matchesTag = (l, t) => !t || (Array.isArray(l.tags) && l.tags.includes(t));
   const matchesPrice = (l) => (l.priceCents || 0) <= maxPriceCents;
+  const matchesCategory = (l, c) => !c || (Array.isArray(l.creatorCategories) && l.creatorCategories.includes(c));
 
   const filtered0 = listings.filter(
-    (l) => matchesKind(l, kind) && matchesText(l) && matchesCreator(l) && matchesTag(l, tag) && matchesPrice(l),
+    (l) =>
+      matchesCategory(l, category) && matchesKind(l, kind) && matchesText(l) && matchesCreator(l) && matchesTag(l, tag) && matchesPrice(l),
   );
   // 'newest' needs no re-sort -- `listings` already arrives in that order
   // (Founding Creators first, then newest) from getServerSideProps, and
@@ -227,7 +274,7 @@ export default function Marketplace({
   // including under compound filters (a kind + a tag + a search term at once).
   const kindCounts = { all: 0, photo: 0, video: 0, physical: 0 };
   for (const l of listings) {
-    if (matchesText(l) && matchesCreator(l) && matchesTag(l, tag) && matchesPrice(l)) {
+    if (matchesCategory(l, category) && matchesText(l) && matchesCreator(l) && matchesTag(l, tag) && matchesPrice(l)) {
       kindCounts.all += 1;
       kindCounts[kindOf(l)] += 1;
     }
@@ -235,9 +282,16 @@ export default function Marketplace({
   const tagCounts = {};
   for (const t of allTags) {
     tagCounts[t] = listings.filter(
-      (l) => matchesKind(l, kind) && matchesText(l) && matchesCreator(l) && matchesTag(l, t) && matchesPrice(l),
+      (l) =>
+        matchesCategory(l, category) && matchesKind(l, kind) && matchesText(l) && matchesCreator(l) && matchesTag(l, t) && matchesPrice(l),
     ).length;
   }
+  // Same rule for categories: every other filter applied, the category left
+  // off. `categoryAll` is what "All" would show.
+  const { total: categoryAll, counts: categoryCounts } = countByCategory(
+    listings.filter((l) => matchesKind(l, kind) && matchesText(l) && matchesCreator(l) && matchesTag(l, tag) && matchesPrice(l)),
+    (l) => l.creatorCategories,
+  );
 
   return (
     <>
@@ -259,6 +313,7 @@ export default function Marketplace({
           subject="this listing"
           onSubmit={submitReport}
           onClose={() => setReporting(null)}
+          takedownContent={listingReportRef(reporting)}
         />
       )}
 
@@ -304,11 +359,38 @@ export default function Marketplace({
 
         <div className="max-w-6xl mx-auto px-6 pt-10 grid lg:grid-cols-[220px_1fr] gap-8">
           {/* Filters. Every one of these is real and wired to `filtered`
-              below -- no fabricated category list with invented counts like
-              "Fetish (231)". TAGS only lists values at least one active
-              listing actually has (see allTags in getServerSideProps); a tag
-              nobody's used yet simply isn't a button, never a zero. */}
+              below -- no invented counts like "Fetish (231)". CATEGORIES is
+              the platform's fixed taxonomy (lib/categories.js), each with a
+              real faceted count, zeros included -- the list is short and
+              closed, so a zero is honest ("nothing here yet"). TAGS only
+              lists values at least one active listing actually has (see
+              allTags in getServerSideProps); a tag nobody's used yet simply
+              isn't a button, never a zero. Below lg the categories are a
+              horizontal scroll row above the grid instead (see there). */}
           <aside className="space-y-6 lg:sticky lg:top-20 self-start">
+            <div className="hidden lg:block">
+              <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">CATEGORIES</p>
+              <div className="space-y-1">
+                {[{ key: null, label: 'All' }, ...CATEGORIES].map((c) => {
+                  const on = (category || null) === c.key;
+                  return (
+                    <button
+                      key={c.key || 'all'}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => setCategory(c.key)}
+                      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left transition ${
+                        on ? 'bg-brand-pink/15 text-brand-pink font-bold' : 'text-gray-300 hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="flex-1">{c.label}</span>
+                      <span className="text-[11px] text-gray-500">{c.key ? categoryCounts[c.key] : categoryAll}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div>
               <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">SEARCH</p>
               <input
@@ -370,7 +452,7 @@ export default function Marketplace({
 
             {allTags.length > 0 && (
               <div>
-                <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">CATEGORY</p>
+                <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">TAGS</p>
                 <div className="space-y-1">
                   {allTags.map((t) => (
                     <button
@@ -397,6 +479,30 @@ export default function Marketplace({
           </aside>
 
           <div>
+          {/* Below lg the sidebar stacks above the grid, so the categories
+              ride here instead as a horizontal scroll row -- same `category`
+              state and counts as the sidebar list, not a second filter. */}
+          <div className="lg:hidden -mx-6 px-6 mb-4 overflow-x-auto">
+            <div className="flex gap-2 whitespace-nowrap">
+              {[{ key: null, label: 'All' }, ...CATEGORIES].map((c) => {
+                const on = (category || null) === c.key;
+                return (
+                  <button
+                    key={c.key || 'all'}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setCategory(c.key)}
+                    className={`text-xs px-3.5 py-1.5 rounded-full border transition ${
+                      on ? 'bg-brand-pink border-brand-pink text-white font-bold' : 'border-white/15 text-gray-300 hover:bg-white/5'
+                    }`}
+                  >
+                    {c.label} <span className={on ? 'text-white/80' : 'text-gray-500'}>{c.key ? categoryCounts[c.key] : categoryAll}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Quick content-type chips, same `kind` state as the sidebar --
               a second way to set the same filter, not a second filter. */}
           <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
@@ -425,6 +531,17 @@ export default function Marketplace({
               ))}
             </select>
           </div>
+
+          {category && (
+            <div className="mb-4 mr-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-brand-pink/40 bg-brand-pink/10 text-xs text-gray-200">
+              <span>
+                Category: <span className="font-bold text-white">{categoryLabel(category)}</span>
+              </span>
+              <button type="button" onClick={() => setCategory(null)} className="text-brand-pink hover:underline font-bold">
+                Show all
+              </button>
+            </div>
+          )}
 
           {creatorId && (
             <div className="mb-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-brand-pink/40 bg-brand-pink/10 text-xs text-gray-200">
@@ -485,13 +602,29 @@ export default function Marketplace({
                         )}
                       </div>
 
-                      <button
-                        onClick={() => setReporting(l)}
-                        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-black/90 transition"
-                        title="Report this listing"
-                      >
-                        <Icons.flag className="h-3.5 w-3.5 mx-auto" />
-                      </button>
+                      {/* In-product reports need an account, and signups can be
+                          closed -- so a signed-out visitor's flag goes straight to
+                          the takedown form (no account needed, and it takes
+                          suspected-underage reports), prefilled with this listing. */}
+                      {sessionUser ? (
+                        <button
+                          onClick={() => setReporting(l)}
+                          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-black/90 transition"
+                          title="Report this listing"
+                        >
+                          <Icons.flag className="h-3.5 w-3.5 mx-auto" />
+                        </button>
+                      ) : (
+                        <a
+                          href={takedownFormHref({ content: listingReportRef(l) })}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-black/90 transition flex items-center justify-center"
+                          title="Report this listing (no account needed)"
+                        >
+                          <Icons.flag className="h-3.5 w-3.5" />
+                        </a>
+                      )}
                     </div>
 
                     <div className="p-3 flex flex-col flex-1">

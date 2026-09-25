@@ -38,8 +38,30 @@ async function tile(width: number, height: number, label: string) {
   return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${marks}</svg>`);
 }
 
-/** Returns a JPEG buffer with the watermark burned in. Any aspect ratio. */
-export async function watermarkImage(original: Buffer, label: string): Promise<Buffer> {
+/** Output format of a watermarked copy, by source mime. */
+export const watermarkFormat = (mime: string) =>
+  mime === 'image/gif' ? { ext: 'gif', contentType: 'image/gif' } as const : { ext: 'jpg', contentType: 'image/jpeg' } as const;
+
+/**
+ * Returns the image with the watermark burned in. Any aspect ratio. JPEG,
+ * except for a GIF, which stays a GIF with EVERY frame marked: the transcode
+ * worker keeps an animated GIF's frames on purpose (transcode-steps.ts
+ * sanitizeImage), but this used to decode only frame 1 and re-encode it as a
+ * JPEG, so every fan who paid for an animation received one still frame --
+ * cached, so every later view too.
+ */
+export async function watermarkImage(original: Buffer, label: string, mime = 'image/jpeg'): Promise<Buffer> {
+  if (mime === 'image/gif') {
+    // Animated: sharp lays the frames out top to bottom, each pageHeight
+    // tall. One overlay per frame, positioned on its page.
+    const img = sharp(original, { animated: true });
+    const meta = await img.metadata();
+    const pages = Math.max(1, meta.pages ?? 1);
+    const pageHeight = meta.pageHeight ?? meta.height;
+    const overlay = await tile(meta.width, pageHeight, label);
+    const layers = Array.from({ length: pages }, (_, i) => ({ input: overlay, top: i * pageHeight, left: 0 }));
+    return img.composite(layers).gif().toBuffer();
+  }
   // metadata().width/height are the *stored* size and ignore EXIF orientation,
   // and a phone portrait photo is stored landscape behind an orientation flag
   // -- so sizing the overlay from those made it wider than the displayed image
@@ -59,13 +81,15 @@ export async function watermarkImage(original: Buffer, label: string): Promise<B
   return img.composite([{ input: overlay, top: 0, left: 0 }]).jpeg({ quality: 88 }).toBuffer();
 }
 
-const wmKey = (mediaId: string, viewerId: string) => `wm/${mediaId}/${viewerId}.jpg`;
+// The extension follows the output format, so a GIF's cached copy can never
+// be mistaken for (or collide with) an old single-frame .jpg of it.
+const wmKey = (mediaId: string, viewerId: string, mime: string) => `wm/${mediaId}/${viewerId}.${watermarkFormat(mime).ext}`;
 /** Every cached watermarked copy of one media row lives under this prefix (takedowns delete it whole). */
 export const wmPrefix = (mediaId: string) => `wm/${mediaId}/`;
 
 /** Cached per (media, viewer) pair -- generated once, reused on subsequent views. */
-export async function getOrCreateWatermarkedUrl(mediaId: string, sourceKey: string, viewerId: string, viewerLabel: string) {
-  const key = wmKey(mediaId, viewerId);
+export async function getOrCreateWatermarkedUrl(mediaId: string, sourceKey: string, viewerId: string, viewerLabel: string, mime = 'image/jpeg') {
+  const key = wmKey(mediaId, viewerId, mime);
   // HEAD, not GET: an unread GetObject body pins one of the SDK's 50 pooled
   // sockets per cache hit, and every repeat view is a cache hit. objectExists
   // also only treats a real not-found as "missing" -- a 403 or throttle used
@@ -74,8 +98,8 @@ export async function getOrCreateWatermarkedUrl(mediaId: string, sourceKey: stri
     const src = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: sourceKey }));
     const original = Buffer.from(await src.Body!.transformToByteArray());
     const label = `${viewerLabel} · ${traceCode(mediaId, viewerId)}`;
-    const watermarked = await watermarkImage(original, label);
-    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: watermarked, ContentType: 'image/jpeg' }));
+    const watermarked = await watermarkImage(original, label, mime);
+    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: watermarked, ContentType: watermarkFormat(mime).contentType }));
   }
   return key;
 }

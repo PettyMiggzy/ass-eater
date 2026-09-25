@@ -16,6 +16,7 @@ import {
   payoutWalletError as serverPayoutWalletError,
 } from '../../lib/field-validation';
 import { gateTokensOf } from '../../lib/token-gate';
+import { sanitizeCategories } from '../../lib/categories';
 
 /**
  * Pure helpers for the creator dashboard. No React, no network, no
@@ -146,6 +147,9 @@ export function draftFromCreator(creator) {
     handle: creator?.handle || '',
     bio: creator?.bio || '',
     tags: (Array.isArray(creator?.tags) ? creator.tags : []).join(', '),
+    // Browse categories (lib/categories.js): an array of known keys, edited
+    // with toggle chips and sent as-is.
+    categories: sanitizeCategories(creator?.categories),
     age: creator?.age ?? '',
     location: creator?.location || '',
     price: creator?.price || '',

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
 import { getSessionUser } from '../lib/session';
@@ -38,20 +38,38 @@ function newIdempotencyKey() {
 // key minted fresh per page load is exactly how a lost response turned into a
 // double charge for an unlimited physical listing.
 //
-// The key is bound to a fingerprint of what is being bought: a changed cart is
-// a different agreement and gets a new key (reusing the old one would make the
-// server report the new cart as "already processed" when it never was) --
-// EXCEPT while the attempt is `uncertain` (a request whose outcome we never
-// learned: network failure or 5xx). An uncertain attempt may already have
-// committed, and the server's price/balance/availability prechecks run before
-// it looks at the key, so a retry can come back 402 / PRICE_CHANGED /
-// ALREADY_OWNED / unavailable for a checkout that DID go through. Rotating the
-// key on any of those would let the fan pay a second time. So an uncertain
-// key is kept (whatever the cart now looks like) until a definitive answer --
-// success or DUPLICATE_CHECKOUT -- arrives. Reusing it is harmless if the
-// first request never committed: the server only claims a key on commit.
-const ATTEMPT_STORAGE_KEY = 'onlyone-checkout-attempt-v1';
+// The attempt belongs to ONE account and ONE cart:
+// - It is stored under a per-account storage key and carries the account id,
+//   so a second person signing in on the same browser never sends (or is
+//   answered about) someone else's attempt. The server scopes the claim to
+//   the buyer as well (checkout_idempotency's key is (buyer_id, key)).
+// - It carries a fingerprint of what is being bought. A changed cart is a
+//   different agreement and gets a new key; the key is only ever SENT with
+//   the cart it was minted for, so a DUPLICATE_CHECKOUT answer always refers
+//   to the cart on screen.
+//
+// An attempt is `uncertain` when a request's outcome was never learned
+// (network failure or 5xx): it may already have committed. While it is,
+// the page asks GET /api/marketplace/orders/checkout-status whether that key
+// was claimed -- on load, right after the failure, and from a "Check payment
+// status" button that works whatever the balance now is (the first request
+// may have spent it). Claimed -> the listings that attempt bought are taken
+// out of the cart (compared against the cart as it is at that moment, not
+// when Pay was pressed): if nothing else is left it is "Already paid",
+// otherwise the fan is told the EARLIER checkout went through and that only
+// what remains is unpaid. Leaving an already-bought item in a cart the page
+// calls unpaid is how an unlimited physical listing got bought twice (a new
+// key, since the cart changed). Not claimed -> the key stays pinned for
+// that cart (a retry can't pay twice), and is only dropped for a different
+// cart once enough time has passed that the old request can no longer
+// commit.
+const ATTEMPT_STORAGE_PREFIX = 'onlyone-checkout-attempt-v2:';
+const LEGACY_ATTEMPT_STORAGE_KEY = 'onlyone-checkout-attempt-v1';
 const ATTEMPT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// Well above the longest a checkout request can run -- `config.maxDuration`
+// (60s) in pages/api/marketplace/orders/create.js -- so an unclaimed key older
+// than this can no longer commit. Raise both together, keeping this larger.
+const UNCERTAIN_GRACE_MS = 5 * 60 * 1000;
 
 function cartFingerprint(items) {
   return JSON.stringify(
@@ -61,41 +79,82 @@ function cartFingerprint(items) {
   );
 }
 
-function readAttempt() {
+// The listing ids an attempt was for, read back out of its fingerprint (so
+// attempts stored before this existed carry them too). Quantity is always 1.
+function attemptListingIds(attempt) {
   try {
-    const rec = JSON.parse(localStorage.getItem(ATTEMPT_STORAGE_KEY) || 'null');
-    if (!rec || typeof rec.key !== 'string' || typeof rec.fp !== 'string') return null;
-    if (!Number.isFinite(rec.at) || Date.now() - rec.at > ATTEMPT_MAX_AGE_MS) return null;
-    return rec;
+    const rows = JSON.parse(attempt.fp);
+    return Array.isArray(rows) ? rows.map((r) => String(Array.isArray(r) ? r[0] : '')).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function validAttempt(rec, uid) {
+  if (!rec || typeof rec.key !== 'string' || typeof rec.fp !== 'string') return null;
+  if (!Number.isFinite(rec.at) || Date.now() - rec.at > ATTEMPT_MAX_AGE_MS) return null;
+  if (String(rec.uid) !== String(uid)) return null;
+  return rec;
+}
+
+function readAttempt(uid) {
+  if (!uid) return null;
+  try {
+    const rec = validAttempt(JSON.parse(localStorage.getItem(ATTEMPT_STORAGE_PREFIX + uid) || 'null'), uid);
+    if (rec) return rec;
+    // An attempt stored before attempts were per-account has no owner. Adopt
+    // it for whoever is signed in now: the server only ever answers about the
+    // caller's own keys, so the worst case is it reads "not claimed" and ages
+    // out. Removed either way so it can't be adopted twice.
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_ATTEMPT_STORAGE_KEY) || 'null');
+    localStorage.removeItem(LEGACY_ATTEMPT_STORAGE_KEY);
+    if (legacy && typeof legacy === 'object') {
+      const adopted = validAttempt({ ...legacy, uid: String(uid) }, uid);
+      if (adopted) {
+        localStorage.setItem(ATTEMPT_STORAGE_PREFIX + uid, JSON.stringify(adopted));
+        return adopted;
+      }
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-function writeAttempt(rec) {
-  try { localStorage.setItem(ATTEMPT_STORAGE_KEY, JSON.stringify(rec)); } catch { /* storage unavailable: in-memory only */ }
+function writeAttempt(uid, rec) {
+  try { localStorage.setItem(ATTEMPT_STORAGE_PREFIX + uid, JSON.stringify(rec)); } catch { /* storage unavailable: in-memory only */ }
 }
 
-function clearAttempt() {
-  try { localStorage.removeItem(ATTEMPT_STORAGE_KEY); } catch { /* ignore */ }
+function clearAttempt(uid) {
+  try { localStorage.removeItem(ATTEMPT_STORAGE_PREFIX + uid); } catch { /* ignore */ }
 }
+
+// true / false, or throws when the answer couldn't be fetched.
+async function fetchKeyClaimed(key) {
+  const res = await fetch(`/api/marketplace/orders/checkout-status?key=${encodeURIComponent(key)}`, { cache: 'no-store' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || typeof data.claimed !== 'boolean') throw new Error('status unavailable');
+  return data.claimed;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export default function CartPage({ sessionUser }) {
   const cart = useCart();
+  const uid = sessionUser ? String(sessionUser.id) : null;
   const [balanceCents, setBalanceCents] = useState(null);
   // One key per checkout ATTEMPT, reused across retries of the same
   // submission (a network drop, a lost response, a reload) so the server can
-  // tell "resending the same attempt" apart from "starting a new one". Held in
-  // a ref-like in-memory copy too, for when localStorage is unavailable. It is
-  // dropped (and a new one minted next time) only after success, a
-  // DUPLICATE_CHECKOUT answer, or a refusal that proves nothing was charged
-  // while no earlier request is unaccounted for -- see the note above
+  // tell "resending the same attempt" apart from "starting a new one". Held
+  // in memory too, for when localStorage is unavailable, and mirrored here so
+  // the page knows when an attempt is `uncertain`. See the note above
   // readAttempt/writeAttempt.
   const [memAttempt, setMemAttempt] = useState(null);
   const [address, setAddress] = useState({});
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [tosAccepted, setTosAccepted] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [payError, setPayError] = useState(null);
   // Set with payError when the refusal is "you already own this": the fix is
   // in /orders, so the message links there.
@@ -104,6 +163,15 @@ export default function CartPage({ sessionUser }) {
   // Set when the server says this exact checkout already went through (the
   // first response was lost): the fan has paid, so show that, not an error.
   const [alreadyProcessed, setAlreadyProcessed] = useState(false);
+  // Set when an EARLIER checkout (for a cart that differs from the one on
+  // screen) turns out to have gone through. The current cart was not bought
+  // and is left as it is; the fan is pointed at /orders to see what was.
+  const [earlierPaid, setEarlierPaid] = useState(false);
+  const loadCheckDone = useRef(false);
+  // The cart as it is right now, for code that resumes after an await (the
+  // fan can edit the cart while a request or a status check is in flight).
+  const cartItemsRef = useRef(cart.items);
+  cartItemsRef.current = cart.items;
 
   const refreshBalance = () =>
     fetch('/api/credits/balance')
@@ -117,6 +185,58 @@ export default function CartPage({ sessionUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionUser]);
 
+  const currentAttempt = () => readAttempt(uid) || (memAttempt && String(memAttempt.uid) === uid ? memAttempt : null);
+
+  // Forget the current attempt: the next Pay starts a new agreement.
+  const endAttempt = () => {
+    if (uid) clearAttempt(uid);
+    setMemAttempt(null);
+  };
+
+  // An attempt is known to have committed: take what it bought out of the
+  // cart as it is NOW. Nothing else left -> "Already paid"; anything else
+  // left (added or kept since) -> the earlier-checkout notice, which says
+  // only what remains is unpaid. Never leaves a bought item in the cart.
+  const settleClaimed = (attempt) => {
+    endAttempt();
+    refreshBalance();
+    const paid = new Set(attemptListingIds(attempt));
+    const live = cartItemsRef.current;
+    const remaining = live.filter((it) => !paid.has(String(it.id)));
+    if (remaining.length === 0 || cartFingerprint(live) === attempt.fp) {
+      cart.clear();
+      setAlreadyProcessed(true);
+    } else {
+      for (const it of live) if (paid.has(String(it.id))) cart.remove(it.id);
+      setEarlierPaid(true);
+    }
+  };
+
+  // Ask the server whether an uncertain attempt committed, and act on the
+  // answer. Returns 'claimed' | 'unclaimed'; throws when the lookup itself
+  // failed.
+  const resolveUncertain = async (attempt) => {
+    const claimed = await fetchKeyClaimed(attempt.key);
+    if (!claimed) return 'unclaimed';
+    settleClaimed(attempt);
+    return 'claimed';
+  };
+
+  // On load: pick up this account's stored attempt and, if its outcome is
+  // unknown, resolve it without the fan having to press anything.
+  useEffect(() => {
+    if (!uid || !cart.hydrated || loadCheckDone.current) return;
+    loadCheckDone.current = true;
+    const stored = readAttempt(uid);
+    setMemAttempt(stored);
+    if (stored && stored.uncertain) {
+      resolveUncertain(stored).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid, cart.hydrated]);
+
+  const uncertainAttempt = memAttempt && memAttempt.uncertain ? memAttempt : null;
+
   const hasEnough = balanceCents !== null && balanceCents >= cart.totalCents;
   const canCheckout =
     !!sessionUser &&
@@ -126,43 +246,99 @@ export default function CartPage({ sessionUser }) {
     cart.items.length > 0 &&
     (!cart.needsShipping || ADDRESS_FIELDS.every((f) => f.optional || String(address[f.key] || '').trim()));
 
-  // Forget the current attempt: the next Pay starts a new agreement.
-  const endAttempt = () => {
-    clearAttempt();
-    setMemAttempt(null);
+  // "Check payment status": resolves an uncertain attempt whatever the
+  // balance is now (the attempt may already have spent it).
+  const checkStatus = async () => {
+    const attempt = currentAttempt();
+    setPayError(null);
+    setPayErrorOwned(false);
+    if (!attempt || !attempt.uncertain) {
+      setMemAttempt(attempt);
+      return;
+    }
+    setChecking(true);
+    try {
+      const outcome = await resolveUncertain(attempt);
+      if (outcome === 'unclaimed') {
+        if (Date.now() - (attempt.uncertainAt || attempt.at) >= UNCERTAIN_GRACE_MS) {
+          // Old enough that the request can no longer commit: it never went
+          // through, and nothing was charged for it.
+          endAttempt();
+          refreshBalance();
+          setPayError('That earlier payment attempt did not go through, and nothing was charged for it. You can pay for your cart now.');
+        } else {
+          setPayError("That payment hasn't gone through yet. It may still be processing -- check again in a minute. Pressing Pay again for this same cart is safe and won't charge you twice.");
+        }
+      }
+    } catch {
+      setPayError("We couldn't check that payment right now. Try again in a moment, or look in your order history.");
+    } finally {
+      setChecking(false);
+    }
   };
 
   const pay = async () => {
+    if (!uid) return;
     setPayError(null);
     setPayErrorOwned(false);
+    setEarlierPaid(false);
     setPaying(true);
-    const fp = cartFingerprint(cart.items);
-    const stored = readAttempt() || memAttempt;
-    const attempt =
-      stored && (stored.fp === fp || stored.uncertain)
-        ? stored
-        : { key: newIdempotencyKey(), fp, at: Date.now(), uncertain: false };
-    writeAttempt(attempt);
-    setMemAttempt(attempt);
-    const idempotencyKey = attempt.key;
-    // The outcome of this request may be unknown (lost response / 5xx): pin
-    // the key so no later refusal can rotate it. See the note at the top.
-    const markUncertain = () => {
-      const rec = { ...attempt, uncertain: true };
-      writeAttempt(rec);
-      setMemAttempt(rec);
-    };
-    // A refusal is only proof that nothing was charged when no earlier request
-    // under this key is unaccounted for.
-    const priorUncertain = !!attempt.uncertain;
-    const UNCERTAIN_NOTE =
-      ' An earlier payment attempt for this cart may already have gone through -- check your order history before paying again. Pressing Pay again is safe and won\'t charge you twice for that attempt.';
-    // Forget the attempt after a definitive refusal -- unless an earlier
-    // request under this key is unaccounted for, in which case keep it.
-    const endIfCertain = () => {
-      if (!priorUncertain) endAttempt();
-    };
     try {
+      const fp = cartFingerprint(cart.items);
+      let stored = currentAttempt();
+      if (stored && stored.uncertain && stored.fp !== fp) {
+        // An earlier attempt whose outcome is unknown was for a DIFFERENT
+        // cart. Its key is never sent with this one: find out what happened
+        // to it first.
+        let outcome;
+        try {
+          outcome = await resolveUncertain(stored);
+        } catch {
+          throw new Error("We couldn't check on your earlier payment attempt. Try again in a moment, or look in your order history.");
+        }
+        if (outcome === 'claimed') return; // the notice above the cart explains it
+        if (Date.now() - (stored.uncertainAt || stored.at) < UNCERTAIN_GRACE_MS) {
+          throw new Error("Your earlier payment attempt is still being confirmed. Wait a minute and check your order history before paying for this cart.");
+        }
+        endAttempt(); // it can no longer commit: start fresh for this cart
+        stored = null;
+      }
+      const attempt =
+        stored && stored.fp === fp
+          ? stored
+          : { key: newIdempotencyKey(), fp, uid, at: Date.now(), uncertain: false };
+      writeAttempt(uid, attempt);
+      setMemAttempt(attempt);
+      const idempotencyKey = attempt.key;
+      // The outcome of this request may be unknown (lost response / 5xx): pin
+      // the key so no later refusal can rotate it. See the note at the top.
+      const markUncertain = () => {
+        const rec = { ...attempt, uncertain: true, uncertainAt: Date.now() };
+        writeAttempt(uid, rec);
+        setMemAttempt(rec);
+        return rec;
+      };
+      // Right after an unknown outcome, ask whether it committed so the fan
+      // doesn't have to press Pay again (which a spent balance may block).
+      // A short pause first gives a request still in flight time to finish.
+      const confirmAfterUnknown = async (rec) => {
+        await sleep(2000);
+        try {
+          return (await resolveUncertain(rec)) === 'claimed';
+        } catch {
+          return false;
+        }
+      };
+      // A refusal is only proof that nothing was charged when no earlier request
+      // under this key is unaccounted for.
+      const priorUncertain = !!attempt.uncertain;
+      const UNCERTAIN_NOTE =
+        ' An earlier payment attempt for this cart may already have gone through -- use "Check payment status" or look in your order history before paying again. Pressing Pay again is safe and won\'t charge you twice for that attempt.';
+      // Forget the attempt after a definitive refusal -- unless an earlier
+      // request under this key is unaccounted for, in which case keep it.
+      const endIfCertain = () => {
+        if (!priorUncertain) endAttempt();
+      };
       let res;
       try {
         res = await fetch('/api/marketplace/orders/create', {
@@ -188,19 +364,19 @@ export default function CartPage({ sessionUser }) {
         // (and its key) is kept and pinned, so pressing Pay again -- even
         // after a reload, a price change or a top-up -- can't place a second
         // order. Refresh the balance so a debit that did happen shows.
-        markUncertain();
+        const rec = markUncertain();
         refreshBalance();
-        throw new Error("We couldn't confirm whether your payment went through. Check your order history — pressing Pay again is safe and won't charge you twice.");
+        if (await confirmAfterUnknown(rec)) return;
+        throw new Error("We couldn't confirm whether your payment went through. Use \"Check payment status\" or look in your order history -- pressing Pay again is safe and won't charge you twice.");
       }
       const data = await res.json().catch(() => ({}));
       if (res.status === 409 && data.code === 'DUPLICATE_CHECKOUT') {
         // This exact checkout already went through; only its response was
-        // lost. The fan has paid: clear the cart, refresh the balance, and
-        // point at the orders -- never leave paid items sitting in the cart.
-        endAttempt();
-        cart.clear();
-        refreshBalance();
-        setAlreadyProcessed(true);
+        // lost. The key is only ever sent with the cart it was minted for;
+        // settleClaimed removes what it bought from the cart as it is now
+        // (the fan may have edited it while the request was in flight) and
+        // points at the orders -- never leaves paid items sitting in the cart.
+        settleClaimed(attempt);
         return;
       }
       if (res.status === 409 && data.code === 'PRICE_CHANGED') {
@@ -234,21 +410,24 @@ export default function CartPage({ sessionUser }) {
       }
       if (!res.ok) {
         // A 5xx may have committed first: pin the key so a retry is answered
-        // DUPLICATE_CHECKOUT, not re-run. Any other refusal (402 not enough
-        // credits, 400, ...) keeps the key too: the server claims a key only on
-        // commit, so reusing an unclaimed one is harmless, and a changed cart
-        // rotates it through the fingerprint anyway. Dropping it here is how a
-        // retry of a committed checkout that hit 402 (the balance was already
-        // debited) turned into a second charge after a top-up.
+        // DUPLICATE_CHECKOUT, not re-run, and ask straight away whether it
+        // did. Any other refusal (402 not enough credits, 400, ...) keeps the
+        // key too: the server claims a key only on commit, so reusing an
+        // unclaimed one is harmless, and a changed cart rotates it through
+        // the fingerprint anyway. Dropping it here is how a retry of a
+        // committed checkout that hit 402 (the balance was already debited)
+        // turned into a second charge after a top-up.
         if (res.status >= 500) {
-          markUncertain();
+          const rec = markUncertain();
           refreshBalance();
+          if (await confirmAfterUnknown(rec)) return;
         }
-        throw new Error((data.error || 'Payment could not be confirmed') + (priorUncertain ? UNCERTAIN_NOTE : ''));
+        throw new Error((data.error || 'Payment could not be confirmed') + (priorUncertain || res.status >= 500 ? UNCERTAIN_NOTE : ''));
       }
       endAttempt();
       setPaidOrders(Array.isArray(data.orders) ? data.orders : []);
-      setBalanceCents(data.balanceCents);
+      if (Number.isFinite(data.balanceCents)) setBalanceCents(data.balanceCents);
+      else refreshBalance();
       cart.clear();
     } catch (err) {
       setPayError(err.message || 'Payment failed');
@@ -323,6 +502,32 @@ export default function CartPage({ sessionUser }) {
           {!sessionUser && (
             <div className="mb-6 px-4 py-3 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300">
               <a href="/login?next=/cart" className="text-brand-pink underline font-bold">Log in</a> to check out.
+            </div>
+          )}
+
+          {earlierPaid && (
+            <div className="mb-6 px-4 py-3 rounded-xl border border-green-500/30 bg-green-500/5 text-xs text-gray-300">
+              Your earlier checkout went through -- the confirmation just didn&apos;t reach you, and you weren&apos;t
+              charged twice.{' '}
+              <a href="/orders" className="text-brand-pink underline font-bold">See it in your orders</a>. The items from
+              that checkout were taken out of your cart
+              {cart.items.length ? '; anything still below has not been paid for -- review it before paying' : ''}.
+            </div>
+          )}
+
+          {sessionUser && uncertainAttempt && (
+            <div className="mb-6 px-4 py-3 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300 flex items-center justify-between gap-3">
+              <span>
+                We couldn&apos;t confirm whether your last payment went through. Check before paying again -- or see your{' '}
+                <a href="/orders" className="text-brand-pink underline">order history</a>.
+              </span>
+              <button
+                onClick={checkStatus}
+                disabled={checking || paying}
+                className="shrink-0 px-3 py-1.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-white transition disabled:opacity-50"
+              >
+                {checking ? 'Checking…' : 'Check payment status'}
+              </button>
             </div>
           )}
 
@@ -412,7 +617,10 @@ export default function CartPage({ sessionUser }) {
                 </label>
               </div>
 
-              {sessionUser && balanceCents !== null && !hasEnough && (
+              {/* While an earlier payment's outcome is unknown, "you're short, buy
+                  credits" is the wrong prompt: the shortfall may be that payment.
+                  The banner above resolves it instead. */}
+              {sessionUser && balanceCents !== null && !hasEnough && !uncertainAttempt && (
                 <div className="mb-4 px-4 py-3 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300 flex items-center justify-between gap-3">
                   <span>You're short {formatCredits(cart.totalCents - balanceCents)}.</span>
                   <a href="/credits" className="shrink-0 px-3 py-1.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-white transition">
@@ -432,7 +640,7 @@ export default function CartPage({ sessionUser }) {
 
               <button
                 onClick={pay}
-                disabled={!canCheckout || paying}
+                disabled={!canCheckout || paying || checking}
                 className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50"
               >
                 {paying ? 'Processing…' : `Pay ${formatCredits(cart.totalCents)}`}

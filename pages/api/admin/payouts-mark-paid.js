@@ -45,7 +45,10 @@ function payoutSenderAddress() {
  *    PAYOUT_SENDER_ADDRESS is set (the payout treasury); while it is unset
  *    a transfer from any wallet passes, so set it.
  *    `skipChainCheck: true` records without that check (e.g. the server's
- *    RPC is down) -- an explicit admin decision.
+ *    RPC is down) -- an explicit admin decision. When the check cannot run the
+ *    answer is 501 (not configured), 502 (RPC unreachable) or 503
+ *    { code: 'chain_check_unavailable' } (PAYOUT_SENDER_ADDRESS invalid); the
+ *    admin panel offers the skip on exactly those.
  *  - One hash closes one request (unique index; 409 if reused).
  *  - A request from an account that is no longer an active creator
  *    (banned/suspended/...) is frozen: 409 unless `override: true`.
@@ -76,7 +79,10 @@ export default async function handler(req, res) {
     const sender = payoutSenderAddress();
     if (sender === false) {
       console.error('[admin/payouts-mark-paid] PAYOUT_SENDER_ADDRESS is not a valid address');
-      return res.status(500).json({ error: 'The payout treasury address (PAYOUT_SENDER_ADDRESS) is misconfigured, so the transfer cannot be checked. Fix it, or pass skipChainCheck to record without the check.' });
+      // 503 + code, not a bare 500: the admin panel offers its explicit
+      // "record without the on-chain check" confirmation on this code (as it
+      // does for 501/502). A genuine unexpected 500 below never offers it.
+      return res.status(503).json({ code: 'chain_check_unavailable', error: 'The payout treasury address (PAYOUT_SENDER_ADDRESS) is misconfigured, so the transfer cannot be checked. Fix it, or record without the check.' });
     }
     const config = getMarketplaceVerificationConfig();
     if (!marketplaceVerificationLive(config)) {

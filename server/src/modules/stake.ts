@@ -9,6 +9,37 @@ import { page } from '../plugins/pagination.js';
 
 const PERIOD_MS = 30 * 864e5;
 
+/**
+ * Buys (or re-confirms) a fan's lock on a creator's perk at the price the fan
+ * was shown. Exported so it is testable against a real Postgres.
+ */
+export async function lockPerk(fanId: string, creatorId: string, expectedUsdCents: number, tokenAmountAtLock: string) {
+  return money(prisma, async (tx) => {
+    // Re-read inside the transaction: the price charged is the one checked.
+    const cur = await tx.creatorProfile.findUniqueOrThrow({ where: { userId: creatorId } });
+    if (!cur.stakePerkEnabled || !cur.stakeUsdCents) throw Object.assign(new Error('no_perk'), { statusCode: 400 });
+    if (cur.stakeUsdCents !== expectedUsdCents) throw Object.assign(new Error('price_changed'), { statusCode: 409 });
+    const usdCents = cur.stakeUsdCents;
+    const existing = await tx.tokenLock.findUnique({ where: { fanId_creatorId: { fanId, creatorId } } });
+    if (existing?.status === 'ACTIVE' && existing.currentPeriodEnd > new Date()) {
+      // Already paid for this period: re-enable renewal at the price the
+      // fan just confirmed. Only autoRenew used to change, so a fan who
+      // re-locked after the creator LOWERED the perk (shown and confirmed
+      // $20) was renewed at the old $50 by workers/renewals.ts, which charges
+      // l.usdCents -- a price they never confirmed. POST /subscriptions
+      // updates priceCents in the same branch.
+      return tx.tokenLock.update({ where: { id: existing.id }, data: { autoRenew: true, usdCents, tokenAmountAtLock } });
+    }
+    const lock = await tx.tokenLock.upsert({
+      where: { fanId_creatorId: { fanId, creatorId } },
+      create: { fanId, creatorId, usdCents, tokenAmountAtLock, currentPeriodEnd: new Date(Date.now() + PERIOD_MS) },
+      update: { usdCents, tokenAmountAtLock, status: 'ACTIVE', autoRenew: true, currentPeriodEnd: new Date(Date.now() + PERIOD_MS) },
+    });
+    await charge(tx, { fanId, creatorId, grossCents: usdCents, type: 'TOKEN_LOCK', refId: lock.id });
+    return lock;
+  });
+}
+
 // Fan locks $ONLYONE-equivalent value against an opted-in creator's perk.
 // Renews monthly exactly like a subscription -- see subscriptions.ts.
 export const stake: FastifyPluginAsync = async (app) => {
@@ -60,24 +91,7 @@ export const stake: FastifyPluginAsync = async (app) => {
       req.log.warn({ err: e }, 'stake lock: $ONLYONE price unavailable, recording 0');
     }
 
-    return money(prisma, async (tx) => {
-      // Re-read inside the transaction: the price charged is the one checked.
-      const cur = await tx.creatorProfile.findUniqueOrThrow({ where: { userId: creatorId } });
-      if (!cur.stakePerkEnabled || !cur.stakeUsdCents) throw Object.assign(new Error('no_perk'), { statusCode: 400 });
-      if (cur.stakeUsdCents !== expectedUsdCents) throw Object.assign(new Error('price_changed'), { statusCode: 409 });
-      const usdCents = cur.stakeUsdCents;
-      const existing = await tx.tokenLock.findUnique({ where: { fanId_creatorId: { fanId: req.user.id, creatorId } } });
-      if (existing?.status === 'ACTIVE' && existing.currentPeriodEnd > new Date()) {
-        return tx.tokenLock.update({ where: { id: existing.id }, data: { autoRenew: true } });
-      }
-      const lock = await tx.tokenLock.upsert({
-        where: { fanId_creatorId: { fanId: req.user.id, creatorId } },
-        create: { fanId: req.user.id, creatorId, usdCents, tokenAmountAtLock, currentPeriodEnd: new Date(Date.now() + PERIOD_MS) },
-        update: { usdCents, tokenAmountAtLock, status: 'ACTIVE', autoRenew: true, currentPeriodEnd: new Date(Date.now() + PERIOD_MS) },
-      });
-      await charge(tx, { fanId: req.user.id, creatorId, grossCents: usdCents, type: 'TOKEN_LOCK', refId: lock.id });
-      return lock;
-    });
+    return lockPerk(req.user.id, creatorId, expectedUsdCents, tokenAmountAtLock);
   });
 
   // Cancel = stop renewing; perk stays active until the current period ends

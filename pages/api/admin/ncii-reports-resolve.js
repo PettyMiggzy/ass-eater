@@ -7,6 +7,7 @@ import {
   NCII_REASON_REQUIRED,
   NCII_NOT_REOPENABLE,
   NCII_NOTE_MAX,
+  NCII_TAKEDOWN_REQUIRED,
 } from '../../../lib/ncii-reports-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { deliverFor, reportPushFailure } from '../../../lib/server-api';
@@ -15,7 +16,14 @@ const POSITIVE_INT = /^[1-9]\d{0,17}$/;
 
 /**
  * POST /api/admin/ncii-reports-resolve   Header x-admin-key.
- *   { id, action: 'removed', creatorId? }  -> 200 { ok, report, creator, outrightBan, preservedCount }
+ *   { id, action: 'removed', creatorId?, contentGone? }  -> 200 { ok, report, creator, outrightBan, preservedCount }
+ *        'removed' needs the removal on file: a takedown recorded against this
+ *        request that actually removed something (result 'removed' -- from
+ *        POST /api/admin/content-takedown, or a gallery/avatar removal
+ *        attributed to it; an 'already_gone' entry does not count), the attributed creator ending up banned, or
+ *        `contentGone: true` -- the admin confirming the content is already
+ *        gone or was removed elsewhere (stored as report.removalBasis).
+ *        409 { code: 'takedown_required' } otherwise; nothing is changed.
  *   { id, action: 'dismiss', reason }      -> 200 { ok, report, creator: null, ... }
  *        a dismissal REQUIRES a reason (1..1000 chars, stored as report.dismissReason
  *        and in report.history) -- 400 { code: 'reason_required' } without one
@@ -32,7 +40,7 @@ export default async function handler(req, res) {
 
   if (!requireAdminKey(req, res)) return;
 
-  const { id, action, creatorId, reason } = req.body || {};
+  const { id, action, creatorId, reason, contentGone } = req.body || {};
   if (!POSITIVE_INT.test(String(id ?? '')) || !['dismiss', 'removed', 'reopen'].includes(action)) {
     return res.status(400).json({ error: 'Missing report id or invalid action (dismiss | removed | reopen)' });
   }
@@ -81,7 +89,12 @@ export default async function handler(req, res) {
     // A report filed as a POSSIBLE MINOR bans the attributed creator outright
     // in that same transaction (the category comes from the stored report,
     // not from this request); `outrightBan` says it happened.
-    const { report, creator, outrightBan, pushUid, preservedCount } = await resolveNciiReport(id, action, { creatorId, reason });
+    const { report, creator, outrightBan, pushUid, preservedCount } = await resolveNciiReport(id, action, {
+      creatorId,
+      reason,
+      requireTakedown: true,
+      contentGone: contentGone === true,
+    });
     // A suspension or ban reaches the creator's server/ account too
     // (subscriptions, payouts, live): queued in the resolve's own commit,
     // delivered now, retried by the cron if this delivery fails.
@@ -91,6 +104,12 @@ export default async function handler(req, res) {
     if (err.code === NCII_REPORT_NOT_FOUND) return res.status(404).json({ error: 'Report not found' });
     if (err.code === NCII_ALREADY_RESOLVED) return res.status(409).json({ error: 'That report was already resolved.' });
     if (err.code === NCII_REASON_REQUIRED) return res.status(400).json({ code: 'reason_required', error: err.message });
+    if (err.code === NCII_TAKEDOWN_REQUIRED) {
+      return res.status(409).json({
+        code: 'takedown_required',
+        error: 'Nothing was changed -- take the content down first (Take down content), or confirm it is already gone.',
+      });
+    }
     if (err.code === NCII_CREATOR_NOT_FOUND) {
       return res.status(400).json({ error: 'That creator no longer exists. Pick another account, or resolve without attributing it.' });
     }

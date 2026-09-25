@@ -27,7 +27,7 @@ export async function chargeTip(
   const tipId = nanoid(12);
   try {
     const charged = await money(prisma, async (tx) => {
-      await tx.tipRequest.create({ data: { fanId, key: p.idempotencyKey, tipId } });
+      await tx.tipRequest.create({ data: { fanId, key: p.idempotencyKey, tipId, creatorId: p.creatorId, amountCents: p.amountCents } });
       return charge(tx, { fanId, creatorId: p.creatorId, grossCents: p.amountCents, type: p.type, refId: tipId });
     });
     return { tipId, already: false, charged };
@@ -35,6 +35,14 @@ export async function chargeTip(
     if ((e as { code?: string }).code !== 'P2002') throw e;
     const prior = await prisma.tipRequest.findUnique({ where: { fanId_key: { fanId, key: p.idempotencyKey } } });
     if (!prior) throw e;
+    // A key reused for a DIFFERENT tip (another creator, another amount) is
+    // a client bug, not a retry: answering "already sent" told the fan a tip
+    // went through that never did. Refused, like a DM's request_id_reused.
+    // (Rows from before the columns existed carry nulls and cannot be
+    // compared; they keep the old replay behaviour.)
+    if ((prior.creatorId != null && prior.creatorId !== p.creatorId) || (prior.amountCents != null && prior.amountCents !== p.amountCents)) {
+      throw Object.assign(new Error('idempotency_key_reused'), { statusCode: 409 });
+    }
     return { tipId: prior.tipId, already: true };
   }
 }

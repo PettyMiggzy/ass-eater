@@ -18,6 +18,14 @@ import {
   RECIPIENT_UNAVAILABLE,
 } from '../../../../lib/credits-store';
 
+// Bounds how long a checkout request can run. pages/cart.js relies on this:
+// an uncertain attempt whose key is still unclaimed after its
+// UNCERTAIN_GRACE_MS (kept well above this) is reported as "did not go
+// through", which is only true if no request can still commit by then. If
+// the function is killed, its database connection drops and Postgres rolls
+// the open transaction back, so nothing commits past this limit.
+export const config = { maxDuration: 60 };
+
 const REQUIRED_ADDRESS_FIELDS = ['fullName', 'line1', 'city', 'region', 'postalCode', 'country'];
 const MAX_CART_ITEMS = 50;
 const MAX_ADDRESS_FIELD = 200;
@@ -205,7 +213,16 @@ export default async function handler(req, res) {
       tosAccepted,
       idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey.slice(0, 200) : undefined,
     });
-    const newBalance = await getBalanceCents(uid);
+    // The orders are committed at this point. A failure reading the new
+    // balance must not turn a completed purchase into a 500 -- the cart would
+    // then report "couldn't confirm" for a checkout that went through. The
+    // cart refreshes the balance itself when it gets null here.
+    let newBalance = null;
+    try {
+      newBalance = await getBalanceCents(uid);
+    } catch (balanceErr) {
+      console.error('[marketplace/orders/create] balance read after commit failed:', balanceErr);
+    }
     return res.status(200).json({ ok: true, orders, balanceCents: newBalance });
   } catch (err) {
     if (err.code === INSUFFICIENT_BALANCE) return res.status(402).json({ error: 'Not enough credits' });

@@ -6,6 +6,8 @@ import { toPublicCreator, isPubliclyVisible } from '../lib/creator-status';
 import { byPlacement } from '../lib/founding';
 import { tokenGateLive } from '../lib/token-gate';
 import { getSessionUser } from '../lib/session';
+import { viewerMarkFor } from '../lib/viewer-mark';
+import ProtectedMedia, { GUEST_MARK } from '../components/ProtectedMedia';
 import { Icons, Lockup, SolidIcons } from '../components/Brand';
 import { publicUser } from '../lib/users-store';
 import {
@@ -20,13 +22,14 @@ import { marketplaceVerificationLive } from '../lib/marketplace-payment-config';
 import DemoBadge from '../components/public/DemoBadge';
 import PremiumBadge from '../components/public/PremiumBadge';
 import { toCreatorCard } from '../components/public/cards';
+import { CATEGORIES, categoryFromQuery, categoryLabel, countByCategory, withCategoryParam } from '../lib/categories';
 
 // Every fee quoted on this page comes from lib/brand.js (derived from
 // lib/fees.js), never a typed number -- this page used to say "We take 10%
 // — nothing else" while marketplace sales paid 15%.
 const FEE_LINE = `We take ${PLATFORM_FEE_PCT}% (${MARKETPLACE_FEE_PCT}% on marketplace sales: ${PLATFORM_FEE_PCT}% + ${LISTING_FEE_PCT}% listing fee).`;
 
-export async function getServerSideProps({ req }) {
+export async function getServerSideProps({ req, query }) {
   const creators = await getCreators();
   const sessionUser = publicUser(await getSessionUser(req));
   return {
@@ -40,8 +43,18 @@ export async function getServerSideProps({ req }) {
       creators: creators
         .filter(isPubliclyVisible)
         .sort(byPlacement)
-        .map((c) => toCreatorCard(toPublicCreator(c))),
+        .map((c) => {
+          const pub = toPublicCreator(c);
+          // The card plus the creator's browse categories (already the
+          // sanitised list -- toPublicCreator projects only known keys).
+          return { ...toCreatorCard(pub), categories: pub.categories || [] };
+        }),
+      // ?category=women renders already filtered; unknown values are no filter.
+      initialCategory: categoryFromQuery(query?.category),
       sessionUser,
+      // The per-viewer mark tiled over card videos (an HMAC -- computed
+      // here, the key never leaves the server; '' when signed out).
+      viewerMark: viewerMarkFor(sessionUser?.id),
       // Credits and marketplace checkout are live exactly when the chain
       // config and the server's verification RPC are both set.
       paymentsLive: marketplaceVerificationLive(),
@@ -155,10 +168,14 @@ function PricingCard({ tier }) {
   );
 }
 
-export default function Creators({ creators, sessionUser, paymentsLive }) {
+export default function Creators({ creators, sessionUser, paymentsLive, viewerMark, initialCategory = null }) {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [tag, setTag] = useState('');
+  // The Categories sidebar, mirrored in the URL (?category=) so a filtered
+  // view is a shareable link. Same mechanism as pages/marketplace.js.
+  const [category, setCategoryState] = useState(initialCategory);
   const [showSplash, setShowSplash] = useState(true);
   const [splashFading, setShowSplashFading] = useState(false);
   const gatingLive = tokenGateLive();
@@ -172,27 +189,67 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
     };
   }, []);
 
+  // Back/forward or a client navigation to another ?category= link.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setCategoryState(categoryFromQuery(new URLSearchParams(window.location.search).get('category')));
+  }, [router.asPath]);
+
+  // Rewrites ?category= in place (shallow: the filter runs here, so
+  // getServerSideProps need not re-run), keeping every other parameter.
+  const setCategory = (key) => {
+    const next = categoryFromQuery(key);
+    setCategoryState(next);
+    if (typeof window === 'undefined') return;
+    const qs = withCategoryParam(window.location.search, next);
+    router.replace(
+      { pathname: router.pathname, query: Object.fromEntries(new URLSearchParams(qs)) },
+      `${window.location.pathname}${qs}`,
+      { shallow: true, scroll: false },
+    );
+  };
+
   const skipSplash = () => {
     setShowSplashFading(true);
     setTimeout(() => setShowSplash(false), 400);
   };
 
-  const filtered = useMemo(() => {
-    return creators.filter((c) => {
-      // No FREE/PREMIUM split: it was driven by the free-text "price" on
-      // the profile, which defaulted to a platform-set '$9.99 / month' for a
-      // subscription nobody can buy. Filters here only use real attributes.
-      const matchesFilter =
-        activeFilter === 'all' ||
-        (activeFilter === 'founding' && c.founding) ||
-        (activeFilter === 'trending' && c.trending);
-      const matchesSearch =
-        search === '' ||
-        String(c.name || '').toLowerCase().includes(search.toLowerCase()) ||
-        String(c.handle || '').toLowerCase().includes(search.toLowerCase());
-      return matchesFilter && matchesSearch;
-    });
-  }, [creators, activeFilter, search]);
+  // One predicate per filter dimension, so each sidebar count can apply
+  // every OTHER active filter and leave its own off (a faceted count: "how
+  // many would clicking this show"), exactly like the marketplace sidebar.
+  // No FREE/PREMIUM split: it was driven by the free-text "price" on the
+  // profile, which defaulted to a platform-set '$9.99 / month' for a
+  // subscription nobody can buy. Filters here only use real attributes.
+  const matchesFilter = (c) =>
+    activeFilter === 'all' ||
+    (activeFilter === 'founding' && c.founding) ||
+    (activeFilter === 'trending' && c.trending);
+  const matchesSearch = (c) =>
+    search === '' ||
+    String(c.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    String(c.handle || '').toLowerCase().includes(search.toLowerCase());
+  const matchesTag = (c, t) => !t || (Array.isArray(c.tags) && c.tags.includes(t));
+  const matchesCategory = (c, k) => !k || (Array.isArray(c.categories) && c.categories.includes(k));
+
+  const filtered = creators.filter(
+    (c) => matchesFilter(c) && matchesSearch(c) && matchesTag(c, tag) && matchesCategory(c, category),
+  );
+
+  // Category counts (zeros included: a short, fixed list) and tag counts
+  // (only tags some visible creator actually has).
+  const { total: categoryAll, counts: categoryCounts } = countByCategory(
+    creators.filter((c) => matchesFilter(c) && matchesSearch(c) && matchesTag(c, tag)),
+    (c) => c.categories,
+  );
+  const allTags = useMemo(
+    () => [...new Set(creators.flatMap((c) => (Array.isArray(c.tags) ? c.tags : [])))].sort(),
+    [creators],
+  );
+  const tagCounts = {};
+  for (const c of creators) {
+    if (!(matchesFilter(c) && matchesSearch(c) && matchesCategory(c, category))) continue;
+    for (const t of Array.isArray(c.tags) ? c.tags : []) tagCounts[t] = (tagCounts[t] || 0) + 1;
+  }
 
   // Real content count across the roster, for the stats bar.
   const totalPosts = creators.reduce((n, c) => n + (c.galleryCount || 0), 0);
@@ -332,8 +389,27 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
           </div>
         </section>
 
-        {/* Filter Bar */}
+        {/* Filter Bar. Below md it also carries the categories as a
+            horizontal scroll row (the sidebar is md+ only). */}
         <div id="creators" className="sticky top-[73px] z-40 bg-brand-dark/90 backdrop-blur border-b border-brand-gold/10 py-4">
+          <div className="md:hidden max-w-7xl mx-auto px-6 mb-3 flex gap-2 overflow-x-auto whitespace-nowrap">
+            {[{ key: null, label: 'All' }, ...CATEGORIES].map((k) => {
+              const on = (category || null) === k.key;
+              return (
+                <button
+                  key={k.key || 'all'}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setCategory(k.key)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold border transition ${
+                    on ? 'bg-brand-pink border-brand-pink text-white' : 'border-white/15 text-gray-300 hover:bg-white/5'
+                  }`}
+                >
+                  {k.label} <span className={on ? 'text-white/80' : 'text-gray-500'}>{k.key ? categoryCounts[k.key] : categoryAll}</span>
+                </button>
+              );
+            })}
+          </div>
           <div className="max-w-7xl mx-auto px-6 flex gap-3 overflow-x-auto">
             {['all', 'founding', 'trending'].map((f) => (
               <button
@@ -351,13 +427,76 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
           </div>
         </div>
 
-        {/* Creator Grid */}
+        {/* Creator Grid, with the browse sidebar on the left from md up:
+            the fixed categories (lib/categories.js) with real faceted counts,
+            then the tags creators actually use. */}
         <section className="py-12 px-6">
-          <div className="max-w-7xl mx-auto">
+          <div className="max-w-7xl mx-auto md:grid md:grid-cols-[200px_1fr] md:gap-8">
+            <aside className="hidden md:block space-y-6 md:sticky md:top-40 self-start pt-10">
+              <div>
+                <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">CATEGORIES</p>
+                <div className="space-y-1">
+                  {[{ key: null, label: 'All' }, ...CATEGORIES].map((k) => {
+                    const on = (category || null) === k.key;
+                    return (
+                      <button
+                        key={k.key || 'all'}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setCategory(k.key)}
+                        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left transition ${
+                          on ? 'bg-brand-pink/15 text-brand-pink font-bold' : 'text-gray-300 hover:bg-white/5'
+                        }`}
+                      >
+                        <span className="flex-1">{k.label}</span>
+                        <span className="text-[11px] text-gray-500">{k.key ? categoryCounts[k.key] : categoryAll}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {allTags.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold tracking-widest text-gray-400 mb-3">TAGS</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {allTags.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        aria-pressed={tag === t}
+                        onClick={() => setTag(tag === t ? '' : t)}
+                        className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                          tag === t ? 'bg-brand-pink border-brand-pink text-white font-bold' : 'border-white/15 text-gray-300 hover:bg-white/5'
+                        }`}
+                      >
+                        #{t} <span className={tag === t ? 'text-white/80' : 'text-gray-500'}>{tagCounts[t] || 0}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </aside>
+            <div>
+            {(category || tag) && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {category && (
+                  <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-brand-pink/40 bg-brand-pink/10 text-xs text-gray-200">
+                    Category: <span className="font-bold text-white">{categoryLabel(category)}</span>
+                    <button type="button" onClick={() => setCategory(null)} className="text-brand-pink hover:underline font-bold">Clear</button>
+                  </span>
+                )}
+                {tag && (
+                  <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-brand-pink/40 bg-brand-pink/10 text-xs text-gray-200">
+                    Tag: <span className="font-bold text-white">#{tag}</span>
+                    <button type="button" onClick={() => setTag('')} className="text-brand-pink hover:underline font-bold">Clear</button>
+                  </span>
+                )}
+              </div>
+            )}
             {filtered.length === 0 ? (
               <p className="text-center text-gray-500 py-12">No creators match your search.</p>
             ) : (
-              <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-8 pt-10">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8 pt-10">
                 {filtered.map((c) => (
                   <div
                     key={c.id}
@@ -371,12 +510,15 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
 
                     <div className="aspect-[4/5] relative overflow-hidden rounded-t-lg mx-3">
                       {c.video ? (
-                        <video
+                        // Creator content: through ProtectedMedia like every
+                        // other tile (no save menu, no picture-in-picture),
+                        // with the viewer's mark -- or the site mark when
+                        // signed out.
+                        <ProtectedMedia
                           src={c.video}
+                          type="video"
                           autoPlay
-                          loop
-                          muted
-                          playsInline
+                          mark={viewerMark || GUEST_MARK}
                           className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
                         />
                       ) : (
@@ -459,6 +601,7 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
                 ))}
               </div>
             )}
+            </div>
           </div>
         </section>
 

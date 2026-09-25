@@ -12,6 +12,7 @@ import ListingPreview from '../components/public/ListingPreview';
 import DemoBadge from '../components/public/DemoBadge';
 import PremiumBadge from '../components/public/PremiumBadge';
 import { toCreatorCard, isDemoListing, DEMO_LABEL, marketplaceHrefFor } from '../components/public/cards';
+import { CATEGORIES, categoryFromQuery, categoryLabel, creatorInCategory, withCategoryParam } from '../lib/categories';
 
 const str = (v) => (typeof v === 'string' ? v : '');
 
@@ -20,19 +21,25 @@ export async function getServerSideProps({ query, req }) {
   // A repeated ?q=a&q=b arrives as an array; only a plain string is a query.
   const q = str(query.q).trim().toLowerCase().slice(0, 200);
   const tag = str(query.tag).trim().toLowerCase().slice(0, 50);
+  // ?category= (lib/categories.js) narrows whatever else was asked for, and on
+  // its own lists that category's creators. Unknown values are no filter.
+  const category = categoryFromQuery(query.category);
   const [allCreators, allListings] = await Promise.all([getCreators(), getListings()]);
   const visibleCreators = allCreators.filter(isPubliclyVisible);
+  const inCategory = visibleCreators.filter((c) => creatorInCategory(c, category));
 
   // byPlacement: Founding Creators first, the same "priority placement" sort
   // /creators, /home and /marketplace apply. Every landing-page category and
   // every #tag chip lands HERE, so without it the founding promise ("lead
   // every browse page") was false on the page fans reach most.
   const creators = (tag
-    ? visibleCreators.filter((c) => Array.isArray(c.tags) && c.tags.includes(tag))
+    ? inCategory.filter((c) => Array.isArray(c.tags) && c.tags.includes(tag))
     : q
-    ? visibleCreators.filter((c) =>
+    ? inCategory.filter((c) =>
         str(c.name).toLowerCase().includes(q) || str(c.handle).toLowerCase().includes(q) || str(c.bio).toLowerCase().includes(q)
       )
+    : category
+    ? inCategory
     : []
   ).sort(byPlacement);
 
@@ -43,11 +50,13 @@ export async function getServerSideProps({ query, req }) {
         // Checked on the stored record, before toPublicListing strips srcs.
         .filter((l) => l.status === 'active' && listingHasDeliverable(l) && (str(l.title).toLowerCase().includes(q) || str(l.description).toLowerCase().includes(q)))
         .map((l) => {
-          const creator = visibleCreators.find((c) => String(c.id) === String(l.creatorId));
+          // A listing inherits its seller's categories, so resolving against
+          // the category-filtered roster applies ?category= to listings too.
+          const creator = inCategory.find((c) => String(c.id) === String(l.creatorId));
           // toPublicListing: blurred previews only, never a media src.
           return creator
             ? {
-                ...toPublicListing(l),
+                ...toPublicListing(l, creator),
                 creatorName: creator.name,
                 creatorFounding: isFoundingCreator(creator),
                 demo: isDemoListing(l, creator),
@@ -73,20 +82,27 @@ export async function getServerSideProps({ query, req }) {
 
   // Cards only -- a result tile needs a name and an avatar, not galleries.
   return {
-    props: { q, tag, creators: creators.map((c) => toCreatorCard(toPublicCreator(c))), listings, allTags, sessionUser },
+    props: { q, tag, category, creators: creators.map((c) => toCreatorCard(toPublicCreator(c))), listings, allTags, sessionUser },
   };
 }
 
-export default function Search({ q, tag, creators, listings, allTags, sessionUser }) {
+export default function Search({ q, tag, category = null, creators, listings, allTags, sessionUser }) {
   const router = useRouter();
   const [value, setValue] = useState(q);
 
   const submit = (e) => {
     e.preventDefault();
-    router.push(`/search?q=${encodeURIComponent(value)}`);
+    // A picked category stays applied to the new search.
+    router.push(`/search${withCategoryParam(`q=${encodeURIComponent(value)}`, category)}`);
   };
 
-  const browsing = !q && !tag;
+  const browsing = !q && !tag && !category;
+  // A category chip keeps the current q/tag and sets (or, when it is the one
+  // already picked, clears) ?category=.
+  const currentParams = new URLSearchParams();
+  if (q) currentParams.set('q', q);
+  if (tag) currentParams.set('tag', tag);
+  const categoryHref = (key) => `/search${withCategoryParam(currentParams.toString(), key === category ? null : key)}`;
 
   return (
     <>
@@ -104,6 +120,26 @@ export default function Search({ q, tag, creators, listings, allTags, sessionUse
             />
           </form>
 
+          <div className="mb-6">
+            <h2 className="text-sm font-bold text-brand-gold uppercase tracking-wide mb-3">Browse by category</h2>
+            <div className="flex flex-wrap gap-2">
+              {CATEGORIES.map((c) => (
+                <a
+                  key={c.key}
+                  href={categoryHref(c.key)}
+                  aria-current={category === c.key ? 'true' : undefined}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition ${
+                    category === c.key
+                      ? 'bg-brand-pink text-white border-transparent font-bold'
+                      : 'bg-white/5 border-white/15 text-gray-200 hover:bg-white/10'
+                  }`}
+                >
+                  {c.label}
+                </a>
+              ))}
+            </div>
+          </div>
+
           {allTags.length > 0 && (
             <div className="mb-10">
               <h2 className="text-sm font-bold text-brand-gold uppercase tracking-wide mb-3">Browse by tag</h2>
@@ -111,7 +147,7 @@ export default function Search({ q, tag, creators, listings, allTags, sessionUse
                 {allTags.map((t) => (
                   <a
                     key={t}
-                    href={`/search?tag=${encodeURIComponent(t)}`}
+                    href={`/search${withCategoryParam(`tag=${encodeURIComponent(t)}`, category)}`}
                     className={`text-xs px-3 py-1.5 rounded-full border transition ${
                       tag === t
                         ? 'bg-brand-gold text-black border-transparent font-bold'
@@ -128,14 +164,25 @@ export default function Search({ q, tag, creators, listings, allTags, sessionUse
           {tag && (
             <p className="text-gray-400 mb-6">
               Showing creators tagged <span className="text-brand-gold font-bold">#{tag}</span> ·{' '}
-              <a href="/search" className="underline">clear</a>
+              <a href={`/search${withCategoryParam('', category)}`} className="underline">clear</a>
+            </p>
+          )}
+
+          {category && (
+            <p className="text-gray-400 mb-6">
+              In category <span className="text-brand-pink font-bold">{categoryLabel(category)}</span> ·{' '}
+              <a href={`/search${withCategoryParam(currentParams.toString(), null)}`} className="underline">clear</a>
             </p>
           )}
 
           {browsing ? (
             allTags.length === 0 && <p className="text-gray-500">Type something to search creators and the marketplace.</p>
           ) : creators.length === 0 && listings.length === 0 ? (
-            <p className="text-gray-500">No results for "{tag ? `#${tag}` : q}".</p>
+            <p className="text-gray-500">
+              {tag || q
+                ? `No results for "${tag ? `#${tag}` : q}"${category ? ` in ${categoryLabel(category)}` : ''}.`
+                : `No creators in ${categoryLabel(category)} yet.`}
+            </p>
           ) : (
             <div className="space-y-10">
               {creators.length > 0 && (

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cdnSignedUrl, objectExists, s3 } from './s3.js';
+import { cdnSignedUrl, cdnPreviewUrlOrNull, objectExists, s3 } from './s3.js';
 
 afterEach(() => { vi.restoreAllMocks(); delete process.env.BUNNY_CDN_HOST; delete process.env.BUNNY_TOKEN_KEY; });
 
@@ -21,6 +21,18 @@ describe('cdnSignedUrl', () => {
   it('throws instead of building https://undefined/...', () => {
     process.env.BUNNY_TOKEN_KEY = 'k';
     expect(() => cdnSignedUrl('/x')).toThrow(/BUNNY_CDN_HOST/);
+  });
+});
+
+describe('cdnPreviewUrlOrNull', () => {
+  it('signs the blurred preview when the pull zone has Token Authentication (a token key is set)', () => {
+    process.env.BUNNY_CDN_HOST = 'cdn.example.com'; process.env.BUNNY_TOKEN_KEY = 'k';
+    expect(cdnPreviewUrlOrNull('/media/o/m/preview.jpg')).toMatch(/^https:\/\/cdn\.example\.com\/media\/o\/m\/preview\.jpg\?token=[A-Za-z0-9_-]+&expires=\d+$/);
+  });
+  it('is null with no CDN host, and unsigned only when there is no token key to sign with', () => {
+    expect(cdnPreviewUrlOrNull('/p.jpg')).toBeNull();
+    process.env.BUNNY_CDN_HOST = 'cdn.example.com';
+    expect(cdnPreviewUrlOrNull('/p.jpg')).toBe('https://cdn.example.com/p.jpg');
   });
 });
 

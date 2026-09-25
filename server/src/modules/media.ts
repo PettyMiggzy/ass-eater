@@ -2,9 +2,9 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { prisma } from '../lib/prisma.js';
-import { presignPut, headObject, cdnSignedUrl, cdnPublicUrlOrNull } from '../lib/s3.js';
+import { presignPut, headObject, cdnSignedUrl, cdnPreviewUrlOrNull } from '../lib/s3.js';
 import { transcodeQueue } from '../lib/redis.js';
-import { canViewMedia, creatorMayOperate } from '../core/access.js';
+import { canViewMedia, creatorMayOperate, creatorIsActive } from '../core/access.js';
 import { getOrCreateWatermarkedUrl, traceCode } from '../lib/watermark.js';
 import { storageKeyOf } from '../core/media-key.js';
 import { maxBytesFor, createUploadWithinQuota } from '../core/upload-limits.js';
@@ -80,7 +80,15 @@ export const media: FastifyPluginAsync = async (app) => {
     let userId: string | null = null;
     try { await req.jwtVerify(); userId = req.user.id; } catch {}
     const { ok, m } = await canViewMedia(userId, req.params.id);
-    if (!ok || !m) return reply.code(403).send({ error: 'locked', preview: m?.previewKey ? cdnPublicUrlOrNull(`/${m.previewKey}`) : null });
+    if (!ok || !m) {
+      // The blurred teaser is only offered for content that is still for
+      // sale: never for a post or listing that moderation took down, nor for
+      // a suspended or banned creator's media. canViewMedia hands back the
+      // row whenever it is READY, and a removed post's media used to leak
+      // its preview URL here to anyone holding the media id.
+      const teaserOk = !!m?.previewKey && !m.post?.removed && m.listing?.status !== 'REMOVED' && (await creatorIsActive(m.ownerId));
+      return reply.code(403).send({ error: 'locked', preview: teaserOk ? cdnPreviewUrlOrNull(`/${m!.previewKey}`) : null });
+    }
 
     const viewer = userId && userId !== m.ownerId
       ? await prisma.user.findUnique({ where: { id: userId }, select: { username: true } })
@@ -101,7 +109,7 @@ export const media: FastifyPluginAsync = async (app) => {
     // the source's (core/media-key.ts).
     const objectKey = storageKeyOf(m.key);
     if (viewer) {
-      const key = await getOrCreateWatermarkedUrl(m.id, objectKey, userId!, viewer.username);
+      const key = await getOrCreateWatermarkedUrl(m.id, objectKey, userId!, viewer.username, m.mime);
       return { type: 'image', url: cdnSignedUrl(`/${key}`, 900), expiresIn: 900 };
     }
     return { type: 'image', url: cdnSignedUrl(`/${objectKey}`, 900), expiresIn: 900 };

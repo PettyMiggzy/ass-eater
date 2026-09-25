@@ -1,6 +1,6 @@
 import { getSessionUser } from '../../../lib/session';
 import { userWriteRestriction } from '../../../lib/user-moderation';
-import { addReport, normalizeTargetId, validateReportInput } from '../../../lib/reports-store';
+import { addReport, normalizeTargetId, validateReportInput, snapshotWallPost, reporterView } from '../../../lib/reports-store';
 import { sendReportAlert } from '../../../lib/alerts';
 import { query } from '../../../lib/db';
 import { consumeAttempt } from '../../../lib/rate-limit';
@@ -50,19 +50,23 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { rows } = await query('select 1 from wall_posts where id = $1', [postId]);
+    const { rows } = await query('select data from wall_posts where id = $1', [postId]);
     if (!rows.length) return res.status(404).json({ error: 'Comment not found' });
+    // The comment's text, author and time are copied onto the report NOW:
+    // its author (or the wall owner) can delete it a second later, and an
+    // account deletion removes every comment the account wrote.
     const report = await addReport({
       targetType: 'wall_post',
       targetId: postId,
       reporterId: uid,
       reason: input.reason,
       category: input.category,
+      reportedContent: await snapshotWallPost(rows[0].data),
     });
     // A possible-minor or non-consensual report alerts the operator (no PII,
     // never blocks the filing) -- the same channel as a takedown request.
     await sendReportAlert(report);
-    return res.status(200).json({ ok: true, report });
+    return res.status(200).json({ ok: true, report: reporterView(report) });
   } catch (err) {
     console.error('[wall/report] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });

@@ -7,6 +7,7 @@ import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
 import { registerWorker } from './process-guards.js';
 import { chunk } from './indexer-chunks.js';
+import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
 
 const BATCH = 1000n;
 // Deposit addresses per eth_getLogs `to` filter (geth caps a position at 1000).
@@ -196,10 +197,35 @@ export async function repricePending(limit = 100) {
   return credited;
 }
 
+/**
+ * First run on this chain: never start at the head once addresses exist
+ * (workers/deposit-cursor.ts). Returns null -- and creates nothing, so the
+ * next tick asks again -- when there is no safe place to start.
+ */
+async function createCursor(safe: bigint) {
+  const [addressCount, unstampedAddresses, agg] = await Promise.all([
+    prisma.depositAddress.count({ where: { chainId: CHAIN_ID } }),
+    prisma.depositAddress.count({ where: { chainId: CHAIN_ID, issuedBlock: null } }),
+    prisma.depositAddress.aggregate({ where: { chainId: CHAIN_ID }, _min: { issuedBlock: true } }),
+  ]);
+  const lastBlock = initialCursorBlock({
+    safe, addressCount, unstampedAddresses,
+    minIssuedBlock: agg._min.issuedBlock ?? null,
+    envStartBlock: parseStartBlock(process.env.DEPOSIT_START_BLOCK),
+  });
+  if (lastBlock == null) {
+    console.error(`indexer: REFUSING to start the deposit cursor for chain ${CHAIN_ID}: ${unstampedAddresses} deposit address(es) were issued with no recorded block, so any deposit sent to them before now would be skipped for good. Set DEPOSIT_START_BLOCK to a block at or before the first address was handed out (e.g. the block of the deploy that first set DEPOSIT_XPUB) and restart the workers.`);
+    return null;
+  }
+  // Upsert, not create: a second indexer racing this one must not fail.
+  return prisma.chainCursor.upsert({ where: { chainId: CHAIN_ID }, create: { chainId: CHAIN_ID, lastBlock }, update: {} });
+}
+
 async function scan() {
   const head = await publicClient.getBlockNumber();
   const safe = head - BigInt(CONFIRMATIONS);
-  const cursor = await prisma.chainCursor.upsert({ where: { chainId: CHAIN_ID }, create: { chainId: CHAIN_ID, lastBlock: safe - 1n }, update: {} });
+  const cursor = await prisma.chainCursor.findUnique({ where: { chainId: CHAIN_ID } }) ?? await createCursor(safe);
+  if (!cursor) return;
   let from = cursor.lastBlock + 1n;
   if (from > safe) return;
   const addrs = await addressMap();

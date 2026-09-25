@@ -84,15 +84,26 @@ export function cdnSignedUrl(path: string, ttlSec = 600, dir?: string) {
   return `https://${host}${path}?token=${token}&expires=${expires}`;
 }
 
-/** Public, unsigned URL for blurred previews / avatars */
+/** Unsigned URL -- only valid on a pull zone WITHOUT Token Authentication. */
 export const cdnPublicUrl = (path: string) => `https://${cdnHost()}${path}`;
 
+/** How long a blurred preview URL stays valid. Longer than a media URL: it is a teaser, not the content. */
+export const PREVIEW_URL_TTL_SEC = 6 * 3600;
+
 /**
- * cdnPublicUrl for an OPTIONAL extra (a blurred preview on a refusal): null
- * when no CDN is configured, so a missing BUNNY_CDN_HOST cannot turn a 403
- * into a 500.
+ * URL for an OPTIONAL extra (a blurred preview on a refusal): null when no
+ * CDN is configured, so a missing BUNNY_CDN_HOST cannot turn a 403 into a 500.
+ *
+ * Signed whenever BUNNY_TOKEN_KEY is set. Bunny's Token Authentication is a
+ * pull-zone-wide switch, and the deploy kit turns it on (.env.example), so an
+ * unsigned https://<host>/<previewKey> was refused by the CDN and every
+ * paywall showed a broken image instead of its teaser. Unsigned only when no
+ * token key exists, i.e. the zone has no token auth to satisfy.
  */
-export const cdnPublicUrlOrNull = (path: string) => (process.env.BUNNY_CDN_HOST ? cdnPublicUrl(path) : null);
+export const cdnPreviewUrlOrNull = (path: string) => {
+  if (!process.env.BUNNY_CDN_HOST) return null;
+  return process.env.BUNNY_TOKEN_KEY ? cdnSignedUrl(path, PREVIEW_URL_TTL_SEC) : cdnPublicUrl(path);
+};
 
 /**
  * Best-effort Bunny cache purge for everything under `path` (wildcard). A

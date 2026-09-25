@@ -1,5 +1,6 @@
 import { effectiveCreatorStatus, sanitizeTags } from '../../lib/creator-status';
 import { gateTokensOf } from '../../lib/token-gate';
+import { sanitizeCategories } from '../../lib/categories';
 
 // Pure helpers for the admin creator editor (pages/admin/index.js), kept out
 // of the page so the save round-trip can be tested against the real
@@ -43,6 +44,8 @@ export function draftFrom(c) {
     // edit them, or a refusal that says "Clear the Tags field" names a field
     // the admin cannot reach. Tags are edited as one comma-separated string.
     tags: Array.isArray(c.tags) ? c.tags.join(', ') : '',
+    // Browse categories (lib/categories.js): known keys, edited as toggle chips.
+    categories: sanitizeCategories(c.categories),
     location: typeof c.location === 'string' ? c.location : '',
     age: Number.isFinite(Number(c.age)) && c.age !== null && c.age !== '' ? String(c.age) : '',
     socials: {
@@ -59,13 +62,13 @@ export function draftFrom(c) {
 // never edited on its own, only carried alongside a status change.
 export const EDITABLE_KEYS = [
   'name', 'handle', 'bio', 'price', 'locked', 'gateTokens', 'trending', 'premium',
-  'founding', 'status', 'walletAddress', 'dmPrice', 'tags', 'location', 'age', 'socials',
+  'founding', 'status', 'walletAddress', 'dmPrice', 'tags', 'categories', 'location', 'age', 'socials',
 ];
 
 const FIELD_NAMES = {
   name: 'name', handle: 'handle', bio: 'bio', price: 'price', locked: 'token gate', gateTokens: 'gate amount',
   trending: 'trending', premium: 'premium', founding: 'Founding', status: 'status', walletAddress: 'payout wallet',
-  dmPrice: 'message price', tags: 'tags', location: 'location', age: 'age', socials: 'socials',
+  dmPrice: 'message price', tags: 'tags', categories: 'categories', location: 'location', age: 'age', socials: 'socials',
 };
 
 /** Human label for a draft key (used in conflict messages). */
@@ -78,6 +81,9 @@ function norm(key, value) {
   // Compared as the list the server would store, so "a, b" vs "a,b" (or a
   // re-cased tag) is not a change and not a false rebase conflict.
   if (key === 'tags') return sanitizeTags(Array.isArray(value) ? value : String(value ?? '')).join(',');
+  // Compared as the stored list, so a legacy unknown key or a comma string is
+  // not mistaken for an edit. Order matters (it is the creator's order).
+  if (key === 'categories') return sanitizeCategories(value).join(',');
   if (key === 'location') return String(value ?? '').replace(/\s+/g, ' ').trim();
   if (typeof value === 'boolean') return value;
   if (key === 'dmPrice') {
@@ -139,6 +145,7 @@ export function fieldsFromDraft(draft, baseline) {
   // runs the payment-circumvention check over the raw items (a split handle
   // like "venmo, @jane" is only visible before sanitizing).
   if (changed('tags')) fields.tags = String(draft.tags ?? '');
+  if (changed('categories')) fields.categories = sanitizeCategories(draft.categories);
   if (changed('location')) fields.location = String(draft.location ?? '');
   if (changed('age')) {
     const parsed = parseAge(draft.age);

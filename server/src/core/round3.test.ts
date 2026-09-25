@@ -121,15 +121,19 @@ describe('renewals', () => {
 });
 
 describe('a listing with nothing to deliver is not sold', () => {
-  it('bids need a READY media item on a DIGITAL listing', async () => {
+  it('bids need every media item READY on a DIGITAL listing', async () => {
     const seller = await makeCreator();
     const bidder = await makeUser();
     await deposit(bidder, 10_000);
     const l = await prisma.listing.create({ data: { creatorId: seller, title: 'Empty', saleType: 'AUCTION', priceCents: 1000, auctionEndsAt: new Date(Date.now() + 3_600_000) } });
     await expect(money(prisma, (tx) => placeBid(tx, l.id, bidder, 1000))).rejects.toThrow('no_deliverable');
-    await media(seller, { listingId: l.id, status: 'PROCESSING' });
+    const processing = await media(seller, { listingId: l.id, status: 'PROCESSING' });
     expect(await money(prisma, (tx) => hasDeliverable(tx, l))).toBe(false);
     await media(seller, { listingId: l.id });
+    // Round 5: EVERY attached item must be READY (was: at least one), so a
+    // listing with one still processing is not yet sellable.
+    expect(await money(prisma, (tx) => hasDeliverable(tx, l))).toBe(false);
+    await prisma.media.update({ where: { id: processing.id }, data: { status: 'READY' } });
     expect(await money(prisma, (tx) => hasDeliverable(tx, l))).toBe(true);
     await money(prisma, (tx) => placeBid(tx, l.id, bidder, 1000));
   });

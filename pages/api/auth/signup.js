@@ -36,6 +36,9 @@ import { CURRENT_TOS_VERSION } from '../../../lib/orders-store';
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_SIGNUPS_PER_IP = 5;
 
+// Something@domain.tld, with a 2+ letter TLD and no whitespace.
+const CREATOR_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@.]{2,}$/;
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -85,6 +88,15 @@ export default async function handler(req, res) {
   }
   if (!['fan', 'creator'].includes(role)) {
     return res.status(400).json({ error: 'Role must be fan or creator' });
+  }
+  // A creator's login is how an admin reaches an applicant (for the photo ID
+  // the §2257 record needs before approval -- pages/api/admin/creators.js),
+  // so it has to be a real, deliverable-looking address. The page's
+  // type="email" input is a courtesy; a direct POST used to create a creator
+  // with a bare username nobody could ever contact. Fans keep the username
+  // option on purpose (anonymous fan signup).
+  if (role === 'creator' && !CREATOR_EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: 'Creator accounts need a real email address so we can reach you for verification.' });
   }
   // Terms §1 has every account holder represent that they are 18+ and accept
   // the Terms. The checkbox on /signup is a courtesy; this is the control,

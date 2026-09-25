@@ -47,6 +47,9 @@ export type BridgeClaims = {
   // for a creator token, User.siteAccountStatusAt for a fan token) changes
   // nothing.
   standingAt?: number;
+  // For a 'suspended' standing: when the site's suspension lapses by itself
+  // (ms epoch). Recorded so the lift happens here too (liftLapsedSiteSuspensions).
+  suspendedUntil?: number;
   jti: string;       // single-use id; /auth/bridge burns it in Redis
   exp: number;       // ms since epoch; short-lived, this is a one-time exchange token
 };
@@ -58,6 +61,18 @@ const FAN_STATUSES = ['active', 'suspended', 'banned'];
 // further in the future is refused outright: accepted, it would sit on the
 // row as the newest standing and make every genuine later message "older".
 const STANDING_SKEW_MS = 5 * 60_000;
+
+/**
+ * `suspendedUntil` as sent by the site: kept only for a 'suspended' standing
+ * and only when it is a finite, positive ms epoch; anything else is dropped
+ * (not the whole message -- a restriction must never be refused over a bad
+ * optional field; without it the suspension simply waits for a site 'active').
+ */
+function normaliseSuspendedUntil(c: { suspendedUntil?: unknown }, status: string | null | undefined) {
+  const v = c.suspendedUntil;
+  if (status === 'suspended' && typeof v === 'number' && Number.isFinite(v) && v > 0) return;
+  delete c.suspendedUntil;
+}
 
 /** A valid standingAt: a finite ms timestamp, not after the token's own expiry, not in the future beyond skew. */
 function validStandingAt(v: unknown, exp: number) {
@@ -119,6 +134,7 @@ export function verifyBridgeToken(token: unknown): BridgeClaims | null {
   delete raw.standing;
   if (claims.standingAt !== undefined && claims.standingAt !== null && !validStandingAt(claims.standingAt, claims.exp)) return null;
   if (claims.standingAt === null) delete claims.standingAt;
+  normaliseSuspendedUntil(claims, claims.role === 'FAN' ? claims.fanStatus : claims.creatorStatus);
   return claims;
 }
 
@@ -184,7 +200,7 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
     ? (claims.fanStatus === 'banned' || claims.fanStatus === 'suspended' ? claims.fanStatus : null)
     : (claims.creatorStatus === 'banned' || claims.creatorStatus === 'suspended' ? claims.creatorStatus : null);
   if (restriction) {
-    if (user) await syncSiteStanding(user, restriction, { standingAt: at, fan });
+    if (user) await syncSiteStanding(user, restriction, { standingAt: at, fan, suspendedUntil: claims.suspendedUntil });
     return { ok: false, status: 403, error: restriction };
   }
 
@@ -340,17 +356,38 @@ export async function claimStanding(
 export async function syncSiteStanding(
   user: User,
   status: SiteCreatorStatus,
-  opts: { standingAt?: number; fan?: boolean } = {},
+  opts: { standingAt?: number; fan?: boolean; suspendedUntil?: number } = {},
 ): Promise<'banned' | 'suspended' | 'reactivated' | 'unchanged' | 'stale'> {
   if (SYSTEM_IDS.has(user.id) || user.role === 'ADMIN' || !user.siteUid) return 'unchanged';
   const fan = opts.fan ?? (user.role === 'FAN' && user.siteCreatorStatus == null && status !== 'pending');
   if (fan && status === 'pending') return 'unchanged'; // a fan is never 'pending'
   const dim: StandingDim = fan ? 'account' : 'creator';
   if (!(await claimStanding(user, opts.standingAt, status, dim))) return 'stale';
-  if (fan && user.siteAccountStatus !== status) {
-    user = await prisma.user.update({ where: { id: user.id }, data: { siteAccountStatus: status } });
-  } else if (!fan && user.siteCreatorStatus !== status) {
-    user = await prisma.user.update({ where: { id: user.id }, data: { siteCreatorStatus: status } });
+  // When this dimension's site suspension lapses by itself. Set only with a
+  // 'suspended' standing, cleared by any other: the site's suspensions end
+  // on their own (lib/creator-status.js effectiveCreatorStatus, and
+  // user-moderation's moderationUntil) and nothing on the site pushes
+  // 'active' when that happens, so without it a lapsed suspension stayed
+  // in force here for good.
+  //
+  // A 'suspended' message that carries no lapse time (the site's exchange
+  // token, outbox rows from before suspendedUntil existed, fan pushes from
+  // older site code) says nothing about WHEN the suspension ends, so while
+  // this dimension is already suspended it keeps the recorded lapse rather
+  // than erasing it -- erasing it is what would make a suspended user's
+  // next login pin the suspension here for good. It is null only for a
+  // suspension that starts with this message and names no end.
+  const prevStatus = fan ? user.siteAccountStatus : user.siteCreatorStatus;
+  const prevUntil = fan ? user.siteAccountSuspendedUntil : user.siteSuspendedUntil;
+  const until = status !== 'suspended'
+    ? null
+    : Number.isFinite(opts.suspendedUntil) && (opts.suspendedUntil as number) > 0
+      ? new Date(opts.suspendedUntil as number)
+      : prevStatus === 'suspended' ? (prevUntil ?? null) : null;
+  if (fan && (user.siteAccountStatus !== status || +(user.siteAccountSuspendedUntil ?? 0) !== +(until ?? 0))) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { siteAccountStatus: status, siteAccountSuspendedUntil: until } });
+  } else if (!fan && (user.siteCreatorStatus !== status || +(user.siteSuspendedUntil ?? 0) !== +(until ?? 0))) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { siteCreatorStatus: status, siteSuspendedUntil: until } });
   }
   if (status === 'banned') {
     if (user.status === 'BANNED') return 'unchanged';
@@ -369,12 +406,74 @@ export async function syncSiteStanding(
   return 'unchanged';
 }
 
+/**
+ * Lifts site suspensions whose `suspendedUntil` has passed. Run on a timer
+ * (workers/renewals.ts, every tick). For each lapsed dimension the recorded
+ * site standing becomes 'active' -- which is what the site itself now says --
+ * and that dimension's stamp is advanced 1ms past the suspension's own, so a
+ * delayed copy of that suspension is stale and cannot reinstate it, while a
+ * later decision (a ban delivered late) still applies. The account is reactivated only when the suspension
+ * was the site's (statusBySite) and neither dimension still restricts it --
+ * never an admin's suspension, never a ban. Guarded on the exact values read,
+ * so a newer message landing in between wins.
+ */
+export async function liftLapsedSiteSuspensions(now = new Date()): Promise<number> {
+  const rows = await prisma.user.findMany({
+    where: { OR: [{ siteSuspendedUntil: { lte: now } }, { siteAccountSuspendedUntil: { lte: now } }] },
+    take: 500,
+  });
+  let lifted = 0;
+  for (const u of rows) {
+    const data: Prisma.UserUpdateInput = {};
+    let creatorStatus = u.siteCreatorStatus;
+    let accountStatus = u.siteAccountStatus;
+    // The stamp moves only 1ms past the message that applied the suspension
+    // (the latest applied in that dimension), NOT to the lapse time: that
+    // makes a delayed copy of that same suspension stale, while anything the
+    // site decided after it -- a ban issued mid-suspension and delivered
+    // late, say -- still applies. An unstamped suspension leaves the stamp
+    // null; a delayed unstamped copy would apply whatever the stamp said.
+    const justAfter = (d: Date) => new Date(d.getTime() + 1);
+    if (u.siteSuspendedUntil && u.siteSuspendedUntil <= now) {
+      data.siteSuspendedUntil = null;
+      if (u.siteCreatorStatus === 'suspended') {
+        data.siteCreatorStatus = creatorStatus = 'active';
+        if (u.siteStatusAt) data.siteStatusAt = justAfter(u.siteStatusAt);
+      }
+    }
+    if (u.siteAccountSuspendedUntil && u.siteAccountSuspendedUntil <= now) {
+      data.siteAccountSuspendedUntil = null;
+      if (u.siteAccountStatus === 'suspended') {
+        data.siteAccountStatus = accountStatus = 'active';
+        if (u.siteAccountStatusAt) data.siteAccountStatusAt = justAfter(u.siteAccountStatusAt);
+      }
+    }
+    const claimed = await prisma.user.updateMany({
+      where: {
+        id: u.id, siteCreatorStatus: u.siteCreatorStatus, siteAccountStatus: u.siteAccountStatus,
+        siteSuspendedUntil: u.siteSuspendedUntil, siteAccountSuspendedUntil: u.siteAccountSuspendedUntil,
+        siteStatusAt: u.siteStatusAt, siteAccountStatusAt: u.siteAccountStatusAt,
+      },
+      data: data as Prisma.UserUpdateManyMutationInput,
+    });
+    if (!claimed.count) continue;
+    if (u.status === 'SUSPENDED' && u.statusBySite && !RESTRICTIVE.has(creatorStatus ?? '') && !RESTRICTIVE.has(accountStatus ?? '')) {
+      await applyUserStatus(u.id, 'ACTIVE', { bySite: true });
+      lifted++;
+    }
+  }
+  return lifted;
+}
+
 export type BridgeStatusClaims = {
   typ: 'bridge_status'; uid: string; creatorStatus: SiteCreatorStatus; jti: string; exp: number;
   // Optional: when the site decided this standing (ms epoch), and whose
   // standing it is. Both absent from older site code.
   standingAt?: number;
   role?: 'FAN' | 'CREATOR';
+  // Optional, 'suspended' only: when that suspension lapses on the site (ms
+  // epoch). See syncSiteStanding and liftLapsedSiteSuspensions.
+  suspendedUntil?: number;
 };
 
 /**
@@ -408,6 +507,7 @@ export function verifyBridgeStatusToken(token: unknown): BridgeStatusClaims | nu
   if (c.role === 'FAN' && c.creatorStatus === 'pending') return null;
   if (c.standingAt !== undefined && c.standingAt !== null && !validStandingAt(c.standingAt, c.exp)) return null;
   if (c.standingAt === null) delete c.standingAt;
+  normaliseSuspendedUntil(c, c.creatorStatus);
   return c;
 }
 

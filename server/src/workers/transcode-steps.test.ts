@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
-import { hlsArgs, sanitizeImage, previewArgs } from './transcode-steps.js';
+import { hlsArgs, sanitizeImage, previewArgs, previewSeekSeconds } from './transcode-steps.js';
 
 describe('hlsArgs', () => {
   it('maps audio only when the source has it', () => {
@@ -43,5 +43,18 @@ describe('previewArgs', () => {
       expect(a[a.length - 1]).toBe('/p.jpg');
     }
     expect(previewArgs('/s', '/p.jpg', { seekSeconds: 1 }).slice(0, 3)).toEqual(['-y', '-ss', '00:00:01']);
+  });
+});
+
+describe('previewSeekSeconds', () => {
+  it('never seeks past the end of a clip shorter than a second', () => {
+    expect(previewSeekSeconds(0.6)).toBeCloseTo(0.3);
+    expect(previewArgs('/s', '/p.jpg', { seekSeconds: previewSeekSeconds(0.6) }).slice(0, 3)).toEqual(['-y', '-ss', '0.300']);
+  });
+  it('seeks 1s into a normal clip, and not at all when the duration is unknown', () => {
+    expect(previewSeekSeconds(30)).toBe(1);
+    expect(previewSeekSeconds(Number.NaN)).toBe(0);
+    expect(previewSeekSeconds(0)).toBe(0);
+    expect(previewArgs('/s', '/p.jpg', { seekSeconds: previewSeekSeconds(Number.NaN) })).not.toContain('-ss');
   });
 });

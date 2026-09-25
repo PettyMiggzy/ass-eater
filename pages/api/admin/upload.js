@@ -1,7 +1,7 @@
 import { addGalleryItem, getCreatorById, GALLERY_CAP_EXCEEDED } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
-import { PREMIUM_GALLERY_SLOTS, mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
+import { PREMIUM_GALLERY_SLOTS, mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
 
 /**
  * POST /api/admin/upload -- admin finalize of a gallery upload for a creator.
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
   try {
     const existing = await getCreatorById(String(creatorId));
     if (!existing) {
-      await deleteBlobQuietly(pathname);
+      await deleteUnfinalizedUpload(pathname);
       return res.status(404).json({ error: 'Creator not found' });
     }
     const attested = await resolvePerformerAttestation(req.body, { admin: true, creatorId: String(creatorId) });
@@ -52,7 +52,7 @@ export default async function handler(req, res) {
       creator = await addGalleryItem(String(creatorId), item, undefined, PREMIUM_GALLERY_SLOTS);
     } catch (err) {
       if (err.code === GALLERY_CAP_EXCEEDED) {
-        await deleteBlobQuietly(pathname);
+        await deleteUnfinalizedUpload(pathname);
         return res.status(403).json({ error: `All ${PREMIUM_GALLERY_SLOTS} content slots are in use.` });
       }
       throw err;

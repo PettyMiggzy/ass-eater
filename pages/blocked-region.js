@@ -47,7 +47,7 @@ export default function BlockedRegion() {
         <meta name="robots" content="noindex" />
       </Head>
 
-      <div className="min-h-screen bg-gradient-luxury text-white flex items-center justify-center px-6">
+      <div className="min-h-screen bg-gradient-luxury text-white flex flex-col items-center justify-center px-6 py-10">
         <div className="max-w-md w-full premium-card p-8 text-center">
           <Lockup className="h-12 justify-center mb-6" />
           <h1 className="text-2xl font-black premium-title mb-3">Verify Your Age to Continue</h1>
@@ -76,6 +76,25 @@ export default function BlockedRegion() {
             />
           </div>
         </div>
+        {/* The TAKE IT DOWN Act requires the removal process be clear and
+            conspicuous; a victim sent a link to a gated creator page from a
+            blocked state lands HERE, so the no-account report form (and the
+            legal pages) must be reachable without verifying first. All four
+            paths are exempt from the geoblock, the preview gate and the 18+
+            notice. */}
+        <footer className="mt-6 max-w-md w-full text-center">
+          <a href="/report-content" className="inline-block text-sm text-red-400 hover:text-red-300 transition font-semibold mb-3">
+            Report Non-Consensual Content
+          </a>
+          <p className="text-[11px] text-gray-500 mb-3">
+            You appear in content here without your consent? Report it — no account or ID needed.
+          </p>
+          <div className="flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-600">
+            <a href="/terms" className="hover:text-brand-pink transition">Terms</a>
+            <a href="/privacy" className="hover:text-brand-pink transition">Privacy</a>
+            <a href="/2257" className="hover:text-brand-pink transition">18 U.S.C. §2257</a>
+          </div>
+        </footer>
       </div>
     </>
   );

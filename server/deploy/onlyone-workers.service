@@ -5,11 +5,17 @@ Wants=postgresql.service redis-server.service
 
 [Service]
 Type=simple
-User=onlyone
+# Its own user, not the API's: the API process (uid onlyone) must not be
+# able to read this process's environment -- it holds the treasury key --
+# through /proc/<pid>/environ. In the onlyone group so it can read the build.
+# Created by deploy/app-setup.sh.
+User=onlyone-workers
+Group=onlyone
 WorkingDirectory=/opt/onlyone/server
 EnvironmentFile=/opt/onlyone/server/.env
 # Signing secrets (TREASURY_PRIVATE_KEY, DEPOSIT_MNEMONIC). Workers only --
-# the API unit deliberately does not load this file. Leading '-': optional,
+# the API unit deliberately does not load this file. Owned root:root, mode
+# 600: systemd reads it as root, no app user can. Leading '-': optional,
 # so a box that has not split its secrets out yet still starts.
 EnvironmentFile=-/opt/onlyone/server/.env.workers
 ExecStart=/usr/bin/node dist/workers/index.js

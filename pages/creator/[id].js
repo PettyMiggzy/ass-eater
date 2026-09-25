@@ -59,7 +59,7 @@ export async function getServerSideProps({ req, params }) {
     // record, before toPublicListing strips the srcs it looks at.
     .filter((l) => String(l.creatorId) === String(creator?.id) && l.status === 'active' && listingHasDeliverable(l))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .map((l) => ({ ...toPublicListing(l), demo: isDemoListing(l, creator) }));
+    .map((l) => ({ ...toPublicListing(l, creator), demo: isDemoListing(l, creator) }));
 
   // Wall comments in their public shape: `mine` instead of every
   // commenter's account id. Only the newest page is server-rendered; the
@@ -371,12 +371,13 @@ export default function CreatorProfile({
 
           {/* Cover. Only ever the creator's public avatar or a video the
               viewer is allowed to see (a gated creator's video is not sent
-              until unlocked), through ProtectedMedia like every other tile. */}
+              until unlocked), through ProtectedMedia like every other tile,
+              carrying the same viewer mark the page says its content carries. */}
           <div className="relative mt-4 h-52 sm:h-64 md:h-72 rounded-2xl overflow-hidden bg-white/5">
             {!locked && creator.video ? (
-              <ProtectedMedia src={creator.video} type="video" autoPlay className="w-full h-full object-cover blur-sm scale-105" />
+              <ProtectedMedia src={creator.video} type="video" autoPlay mark={overlayMark} className="w-full h-full object-cover blur-sm scale-105" />
             ) : creator.img ? (
-              <ProtectedMedia src={creator.img} type="image" className="w-full h-full object-cover blur-sm scale-105" />
+              <ProtectedMedia src={creator.img} type="image" mark={overlayMark} className="w-full h-full object-cover blur-sm scale-105" />
             ) : null}
             {/* Darkest at the bottom, where the identity row overlaps the
                 cover, and again at top-right so the tagline stays readable

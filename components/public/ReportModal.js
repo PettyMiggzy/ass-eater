@@ -23,7 +23,20 @@ export const REPORT_CATEGORY_OPTIONS = [
  * `onSubmit({ reason, category })` must resolve on success and throw an
  * Error whose message is safe to show on failure.
  */
-export default function ReportModal({ title, subject = 'this', onSubmit, onClose }) {
+/**
+ * `takedownContent` (optional): a short description of what is being reported
+ * (e.g. the listing), prefilled into the takedown form's "where is the
+ * content" field when the reporter follows the link from here.
+ */
+export function takedownFormHref({ category, content } = {}) {
+  const params = new URLSearchParams();
+  if (category) params.set('category', category);
+  if (content) params.set('content', String(content).slice(0, 1000));
+  const q = params.toString();
+  return q ? `/report-content?${q}` : '/report-content';
+}
+
+export default function ReportModal({ title, subject = 'this', onSubmit, onClose, takedownContent }) {
   const [reason, setReason] = useState('');
   const [category, setCategory] = useState('other');
   const [sending, setSending] = useState(false);
@@ -86,10 +99,21 @@ export default function ReportModal({ title, subject = 'this', onSubmit, onClose
           className="w-full px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm resize-none"
         />
         <p className="text-[11px] text-gray-500 text-right mb-2">{reason.length}/{REPORT_REASON_MAX}</p>
+        {/* Suspected underage content can be reported by anyone, not only the
+            person shown, so that choice gets third-party wording and a link
+            straight to the takedown form's under-18 category. */}
         <p className="text-[11px] text-gray-500 mb-4 leading-relaxed">
-          {serious ? 'If this is you, or intimate content of you shared without consent, ' : 'Reporting intimate content of you shared without consent? '}
-          use the{' '}
-          <a href="/report-content" target="_blank" rel="noreferrer" className="text-brand-pink underline">
+          {category === 'minor'
+            ? 'Anyone can report suspected underage content through the '
+            : category === 'non_consensual'
+              ? 'If this is you, or intimate content of someone shared without consent, you can also use the '
+              : 'Reporting intimate content of you shared without consent? Use the '}
+          <a
+            href={takedownFormHref({ category: category === 'minor' ? 'minor' : undefined, content: takedownContent })}
+            target="_blank"
+            rel="noreferrer"
+            className="text-brand-pink underline"
+          >
             takedown request form
           </a>{' '}
           — it starts a 48-hour removal clock and needs no account.
@@ -128,7 +152,7 @@ export async function postReport(url, body) {
   let data = {};
   try { data = await res.json(); } catch { /* non-JSON */ }
   if (!res.ok) {
-    if (res.status === 401) throw new Error('Log in to report this.');
+    if (res.status === 401) throw new Error('Log in to report this -- or use the takedown request form, which needs no account.');
     throw new Error((typeof data?.error === 'string' && data.error) || 'Could not send the report. Please try again.');
   }
   return data;

@@ -28,6 +28,7 @@ import {
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
 import { performerRecordStatusForCreator } from '../../../lib/performer-records-store';
 import { getAddress } from 'viem';
+import { parseCategoriesInput } from '../../../lib/categories';
 import { pushCreatorStatus, reportPushFailure } from '../../../lib/server-api';
 
 const FIELD_LABELS = {
@@ -156,6 +157,13 @@ export default async function handler(req, res) {
 
   if ('socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
   if ('tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
+  // Browse categories: known keys only (lib/categories.js). The panel sends
+  // an array; a comma-separated string is accepted too.
+  if ('categories' in fields) {
+    const { value, error } = parseCategoriesInput(fields.categories);
+    if (error) return res.status(400).json({ error: `Nothing was saved -- ${error}` });
+    safeFields.categories = value;
+  }
   if ('gateTokens' in fields) safeFields.gateTokens = sanitizeGateTokens(fields.gateTokens);
   // A gate over media served as public files (every seed/demo creator's
   // /images/...) would lock nothing: refused rather than shown as padlocks
@@ -341,6 +349,11 @@ export default async function handler(req, res) {
     safeFields.founding = false;
     safeFields.foundingSince = null;
     if (isFoundingCreator(existing)) safeFields.foundingRevokedAt = new Date().toISOString();
+    // A permanent marker that this creator was once banned by hand. It only
+    // ever gets set (never cleared), so a later banned -> pending -> active
+    // reinstatement is not mistaken for a first approval by the Founding
+    // auto-grant below. The first ban's time is kept.
+    if (!existing.bannedAt) safeFields.bannedAt = new Date().toISOString();
   } else if ('founding' in safeFields) {
     if (safeFields.founding) {
       safeFields.founding = true;
@@ -379,11 +392,20 @@ export default async function handler(req, res) {
   // badge has to untick it on a second save (which then records the
   // revocation). Recoverable, and the opposite default (never auto-grant)
   // fails silently instead.
+  //
+  // Also never for a creator who was ever live or ever banned: `approvedAt`
+  // is stamped on the first approval and `bannedAt` on a manual ban, and
+  // neither is ever cleared. A hand ban never touched contentViolationCount
+  // and set foundingRevokedAt only for creators who already held the badge,
+  // so banned -> pending -> active used to read as a fresh approval and
+  // hand a reinstated creator the programme. Hand grants stay possible.
   if (
     approving &&
     !isFoundingCreator(existing) &&
     !safeFields.founding &&
     !existing.foundingRevokedAt &&
+    !existing.approvedAt &&
+    !existing.bannedAt &&
     !(Number(existing.contentViolationCount) > 0)
   ) {
     if (profileQualifiesForFounding({ ...existing, ...safeFields })) {
@@ -403,10 +425,39 @@ export default async function handler(req, res) {
     previousStatus !== 'active' &&
     isFoundingCreator(existing) &&
     safeFields.founding !== false &&
-    (approving || !existing.foundingSince)
+    (approving || !existing.foundingSince || Date.parse(existing.foundingSince) > Date.now())
   ) {
     safeFields.foundingSince = new Date().toISOString();
   }
+
+  // A founding creator whose window has no start yet, or a start still in the
+  // future (a grant made while they were suspended, below), is restamped on
+  // ANY save once they are active: a lapsed suspension has no event of its
+  // own, and the panel only posts status when it changes, so the rule above
+  // never fired for them and feeWaiverStartsAt() stayed null forever -- the
+  // perk read "pending" indefinitely while every sale paid the full fee.
+  // A grant to a creator who will still be SUSPENDED after this save starts
+  // the window the moment the suspension ends (suspendedUntil): that is when
+  // they can first earn, and it needs no later save to happen.
+  const foundingAfter = 'founding' in safeFields ? safeFields.founding === true : isFoundingCreator(existing);
+  if (foundingAfter && safeFields.status !== 'banned') {
+    const stamp = 'foundingSince' in safeFields ? safeFields.foundingSince : existing.foundingSince;
+    const stampMs = Date.parse(stamp || '');
+    const unstarted = Number.isNaN(stampMs) || stampMs > Date.now();
+    if (unstarted && willBeActive) {
+      safeFields.foundingSince = new Date().toISOString();
+    } else if (unstarted && resultingStatus === 'suspended' && Date.parse(merged.suspendedUntil || '') > Date.now()) {
+      safeFields.foundingSince = new Date(Date.parse(merged.suspendedUntil)).toISOString();
+    }
+  }
+
+  // The first approval is remembered for good (see the auto-grant above), and
+  // so is a ban -- including on records that were already live or already
+  // banned before these markers existed, the first time an admin saves them.
+  if (!existing.approvedAt && (approving || previousStatus === 'active' || existing.status === 'active')) {
+    safeFields.approvedAt = new Date().toISOString();
+  }
+  if (!existing.bannedAt && existing.status === 'banned') safeFields.bannedAt = new Date().toISOString();
 
   // The avatar goes through setCreatorAvatar (after the rest is saved), which
   // locks the row and deletes the file it replaced. Writing img here through

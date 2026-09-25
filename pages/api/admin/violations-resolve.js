@@ -9,14 +9,17 @@ export default async function handler(req, res) {
   if (!requireAdminKey(req, res)) return;
 
   const { id, action } = req.body || {};
-  if (!id || !['dismiss', 'confirmed'].includes(action)) {
+  if (!/^[1-9]\d{0,17}$/.test(String(id ?? '')) || !['dismiss', 'confirmed'].includes(action)) {
     return res.status(400).json({ error: 'Missing violation id or invalid action (dismiss | confirmed)' });
   }
 
   try {
-    const updated = await updateViolationStatus(id, action, 'admin');
+    const updated = await updateViolationStatus(String(id), action, 'admin');
+    // Someone else resolved it first: the first decision stands.
+    if (!updated) return res.status(409).json({ code: 'already_resolved', error: 'This violation was already resolved. Reload the queue.' });
     return res.status(200).json({ ok: true, violation: updated });
   } catch (err) {
+    if (err.message === 'Violation not found') return res.status(404).json({ error: 'Violation not found' });
     console.error('[admin/violations-resolve] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

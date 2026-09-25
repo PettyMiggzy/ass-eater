@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Head from 'next/head';
 
 // Mirrors NCII_FIELD_LIMITS in lib/ncii-reports-store.js (not imported: that
@@ -35,6 +35,23 @@ export default function ReportContent() {
   const [error, setError] = useState('');
   const [errorField, setErrorField] = useState('');
   const [done, setDone] = useState(false);
+
+  // Links from a report button elsewhere on the site can prefill the form:
+  // ?category=<self|third_party|minor> and ?content=<what is being reported>.
+  // Read after mount (the page has no server props), only into empty fields,
+  // and only a known category -- nothing here is trusted beyond being text
+  // the reporter can still edit before sending.
+  useEffect(() => {
+    let params;
+    try { params = new URLSearchParams(window.location.search); } catch { return; }
+    const category = params.get('category');
+    const content = params.get('content');
+    setForm((f) => ({
+      ...f,
+      category: !f.category && CATEGORY_OPTIONS.some((o) => o.value === category) ? category : f.category,
+      contentLocation: !f.contentLocation && content ? content.slice(0, LIMITS.contentLocation) : f.contentLocation,
+    }));
+  }, []);
 
   const selfReport = form.category === 'self';
   const minorReport = form.category === 'minor';

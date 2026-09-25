@@ -7,6 +7,7 @@ import { PERIOD_MS } from '../modules/subscriptions.js';
 import { registerWorker } from './process-guards.js';
 import { CREATOR_STANDING_SELECT } from '../core/creator-standing.js';
 import { renewalShouldExpire } from '../core/renewal-policy.js';
+import { liftLapsedSiteSuspensions } from '../lib/bridge.js';
 
 await renewalQueue.add('tick', {}, { repeat: { every: 5 * 60_000 }, jobId: 'renewals-tick', removeOnComplete: true });
 
@@ -30,6 +31,10 @@ registerWorker(new Worker('renewals', async () => {
   const held = randomUUID();
   if (!(await redis.set(TICK_LOCK, held, 'PX', TICK_LOCK_MS, 'NX'))) return;
   try {
+    // Site suspensions that have lapsed by themselves are lifted first, so a
+    // creator whose 30-day suspension just ended is payable again in this
+    // same tick (lib/bridge.ts). Its own failure must not stop renewals.
+    try { await liftLapsedSiteSuspensions(); } catch (e) { console.error('renewals: lifting lapsed site suspensions failed', e); }
     // Which due rows are expired rather than charged: core/renewal-policy.ts
     // (creator must still be payable -- not suspended/banned AND approved --
     // and the FAN must be ACTIVE, since a suspended/banned fan cannot reach

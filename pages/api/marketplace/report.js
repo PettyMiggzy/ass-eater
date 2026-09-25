@@ -1,6 +1,6 @@
 import { getSessionUser } from '../../../lib/session';
 import { userWriteRestriction } from '../../../lib/user-moderation';
-import { addReport, normalizeTargetId, validateReportInput } from '../../../lib/reports-store';
+import { addReport, normalizeTargetId, validateReportInput, snapshotListing, reporterView } from '../../../lib/reports-store';
 import { sendReportAlert } from '../../../lib/alerts';
 import { query } from '../../../lib/db';
 import { consumeAttempt } from '../../../lib/rate-limit';
@@ -45,19 +45,28 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { rows } = await query('select 1 from listings where id = $1', [listingId]);
+    const { rows } = await query('select data from listings where id = $1', [listingId]);
     if (!rows.length) return res.status(404).json({ error: 'Listing not found' });
+    // The listing's text and the srcs of every file are copied onto the
+    // report now. A POSSIBLE MINOR report also puts those files on HOLD in the
+    // same transaction (lib/media-preservation.js): the seller can no longer
+    // delete them before an admin looks -- 18 U.S.C. 2258A needs them kept if
+    // the report is confirmed. A hold does not take the listing down (an
+    // unverified report must not be a one-click takedown); reports-resolve
+    // turns it into a preservation on removal and releases it on dismissal.
+    const reportedContent = snapshotListing(rows[0].data);
     const report = await addReport({
       targetType: 'listing',
       targetId: listingId,
       reporterId: uid,
       reason: input.reason,
       category: input.category,
-    });
+      reportedContent,
+    }, { holdMedia: input.category === 'minor' ? reportedContent.media.map((m) => m.src) : null });
     // A possible-minor or non-consensual report alerts the operator (no PII,
     // never blocks the filing) -- the same channel as a takedown request.
     await sendReportAlert(report);
-    return res.status(200).json({ ok: true, report });
+    return res.status(200).json({ ok: true, report: reporterView(report) });
   } catch (err) {
     console.error('[marketplace/report] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });

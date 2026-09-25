@@ -119,7 +119,7 @@ export const admin: FastifyPluginAsync = async (app) => {
   });
 
   // The takedown itself (see the comment on DELETE /media/:id below); shared with
-  // /reports/:id/resolve, which takes down a reported message's or
+  // /reports/:id/resolve, which takes down a reported post's, message's or
   // listing's media the same way.
   const takedownMedia = async (mediaId: string, log: { error: (o: unknown, m?: string) => void }) => {
     const target = await prisma.media.findUniqueOrThrow({ where: { id: mediaId } });
@@ -190,14 +190,23 @@ export const admin: FastifyPluginAsync = async (app) => {
         // Content comes down for every action but dismiss -- a suspension or
         // ban over a report is not a reason to leave the reported item up.
         if (r.targetType === 'post') {
+          // Flagging the post removed only hid it: its media stayed READY, so
+          // the raw upload, HLS and preview stayed in storage and at the CDN
+          // edge, and GET /media/:id/url handed out the preview URL to anyone
+          // holding the id. Taken down like the message and listing branches.
           await prisma.post.update({ where: { id: r.targetId }, data: { removed: true } });
+          const media = await prisma.media.findMany({ where: { postId: r.targetId }, select: { id: true } });
+          for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
         } else if (r.targetType === 'message') {
           // The message's media is taken down like any NCII takedown (storage,
           // copies, CDN), and its text blanked -- a message has no "removed"
-          // flag, and its text is paid content in its own right.
+          // flag, and its text is paid content in its own right. Its price
+          // goes too: there is nothing left to sell (unlockMessage also
+          // refuses an empty or taken-down message, which covers the other
+          // broadcast copies of taken-down media).
           const media = await prisma.media.findMany({ where: { messageId: r.targetId }, select: { id: true } });
           for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
-          await prisma.message.update({ where: { id: r.targetId }, data: { text: '' } });
+          await prisma.message.update({ where: { id: r.targetId }, data: { text: '', priceCents: 0 } });
         } else if (r.targetType === 'listing') {
           const l = await prisma.listing.findUniqueOrThrow({ where: { id: r.targetId }, select: { saleType: true, status: true } });
           // A live auction is cancelled with the leader's hold returned; a
@@ -207,6 +216,16 @@ export const admin: FastifyPluginAsync = async (app) => {
           else await prisma.listing.updateMany({ where: { id: r.targetId, status: 'ACTIVE' }, data: { status: 'REMOVED' } });
           const media = await prisma.media.findMany({ where: { listingId: r.targetId }, select: { id: true } });
           for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
+          // Its free preview photos too: past buyers can still open the
+          // listing page (GET /marketplace/listings/:id), which returns them.
+          // Cleared and purged from the edge; the objects themselves belong
+          // to the creator's media rows (marketplace.ts validListingImages
+          // only accepts their own transcode output), not to this listing.
+          const imgs = await prisma.listing.findUnique({ where: { id: r.targetId }, select: { images: true } });
+          await prisma.listing.update({ where: { id: r.targetId }, data: { images: [] } });
+          for (const u of imgs?.images ?? []) {
+            try { await purgeCdnPrefix(new URL(u).pathname); } catch { /* not a URL: nothing cached under it */ }
+          }
         }
         if (action !== 'remove_content') await setStatus(owner!, action === 'ban_user' ? 'BANNED' : 'SUSPENDED');
       }

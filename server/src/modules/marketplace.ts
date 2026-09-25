@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { money, lockBalance, post, InsufficientFunds, isVip, postPlatformRevenue } from '../core/ledger.js';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION, PHYSICAL_SALES_ENABLED } from '../core/marketplace-fees.js';
-import { placeBid, cancelAuction, statusCode, hasDeliverable } from '../core/auctions.js';
+import { placeBid, cancelAuction, statusCode, hasDeliverable, deliverableWhere } from '../core/auctions.js';
+import type { Tx } from '../core/ledger.js';
 import { OPERATING_CREATOR_USER_WHERE, creatorMayBePaidById } from '../core/creator-standing.js';
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
@@ -75,10 +76,50 @@ const activeSeller = { creator: { user: OPERATING_CREATOR_USER_WHERE } };
 
 /**
  * A DIGITAL listing's product IS its media (core/access.ts canViewListing),
- * so it is listed only once at least one attached item is READY. Physical
- * items ship; their media is optional.
+ * so it is listed only once it has media and every attached item is READY
+ * (core/auctions.ts hasDeliverable, the rule checked again at purchase).
+ * Physical items ship; their media is optional.
  */
-const deliverable = { OR: [{ kind: 'PHYSICAL' as const }, { media: { some: { status: 'READY' as const } } }] };
+const deliverable = deliverableWhere;
+
+/** Longest accepted listing preview-image URL. */
+const MAX_IMAGE_URL = 500;
+
+/**
+ * `images` are free public preview photos, served to signed-out browsers by
+ * GET /listings. They used to be any strings at all: a third-party tracking
+ * pixel (leaking every browser's IP), a javascript:/data: URL, or a single
+ * ~1 MB string inflating every list response -- all outside the upload
+ * pipeline and out of reach of a takedown. Each entry must now be an https
+ * URL on the platform's own CDN host, under the creator's OWN transcode
+ * output (media/<creatorId>/...), so one creator cannot show another's
+ * files. With no CDN configured there is nothing valid to point at, so only
+ * an empty list is accepted.
+ */
+export function validListingImages(images: string[], creatorId: string): boolean {
+  const host = process.env.BUNNY_CDN_HOST;
+  return images.every((raw) => {
+    if (typeof raw !== 'string' || raw.length > MAX_IMAGE_URL || !host) return false;
+    let u: URL;
+    try { u = new URL(raw); } catch { return false; }
+    return u.protocol === 'https:' && u.host === host && !u.username && !u.password &&
+      u.pathname.startsWith(`/media/${creatorId}/`) && !u.pathname.includes('..');
+  });
+}
+
+/**
+ * One-of-a-kind means nobody else has it. A mass DM (POST /messages/broadcast)
+ * never attaches its source media -- it fans out COPIES pointing back at it
+ * (sourceMediaId) -- so an "unattached original" may already be sitting in
+ * every subscriber's inbox. Such media cannot become a 1-of-1 DIGITAL
+ * listing's product (auctions included): the buyer would pay for exclusivity
+ * the platform had already broken.
+ */
+export async function assertNotDistributed(tx: Tx, mediaIds: string[]) {
+  if (!mediaIds.length) return;
+  const copies = await tx.media.count({ where: { sourceMediaId: { in: mediaIds } } });
+  if (copies > 0) throw statusCode('media_already_distributed', 400);
+}
 
 async function optionalViewer(req: any): Promise<string | null> {
   try { await req.jwtVerify(); return req.user.id; } catch { return null; }
@@ -126,12 +167,14 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     // could only ever be sold as nothing.
     if (fields.kind === 'DIGITAL' && !mediaIds.length) throw Object.assign(new Error('digital_listing_needs_media'), { statusCode: 400 });
     if (new Set(mediaIds).size !== mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+    if (!validListingImages(fields.images, req.user.id)) throw statusCode('bad_images', 400);
     return prisma.$transaction(async (tx) => {
+      if (fields.kind === 'DIGITAL' && !fields.unlimited) await assertNotDistributed(tx, mediaIds);
       const l = await tx.listing.create({ data: { creatorId: req.user.id, ...fields } });
       if (mediaIds.length) {
         // Unattached originals that can still become viewable (still
         // uploading/processing is fine -- the listing is not listed or
-        // sellable until one is READY). Never a broadcast copy.
+        // sellable until every item is READY). Never a broadcast copy.
         const r = await tx.media.updateMany({ where: { id: { in: mediaIds }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: { not: 'REJECTED' } }, data: { listingId: l.id } });
         if (r.count !== mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
@@ -149,10 +192,20 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     }).parse(req.body);
     if (b.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
     if (b.kind === 'PHYSICAL') b.unlimited = false;
+    if (b.images && !validListingImages(b.images, req.user.id)) throw statusCode('bad_images', 400);
 
     const r = await money(prisma, async (tx) => {
       const l = await tx.listing.findFirst({ where: { id: req.params.id, creatorId: req.user.id, status: { not: 'SOLD' } } });
       if (!l) return null;
+      // Turning an unlimited listing into a one-of-a-kind (or a physical
+      // one into digital) is the other way in to selling already-broadcast
+      // media as exclusive -- same check as at creation.
+      const nextKind = b.kind ?? l.kind;
+      const nextUnlimited = b.unlimited ?? l.unlimited;
+      if (nextKind === 'DIGITAL' && !nextUnlimited && (l.unlimited || l.kind !== 'DIGITAL')) {
+        const media = await tx.media.findMany({ where: { listingId: l.id }, select: { id: true } });
+        await assertNotDistributed(tx, media.map((m) => m.id));
+      }
       if (l.saleType === 'AUCTION') {
         // The money terms of an auction are fixed once anyone has bid: the
         // leader's hold was sized from them (bid + shipping), and letting
@@ -225,10 +278,10 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         ...(viewerId
           ? { OR: [
             { creatorId: viewerId },
-            { AND: [vip, activeSeller] },
+            { AND: [vip, activeSeller, deliverable] },
             { AND: [{ creator: { user: { status: 'ACTIVE' as const } } }, { orders: { some: { buyerId: viewerId } } }] },
           ] }
-          : { AND: [vip, activeSeller] }),
+          : { AND: [vip, activeSeller, deliverable] }),
       },
       select: { ...LISTING_SELECT, media: { select: { id: true, mime: true, previewKey: true } } },
     });

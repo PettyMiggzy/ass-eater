@@ -3,13 +3,15 @@ import { requireAdminKey } from '../../../lib/admin-auth';
 import { validateTextFields, normalizeHandle, isAllowedAvatarSrc } from '../../../lib/field-validation';
 import { screenPublicText, publicProfileTextEntries } from '../../../lib/prohibited-terms';
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
+import { parseCategoriesInput } from '../../../lib/categories';
 
 // The only fields "+ Add Model" may set. Everything else -- founding,
 // foundingSince, status, seed, contentViolationCount, id -- is the
 // platform's to decide: spreading the body straight into the record let a
 // caller skip the 100-slot Founding cap and the "window cannot be set by
 // hand" rule that pages/api/admin/profile.js enforces, publish a model with
-// no review, or mark a real one as seed data.
+// no review, or mark a real one as seed data. `categories` is accepted too,
+// but parsed separately below (a list of keys, not text).
 const CREATE_FIELDS = ['name', 'handle', 'bio', 'price', 'img'];
 
 export default async function handler(req, res) {
@@ -46,6 +48,13 @@ export default async function handler(req, res) {
   const { handle, error: handleError } = normalizeHandle(profile.handle ?? '', { allowBlank: true });
   if (handleError) return res.status(400).json({ error: handleError });
   profile.handle = handle;
+
+  // Browse categories (lib/categories.js): known keys only, at most three.
+  if ('categories' in body) {
+    const { value, error } = parseCategoriesInput(body.categories);
+    if (error) return res.status(400).json({ error: `Nothing was created -- ${error}` });
+    profile.categories = value;
+  }
 
   // No id exists yet, so only a site image is acceptable; an uploaded avatar
   // is set afterwards through the avatar upload.

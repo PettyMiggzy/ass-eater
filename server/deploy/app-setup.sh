@@ -7,6 +7,11 @@
 set -euo pipefail
 
 APP_USER="onlyone"
+# The workers (which hold the treasury key and deposit mnemonic) run as their
+# own system user, in APP_USER's group so they can read the build. The
+# internet-facing API runs as APP_USER and so can read neither .env.workers
+# (root-owned, below) nor the workers' /proc/<pid>/environ.
+WORKERS_USER="onlyone-workers"
 APP_DIR="${APP_DIR:-/opt/onlyone/server}"
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
@@ -52,7 +57,15 @@ chmod 600 "$APP_DIR/.env"
 # Signing secrets live ONLY in .env.workers, which only onlyone-workers
 # loads: the internet-facing API process never needs the treasury key or the
 # deposit mnemonic (it derives deposit addresses from DEPOSIT_XPUB).
+#
+# .env.workers is owned by ROOT, not the app user. The recursive chown above
+# used to hand it to APP_USER -- the same user the API runs as -- so any
+# file-read bug in the API (or a dependency) reached the treasury key
+# directly, defeating the split. systemd reads EnvironmentFile= as root, so
+# the workers unit still gets it; nothing else needs to open the file.
+id -u "$WORKERS_USER" &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin -g "$APP_USER" "$WORKERS_USER"
 if [[ -f "$APP_DIR/.env.workers" ]]; then
+  chown root:root "$APP_DIR/.env.workers"
   chmod 600 "$APP_DIR/.env.workers"
 fi
 if grep -Eq '^(TREASURY_PRIVATE_KEY|DEPOSIT_MNEMONIC)=.+' "$APP_DIR/.env"; then

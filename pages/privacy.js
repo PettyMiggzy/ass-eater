@@ -240,14 +240,18 @@ export default function Privacy() {
 
             <Section title="7. Data Retention & Deletion">
               <p>
-                You can request deletion of your account and associated off-chain data at any time by emailing
-                team@onlyone1.fun from the address (or with the username) on the account. For a fan account we
-                delete the login, your wall comments, the messages you sent, your favorites and your
-                notifications, and sign you out everywhere. A creator account is deleted together with its
-                profile and uploaded content, and its listings are taken down (a file a buyer already paid for
-                stays available to that buyer). Any credit balance left on a deleted account is forfeited
-                — credits are never refunded (Terms of Service) — so spend it, or tell us to go ahead anyway.
-                Some limits on that:
+                A fan can delete their own account from Settings, and anyone can request deletion of their
+                account and associated off-chain data at any time by emailing team@onlyone1.fun from the address
+                (or with the username) on the account. For a fan account we delete the login, your wall
+                comments, the messages you sent, your favorites and your notifications, and sign you out
+                everywhere; digital items you bought can only be viewed from your account, so they become
+                unavailable to you once it is deleted. A creator account is deleted together with its profile
+                and uploaded content, the comments and messages it sent, its favorites and its notifications,
+                and its listings are taken down (a file a buyer already paid for stays available to that
+                buyer). Anything of yours that has been reported to us is copied into the moderation record
+                before it is deleted, so a deletion does not erase a report&apos;s evidence. Any credit balance
+                left on a deleted account is forfeited — credits are never refunded (Terms of Service) — so
+                spend it, or confirm you want to go ahead anyway. Some limits on that:
               </p>
               <ul className="list-disc pl-5 space-y-2 mt-3">
                 <li>On-chain transaction history cannot be deleted — see Section 4.</li>
@@ -261,7 +265,9 @@ export default function Privacy() {
                   request while we are required to keep them; once the account is deleted they are no longer
                   linked to a login, email address or username. Reports and moderation records are kept the same
                   way. If you have earnings waiting to be paid out, a pending payout, or a physical order that
-                  hasn&apos;t shipped yet, we&apos;ll settle that with you before deleting the account.
+                  hasn&apos;t shipped yet, we&apos;ll settle that with you before deleting the account — the
+                  Settings page won&apos;t delete an account while one of its orders is still waiting to ship.
+                  An account that is suspended or under review for a report is deleted only through support.
                 </li>
                 <li>
                   A physical order&apos;s shipping name and address stay with the order record so the creator
