@@ -14,7 +14,7 @@ import { cashOutBlockedReason, centsToDollarsInput, dollarsToCents, payoutStatus
  *   - only an approved (active) creator; held while suspended; never paid
  *     to a banned account
  */
-export default function CashOutPanel({ creator, effectiveStatus, savedWallet, walletDirty }) {
+export default function CashOutPanel({ creator, effectiveStatus, accountRestricted = false, savedWallet, walletDirty }) {
   const [balance, setBalance] = useState(null); // { balanceCents, withdrawableCents } | { error }
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
@@ -54,7 +54,11 @@ export default function CashOutPanel({ creator, effectiveStatus, savedWallet, wa
       .catch(() => { if (activityRequestId.current === id) setHistory([]); });
   };
 
-  const blocked = cashOutBlockedReason(creator, effectiveStatus);
+  // A suspended or banned LOGIN (account-level moderation) is refused by
+  // /api/credits/payout-request too, whatever the creator record says.
+  const blocked = accountRestricted
+    ? "Cash-outs aren't available while this account is restricted."
+    : cashOutBlockedReason(creator, effectiveStatus);
   const withdrawable = balance && !balance.error ? balance.withdrawableCents : 0;
   const spendOnly = balance && !balance.error ? Math.max(0, balance.balanceCents - balance.withdrawableCents) : 0;
 
@@ -127,7 +131,7 @@ export default function CashOutPanel({ creator, effectiveStatus, savedWallet, wa
       </p>
 
       {blocked ? (
-        <p className={`text-xs ${effectiveStatus === 'suspended' || effectiveStatus === 'banned' ? 'text-red-400' : 'text-brand-gold'}`}>{blocked}</p>
+        <p className={`text-xs ${accountRestricted || effectiveStatus === 'suspended' || effectiveStatus === 'banned' ? 'text-red-400' : 'text-brand-gold'}`}>{blocked}</p>
       ) : !savedWallet ? (
         <p className="text-xs text-brand-gold">Add a payout wallet address above and save your profile before cashing out.</p>
       ) : (

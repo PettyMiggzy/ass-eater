@@ -9,6 +9,7 @@ import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { LK, rooms } from '../core/livekit.js';
 import { ensureMinutePaid, payNextMinute } from '../core/live-billing.js';
 import { endStaleStreamFor, checkViewerOnJoin, viewerTokenTtlSeconds, hasTicket, minuteRefusal } from '../core/live-sweep.js';
+import { withProfileImageUrls } from '../core/public-images.js';
 
 let _receiver: WebhookReceiver | undefined;
 const receiver = () => (_receiver ??= new WebhookReceiver(LK.key, LK.secret));
@@ -141,7 +142,8 @@ export const live: FastifyPluginAsync = async (app) => {
 
   app.get('/active', async () =>
     // A suspended or banned creator's stream is not listed.
-    prisma.liveStream.findMany({ where: { status: 'LIVE', creator: { user: { status: 'ACTIVE' } } }, include: { creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } }, _count: { select: { tickets: true } } } }));
+    (await prisma.liveStream.findMany({ where: { status: 'LIVE', creator: { user: { status: 'ACTIVE' } } }, include: { creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } }, _count: { select: { tickets: true } } } }))
+      .map((s) => ({ ...s, creator: withProfileImageUrls(s.creator) })));
 
   // LiveKit → us. Needs raw body for signature check.
   app.addContentTypeParser('application/webhook+json', { parseAs: 'string' }, (_r, body, done) => done(null, body));

@@ -2,6 +2,7 @@ import sharp from 'sharp';
 import { createHash } from 'crypto';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { s3, BUCKET, objectExists } from './s3.js';
+import { checkedImageShape, keepsFrames, MAX_ANIMATED_PIXELS, MAX_FRAME_PIXELS } from './image-limits.js';
 
 // Leak-deterrent watermark: a tiled, semi-transparent mark burned into the
 // pixels themselves, showing the viewer's username and a short code that
@@ -40,27 +41,31 @@ async function tile(width: number, height: number, label: string) {
 
 /** Output format of a watermarked copy, by source mime. */
 export const watermarkFormat = (mime: string) =>
-  mime === 'image/gif' ? { ext: 'gif', contentType: 'image/gif' } as const : { ext: 'jpg', contentType: 'image/jpeg' } as const;
+  mime === 'image/gif' ? { ext: 'gif', contentType: 'image/gif' } as const
+    : mime === 'image/webp' ? { ext: 'webp', contentType: 'image/webp' } as const
+      : { ext: 'jpg', contentType: 'image/jpeg' } as const;
 
 /**
  * Returns the image with the watermark burned in. Any aspect ratio. JPEG,
- * except for a GIF, which stays a GIF with EVERY frame marked: the transcode
- * worker keeps an animated GIF's frames on purpose (transcode-steps.ts
- * sanitizeImage), but this used to decode only frame 1 and re-encode it as a
- * JPEG, so every fan who paid for an animation received one still frame --
- * cached, so every later view too.
+ * except for a GIF or a WebP, which stay a GIF / WebP with EVERY frame
+ * marked: the transcode worker keeps an animation's frames on purpose
+ * (transcode-steps.ts sanitizeImage), but this used to decode only frame 1
+ * and re-encode it as a JPEG, so every fan who paid for an animation
+ * received one still frame -- cached, so every later view too.
+ *
+ * Decoded under the same frame-aware limits as the transcode
+ * (lib/image-limits.ts): sharp's own default counts every frame stacked.
  */
 export async function watermarkImage(original: Buffer, label: string, mime = 'image/jpeg'): Promise<Buffer> {
-  if (mime === 'image/gif') {
+  const shape = await checkedImageShape(original);
+  if (keepsFrames(mime, shape)) {
     // Animated: sharp lays the frames out top to bottom, each pageHeight
     // tall. One overlay per frame, positioned on its page.
-    const img = sharp(original, { animated: true });
-    const meta = await img.metadata();
-    const pages = Math.max(1, meta.pages ?? 1);
-    const pageHeight = meta.pageHeight ?? meta.height;
-    const overlay = await tile(meta.width, pageHeight, label);
-    const layers = Array.from({ length: pages }, (_, i) => ({ input: overlay, top: i * pageHeight, left: 0 }));
-    return img.composite(layers).gif().toBuffer();
+    const img = sharp(original, { animated: true, limitInputPixels: MAX_ANIMATED_PIXELS });
+    const overlay = await tile(shape.width, shape.pageHeight, label);
+    const layers = Array.from({ length: shape.pages }, (_, i) => ({ input: overlay, top: i * shape.pageHeight, left: 0 }));
+    const out = img.composite(layers);
+    return mime === 'image/gif' ? out.gif().toBuffer() : out.webp({ quality: 88 }).toBuffer();
   }
   // metadata().width/height are the *stored* size and ignore EXIF orientation,
   // and a phone portrait photo is stored landscape behind an orientation flag
@@ -75,10 +80,11 @@ export async function watermarkImage(original: Buffer, label: string, mime = 'im
   // sharp's default quality) before the final .jpeg() here, and two lossy
   // passes over a paid photo is a real quality hit -- the result is cached per
   // (media, viewer), so the degraded copy is what every later view serves.
-  const img = sharp(original, { autoOrient: true });
+  const img = sharp(original, { autoOrient: true, limitInputPixels: MAX_FRAME_PIXELS });
   const { autoOrient } = await img.metadata();
   const overlay = await tile(autoOrient.width, autoOrient.height, label);
-  return img.composite([{ input: overlay, top: 0, left: 0 }]).jpeg({ quality: 88 }).toBuffer();
+  const out = img.composite([{ input: overlay, top: 0, left: 0 }]);
+  return mime === 'image/webp' ? out.webp({ quality: 88 }).toBuffer() : out.jpeg({ quality: 88 }).toBuffer();
 }
 
 // The extension follows the output format, so a GIF's cached copy can never

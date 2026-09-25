@@ -6,6 +6,7 @@ import { money, lockBalance, post, InsufficientFunds, postPlatformRevenue, getTo
 import { isSubscribed, creatorMayOperate } from '../core/access.js';
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
+import { withProfileImageUrls, assertOwnPublicImages } from '../core/public-images.js';
 
 // What anyone may see of a creator's profile. userId and user.kycStatus are
 // also needed by the visibility check in GET /:username below.
@@ -69,7 +70,7 @@ export const creators: FastifyPluginAsync = async (app) => {
     // siteUid is the creator's site user id -- only selected for the check
     // above, never returned.
     const { siteUid: _uid, siteCreatorStatus: _scs, ...user } = c.user;
-    return { ...c, user, dmPriceCents, acceptingPayments: approved };
+    return { ...withProfileImageUrls(c), user, dmPriceCents, acceptingPayments: approved };
   });
 
   // Report a creator (their profile, or them). Anyone signed in but themself.
@@ -83,7 +84,10 @@ export const creators: FastifyPluginAsync = async (app) => {
   app.patch('/me', { preHandler: app.role('CREATOR') }, async (req) => {
     const b = z.object({
       displayName: z.string().min(1).max(50).optional(), bio: z.string().max(2000).optional(),
-      avatarKey: z.string().optional(), bannerKey: z.string().optional(),
+      // The storage key of one of the creator's own READY, unattached
+      // images (core/public-images.ts), or null to clear. Was any string at
+      // all, and returned unsigned -- which the token-auth CDN refuses.
+      avatarKey: z.string().max(200).nullable().optional(), bannerKey: z.string().max(200).nullable().optional(),
       tags: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
       // Never ONLYONE: paying a creator in the token is still paying
       // someone in a token whose price moves between earning and cashing out.
@@ -97,7 +101,9 @@ export const creators: FastifyPluginAsync = async (app) => {
       // is charged at the floor anyway, so it can never be free.
       inboundDmPriceCents: z.number().int().min(0).max(50_000).nullable().optional(),
     }).parse(req.body);
-    return prisma.creatorProfile.update({ where: { userId: req.user.id }, data: b });
+    const images = [b.avatarKey, b.bannerKey].filter((k): k is string => typeof k === 'string');
+    for (const k of images) await assertOwnPublicImages(prisma, req.user.id, [k]);
+    return withProfileImageUrls(await prisma.creatorProfile.update({ where: { userId: req.user.id }, data: b }));
   });
 
   app.post('/me/tiers', { preHandler: app.creatorOk }, async (req) => {
@@ -150,7 +156,7 @@ export const creators: FastifyPluginAsync = async (app) => {
         skip: Math.max(0, offset - promotedCount), take: remaining, select,
       })
       : [];
-    return [...promoted, ...rest];
+    return [...promoted, ...rest].map(withProfileImageUrls);
   });
 
   // All tags currently in use, for building a category filter UI

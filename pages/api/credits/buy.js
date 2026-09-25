@@ -6,6 +6,7 @@ import {
   readDepositWalletToken,
   DEPOSIT_WALLET_COOKIE_NAME,
   TX_ALREADY_USED,
+  ACCOUNT_GONE,
   BELOW_MINIMUM,
 } from '../../../lib/deposit';
 import { ageVerificationSecret } from '../../../lib/age-verification';
@@ -116,6 +117,7 @@ export default async function handler(req, res) {
   } catch (err) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });
+    if (err.code === ACCOUNT_GONE) return res.status(410).json({ error: err.message, code: err.code });
     if (err.code === 'SENDER_MISMATCH') return res.status(402).json({ error: err.message, code: err.code });
     // The rest of verifyUsdcPayment's deliberately-thrown codes (lib/chain-verify.js)
     // -- every one of them was written with a message safe to show the buyer.

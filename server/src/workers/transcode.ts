@@ -1,11 +1,11 @@
 import { Worker } from 'bullmq';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
-import { hasAudio, hlsArgs, sanitizeImage, previewArgs, probeDuration, previewSeekSeconds } from './transcode-steps.js';
+import { hasAudio, hlsArgs, sanitizeImage, previewArgs, probeDuration, previewSeekSeconds, CHILD_ENV, firstFrameStill } from './transcode-steps.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -23,7 +23,7 @@ const run = promisify(execFile);
 // blurred preview -- failed with ENOENT and ended REJECTED with nothing in
 // the logs saying why. Say it once, loudly, at startup.
 if (process.env.NODE_ENV !== 'test') {
-  run('ffmpeg', ['-version']).catch(() =>
+  run('ffmpeg', ['-version'], CHILD_ENV).catch(() =>
     console.error('transcode: ffmpeg is NOT installed on this host -- every media upload will be REJECTED. apt-get install -y ffmpeg'));
 }
 
@@ -53,9 +53,9 @@ const exists = (f: string) => stat(f).then(() => true, () => false);
  * of an ENOENT from reading it.
  */
 async function videoPreview(src: string, preview: string) {
-  await run('ffmpeg', previewArgs(src, preview, { seekSeconds: previewSeekSeconds(await probeDuration(src)) }));
+  await run('ffmpeg', previewArgs(src, preview, { seekSeconds: previewSeekSeconds(await probeDuration(src)) }), CHILD_ENV);
   if (await exists(preview)) return;
-  await run('ffmpeg', previewArgs(src, preview));
+  await run('ffmpeg', previewArgs(src, preview), CHILD_ENV);
   if (!(await exists(preview))) throw new Error('preview_not_written: ffmpeg produced no preview frame for this video');
 }
 
@@ -90,9 +90,9 @@ registerWorker(new Worker('transcode', async (job) => {
     const preview = join(work, 'preview.jpg');
 
     if (m.mime.startsWith('video/')) {
-      const hls = join(work, 'hls'); await run('mkdir', ['-p', hls]);
+      const hls = join(work, 'hls'); await mkdir(hls, { recursive: true });
       // 720p + 480p ladder, 6s segments, master playlist
-      await run('ffmpeg', hlsArgs(src, hls, await hasAudio(src)), { timeout: 3_600_000 });
+      await run('ffmpeg', hlsArgs(src, hls, await hasAudio(src)), { ...CHILD_ENV, timeout: 3_600_000 });
       await videoPreview(src, preview);
       if (!(await stillProcessing(m.id))) return;
       await uploadDir(hls, outPrefix + '/hls');
@@ -112,7 +112,14 @@ registerWorker(new Worker('transcode', async (job) => {
       await writeFile(src, clean);
       // Then the blurred preview shown to fans who haven't unlocked it yet --
       // its first frame only (an animated GIF has many; see previewArgs).
-      await run('ffmpeg', previewArgs(src, preview));
+      // A WebP is previewed from a still of its first frame: ffmpeg cannot
+      // decode an animated WebP (transcode-steps.ts firstFrameStill).
+      let previewSrc = src;
+      if (m.mime === 'image/webp') {
+        previewSrc = join(work, 'first.png');
+        await writeFile(previewSrc, await firstFrameStill(clean));
+      }
+      await run('ffmpeg', previewArgs(previewSrc, preview), CHILD_ENV);
       // Re-checked right before the in-place overwrite: after a takedown the
       // raw key is gone, and writing it back would resurrect the content.
       if (!(await stillProcessing(m.id))) return;

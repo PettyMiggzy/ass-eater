@@ -1,5 +1,5 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { findUserById, setUserModeration, USER_MODERATION_NOT_ALLOWED } from '../../../lib/users-store';
+import { findUserById, findUserByEmail, setUserModeration, USER_MODERATION_NOT_ALLOWED } from '../../../lib/users-store';
 import { effectiveUserStatus } from '../../../lib/user-moderation';
 import { deliverFor, reportPushFailure } from '../../../lib/server-api';
 
@@ -10,6 +10,11 @@ const DEFAULT_DAYS = 30;
 function view(user) {
   return {
     userId: String(user.id),
+    // The login identifier (an email, or a fan's plain username). Admin-only
+    // -- this route takes the admin key -- and it is what support requests
+    // and the manual-credit confirmation name the account by.
+    login: typeof user.email === 'string' ? user.email : null,
+    creatorId: user.creatorId ? String(user.creatorId) : null,
     role: user.role || null,
     status: effectiveUserStatus(user),
     moderationUntil: user.moderationUntil || null,
@@ -22,8 +27,12 @@ function view(user) {
  * Account-level moderation for fan accounts and unapproved creator accounts -- see
  * lib/user-moderation.js. Admin-key gated.
  *
- * GET  ?userId=<id>
- *   -> 200 { ok: true, user: { userId, role, status, moderationUntil, moderationReason, moderatedAt } }
+ * GET  ?userId=<id>   or   ?login=<email or username>
+ *   -> 200 { ok: true, user: { userId, login, creatorId, role, status, moderationUntil, moderationReason, moderatedAt } }
+ *   `login` is matched the way sign-in matches it (trimmed, case-insensitive).
+ *   Fans never see their internal user id, so a deletion or stuck-deposit
+ *   request emailed to support names the account by its login -- this is how
+ *   the admin panel finds it.
  * POST { userId, action: 'suspend' | 'ban' | 'clear', days?: 1..365 (suspend, default 30), reason?: string }
  *   -> 200 { ok: true, user: <same shape> }
  *   -> 404 no such user; 400 bad input, or an APPROVED creator account (its
@@ -43,15 +52,21 @@ export default async function handler(req, res) {
   }
   if (!requireAdminKey(req, res)) return;
 
-  const source = req.method === 'GET' ? req.query : req.body || {};
+  const source = req.method === 'GET' ? req.query : req.body && typeof req.body === 'object' ? req.body : {};
   const userId = source.userId;
-  if ((typeof userId !== 'string' && typeof userId !== 'number') || !String(userId).trim() || String(userId).length > 100) {
+  const login = req.method === 'GET' ? source.login : undefined;
+  const byLogin = (userId === undefined || userId === null || userId === '') && login !== undefined;
+  if (byLogin) {
+    if (typeof login !== 'string' || !login.trim() || login.length > 320) {
+      return res.status(400).json({ error: 'Missing email or username' });
+    }
+  } else if ((typeof userId !== 'string' && typeof userId !== 'number') || !String(userId).trim() || String(userId).length > 100) {
     return res.status(400).json({ error: 'Missing userId' });
   }
 
   try {
     if (req.method === 'GET') {
-      const user = await findUserById(String(userId).trim());
+      const user = byLogin ? await findUserByEmail(login) : await findUserById(String(userId).trim());
       if (!user) return res.status(404).json({ error: 'No such account' });
       return res.status(200).json({ ok: true, user: view(user) });
     }

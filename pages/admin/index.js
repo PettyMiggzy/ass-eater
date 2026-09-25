@@ -16,6 +16,7 @@ import {
 } from '../../components/admin/adminApi';
 import { draftFrom, fieldsFromDraft, rebaseDraft, fieldName } from '../../components/admin/creatorDraft';
 import { CATEGORIES, MAX_CATEGORIES } from '../../lib/categories';
+import { getMarketplacePaymentConfig } from '../../lib/marketplace-payment-config';
 
 // The oa_admin_media cookie (POST /api/admin/media-session) lasts 2 hours;
 // refreshed well inside that so a panel left open keeps loading private media.
@@ -186,13 +187,19 @@ export default function AdminPanel() {
   // ONE creator: "asked per upload and reset after each one, never
   // remembered". Every path that changes which creator is open calls this --
   // an answer given for creator A (with A's co-performer records ticked) must
-  // never be carried into the next creator's upload.
+  // never be carried into the next creator's upload. The TAKE IT DOWN
+  // request number and the possible-minor quarantine tick are per-creator the
+  // same way: they decide which request the next gallery / profile-photo
+  // removal is recorded against, so '+ Add Model' or closing the editor must
+  // not carry request #N over to an unrelated model's removals.
   const resetUploadAttestations = () => {
     setOthersAppear(null);
     setCoPerformerIds([]);
     setAvatarOthersAppear(null);
     setAvatarCoPerformerIds([]);
     setNextUploadIsAi(false);
+    setPreserveReportId('');
+    setQuarantineRemovals(false);
   };
 
   /** Closes the editor (the creator is gone or the panel is locking). */
@@ -214,8 +221,6 @@ export default function AdminPanel() {
     const snap = creators.find((c) => String(c.id) === String(id));
     if (snap) { setDraft(draftFrom(snap)); setBaseline(draftFrom(snap)); }
     resetUploadAttestations();
-    setPreserveReportId('');
-    setQuarantineRemovals(false);
     try {
       const roster = await fetchRoster();
       if (!roster || seq !== selectSeq.current) return;
@@ -1488,8 +1493,14 @@ function ReportsPanel({ adminKey }) {
     if (action === 'remove_content') {
       const what = r.targetType === 'listing'
         ? (minorReport ? 'take this listing down and QUARANTINE its media as evidence (kept, never served)' : 'take this listing down (and delete its media, including files buyers paid for)')
-        : r.targetType === 'message' ? 'delete this direct message' : 'delete this comment';
-      const keep = serious ? ' A copy of the text is kept on the report as evidence.' : '';
+        : r.targetType === 'message' ? 'delete this direct message'
+          : r.targetType === 'gallery_item'
+            ? (minorReport ? "remove this gallery item from the creator's profile and QUARANTINE the file as evidence (kept, never served)" : "remove this gallery item from the creator's profile and delete the file")
+            : r.targetType === 'avatar'
+              ? (minorReport ? "reset this creator's profile photo to the placeholder and QUARANTINE the file as evidence (kept, never served)" : "reset this creator's profile photo to the placeholder and delete the file")
+              : 'delete this comment';
+      const profileMedia = r.targetType === 'gallery_item' || r.targetType === 'avatar';
+      const keep = serious && !profileMedia ? ' A copy of the text is kept on the report as evidence.' : '';
       const gone = r.target?.exists === false ? ' (It already looks deleted -- this records the report as actioned.)' : '';
       if (!confirm(`Remove the reported content? This will ${what}.${keep}${gone}`)) return;
     } else if (action === 'dismiss' && serious) {
@@ -1552,7 +1563,10 @@ function ReportsPanel({ adminKey }) {
   const targetLabel = (r) => (r.targetType === 'wall_post' ? 'Wall comment'
     : r.targetType === 'listing' ? 'Marketplace listing'
       : r.targetType === 'message' ? 'Direct message'
-        : String(r.targetType ?? 'Unknown'));
+        // targetId is the CREATOR id for these two (the item is named by src).
+        : r.targetType === 'gallery_item' ? 'Gallery item on creator'
+          : r.targetType === 'avatar' ? 'Profile photo of creator'
+            : String(r.targetType ?? 'Unknown'));
 
   return (
     <div>
@@ -1712,6 +1726,40 @@ function ReportTarget({ report }) {
           {Array.isArray(t.participantIds) && t.participantIds.length ? ` · conversation between users ${t.participantIds.map(String).join(' and ')}` : ''}:
         </p>
         <p className="whitespace-pre-wrap break-words">"{String(t.text ?? '')}"</p>
+      </div>
+    );
+  }
+  if (report.targetType === 'gallery_item' || report.targetType === 'avatar') {
+    // A reported photo/video on a creator's public profile. `target.media` is
+    // the one item as it stands now (or the filing-time copy); for a
+    // POSSIBLE MINOR report the file has been on hold since filing, and
+    // "Remove Content" quarantines it rather than deleting it.
+    const items = Array.isArray(t.media) ? t.media : [];
+    return (
+      <div className="mb-3 px-3 py-2 rounded-md bg-black/30 border border-white/10 text-xs text-gray-300">
+        {snapNote}
+        <p className="text-gray-500 mb-1">
+          {report.targetType === 'avatar' ? 'Profile photo' : 'Gallery item'} on {seller}'s profile
+          {report.src ? <span className="block font-mono text-[10px] text-gray-600 break-all">{String(report.src)}</span> : null}
+        </p>
+        {items.length > 0 ? (
+          <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 gap-2">
+            {items.map((m, i) => (
+              <div key={`${String(m?.src)}-${i}`} className="relative aspect-square rounded overflow-hidden border border-white/10 bg-black/40">
+                {m?.type === 'video' ? (
+                  <video src={String(m.src)} className="w-full h-full object-cover" controls preload="metadata" />
+                ) : (
+                  <img src={String(m?.src || '')} alt="" className="w-full h-full object-cover" />
+                )}
+                {m?.aiGenerated && (
+                  <span className="absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-brand-gold font-bold">AI</span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-gray-500">No copy of the file is available.</p>
+        )}
       </div>
     );
   }
@@ -2213,6 +2261,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
                   <>
                     <TakedownControl
                       adminKey={adminKey}
+                      creators={creators}
                       report={r}
                       disabled={busyId === r.id}
                       onDone={async (msg) => { setError(''); setNotice(msg); await load(statusFilter); }}
@@ -2351,6 +2400,14 @@ function TakedownList({ report }) {
 
 const TAKEDOWN_ID_RE = /^[1-9][0-9]{0,17}$/;
 
+// How the content lookup (GET /api/admin/content-lookup) names an account.
+function lookupAccountLabel(a) {
+  if (!a) return 'unknown account';
+  if (a.deleted) return `deleted account ${String(a.userId)}`;
+  const creator = a.creatorName ? `${String(a.creatorName)}${a.creatorHandle ? ` (${String(a.creatorHandle)})` : ''} — ` : '';
+  return `${creator}${a.login ? String(a.login) : '(no login)'} · user ${String(a.userId)}${a.role ? ` · ${String(a.role)}` : ''}`;
+}
+
 /**
  * "Take down content" for one TAKE IT DOWN request: removes the one listing,
  * direct message or wall comment the request names
@@ -2359,8 +2416,14 @@ const TAKEDOWN_ID_RE = /^[1-9][0-9]{0,17}$/;
  * always quarantined as evidence first (the server forces it too); for any
  * other request the admin may choose to. Gallery items and profile photos are
  * removed from the creator's record (Creators tab) with this request number.
+ *
+ * A DM or wall comment is FOUND here rather than typed in: message ids exist
+ * only in the two participants' inboxes and comment ids are shown nowhere, so
+ * the control lists a creator's wall comments, or an account's conversations
+ * and then a thread's messages (GET /api/admin/content-lookup), each with its
+ * own Take down button. The raw-id inputs stay as a fallback.
  */
-function TakedownControl({ adminKey, report, disabled, onDone, onError }) {
+function TakedownControl({ adminKey, creators, report, disabled, onDone, onError }) {
   const minor = report?.category === 'minor';
   const [type, setType] = useState('listing');
   const [listingId, setListingId] = useState('');
@@ -2370,25 +2433,90 @@ function TakedownControl({ adminKey, report, disabled, onDone, onError }) {
   const [preserve, setPreserve] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const submit = async () => {
+  // Wall-comment lookup.
+  const [wallCreatorId, setWallCreatorId] = useState('');
+  const [wall, setWall] = useState(null); // { creatorId, posts, nextBefore }
+  // DM lookup: by email/username, user id or creator -> conversations -> thread.
+  const [dmBy, setDmBy] = useState('login');
+  const [dmWho, setDmWho] = useState('');
+  const [dmCreatorId, setDmCreatorId] = useState('');
+  const [convos, setConvos] = useState(null); // { account, conversations, nextOffset }
+  const [thread, setThread] = useState(null); // { id, participants, messages }
+  const [lookupBusy, setLookupBusy] = useState(false);
+
+  const lookup = async (params) => {
+    const qs = new URLSearchParams(params).toString();
+    const { res, data } = await adminGet(adminKey, `/api/admin/content-lookup?${qs}`);
+    if (!res.ok) throw new Error(errorFrom(res, data, 'Lookup failed'));
+    return data;
+  };
+
+  const loadWall = async (more = false) => {
+    const cid = more ? wall?.creatorId : wallCreatorId;
+    if (!cid) { onError('Pick the creator whose wall the comment is on.'); return; }
+    setLookupBusy(true);
+    try {
+      const data = await lookup({ kind: 'wall', creatorId: String(cid), ...(more && wall?.nextBefore ? { before: wall.nextBefore } : {}) });
+      const posts = Array.isArray(data.posts) ? data.posts : [];
+      setWall({ creatorId: String(cid), posts: more ? [...(wall?.posts || []), ...posts] : posts, nextBefore: data.nextBefore || null });
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setLookupBusy(false);
+    }
+  };
+
+  const loadConvos = async (more = false) => {
+    let params;
+    if (more) params = convos?.params;
+    else if (dmBy === 'creator') params = dmCreatorId ? { creatorId: dmCreatorId } : null;
+    else if (dmWho.trim()) params = dmBy === 'id' ? { userId: dmWho.trim() } : { login: dmWho.trim() };
+    if (!params) { onError(dmBy === 'creator' ? 'Pick the creator.' : 'Enter the email / username or user id of one side of the conversation.'); return; }
+    setLookupBusy(true);
+    try {
+      const data = await lookup({ kind: 'conversations', ...params, ...(more && convos?.nextOffset ? { offset: String(convos.nextOffset) } : {}) });
+      const list = Array.isArray(data.conversations) ? data.conversations : [];
+      setConvos({ params, account: data.account || null, conversations: more ? [...(convos?.conversations || []), ...list] : list, nextOffset: data.nextOffset ?? null });
+      if (!more) setThread(null);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setLookupBusy(false);
+    }
+  };
+
+  const openThread = async (id) => {
+    setLookupBusy(true);
+    try {
+      const data = await lookup({ kind: 'messages', conversationId: String(id) });
+      setThread(data.conversation || null);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setLookupBusy(false);
+    }
+  };
+
+  const submit = async (picked = null) => {
     let target;
     let what;
-    if (type === 'listing') {
+    const kind = picked?.type || type;
+    if (kind === 'listing') {
       const idv = listingId.trim();
       if (!TAKEDOWN_ID_RE.test(idv)) { onError('Enter the listing number (e.g. 12 from /marketplace?listing=12).'); return; }
-      target = { type, listingId: idv };
+      target = { type: kind, listingId: idv };
       what = `marketplace listing #${idv}, INCLUDING the files buyers paid for (they stop receiving it)`;
-    } else if (type === 'wall_post') {
-      const idv = postId.trim();
-      if (!TAKEDOWN_ID_RE.test(idv)) { onError('Enter the wall comment number.'); return; }
-      target = { type, postId: idv };
-      what = `wall comment #${idv}`;
+    } else if (kind === 'wall_post') {
+      const idv = String(picked?.postId ?? postId).trim();
+      if (!TAKEDOWN_ID_RE.test(idv)) { onError('Enter the wall comment number, or find it with "Show comments".'); return; }
+      target = { type: kind, postId: idv };
+      what = `wall comment #${idv}${picked?.label ? ` (${picked.label})` : ''}`;
     } else {
-      const c = conversationId.trim();
-      const m = messageId.trim();
-      if (!c || !m || c.length > 300 || m.length > 100) { onError('Enter both the conversation id and the message id.'); return; }
-      target = { type, conversationId: c, messageId: m };
-      what = `message ${m} in conversation ${c}`;
+      const c = String(picked?.conversationId ?? conversationId).trim();
+      const m = String(picked?.messageId ?? messageId).trim();
+      if (!c || !m || c.length > 300 || m.length > 100) { onError('Find the message with "Find conversations", or enter both the conversation id and the message id.'); return; }
+      target = { type: kind, conversationId: c, messageId: m };
+      what = `message ${m}${picked?.label ? ` (${picked.label})` : ''} in conversation ${c}`;
     }
     const quarantine = minor || preserve;
     if (!confirm(
@@ -2404,10 +2532,17 @@ function TakedownControl({ adminKey, report, disabled, onDone, onError }) {
         ...(quarantine ? { preserve: true } : {}),
       });
       if (!res.ok) throw new Error(errorFrom(res, data, 'The takedown failed'));
+      const short = what.split(',')[0];
       await onDone(data.result === 'removed'
-        ? `Took down ${what.split(',')[0]} for request #${report.id}${data.preserved ? `; ${data.preserved} file(s) quarantined as evidence` : ''}. It is recorded on the request -- you can now resolve it as removed.`
-        : `Nothing to take down: ${what.split(',')[0]} was already gone (or that id is wrong). That does NOT count as a removal: check the id and the content location, then take down the right item, or tick "already gone / removed elsewhere" if it really is.`);
+        ? `Took down ${short} for request #${report.id}${data.preserved ? `; ${data.preserved} file(s) quarantined as evidence` : ''}. It is recorded on the request -- you can now resolve it as removed.`
+        : `Nothing to take down: ${short} was already gone (or that id is wrong). That does NOT count as a removal: check the id and the content location, then take down the right item, or tick "already gone / removed elsewhere" if it really is.`);
       setListingId(''); setConversationId(''); setMessageId(''); setPostId('');
+      // The item is gone either way: drop it from the lookup lists.
+      if (target.type === 'wall_post') {
+        setWall((w) => (w ? { ...w, posts: w.posts.filter((p) => String(p.id) !== target.postId) } : w));
+      } else if (target.type === 'message') {
+        setThread((t) => (t && t.id === target.conversationId ? { ...t, messages: t.messages.filter((x) => x.id !== target.messageId) } : t));
+      }
     } catch (err) {
       onError(err.message);
     } finally {
@@ -2417,6 +2552,14 @@ function TakedownControl({ adminKey, report, disabled, onDone, onError }) {
 
   const inputCls = 'px-2 py-1 rounded-md bg-black/40 border border-red-500/40 text-white text-xs';
   const off = disabled || busy;
+  const lookOff = off || lookupBusy;
+  const smallBtn = 'text-[11px] px-2 py-0.5 rounded-md border border-red-500 bg-red-600/20 text-red-300 hover:bg-red-600/30 transition disabled:opacity-50 shrink-0';
+  const linkBtn = 'text-[11px] px-2 py-1 rounded-md border border-white/20 text-gray-300 hover:text-white transition disabled:opacity-50';
+  const creatorOptions = (Array.isArray(creators) ? creators : []).map((c) => (
+    <option key={c.id} value={String(c.id)}>{String(c.name || 'Unnamed')} {c.handle ? `(${String(c.handle)})` : ''} · #{String(c.id)}</option>
+  ));
+  const participantById = (id) => (thread?.participants || []).find((p) => String(p.userId) === String(id));
+
   return (
     <div className="mb-2 px-3 py-2 rounded-md bg-red-900/10 border border-red-500/30 text-xs text-gray-300">
       <p className="text-red-300 font-bold mb-1">Take down content</p>
@@ -2430,22 +2573,143 @@ function TakedownControl({ adminKey, report, disabled, onDone, onError }) {
           <input value={listingId} onChange={(e) => setListingId(e.target.value.replace(/[^0-9]/g, '').slice(0, 18))} placeholder="Listing #" inputMode="numeric" disabled={off} className={`${inputCls} w-28`} />
         )}
         {type === 'wall_post' && (
-          <input value={postId} onChange={(e) => setPostId(e.target.value.replace(/[^0-9]/g, '').slice(0, 18))} placeholder="Comment #" inputMode="numeric" disabled={off} className={`${inputCls} w-28`} />
+          <input value={postId} onChange={(e) => setPostId(e.target.value.replace(/[^0-9]/g, '').slice(0, 18))} placeholder="Comment # (or find below)" inputMode="numeric" disabled={off} className={`${inputCls} w-44`} />
         )}
         {type === 'message' && (
           <>
-            <input value={conversationId} onChange={(e) => setConversationId(e.target.value.slice(0, 300))} placeholder="Conversation id" disabled={off} className={`${inputCls} w-44`} />
+            <input value={conversationId} onChange={(e) => setConversationId(e.target.value.slice(0, 300))} placeholder="Conversation id (or find below)" disabled={off} className={`${inputCls} w-52`} />
             <input value={messageId} onChange={(e) => setMessageId(e.target.value.slice(0, 100))} placeholder="Message id" disabled={off} className={`${inputCls} w-36`} />
           </>
         )}
         <button
-          onClick={submit}
+          onClick={() => submit()}
           disabled={off}
           className="text-xs px-3 py-1 rounded-md border border-red-500 bg-red-600/20 text-red-300 hover:bg-red-600/30 transition disabled:opacity-50"
         >
           {busy ? 'Taking down…' : 'Take down'}
         </button>
       </div>
+
+      {type === 'wall_post' && (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={wallCreatorId} onChange={(e) => setWallCreatorId(e.target.value)} disabled={lookOff} className={inputCls}>
+              <option value="">Whose wall?</option>
+              {creatorOptions}
+            </select>
+            <button onClick={() => loadWall(false)} disabled={lookOff || !wallCreatorId} className={linkBtn}>
+              {lookupBusy ? 'Loading…' : 'Show comments'}
+            </button>
+          </div>
+          {wall && (
+            <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
+              {!wall.posts.length ? <p className="text-gray-500">No comments on that wall.</p> : wall.posts.map((p) => (
+                <div key={p.id} className="flex items-start gap-2 px-2 py-1 rounded bg-black/30 border border-white/5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] text-gray-500">
+                      #{String(p.id)} · {p.createdAt ? new Date(p.createdAt).toLocaleString() : ''} · {String(p.authorName || '')} — {lookupAccountLabel(p.author)}
+                    </p>
+                    <p className="text-gray-200 whitespace-pre-wrap break-words">{String(p.text)}</p>
+                  </div>
+                  <button
+                    onClick={() => submit({ type: 'wall_post', postId: String(p.id), label: `by ${p.author?.login || p.authorName || 'unknown'}` })}
+                    disabled={off}
+                    className={smallBtn}
+                  >
+                    Take down for #{String(report.id)}
+                  </button>
+                </div>
+              ))}
+              {wall.nextBefore && (
+                <button onClick={() => loadWall(true)} disabled={lookOff} className={linkBtn}>Load older</button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {type === 'message' && (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={dmBy} onChange={(e) => setDmBy(['login', 'id', 'creator'].includes(e.target.value) ? e.target.value : 'login')} disabled={lookOff} className={inputCls}>
+              <option value="login">One side's email / username</option>
+              <option value="id">One side's user id</option>
+              <option value="creator">A creator</option>
+            </select>
+            {dmBy === 'creator' ? (
+              <select value={dmCreatorId} onChange={(e) => setDmCreatorId(e.target.value)} disabled={lookOff} className={inputCls}>
+                <option value="">Which creator?</option>
+                {creatorOptions}
+              </select>
+            ) : (
+              <input
+                value={dmWho}
+                onChange={(e) => setDmWho(e.target.value.slice(0, 320))}
+                onKeyDown={(e) => e.key === 'Enter' && loadConvos(false)}
+                placeholder={dmBy === 'id' ? 'User id' : 'Email or username'}
+                disabled={lookOff}
+                className={`${inputCls} w-52`}
+              />
+            )}
+            <button onClick={() => loadConvos(false)} disabled={lookOff} className={linkBtn}>
+              {lookupBusy ? 'Loading…' : 'Find conversations'}
+            </button>
+          </div>
+          {convos && (
+            <div className="space-y-1">
+              <p className="text-[10px] text-gray-500">Conversations of {lookupAccountLabel(convos.account)}:</p>
+              <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                {!convos.conversations.length ? <p className="text-gray-500">No conversations.</p> : convos.conversations.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => openThread(c.id)}
+                    disabled={lookOff}
+                    className={`block w-full text-left px-2 py-1 rounded border ${thread?.id === c.id ? 'border-red-500/60 bg-red-900/20' : 'border-white/5 bg-black/30'} hover:border-white/20 disabled:opacity-50`}
+                  >
+                    <span className="text-gray-200">with {lookupAccountLabel(c.other)}</span>
+                    <span className="text-[10px] text-gray-500"> · {Number(c.messageCount) || 0} message(s){c.updatedAt ? ` · last ${new Date(c.updatedAt).toLocaleString()}` : ''}</span>
+                    {c.lastMessage?.text ? <span className="block text-[10px] text-gray-500 truncate">"{String(c.lastMessage.text)}"</span> : null}
+                  </button>
+                ))}
+                {convos.nextOffset != null && (
+                  <button onClick={() => loadConvos(true)} disabled={lookOff} className={linkBtn}>More conversations</button>
+                )}
+              </div>
+            </div>
+          )}
+          {thread && (
+            <div className="space-y-1">
+              <p className="text-[10px] text-gray-500">
+                Thread {String(thread.id)} between {(thread.participants || []).map(lookupAccountLabel).join(' and ')}:
+              </p>
+              <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
+                {!thread.messages.length ? <p className="text-gray-500">No stored messages.</p> : thread.messages.map((m) => {
+                  const sender = participantById(m.senderId);
+                  return (
+                    <div key={m.id} className="flex items-start gap-2 px-2 py-1 rounded bg-black/30 border border-white/5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] text-gray-500">
+                          {m.createdAt ? new Date(m.createdAt).toLocaleString() : ''} · from {sender ? lookupAccountLabel(sender) : `user ${String(m.senderId)}`}
+                          {m.priceCents ? ` · paid ${formatCredits(m.priceCents)}` : ''} · id {String(m.id)}
+                        </p>
+                        <p className="text-gray-200 whitespace-pre-wrap break-words">{String(m.text)}</p>
+                      </div>
+                      <button
+                        onClick={() => submit({ type: 'message', conversationId: String(thread.id), messageId: String(m.id), label: `from ${sender?.login || `user ${String(m.senderId)}`}` })}
+                        disabled={off}
+                        className={smallBtn}
+                      >
+                        Take down for #{String(report.id)}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <label className="flex items-center gap-2 mt-2 text-[11px] text-gray-400">
         <input type="checkbox" checked={minor || preserve} disabled={minor || off} onChange={(e) => setPreserve(e.target.checked)} />
         {minor
@@ -2665,7 +2929,32 @@ function PayoutAccount({ r }) {
   );
 }
 
+// Where a payout has to be sent for Mark Paid to verify it: the on-chain
+// check (pages/api/admin/payouts-mark-paid.js) looks ONLY at the configured
+// marketplace chain and token contract. USDG exists on other networks and the
+// same 0x address receives on any of them, so a transfer sent on the wrong
+// one (an exchange's default network, say) reaches the creator but can never
+// be recorded here -- the row stays pending with its credits reserved.
+function payoutNetwork() {
+  const c = getMarketplacePaymentConfig();
+  const symbol = c.stableSymbol || 'USDG';
+  const chain = c.chainName
+    ? `${c.chainName}${c.chainId ? ` (chain id ${c.chainId})` : ''}`
+    : c.chainId ? `chain id ${c.chainId}` : '';
+  return { symbol, chain, token: c.usdcAddress || '' };
+}
+
+function PayoutNetworkLine({ net }) {
+  return (
+    <>
+      {net.symbol} on <span className="text-white font-bold">{net.chain || '(payment network not configured)'}</span>
+      {net.token ? <>, token contract <span className="font-mono">{net.token}</span></> : null}
+    </>
+  );
+}
+
 function PayoutsPanel({ adminKey }) {
+  const net = payoutNetwork();
   const [requests, setRequests] = useState([]);
   const [paid, setPaid] = useState([]);
   const [rejected, setRejected] = useState([]);
@@ -2676,7 +2965,8 @@ function PayoutsPanel({ adminKey }) {
   const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [txInputs, setTxInputs] = useState({});
-  const [manual, setManual] = useState({ userId: '', txHash: '', fromAddress: '' });
+  const [manual, setManual] = useState({ account: '', txHash: '', fromAddress: '' });
+  const [manualBy, setManualBy] = useState('login');
   const [manualBusy, setManualBusy] = useState(false);
   const [manualMsg, setManualMsg] = useState('');
 
@@ -2801,9 +3091,36 @@ function PayoutsPanel({ adminKey }) {
   // that exact address exists.
   const manualCredit = async () => {
     setManualMsg('');
+    const who = manual.account.trim();
+    const txHash = manual.txHash.trim();
+    const fromAddress = manual.fromAddress.trim();
+    if (!who || !txHash || !fromAddress) return;
     setManualBusy(true);
     try {
-      let { res, data } = await adminPost(adminKey, '/api/admin/manual-credit', manual);
+      // A manual credit is irreversible: the transaction hash is claimed for
+      // good the moment it succeeds, so a typo'd id would credit a DIFFERENT
+      // real account with no way back. Resolve the account first and have the
+      // admin confirm who it is; the server then refuses unless expectedLogin
+      // matches that user id (400 CONFIRM_ACCOUNT / 409 ACCOUNT_MISMATCH), so
+      // a stale panel cannot skip the check either.
+      const param = manualBy === 'login' ? `login=${encodeURIComponent(who)}` : `userId=${encodeURIComponent(who)}`;
+      const lookup = await adminGet(adminKey, `/api/admin/user-moderation?${param}`);
+      if (lookup.res.status === 404) {
+        throw new Error(manualBy === 'login' ? `No account signs in as "${who}". Nothing was credited.` : `No account with user id "${who}". Nothing was credited.`);
+      }
+      if (!lookup.res.ok || !lookup.data.user) throw new Error(errorFrom(lookup.res, lookup.data, 'Could not look up that account'));
+      const acct = lookup.data.user;
+      if (!acct.login) throw new Error(`User ${acct.userId} has no login on record, so it cannot be confirmed. Nothing was credited.`);
+      if (!confirm(
+        `Credit the deposit in ${txHash} (sent from ${fromAddress}) to:\n\n`
+        + `  ${acct.login}\n  user ${acct.userId}${acct.role ? ` · ${acct.role}` : ''}${acct.status && acct.status !== 'active' ? ` · ${String(acct.status).toUpperCase()}` : ''}\n\n`
+        + 'This cannot be undone: the transaction is claimed permanently and can never be credited to anyone else.',
+      )) {
+        setManualMsg('Nothing was credited.');
+        return;
+      }
+      const body = { userId: acct.userId, expectedLogin: acct.login, txHash, fromAddress };
+      let { res, data } = await adminPost(adminKey, '/api/admin/manual-credit', body);
       // A suspended or banned account's credits are frozen: crediting it
       // claims the transaction for good with nothing spendable. The server
       // refuses unless that is an explicit decision (creditFrozen: true).
@@ -2815,14 +3132,14 @@ function PayoutsPanel({ adminKey }) {
           setManualMsg('Nothing was credited.');
           return;
         }
-        ({ res, data } = await adminPost(adminKey, '/api/admin/manual-credit', { ...manual, creditFrozen: true }));
+        ({ res, data } = await adminPost(adminKey, '/api/admin/manual-credit', { ...body, creditFrozen: true }));
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not credit that payment'));
       setManualMsg(
-        `Credited ${formatCredits(data.creditedCents)} to ${data.creditedUserEmail || `user ${manual.userId}`}.`
+        `Credited ${formatCredits(data.creditedCents)} to ${data.creditedUserEmail || acct.login} (user ${acct.userId}).`
         + (data.frozen ? ' The account is suspended or banned, so these credits are frozen until it is reinstated.' : ''),
       );
-      setManual({ userId: '', txHash: '', fromAddress: '' });
+      setManual({ account: '', txHash: '', fromAddress: '' });
     } catch (err) {
       setManualMsg(err.message);
     } finally {
@@ -2837,6 +3154,11 @@ function PayoutsPanel({ adminKey }) {
         ask. Send the real USDG to the wallet shown -- one transaction per request, since one hash can only close one
         payout -- THEN paste the transaction hash here. It is checked on-chain before it is recorded: the EXACT
         requested amount, to that wallet, sent after the request was made (an older transaction is refused).
+      </p>
+      <p className="text-sm text-yellow-300/90 mb-2">
+        Send <PayoutNetworkLine net={net} /> only. The check looks at that network and that token and nothing else: USDG
+        sent on any other network (an exchange's default withdrawal network, for example) still reaches the wallet but
+        can never be recorded here.
       </p>
       <p className="text-xs text-gray-500 mb-4">
         FROZEN means the account is no longer an active creator (suspended, banned, pending or deleted). Don't pay those:
@@ -2860,7 +3182,10 @@ function PayoutsPanel({ adminKey }) {
                 <div className="flex-1" />
                 <span className="text-[11px] text-gray-600">#{String(r.id)} · {r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
               </div>
-              <p className="font-mono text-[11px] text-gray-400 break-all">Send USDG to: {String(r.payout_wallet || '(no wallet)')}</p>
+              <p className="text-[11px] text-gray-400 break-all">
+                Send <PayoutNetworkLine net={net} /> to:{' '}
+                <span className="font-mono">{String(r.payout_wallet || '(no wallet)')}</span>
+              </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   value={txInputs[r.id] || ''}
@@ -2934,14 +3259,23 @@ function PayoutsPanel({ adminKey }) {
         <p className="text-xs text-gray-500 mb-3">
           For a fan whose payment confirmed on-chain but whose browser died before the credit call ran, and who couldn't
           self-recover it from the Credits page. Verifies the exact transaction really came from the address given
-          before crediting anything. Deposited credits are spend-only -- they can never be cashed out.
+          before crediting anything. Deposited credits are spend-only -- they can never be cashed out. The account is
+          looked up and shown for you to confirm before anything is credited, because a credit can never be undone.
         </p>
         <div className="flex flex-wrap gap-2 mb-2">
+          <select
+            value={manualBy}
+            onChange={(e) => setManualBy(e.target.value === 'id' ? 'id' : 'login')}
+            className="px-2 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white"
+          >
+            <option value="login">Email / username</option>
+            <option value="id">User id</option>
+          </select>
           <input
-            value={manual.userId}
-            onChange={(e) => setManual((m) => ({ ...m, userId: e.target.value }))}
-            placeholder="User id"
-            className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white w-32"
+            value={manual.account}
+            onChange={(e) => setManual((m) => ({ ...m, account: e.target.value.slice(0, 320) }))}
+            placeholder={manualBy === 'login' ? 'Email or username' : 'User id'}
+            className="px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-xs text-white w-48"
           />
           <input
             value={manual.txHash}
@@ -2957,7 +3291,7 @@ function PayoutsPanel({ adminKey }) {
           />
           <button
             onClick={manualCredit}
-            disabled={manualBusy || !manual.userId || !manual.txHash || !manual.fromAddress}
+            disabled={manualBusy || !manual.account.trim() || !manual.txHash.trim() || !manual.fromAddress.trim()}
             className="premium-button text-xs px-4 py-1.5 disabled:opacity-50"
           >
             {manualBusy ? 'Checking…' : 'Verify & Credit'}
@@ -3545,6 +3879,7 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
   const [markError, setMarkError] = useState('');
 
   const [userId, setUserId] = useState('');
+  const [login, setLogin] = useState('');
   const [account, setAccount] = useState(null);
   const [days, setDays] = useState('30');
   const [reason, setReason] = useState('');
@@ -3568,17 +3903,23 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
     }
   };
 
-  const loadAccount = async (id) => {
-    const target = String(id ?? userId).trim();
+  // By internal user id, or -- `byLogin` -- by the email / username the
+  // account signs in with. Fans never see their user id, so a deletion or
+  // support request emailed to team@ names the account by its login (Privacy
+  // Policy section 7); the server matches it the way sign-in does.
+  const loadAccount = async (id, { byLogin = false } = {}) => {
+    const target = String(id ?? (byLogin ? login : userId)).trim();
     if (!target) return;
     setModBusy(true);
     setModError('');
     setModNotice('');
     setAccount(null);
     try {
-      const { res, data } = await adminGet(adminKey, `/api/admin/user-moderation?userId=${encodeURIComponent(target)}`);
+      const param = byLogin ? `login=${encodeURIComponent(target)}` : `userId=${encodeURIComponent(target)}`;
+      const { res, data } = await adminGet(adminKey, `/api/admin/user-moderation?${param}`);
+      if (res.status === 404) throw new Error(byLogin ? `No account signs in as "${target}".` : `No account with user id "${target}".`);
       if (!res.ok || !data.user) throw new Error(errorFrom(res, data, 'Could not load that account'));
-      setUserId(target);
+      setUserId(String(data.user.userId));
       setAccount(data.user);
     } catch (err) {
       setModError(err.message);
@@ -3597,7 +3938,8 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
     const verb = action === 'ban' ? 'BAN (signs them out everywhere, refuses every future sign-in)'
       : action === 'suspend' ? `suspend for ${n} day(s) (read-only: no posts, messages, reports, purchases)`
         : 'clear any suspension or ban on';
-    if (!confirm(`${verb.charAt(0).toUpperCase()}${verb.slice(1)} account ${account.userId}?`)) return;
+    const who = `account ${account.userId}${account.login ? ` (${account.login})` : ''}`;
+    if (!confirm(`${verb.charAt(0).toUpperCase()}${verb.slice(1)} ${who}?`)) return;
     setModBusy(true);
     setModError('');
     setModNotice('');
@@ -3622,9 +3964,10 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
   const deleteAccount = async () => {
     if (!account) return;
     if (!confirm(
-      `Delete account ${account.userId} on request?\n\nRemoves the login, their wall comments, the messages they sent, `
-      + 'favorites and notifications, and signs them out everywhere. Credit, order and payout records and moderation '
-      + 'records are kept (without the login), and §2257 records are never deleted. This cannot be undone.',
+      `Delete account ${account.userId}${account.login ? ` (${account.login})` : ''} on request?\n\nRemoves the login, their wall comments, the messages they sent, `
+      + 'favorites and notifications, and signs them out everywhere. Credit, order and payout records are kept (without '
+      + 'the login); reports and moderation records keep their copy of reported content, including who wrote it; and '
+      + '§2257 records are never deleted. This cannot be undone.',
     )) return;
     setModBusy(true);
     setModError('');
@@ -3653,6 +3996,7 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
         if (!res.ok) throw new Error(errorFrom(res, data, 'Could not delete that account'));
         setAccount(null);
         setUserId('');
+        setLogin('');
         setModNotice(
           `Account ${data.deletedUserId} deleted.`
           + (Number(data.forfeitedCents) > 0 ? ` ${formatCredits(data.forfeitedCents)} of credits were forfeited.` : ''),
@@ -3717,12 +4061,25 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
       <div className="premium-card p-5">
         <p className="font-bold text-white mb-1">Account moderation and deletion</p>
         <p className="text-xs text-gray-500 mb-3">
-          By user id (shown on reports, violations and each creator's login line). A suspension makes the account
+          By the email or username the account signs in with (what a support or deletion email names), or by user
+          id (shown on reports, violations and each creator's login line). A suspension makes the account
           read-only until it lapses; a ban signs it out everywhere and refuses every future sign-in. An approved
           creator is suspended or banned from their creator record instead, but Clear works on any account (for
           example, a pending applicant who was banned here and has since been approved). Delete honours a fan&apos;s
           deletion request (Privacy Policy section 7).
         </p>
+        <div className="flex flex-wrap gap-2 mb-2">
+          <input
+            value={login}
+            onChange={(e) => setLogin(e.target.value.slice(0, 320))}
+            onKeyDown={(e) => e.key === 'Enter' && login.trim() && loadAccount(undefined, { byLogin: true })}
+            placeholder="Email or username"
+            className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm w-72 max-w-full"
+          />
+          <button onClick={() => loadAccount(undefined, { byLogin: true })} disabled={modBusy || !login.trim()} className="premium-button text-sm disabled:opacity-50">
+            Find by email / username
+          </button>
+        </div>
         <div className="flex flex-wrap gap-2 mb-3">
           <input
             value={userId}
@@ -3732,7 +4089,7 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
             className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm font-mono w-72 max-w-full"
           />
           <button onClick={() => loadAccount()} disabled={modBusy || !userId.trim()} className="premium-button text-sm disabled:opacity-50">
-            Load
+            Load by id
           </button>
         </div>
         {modError && <p className="text-sm text-red-400 mb-3">{modError}</p>}
@@ -3741,6 +4098,7 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
           <div className="space-y-3 text-sm text-gray-300">
             <p>
               Account <span className="font-mono text-white">{String(account.userId)}</span>
+              {account.login ? <> — signs in as <span className="text-white">{String(account.login)}</span></> : null}
               {account.role ? ` (${String(account.role)})` : ''} — status:{' '}
               <span className={account.status && account.status !== 'active' ? 'text-red-400 font-bold' : 'text-green-400'}>
                 {String(account.status || 'active')}

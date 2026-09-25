@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { money, post, PLATFORM_ID, FEES } from '../core/ledger.js';
-import { deleteObject, deletePrefix, purgeCdnPrefix } from '../lib/s3.js';
+import { deleteObject, deletePrefix, purgeCdnPrefix, cdnSignedUrl } from '../lib/s3.js';
 import { wmPrefix } from '../lib/watermark.js';
 import { recordManualBurn } from '../core/vip.js';
 import { applyUserStatus } from '../core/moderation.js';
@@ -15,7 +15,7 @@ import { Prisma } from '@prisma/client';
 import { storageKeyOf } from '../core/media-key.js';
 import { cancelAuction } from '../core/auctions.js';
 import { CREATOR_STANDING_SELECT, creatorMayBePaid } from '../core/creator-standing.js';
-import { REPORT_TARGETS } from '../core/reports.js';
+import { REPORT_TARGETS, messageAndBroadcastSiblings } from '../core/reports.js';
 
 export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));
@@ -153,6 +153,72 @@ export const admin: FastifyPluginAsync = async (app) => {
   app.get('/reports', async (req: any) =>
     prisma.report.findMany({ where: { status: (req.query.status ?? 'OPEN') as any }, orderBy: { createdAt: 'asc' }, take: 100 }));
 
+  /**
+   * What was reported, for the admin deciding on it. Moderation used to be
+   * blind: GET /reports returns only the report row, and every content read
+   * path deliberately excludes admins (canViewPost / canViewMessage /
+   * canViewListing / canViewMedia have no ADMIN branch -- and must not get
+   * one, since that would widen access on every fan route). So an admin
+   * chose between an irreversible takedown and leaving possible NCII up
+   * without seeing it. This returns the item, and short-lived signed URLs
+   * for its media generated directly for this admin-only route.
+   *
+   * Every view is logged (admin, report, target) as the audit trail: this
+   * route shows paywalled and private content.
+   */
+  app.get('/reports/:id/target', async (req: any, reply) => {
+    const r = await prisma.report.findUnique({ where: { id: String(req.params.id ?? '') } });
+    if (!r) return reply.code(404).send({ error: 'not_found' });
+    req.log.info({ audit: 'admin_viewed_reported_content', adminId: req.user.id, reportId: r.id, targetType: r.targetType, targetId: r.targetId, at: new Date().toISOString() }, 'admin viewed reported content');
+
+    const MEDIA_TTL = 300;
+    const mediaView = (m: { id: string; key: string; mime: string; status: string; hlsKey: string | null; previewKey: string | null }) => {
+      let url: string | null = null, type: 'hls' | 'image' | null = null;
+      try {
+        if (m.status === 'READY' && m.hlsKey) {
+          const dir = m.hlsKey.slice(0, m.hlsKey.lastIndexOf('/') + 1);
+          url = cdnSignedUrl(`/${m.hlsKey}`, MEDIA_TTL, `/${dir}`); type = 'hls';
+        } else if (m.status === 'READY') {
+          url = cdnSignedUrl(`/${storageKeyOf(m.key)}`, MEDIA_TTL); type = 'image';
+        }
+      } catch { url = null; /* no CDN configured */ }
+      return { id: m.id, mime: m.mime, status: m.status, type, url, expiresIn: url ? MEDIA_TTL : null };
+    };
+    const MEDIA_SELECT = { id: true, key: true, mime: true, status: true, hlsKey: true, previewKey: true } as const;
+
+    let target: unknown = null;
+    if (r.targetType === 'post') {
+      const p = await prisma.post.findUnique({ where: { id: r.targetId }, include: { media: { select: MEDIA_SELECT } } });
+      if (p) target = { id: p.id, creatorId: p.creatorId, text: p.text, visibility: p.visibility, priceCents: p.priceCents, removed: p.removed, createdAt: p.createdAt, media: p.media.map(mediaView) };
+    } else if (r.targetType === 'message') {
+      const m = await prisma.message.findUnique({ where: { id: r.targetId }, include: { media: { select: MEDIA_SELECT } } });
+      if (m) {
+        const sender = await prisma.user.findUnique({ where: { id: m.senderId }, select: { id: true, username: true, role: true, status: true } });
+        const copies = m.broadcastId ? await prisma.message.count({ where: { senderId: m.senderId, broadcastId: m.broadcastId } }) : 1;
+        target = { id: m.id, text: m.text, priceCents: m.priceCents, sender, broadcastId: m.broadcastId, broadcastCopies: copies, createdAt: m.createdAt, media: m.media.map(mediaView) };
+      }
+    } else if (r.targetType === 'listing') {
+      const l = await prisma.listing.findUnique({ where: { id: r.targetId }, include: { media: { select: MEDIA_SELECT } } });
+      if (l) {
+        const keys = l.images.filter((k) => k.startsWith('raw/'));
+        const images = keys.length ? await prisma.media.findMany({ where: { key: { in: keys } }, select: MEDIA_SELECT }) : [];
+        const { media: product, ...fields } = l;
+        target = { ...fields, media: product.map(mediaView), images: images.map(mediaView) };
+      }
+    } else if (r.targetType === 'user') {
+      const u = await prisma.user.findUnique({
+        where: { id: r.targetId },
+        select: { id: true, username: true, role: true, status: true, statusBySite: true, kycStatus: true, createdAt: true, creator: { select: { displayName: true, bio: true, avatarKey: true, bannerKey: true, tags: true } } },
+      });
+      if (u) {
+        const imgKeys = [u.creator?.avatarKey, u.creator?.bannerKey].filter((k): k is string => !!k && k.startsWith('raw/'));
+        const images = imgKeys.length ? await prisma.media.findMany({ where: { key: { in: imgKeys } }, select: MEDIA_SELECT }) : [];
+        target = { ...u, images: images.map(mediaView) };
+      }
+    }
+    return { report: r, target, targetFound: target != null };
+  });
+
   app.post('/reports/:id/resolve', async (req: any, reply) => {
     const { action } = z.object({ action: z.enum(['dismiss', 'remove_content', 'suspend_user', 'ban_user']) }).parse(req.body);
     const r = await prisma.report.findUniqueOrThrow({ where: { id: req.params.id } });
@@ -204,9 +270,22 @@ export const admin: FastifyPluginAsync = async (app) => {
           // goes too: there is nothing left to sell (unlockMessage also
           // refuses an empty or taken-down message, which covers the other
           // broadcast copies of taken-down media).
-          const media = await prisma.media.findMany({ where: { messageId: r.targetId }, select: { id: true } });
+          //
+          // A mass DM is one row PER SUBSCRIBER (workers/broadcast.ts), all
+          // sharing the sender and broadcastId. Blanking only the reported
+          // copy left every other subscriber's copy with the removed text --
+          // still readable by everyone who had unlocked it, and a text-only
+          // one still on sale (messageHasDeliverable saw non-empty text).
+          // Every copy of the broadcast goes (core/reports.ts). Copies the
+          // worker writes AFTER this (a large drop still delivering, or a
+          // re-queued failed job) are caught by the worker itself: it sees
+          // this report ACTIONED, blanks every copy and stops
+          // (core/reports.ts broadcastTakenDown), and the route refuses to
+          // queue the same requestId again.
+          const ids = await messageAndBroadcastSiblings(r.targetId);
+          const media = await prisma.media.findMany({ where: { messageId: { in: ids } }, select: { id: true } });
           for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
-          await prisma.message.update({ where: { id: r.targetId }, data: { text: '', priceCents: 0 } });
+          await prisma.message.updateMany({ where: { id: { in: ids } }, data: { text: '', priceCents: 0 } });
         } else if (r.targetType === 'listing') {
           const l = await prisma.listing.findUniqueOrThrow({ where: { id: r.targetId }, select: { saleType: true, status: true } });
           // A live auction is cancelled with the leader's hold returned; a
@@ -218,12 +297,17 @@ export const admin: FastifyPluginAsync = async (app) => {
           for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
           // Its free preview photos too: past buyers can still open the
           // listing page (GET /marketplace/listings/:id), which returns them.
-          // Cleared and purged from the edge; the objects themselves belong
-          // to the creator's media rows (marketplace.ts validListingImages
-          // only accepts their own transcode output), not to this listing.
+          // They are storage keys of the creator's own uploaded images
+          // (core/public-images.ts) -- free, public, and quite possibly the
+          // reported content itself -- so they are cleared AND taken down
+          // like the product media. A legacy value that is still a URL is
+          // just purged from the edge.
           const imgs = await prisma.listing.findUnique({ where: { id: r.targetId }, select: { images: true } });
           await prisma.listing.update({ where: { id: r.targetId }, data: { images: [] } });
-          for (const u of imgs?.images ?? []) {
+          const keys = (imgs?.images ?? []).filter((k) => k.startsWith('raw/'));
+          const imageMedia = keys.length ? await prisma.media.findMany({ where: { key: { in: keys } }, select: { id: true } }) : [];
+          for (const m of imageMedia) takedowns.push(await takedownMedia(m.id, req.log));
+          for (const u of (imgs?.images ?? []).filter((k) => !k.startsWith('raw/'))) {
             try { await purgeCdnPrefix(new URL(u).pathname); } catch { /* not a URL: nothing cached under it */ }
           }
         }
@@ -254,6 +338,39 @@ export const admin: FastifyPluginAsync = async (app) => {
   app.post('/users/:id/kyc', async (req: any) => {
     const { status } = z.object({ status: z.enum(['APPROVED', 'REJECTED', 'PENDING']) }).parse(req.body);
     return prisma.user.update({ where: { id: req.params.id }, data: { kycStatus: status } });
+  });
+
+  /**
+   * Creators whose payouts are frozen. Reactivation deliberately never lifts
+   * a freeze (core/moderation.ts) -- but a frozen creator's POST /payouts is
+   * refused before any Payout row exists, so nothing reached the HELD queue
+   * and no admin view showed them: a site suspension that lapsed by itself
+   * left the creator earning again with their balance unwithdrawable and
+   * nobody aware. `activeButFrozen` marks the ones to look at first.
+   */
+  app.get('/creators/frozen', async (req: any) => {
+    const { limit: take, offset: skip } = z.object({
+      limit: z.coerce.number().int().min(1).max(200).default(100),
+      offset: z.coerce.number().int().min(0).default(0),
+    }).parse(req.query ?? {});
+    const rows = await prisma.creatorProfile.findMany({
+      where: { payoutsFrozen: true },
+      orderBy: { userId: 'asc' }, take, skip,
+      select: {
+        userId: true, displayName: true,
+        user: { select: {
+          username: true, status: true, statusBySite: true, siteCreatorStatus: true, siteAccountStatus: true,
+          siteSuspendedUntil: true, siteAccountSuspendedUntil: true, siteStatusAt: true, siteAccountStatusAt: true,
+          account: { select: { balanceCents: true, withdrawableCents: true } },
+        } },
+      },
+    });
+    return rows.map(({ user: { account, ...u }, ...c }) => ({
+      ...c, user: u,
+      balanceCents: Number(account?.balanceCents ?? 0n),
+      withdrawableCents: Number(account?.withdrawableCents ?? 0n),
+      activeButFrozen: u.status === 'ACTIVE',
+    }));
   });
 
   app.post('/creators/:id/freeze', async (req: any) => {

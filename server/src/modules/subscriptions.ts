@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { charge, money } from '../core/ledger.js';
 import { page } from '../plugins/pagination.js';
+import { withProfileImageUrls } from '../core/public-images.js';
 
 export const PERIOD_MS = 30 * 864e5;
 
@@ -50,10 +51,10 @@ export const subscriptions: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/me', { preHandler: app.auth }, async (req) =>
-    prisma.subscription.findMany({
+    (await prisma.subscription.findMany({
       where: { fanId: req.user.id, currentPeriodEnd: { gt: new Date() } },
       include: { creator: { select: { username: true, creator: { select: { displayName: true, avatarKey: true } } } }, tier: true },
-    }));
+    })).map((s) => ({ ...s, creator: { ...s.creator, creator: s.creator.creator && withProfileImageUrls(s.creator.creator) } })));
 
   app.get('/subscribers', { preHandler: app.creatorOk }, async (req: any) =>
     prisma.subscription.findMany({

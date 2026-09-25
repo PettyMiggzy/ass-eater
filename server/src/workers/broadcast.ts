@@ -4,6 +4,8 @@ import { prisma } from '../lib/prisma.js';
 import { publish, connection } from '../lib/redis.js';
 import { broadcastCopyKey } from '../core/media-key.js';
 import { registerWorker } from './process-guards.js';
+import { broadcastTakenDown, blankBroadcast } from '../core/reports.js';
+import { assertNotPublicImages } from '../core/public-images.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
@@ -19,6 +21,10 @@ const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, b
  *
  * Resumable: every message carries the job's broadcastId, unique per
  * conversation, so a retried job skips fans it already reached.
+ *
+ * Stoppable: once an admin takes the drop down (a report on any copy,
+ * resolved with any action but dismiss), the job stops sending and blanks
+ * whatever copies it had written -- see core/reports.ts broadcastTakenDown.
  */
 registerWorker(new Worker('broadcast', async (job) => {
   const { creatorId, text, mediaIds, priceCents } = job.data as {
@@ -32,6 +38,15 @@ registerWorker(new Worker('broadcast', async (job) => {
   const creator = await prisma.user.findUnique({ where: { id: creatorId }, select: { status: true } });
   if (creator?.status !== 'ACTIVE') return;
 
+  // An admin removed this drop (a report on any copy, actioned) before or
+  // while an earlier attempt of it was delivering. Re-sending it -- a retry,
+  // or the creator re-queueing the same requestId -- would put the removed
+  // content back in front of the fans that attempt never reached.
+  if (await broadcastTakenDown(creatorId, broadcastId)) {
+    await blankBroadcast(creatorId, broadcastId);
+    return { skipped: 'taken_down' };
+  }
+
   const sourceMedia = mediaIds.length
     ? await prisma.media.findMany({ where: { id: { in: mediaIds }, ownerId: creatorId, status: 'READY', listingId: null, sourceMediaId: null } })
     : [];
@@ -43,6 +58,13 @@ registerWorker(new Worker('broadcast', async (job) => {
   if (sourceMedia.length !== new Set(mediaIds).size) {
     console.error('broadcast: skipped, requested media missing or not READY', { broadcastId, creatorId, requested: mediaIds.length, ready: sourceMedia.length });
     return { skipped: 'media_not_ready' };
+  }
+  // Nor media that became an avatar, banner or listing preview photo since
+  // it was queued: free to everyone, so never sold as a priced drop
+  // (core/public-images.ts; the route checks the same at queue time).
+  try { await assertNotPublicImages(prisma, mediaIds); } catch {
+    console.error('broadcast: skipped, media is now a public image', { broadcastId, creatorId });
+    return { skipped: 'media_is_public_image' };
   }
 
   const subs = await prisma.subscription.findMany({
@@ -76,6 +98,16 @@ registerWorker(new Worker('broadcast', async (job) => {
       // conflict is thrown so the job retries and resumes from here.
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002' && String(e.meta?.target ?? '').includes('broadcastId')) continue;
       throw e;
+    }
+    // Checked AFTER the copy commits, not before: the admin's resolve marks
+    // the report ACTIONED and then blanks the copies that exist. If that
+    // mark is visible now, this copy may have committed after the blanking
+    // ran, so blank everything and stop; if it is not visible yet, the
+    // blanking has not run yet either and will see this copy. Either way no
+    // copy keeps the removed content, and nothing is pushed to the fan.
+    if (await broadcastTakenDown(creatorId, broadcastId)) {
+      await blankBroadcast(creatorId, broadcastId);
+      return { stopped: 'taken_down' };
     }
     // Same redaction as the single-DM path (modules/messages.ts) -- a priced
     // broadcast's text is paywalled content, not a free teaser, so it can't

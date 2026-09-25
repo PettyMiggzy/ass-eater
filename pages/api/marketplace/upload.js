@@ -3,6 +3,7 @@ import { addListingMediaForOwner, MEDIA_CAP_EXCEEDED, LISTING_NOT_EDITABLE } fro
 import { LISTING_LIMITS, isValidListingPreview } from '../../../lib/creator-status';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
+import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
 
 const MEDIA_CAP_MESSAGE = `Listings can have up to ${LISTING_LIMITS.maxMedia} items.`;
 
@@ -77,6 +78,8 @@ export default async function handler(req, res) {
     }
   } catch (err) {
     if (err instanceof MediaRejected) return res.status(err.status).json({ error: err.message });
+    // The file was reaped by the orphan sweep before this finalize (lib/media-refs.js).
+    if (err.code === MEDIA_UPLOAD_EXPIRED) return res.status(409).json({ error: MEDIA_UPLOAD_EXPIRED_MESSAGE });
     console.error('[marketplace/upload] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

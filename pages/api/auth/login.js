@@ -1,6 +1,6 @@
 import { findUserByEmail, verifyPassword } from '../../../lib/users-store';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
-import { checkRateLimit, clearFailures, clientIp, consumeAttempt, recordFailure } from '../../../lib/rate-limit';
+import { checkRateLimit, clearFailures, clientIp, consumeAttempt, recordFailure, refundAttempt } from '../../../lib/rate-limit';
 import { effectiveUserStatus } from '../../../lib/user-moderation';
 
 // Two brakes, and both of them are aimed at the host doing the guessing
@@ -88,11 +88,14 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // A successful login clears all three, so one shared IP (carrier NAT,
-    // an office) isn't stuck for 15 minutes because one person fat-fingered
-    // their password, and the account's own owner always leaves a clean
-    // record behind them.
-    clearFailures(ipKey);
+    // A successful login clears this ACCOUNT's keys, so its owner always
+    // leaves a clean record behind them. The per-IP bucket is NOT cleared --
+    // it is the only brake on spraying one password across many accounts, and
+    // wiping it on success let a host holding any valid account log in after
+    // every 9 failed guesses and never trip it. Only this request's own hit is
+    // taken back, so successful logins from a shared IP (carrier NAT, an
+    // office) never count against it, while failures still do.
+    refundAttempt(ipKey);
     clearFailures(accountKey);
     clearFailures(accountFromIpKey);
 

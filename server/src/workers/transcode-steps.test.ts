@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
-import { hlsArgs, sanitizeImage, previewArgs, previewSeekSeconds } from './transcode-steps.js';
+import { hlsArgs, sanitizeImage, previewArgs, previewSeekSeconds, firstFrameStill } from './transcode-steps.js';
+import { checkedImageShape, MAX_FRAMES } from '../lib/image-limits.js';
 
 describe('hlsArgs', () => {
   it('maps audio only when the source has it', () => {
@@ -56,5 +57,45 @@ describe('previewSeekSeconds', () => {
     expect(previewSeekSeconds(Number.NaN)).toBe(0);
     expect(previewSeekSeconds(0)).toBe(0);
     expect(previewArgs('/s', '/p.jpg', { seekSeconds: previewSeekSeconds(Number.NaN) })).not.toContain('-ss');
+  });
+});
+
+// Frames stacked vertically (the layout sharp uses for an animation), each
+// with a bar in a different place so no encoder merges them.
+async function animation(w: number, h: number, n: number, fmt: 'gif' | 'webp') {
+  const buf = Buffer.alloc(w * h * n * 3, 0);
+  for (let i = 0; i < n; i++) {
+    const x = (i * 7) % w;
+    for (let y = 0; y < h; y++) for (let dx = 0; dx < 6 && x + dx < w; dx++) buf[(i * w * h + y * w + x + dx) * 3] = 255;
+  }
+  const img = sharp(buf, { raw: { width: w, height: h * n, channels: 3, pageHeight: h } as any });
+  return fmt === 'gif' ? img.gif().toBuffer() : img.webp().toBuffer();
+}
+
+describe('sanitizeImage on animations', () => {
+  it('keeps a many-frame GIF whose frames TOTAL over 50M pixels (sharp counts every frame)', async () => {
+    // 480x480 x 220 frames = 50.7M pixels: refused outright before.
+    const gif = await animation(480, 480, 220, 'gif');
+    const out = await sanitizeImage(gif, 'image/gif');
+    const meta = await sharp(out, { animated: true }).metadata();
+    expect([meta.format, meta.pages, meta.pageHeight]).toEqual(['gif', 220, 480]);
+  }, 60_000);
+
+  it('keeps an animated WebP animated (it used to be flattened to frame 1, in place)', async () => {
+    const webp = await animation(64, 48, 4, 'webp');
+    expect((await sharp(webp, { animated: true }).metadata()).pages).toBe(4);
+    const out = await sanitizeImage(webp, 'image/webp');
+    const meta = await sharp(out, { animated: true }).metadata();
+    expect([meta.format, meta.pages, meta.pageHeight]).toEqual(['webp', 4, 48]);
+    // ...and its blurred preview is taken from a still of frame 1, which
+    // ffmpeg can read (it cannot decode an animated WebP).
+    const still = await sharp(await firstFrameStill(out)).metadata();
+    expect([still.format, still.width, still.height, still.pages ?? 1]).toEqual(['png', 64, 48, 1]);
+  });
+
+  it('still refuses a per-frame decompression bomb and an absurd frame count', async () => {
+    await expect(checkedImageShape(await animation(8, 8, MAX_FRAMES + 1, 'gif'))).rejects.toThrow('image_too_many_frames');
+    const header = await sharp({ create: { width: 10_000, height: 6_000, channels: 3, background: '#000' } }).png({ compressionLevel: 9 }).toBuffer();
+    await expect(sanitizeImage(header, 'image/png')).rejects.toThrow('image_too_many_pixels');
   });
 });

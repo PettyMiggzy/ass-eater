@@ -259,6 +259,8 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
     // restricts it (siteMayLift). One an admin applied here, and any ban, is
     // not lifted this way. Payouts stay frozen either way until an admin
     // unfreezes them (core/moderation.ts).
+    // Conditional in the database (applyUserStatus): `user` was read above,
+    // and an admin's ban landing since must not be lifted by it.
     if (standing === 'active' && siteMayLift(user, dim)) {
       await applyUserStatus(user.id, 'ACTIVE', { bySite: true });
     }
@@ -389,19 +391,19 @@ export async function syncSiteStanding(
   } else if (!fan && (user.siteCreatorStatus !== status || +(user.siteSuspendedUntil ?? 0) !== +(until ?? 0))) {
     user = await prisma.user.update({ where: { id: user.id }, data: { siteCreatorStatus: status, siteSuspendedUntil: until } });
   }
+  // `user` may be stale by now (an admin can act in between), so each of
+  // these is applied conditionally in the database (applyUserStatus): an
+  // admin ban is never lifted or downgraded by a message that raced it.
   if (status === 'banned') {
     if (user.status === 'BANNED') return 'unchanged';
-    await applyUserStatus(user.id, 'BANNED', { bySite: true });
-    return 'banned';
+    return (await applyUserStatus(user.id, 'BANNED', { bySite: true })) ? 'banned' : 'unchanged';
   }
   if (status === 'suspended') {
     if (user.status !== 'ACTIVE') return 'unchanged';
-    await applyUserStatus(user.id, 'SUSPENDED', { bySite: true });
-    return 'suspended';
+    return (await applyUserStatus(user.id, 'SUSPENDED', { bySite: true })) ? 'suspended' : 'unchanged';
   }
   if (status === 'active' && siteMayLift(user, dim)) {
-    await applyUserStatus(user.id, 'ACTIVE', { bySite: true });
-    return 'reactivated';
+    return (await applyUserStatus(user.id, 'ACTIVE', { bySite: true })) ? 'reactivated' : 'unchanged';
   }
   return 'unchanged';
 }
@@ -457,9 +459,12 @@ export async function liftLapsedSiteSuspensions(now = new Date()): Promise<numbe
       data: data as Prisma.UserUpdateManyMutationInput,
     });
     if (!claimed.count) continue;
+    // u.status is the snapshot from the read above; an admin ban or
+    // suspension issued while this loop worked through earlier rows is not in
+    // it (the claim above only guards the site_* columns). applyUserStatus
+    // lifts only a row that is STILL suspended by the site, in the database.
     if (u.status === 'SUSPENDED' && u.statusBySite && !RESTRICTIVE.has(creatorStatus ?? '') && !RESTRICTIVE.has(accountStatus ?? '')) {
-      await applyUserStatus(u.id, 'ACTIVE', { bySite: true });
-      lifted++;
+      if (await applyUserStatus(u.id, 'ACTIVE', { bySite: true })) lifted++;
     }
   }
   return lifted;

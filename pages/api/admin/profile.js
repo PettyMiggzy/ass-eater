@@ -11,7 +11,7 @@ import {
   UnderageProfile,
 } from '../../../lib/creators-store';
 import { findCircumventionInTags, removeListingsForCreator } from '../../../lib/listings-store';
-import { FOUNDING_LIMIT, isFoundingCreator, profileQualifiesForFounding } from '../../../lib/founding';
+import { FOUNDING_LIMIT, isFoundingCreator, profileQualifiesForFounding, foundingAutoGrantEligible } from '../../../lib/founding';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { screenPublicText, publicProfileTextEntries, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
@@ -25,11 +25,13 @@ import {
   looksLikePhoneNumber,
   PHONE_NAME_MESSAGE,
 } from '../../../lib/field-validation';
-import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
+import { isHandleConflict, HANDLE_TAKEN_MESSAGE, findUserByCreatorId } from '../../../lib/users-store';
+import { effectiveUserStatus } from '../../../lib/user-moderation';
 import { performerRecordStatusForCreator } from '../../../lib/performer-records-store';
 import { getAddress } from 'viem';
 import { parseCategoriesInput } from '../../../lib/categories';
 import { pushCreatorStatus, reportPushFailure } from '../../../lib/server-api';
+import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
 
 const FIELD_LABELS = {
   name: 'Display name',
@@ -248,6 +250,19 @@ export default async function handler(req, res) {
     if (!String(merged.handle || '').replace(/^@+/, '').trim()) {
       return res.status(409).json({ error: 'Set a handle before making this creator live.' });
     }
+    // The login account behind the profile must be in good standing too. An
+    // applicant's account can be banned or suspended at account level while
+    // the profile is still pending (/api/admin/user-moderation), and nothing
+    // here used to look: approving published a profile and listings nobody
+    // could pay (checkout refuses a banned/suspended seller) and whose owner
+    // could not sign in to manage them. Clearing the account moderation stays
+    // possible, so this locks nobody out.
+    const owner = await findUserByCreatorId(existing.id);
+    if (owner && effectiveUserStatus(owner) !== 'active') {
+      return res.status(409).json({
+        error: `Nothing was saved -- this creator's login account is ${effectiveUserStatus(owner)}. Clear the account moderation (Accounts tab) before making them live.`,
+      });
+    }
     const recordStatus = await performerRecordStatusForCreator(existing.id);
     if (recordStatus === 'no_record') {
       return res.status(409).json({
@@ -292,7 +307,8 @@ export default async function handler(req, res) {
     entries = entries.filter(([context, value]) => !unchanged(context, value));
   }
   // Tags render publicly as #chips, and a handle or phone number split across
-  // two tags ("venmo", "@janedoe") passes every per-tag check above. Same
+  // two tags ("venmo", "@janedoe"), or a prohibited phrase split across two
+  // ("barely", "legal"), passes every per-tag check above. Same
   // joined check the marketplace applies to listing tags; run whenever tags
   // are written, and on go-live over the stored ones.
   const tagSource = 'tags' in fields ? fields.tags : goingLive ? existing.tags : null;
@@ -300,8 +316,11 @@ export default async function handler(req, res) {
   const tagsUnchanged = 'tags' in fields && !goingLive && sameTags(safeFields.tags, existing.tags);
   if (tagHit && !tagsUnchanged) {
     await addViolation({ userId: `admin-edit:creator:${creatorId}`, context: 'tags', reasons: tagHit.reasons, snippet: tagHit.snippet });
+    const what = tagHit.kind === 'prohibited'
+      ? "contains a term that isn't allowed anywhere on this platform"
+      : "looks like it's trying to move a payment off-platform, which isn't allowed here";
     return res.status(400).json({
-      error: `Nothing was saved -- the Tags field looks like it's trying to move a payment off-platform, which isn't allowed here (flagged: ${tagHit.reasons.join(', ')}). Clear it and save again.`,
+      error: `Nothing was saved -- the Tags field ${what} (flagged: ${tagHit.reasons.join(', ')}). Clear it and save again.`,
     });
   }
   for (const [context, value] of entries) {
@@ -399,15 +418,10 @@ export default async function handler(req, res) {
   // and set foundingRevokedAt only for creators who already held the badge,
   // so banned -> pending -> active used to read as a fresh approval and
   // hand a reinstated creator the programme. Hand grants stay possible.
-  if (
-    approving &&
-    !isFoundingCreator(existing) &&
-    !safeFields.founding &&
-    !existing.foundingRevokedAt &&
-    !existing.approvedAt &&
-    !existing.bannedAt &&
-    !(Number(existing.contentViolationCount) > 0)
-  ) {
+  // The eligibility half lives in lib/founding.js (foundingAutoGrantEligible)
+  // so the creator dashboard only promises the badge to creators this grant
+  // would still consider.
+  if (approving && !safeFields.founding && foundingAutoGrantEligible(existing)) {
     if (profileQualifiesForFounding({ ...existing, ...safeFields })) {
       safeFields.founding = true;
       safeFields.foundingSince = new Date().toISOString();
@@ -415,17 +429,20 @@ export default async function handler(req, res) {
     }
   }
 
-  // Approval (or any move to active) of a creator who already holds the
+  // FIRST approval (or any move to active) of a creator who already holds the
   // badge: their window starts now. A pending grant has no stamp yet; an
   // older stamp from before approval is moved up so the pre-approval days,
-  // when they could not earn, are not counted against them.
+  // when they could not earn, are not counted against them. Only a first
+  // approval (no approvedAt) restamps a stamp already in the past: an admin
+  // moving a live founding creator active -> pending -> active used to hand
+  // them a fresh 30 days at 0% fee with no explicit re-grant.
   if (
     safeFields.status === 'active' &&
     willBeActive &&
     previousStatus !== 'active' &&
     isFoundingCreator(existing) &&
     safeFields.founding !== false &&
-    (approving || !existing.foundingSince || Date.parse(existing.foundingSince) > Date.now())
+    ((approving && !existing.approvedAt) || !existing.foundingSince || Date.parse(existing.foundingSince) > Date.now())
   ) {
     safeFields.foundingSince = new Date().toISOString();
   }
@@ -481,6 +498,11 @@ export default async function handler(req, res) {
     // duplicate key is a server problem, not a naming one.
     if (isHandleConflict(err)) {
       return res.status(409).json({ error: HANDLE_TAKEN_MESSAGE });
+    }
+    // An /api/media photo nothing references and no upload token covers (a
+    // reaped upload) -- lib/media-refs.js lockMediaForFinalize.
+    if (err.code === MEDIA_UPLOAD_EXPIRED) {
+      return res.status(409).json({ error: MEDIA_UPLOAD_EXPIRED_MESSAGE });
     }
     console.error('[admin/profile] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });

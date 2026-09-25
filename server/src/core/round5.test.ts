@@ -160,20 +160,27 @@ describe('digital listings', () => {
 });
 
 describe('listing preview images', () => {
-  afterEach(() => { delete process.env.BUNNY_CDN_HOST; });
-  it("accept only https URLs under the creator's own CDN output", () => {
-    const creator = randomUUID();
-    expect(validListingImages([], creator)).toBe(true);
-    expect(validListingImages([`https://cdn.example.com/media/${creator}/m/preview.jpg`], creator)).toBe(false); // no CDN configured
-    process.env.BUNNY_CDN_HOST = 'cdn.example.com';
-    expect(validListingImages([`https://cdn.example.com/media/${creator}/m/preview.jpg`], creator)).toBe(true);
+  // Round 6 changed the contract: images are the storage keys of the
+  // creator's own READY, unattached images, signed per response -- the old
+  // allowlisted media/<creator>/ URLs were a blurred teaser the token-auth
+  // CDN refused unsigned (core/public-images.ts, round6.test.ts).
+  it("accept only the creator's own READY, unattached images -- never a URL", async () => {
+    const creator = await makeCreator();
+    const other = await makeCreator();
+    await expect(validListingImages(prisma as any, [], creator)).resolves.toBeUndefined();
+    const own = await media(creator, 'READY');
+    await expect(validListingImages(prisma as any, [own.key], creator)).resolves.toBeUndefined();
+    const theirs = await media(other, 'READY');
+    const pending = await media(creator, 'PROCESSING');
+    const video = await media(creator, 'READY', { mime: 'video/mp4' });
+    const post = await prisma.post.create({ data: { creatorId: creator } });
+    const onPost = await media(creator, 'READY', { postId: post.id });
     for (const bad of [
       'https://tracker.example/p.gif?u=1', 'javascript:alert(1)', 'data:image/png;base64,AAAA',
-      `http://cdn.example.com/media/${creator}/m/preview.jpg`,
-      `https://cdn.example.com/media/${randomUUID()}/m/preview.jpg`,
-      `https://cdn.example.com/raw/${creator}/x`,
-      `https://cdn.example.com/media/${creator}/${'a'.repeat(600)}`,
-    ]) expect(validListingImages([bad], creator)).toBe(false);
+      `https://cdn.example.com/media/${creator}/m/preview.jpg`,
+      theirs.key, pending.key, video.key, onPost.key, `raw/${creator}/${'a'.repeat(600)}`,
+    ]) await expect(validListingImages(prisma as any, [bad], creator)).rejects.toMatchObject({ message: 'bad_images', statusCode: 400 });
+    await expect(validListingImages(prisma as any, [own.key, own.key], creator)).rejects.toMatchObject({ message: 'bad_images' });
   });
 });
 

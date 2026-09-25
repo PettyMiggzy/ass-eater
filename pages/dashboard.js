@@ -16,8 +16,10 @@ import {
   isFoundingCreator,
   foundingProfileGaps,
   foundingSlotsLeft,
+  foundingAutoGrantEligible,
   FEE_WAIVER_DAYS,
 } from '../lib/founding';
+import { effectiveUserStatus } from '../lib/user-moderation';
 import { Icons, SolidIcons } from '../components/Brand';
 import PremiumBadge from '../components/public/PremiumBadge';
 import SiteNav from '../components/SiteNav';
@@ -144,7 +146,14 @@ export default function Dashboard({
   // be sent from here. Resets after each successful upload.
   const [avatarOnlyMe, setAvatarOnlyMe] = useState(false);
   const creatorStatus = creator ? effectiveCreatorStatus(creator) : null;
-  const isRestricted = creatorStatus === 'suspended' || creatorStatus === 'banned';
+  // Account-level moderation (lib/user-moderation.js) is separate from the
+  // creator record's status: an admin can suspend or ban a fan's or a
+  // not-yet-approved creator's LOGIN, and every write route then refuses it
+  // (userWriteRestriction). The page has to say so and disable the same
+  // controls, or each one only fails after it is clicked.
+  const accountStatus = effectiveUserStatus(user);
+  const accountRestricted = accountStatus === 'suspended' || accountStatus === 'banned';
+  const isRestricted = creatorStatus === 'suspended' || creatorStatus === 'banned' || accountRestricted;
   const isDemo = !!creator && (creator.seed === true || creator.demo === true);
   const walletError = payoutWalletError(draft.walletAddress);
   const walletDirty = String(draft.walletAddress || '').trim() !== String(creator?.walletAddress || '').trim();
@@ -408,6 +417,17 @@ export default function Dashboard({
             </div>
           )}
 
+          {accountRestricted && (
+            <div className="mb-6 px-4 py-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm" role="alert">
+              {accountStatus === 'banned'
+                ? 'This account has been banned. You can no longer post, message, report or buy'
+                : `This account is suspended until ${formatDate(user.moderationUntil)}. Until then you can't post, message, report or buy`}
+              {user.role === 'creator' && creator ? ', edit your profile, upload, list items or cash out' : ''}.
+              {user.role === 'creator' && creator ? ' You can still ship orders fans have already paid for.' : ''}{' '}
+              Questions: <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a>.
+            </div>
+          )}
+
           <Inbox currentUserId={user.id} isCreator={user.role === 'creator' && !!creator} />
 
           {user.role !== 'creator' && (
@@ -453,8 +473,9 @@ export default function Dashboard({
               )}
               {creatorStatus === 'pending' && (
                 <div className="px-4 py-3 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
-                  Your profile is pending review and not yet visible on the platform. Build it out below — you can upload
-                  and create listings now, and they go live (and can sell) once our team approves your profile.
+                  Your profile is pending review and not yet visible on the platform.
+                  {!accountRestricted &&
+                    ' Build it out below — you can upload and create listings now, and they go live (and can sell) once our team approves your profile.'}
                   <span className="block mt-2">
                     Approval needs a §2257 record: your legal name, date of birth and a copy of a government-issued
                     photo ID. Our team will email the address you signed up with, or you can send it first to
@@ -819,6 +840,7 @@ export default function Dashboard({
               <CashOutPanel
                 creator={creator}
                 effectiveStatus={creatorStatus}
+                accountRestricted={accountRestricted}
                 savedWallet={creator.walletAddress || ''}
                 walletDirty={walletDirty}
               />
@@ -964,6 +986,7 @@ export default function Dashboard({
                 busy={busy}
                 disabled={isRestricted}
                 creatorStatus={creatorStatus}
+                accountRestricted={accountRestricted}
                 isDemo={isDemo}
                 founding={founding}
                 paymentsLive={paymentsLive}
@@ -1035,6 +1058,13 @@ function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, si
 
   const isFounding = !!founding?.isFounding;
   const gaps = foundingProfileGaps(creator);
+  // The recruitment cards promise "finish your profile and approval gives you
+  // the badge". That is only true for a creator the automatic grant in
+  // pages/api/admin/profile.js would still consider -- a first approval of a
+  // pending profile with no revocation, ban or violation on record -- so they
+  // are shown to nobody else (an already-approved creator finishing their
+  // profile is never auto-granted it).
+  const autoGrantEligible = foundingAutoGrantEligible(creator);
 
   return (
     <div>
@@ -1044,7 +1074,7 @@ function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, si
           The programme is decided automatically at approval, so a creator who
           is told "finish these four things" can actually act on it -- which is
           the difference between a perk and a lottery. */}
-      {!isFounding && foundingLeft > 0 && gaps.length > 0 && (
+      {!isFounding && autoGrantEligible && foundingLeft > 0 && gaps.length > 0 && (
         <div className="mb-4 px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-sm">
           <p className="font-bold text-brand-gold">
             {foundingLeft} Founding Creator {foundingLeft === 1 ? 'spot' : 'spots'} left
@@ -1058,7 +1088,7 @@ function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, si
           </ul>
         </div>
       )}
-      {!isFounding && foundingLeft > 0 && gaps.length === 0 && (
+      {!isFounding && autoGrantEligible && foundingLeft > 0 && gaps.length === 0 && (
         <div className="mb-4 px-4 py-3 rounded-md bg-black/40 border border-brand-gold/30 text-sm">
           <p className="font-bold text-brand-gold">Your profile qualifies for Founding Creator</p>
           <p className="text-gray-400 mt-1">
@@ -1286,6 +1316,7 @@ function MarketplaceSection({
   busy,
   disabled,
   creatorStatus,
+  accountRestricted,
   isDemo,
   founding,
   paymentsLive,
@@ -1343,7 +1374,7 @@ function MarketplaceSection({
     if (listing) setForm(BLANK_LISTING_FORM);
   };
 
-  const canSellNow = creatorStatus === 'active' && !isDemo;
+  const canSellNow = creatorStatus === 'active' && !isDemo && !accountRestricted;
 
   return (
     <div>
@@ -1363,7 +1394,9 @@ function MarketplaceSection({
         <p className="text-xs text-brand-gold mb-4">
           {isDemo
             ? 'This is a demo profile, so its listings are labelled "Demo — not for sale" and can\'t be bought.'
-            : creatorStatus === 'pending'
+            : accountRestricted
+              ? 'Your account is restricted, so you can\'t create or change listings right now.'
+              : creatorStatus === 'pending'
               ? 'Your listings stay hidden and can\'t be bought until your profile is approved.'
               : creatorStatus === 'suspended'
                 ? 'Your listings are hidden and can\'t be bought while your account is suspended.'

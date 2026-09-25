@@ -3,7 +3,7 @@ import { displayNameFor, findUserByCreatorId } from '../../../lib/users-store';
 import { addWallPost, toPublicWallPost, MAX_TEXT_LENGTH, WALL_DAILY_CAP_MESSAGE } from '../../../lib/wall-store';
 import { getCreatorById } from '../../../lib/creators-store';
 import { isPubliclyVisible, effectiveCreatorStatus } from '../../../lib/creator-status';
-import { restrictionMessageFor } from '../../../lib/messages-store';
+import { restrictionMessageFor, blockBetween } from '../../../lib/messages-store';
 import { createNotification } from '../../../lib/notifications-store';
 import { screenPublicText } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
@@ -67,6 +67,18 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Creator not found' });
     }
 
+    // A DM block is the remedy for an abusive account, and it used to stop
+    // only DMs: a fan the creator blocked kept commenting on their public
+    // wall, notifying them on every burst. Refused (and nobody notified) in
+    // either direction, the same as a DM.
+    let ownerUser = null;
+    if (!isOwner) {
+      ownerUser = await findUserByCreatorId(wallCreator.id);
+      const block = ownerUser ? await blockBetween(uid, ownerUser.id) : null;
+      if (block === 'them') return res.status(403).json({ error: "This creator isn't accepting comments from you." });
+      if (block === 'me') return res.status(403).json({ error: 'You blocked this creator. Unblock them to comment on their wall.' });
+    }
+
     // A wall comment is public text on the creator's profile, so it gets the
     // same screen as every other public field (bio, name, tags, listing
     // copy): payment circumvention AND the prohibited-terms list. It used to
@@ -85,7 +97,6 @@ export default async function handler(req, res) {
     // burst of comments folds into one unread notification per wall.
     if (!isOwner) {
       try {
-        const ownerUser = await findUserByCreatorId(wallCreator.id);
         if (ownerUser && String(ownerUser.id) !== String(uid)) {
           await createNotification({
             userId: String(ownerUser.id),

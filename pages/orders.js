@@ -26,12 +26,12 @@ const DELIVERABLE = new Set(['fulfilled', 'delivered']);
  * request, by the same order. Nothing about a purchase is in page props.
  */
 function DigitalDelivery({ orderId, mark }) {
-  const [state, setState] = useState({ status: 'idle', items: [], removed: false, removedReason: null, error: '' });
+  const [state, setState] = useState({ status: 'idle', items: [], removed: false, removedReason: null, withheld: 0, error: '' });
   const [viewing, setViewing] = useState(null);
   const close = useCallback(() => setViewing(null), []);
 
   const load = async () => {
-    setState({ status: 'loading', items: [], removed: false, removedReason: null, error: '' });
+    setState({ status: 'loading', items: [], removed: false, removedReason: null, withheld: 0, error: '' });
     try {
       const res = await fetch(`/api/marketplace/orders/delivery?orderId=${encodeURIComponent(orderId)}`);
       const data = await res.json().catch(() => ({}));
@@ -41,10 +41,13 @@ function DigitalDelivery({ orderId, mark }) {
         items: Array.isArray(data.items) ? data.items.filter((i) => i && typeof i.src === 'string') : [],
         removed: !!data.removed,
         removedReason: typeof data.removedReason === 'string' ? data.removedReason : null,
+        // Files held back pending a moderation review (preserved/quarantined):
+        // left out of `items`, so they are counted here and said so.
+        withheld: Number.isInteger(data.withheld) && data.withheld > 0 ? data.withheld : 0,
         error: '',
       });
     } catch (err) {
-      setState({ status: 'error', items: [], removed: false, removedReason: null, error: err.message || 'Could not load this purchase.' });
+      setState({ status: 'error', items: [], removed: false, removedReason: null, withheld: 0, error: err.message || 'Could not load this purchase.' });
     }
   };
 
@@ -78,7 +81,15 @@ function DigitalDelivery({ orderId, mark }) {
       </p>
     );
   }
+  const withheldNote = state.withheld > 0 && (
+    <p className="text-[11px] text-gray-400 mt-2">
+      {state.withheld === 1 ? '1 file from this purchase is' : `${state.withheld} files from this purchase are`} held back
+      while our team reviews a report about it. Contact{' '}
+      <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> if you need help.
+    </p>
+  );
   if (state.items.length === 0) {
+    if (withheldNote) return <div className="mt-3 pt-3 border-t border-white/10">{withheldNote}</div>;
     return (
       <p className="mt-3 pt-3 border-t border-white/10 text-xs text-gray-400">
         The creator hasn&apos;t attached any files to this item. Contact{' '}
@@ -109,6 +120,7 @@ function DigitalDelivery({ orderId, mark }) {
         ))}
       </div>
       <p className="text-[11px] text-gray-500 mt-2">These files carry a mark tied to your account. They are for you only.</p>
+      {withheldNote}
     </div>
   );
 }

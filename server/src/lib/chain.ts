@@ -419,3 +419,27 @@ export function warnLegacyEnv(log: (msg: string) => void = console.warn) {
     log(`env vars with an inline '# comment' in their value (systemd keeps it as part of the value -- move the comment to its own line): ${commented.join(', ')}`);
   }
 }
+
+/**
+ * Startup check of the two signing secrets' SHAPE, logging variable names
+ * only (never values). systemd's EnvironmentFile= keeps a trailing
+ * '# comment' as part of the value, and warnLegacyEnv deliberately never
+ * inspects these two -- so a key pasted with one became unusable, and the
+ * only symptom was every payout auto-refunding and every sweep failing.
+ */
+export function warnSecretShape(log: (msg: string) => void = console.error) {
+  const bad: string[] = [];
+  const key = process.env.TREASURY_PRIVATE_KEY;
+  if (key !== undefined && key !== '' && !/^0x[0-9a-fA-F]{64}$/.test(key)) bad.push('TREASURY_PRIVATE_KEY (expected 0x + 64 hex characters)');
+  const mn = process.env.DEPOSIT_MNEMONIC;
+  if (mn !== undefined && mn !== '') {
+    const words = mn.trim().split(/\s+/);
+    if (![12, 15, 18, 21, 24].includes(words.length) || words.some((w) => !/^[a-z]+$/.test(w))) {
+      bad.push('DEPOSIT_MNEMONIC (expected 12-24 lowercase words, nothing else on the line)');
+    }
+  }
+  if (bad.length) {
+    log(`MALFORMED signing secrets in the workers env (check .env.workers for an inline '# comment' or stray quotes): ${bad.join('; ')}`);
+  }
+  return bad.length === 0;
+}

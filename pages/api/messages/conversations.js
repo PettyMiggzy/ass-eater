@@ -5,7 +5,7 @@ import {
   encodeConversationCursor,
   SUMMARY_MESSAGES,
 } from '../../../lib/messages-store';
-import { findUserById } from '../../../lib/users-store';
+import { inboxNameFor, findUserById } from '../../../lib/users-store';
 import { getCreatorById } from '../../../lib/creators-store';
 
 /**
@@ -56,20 +56,23 @@ export default async function handler(req, res) {
         .map((c) => [String(c.id), c]),
     );
 
+    // A fan's name: their screened username, or a stable "Fan #…" label
+    // derived from their id (lib/users-store.js inboxNameFor) -- never the
+    // email. Every email-registered fan used to read as the same "Unknown",
+    // and a raw username skipped the screen displayNameFor applies.
+    const names = new Map(
+      await Promise.all([...others.values()].map(async (u) => [String(u.id), await inboxNameFor(u)])),
+    );
+
     const enriched = conversations.map((c) => {
       const otherId = (c.participantIds || []).find((id) => String(id) !== String(uid));
       const otherUser = others.get(String(otherId));
       const otherCreator = otherUser?.creatorId ? creators.get(String(otherUser.creatorId)) : null;
-      // otherUser.email can be a real email address (see MEMORY.md's
-      // anonymous-fan-signup feature) -- only show it when it has no "@",
-      // meaning it's actually the plain username a fan chose to be shown
-      // by, never a real address someone didn't intend to expose.
-      const safeFanName = otherUser?.email && !otherUser.email.includes('@') ? otherUser.email : null;
       return {
         ...projectConversation(c, uid, { limit: SUMMARY_MESSAGES }),
         other: {
           userId: otherId,
-          name: otherCreator?.name || safeFanName || 'Unknown',
+          name: otherCreator?.name || names.get(String(otherId)) || 'Unknown',
           handle: otherCreator?.handle || null,
           img: otherCreator?.img || null,
           isCreator: !!otherCreator,

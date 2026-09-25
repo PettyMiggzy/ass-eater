@@ -104,11 +104,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: hit.message });
   }
   // Tags are also checked JOINED, so a handle or phone number split across two
-  // tags ("venmo", "@janedoe") is caught the same as in a title.
+  // tags ("venmo", "@janedoe") is caught the same as in a title -- and so is
+  // a prohibited phrase split across two ("barely", "legal").
   const tagHit = findCircumventionInTags(tags);
   if (tagHit) {
     await addViolation({ userId: ctx.user.id, context: 'listing_tags', reasons: tagHit.reasons, snippet: tagHit.snippet });
-    return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+    return res.status(400).json({ error: tagHit.message || PAYMENT_CIRCUMVENTION_MESSAGE });
   }
 
   try {

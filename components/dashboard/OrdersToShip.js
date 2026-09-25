@@ -9,6 +9,20 @@ import { responseErrorMessage } from './helpers';
  * ship what they sold. A banned account gets the server's refusal, shown as
  * such -- a failed load must never read as "No physical orders yet".
  */
+// What was bought. The order row is the only record of it (one listing =
+// one item to ship), so every row names the item: the title snapshotted at
+// checkout, else the listing id. Linked to the listing on the Marketplace.
+function OrderItem({ o }) {
+  const label = typeof o.title === 'string' && o.title.trim() ? o.title.trim() : o.listingId != null ? `Listing #${o.listingId}` : 'Unknown item';
+  if (o.listingId == null || o.creatorId == null) return <span>{label}</span>;
+  const href = `/marketplace?creator=${encodeURIComponent(String(o.creatorId))}&listing=${encodeURIComponent(String(o.listingId))}`;
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="text-brand-pink hover:underline break-words">
+      {label}
+    </a>
+  );
+}
+
 export default function OrdersToShip() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -87,6 +101,7 @@ export default function OrdersToShip() {
             return (
               <div key={o.id} className="premium-card border border-brand-purple/20 p-4">
                 <p className="text-sm text-white font-bold">Order #{o.id} — ${(o.priceCents / 100).toFixed(2)}{o.shippingCents ? ` + $${(o.shippingCents / 100).toFixed(2)} shipping` : ''}</p>
+                <p className="text-sm text-gray-200 mt-0.5">Item: <OrderItem o={o} /></p>
                 {o.signatureRequired && (
                   <p className="text-xs text-brand-gold mt-1">Select signature confirmation with your carrier for this one — you marked this listing as requiring it.</p>
                 )}
@@ -141,7 +156,7 @@ export default function OrdersToShip() {
               <summary className="cursor-pointer">Shipped ({shipped.length})</summary>
               <div className="mt-2 space-y-1">
                 {shipped.map((o) => (
-                  <p key={o.id}>Order #{o.id} — {o.carrier} {o.trackingNumber}</p>
+                  <p key={o.id}>Order #{o.id} — <OrderItem o={o} /> — {o.carrier} {o.trackingNumber}</p>
                 ))}
               </div>
             </details>

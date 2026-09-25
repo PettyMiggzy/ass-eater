@@ -8,6 +8,7 @@ import type { Tx } from '../core/ledger.js';
 import { OPERATING_CREATOR_USER_WHERE, creatorMayBePaidById } from '../core/creator-standing.js';
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
+import { assertOwnPublicImages, assertNotPublicImages, publicImageUrls, withProfileImageUrls } from '../core/public-images.js';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 // Physical orders pay the creator at purchase time, same as digital -- no
@@ -56,7 +57,7 @@ function publicListing<T extends { creatorId: string; reserveCents: number | nul
   const { reserveCents, currentBidderId, ...rest } = l;
   const own = viewerId === l.creatorId;
   return {
-    ...rest,
+    ...withImageUrls(rest as typeof rest & { images: string[] }),
     hasReserve: reserveCents != null,
     reserveMet: reserveCents == null || (l.currentBidCents != null && l.currentBidCents >= reserveCents),
     isLeading: !!viewerId && currentBidderId === viewerId,
@@ -82,29 +83,26 @@ const activeSeller = { creator: { user: OPERATING_CREATOR_USER_WHERE } };
  */
 const deliverable = deliverableWhere;
 
-/** Longest accepted listing preview-image URL. */
-const MAX_IMAGE_URL = 500;
-
 /**
  * `images` are free public preview photos, served to signed-out browsers by
- * GET /listings. They used to be any strings at all: a third-party tracking
- * pixel (leaking every browser's IP), a javascript:/data: URL, or a single
- * ~1 MB string inflating every list response -- all outside the upload
- * pipeline and out of reach of a takedown. Each entry must now be an https
- * URL on the platform's own CDN host, under the creator's OWN transcode
- * output (media/<creatorId>/...), so one creator cannot show another's
- * files. With no CDN configured there is nothing valid to point at, so only
- * an empty list is accepted.
+ * GET /listings. They used to be any strings at all (a third-party tracking
+ * pixel, a javascript: URL, a ~1 MB string), then https URLs under the
+ * creator's own CDN output -- which holds only the BLURRED teaser and HLS
+ * segments, and which the token-auth CDN refuses unsigned, so no stored
+ * preview could ever load. They are now the storage keys of the creator's own
+ * READY, unattached images, validated here and signed per response
+ * (core/public-images.ts).
  */
-export function validListingImages(images: string[], creatorId: string): boolean {
-  const host = process.env.BUNNY_CDN_HOST;
-  return images.every((raw) => {
-    if (typeof raw !== 'string' || raw.length > MAX_IMAGE_URL || !host) return false;
-    let u: URL;
-    try { u = new URL(raw); } catch { return false; }
-    return u.protocol === 'https:' && u.host === host && !u.username && !u.password &&
-      u.pathname.startsWith(`/media/${creatorId}/`) && !u.pathname.includes('..');
-  });
+export const validListingImages = (tx: Pick<Tx, 'media'>, images: string[], creatorId: string, productMediaIds: string[] = []) =>
+  assertOwnPublicImages(tx, creatorId, images, productMediaIds);
+
+/** The public shape of a listing's stored image keys and its creator's avatar key: signed URLs. */
+function withImageUrls<T extends { images: string[]; creator?: { avatarKey: string | null } | null }>(l: T) {
+  return {
+    ...l,
+    images: publicImageUrls(l.images),
+    ...(l.creator ? { creator: withProfileImageUrls(l.creator) } : {}),
+  };
 }
 
 /**
@@ -119,6 +117,9 @@ export async function assertNotDistributed(tx: Tx, mediaIds: string[]) {
   if (!mediaIds.length) return;
   const copies = await tx.media.count({ where: { sourceMediaId: { in: mediaIds } } });
   if (copies > 0) throw statusCode('media_already_distributed', 400);
+  // Nor what is already free to everyone: an avatar, banner or listing
+  // preview photo (core/public-images.ts), served unwatermarked to anyone.
+  await assertNotPublicImages(tx, mediaIds);
 }
 
 async function optionalViewer(req: any): Promise<string | null> {
@@ -167,8 +168,12 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     // could only ever be sold as nothing.
     if (fields.kind === 'DIGITAL' && !mediaIds.length) throw Object.assign(new Error('digital_listing_needs_media'), { statusCode: 400 });
     if (new Set(mediaIds).size !== mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
-    if (!validListingImages(fields.images, req.user.id)) throw statusCode('bad_images', 400);
     return prisma.$transaction(async (tx) => {
+      // The free preview photos can never be the paid product itself (either
+      // way round: an image key that is one of mediaIds, or a mediaId that is
+      // already some public image).
+      await validListingImages(tx, fields.images, req.user.id, mediaIds);
+      await assertNotPublicImages(tx, mediaIds);
       if (fields.kind === 'DIGITAL' && !fields.unlimited) await assertNotDistributed(tx, mediaIds);
       const l = await tx.listing.create({ data: { creatorId: req.user.id, ...fields } });
       if (mediaIds.length) {
@@ -178,7 +183,9 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         const r = await tx.media.updateMany({ where: { id: { in: mediaIds }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: { not: 'REJECTED' } }, data: { listingId: l.id } });
         if (r.count !== mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
-      return tx.listing.findUnique({ where: { id: l.id }, include: { media: { select: { id: true, mime: true, previewKey: true } } } });
+      const out = await tx.listing.findUniqueOrThrow({ where: { id: l.id }, include: { media: { select: { id: true, mime: true, previewKey: true } } } });
+      // The owner gets the stored keys back (to edit them) and their signed URLs.
+      return { ...out, imageUrls: publicImageUrls(out.images) };
     });
   });
 
@@ -192,17 +199,23 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     }).parse(req.body);
     if (b.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
     if (b.kind === 'PHYSICAL') b.unlimited = false;
-    if (b.images && !validListingImages(b.images, req.user.id)) throw statusCode('bad_images', 400);
 
     const r = await money(prisma, async (tx) => {
       const l = await tx.listing.findFirst({ where: { id: req.params.id, creatorId: req.user.id, status: { not: 'SOLD' } } });
       if (!l) return null;
+      if (b.images) await validListingImages(tx, b.images, req.user.id);
       // Turning an unlimited listing into a one-of-a-kind (or a physical
-      // one into digital) is the other way in to selling already-broadcast
-      // media as exclusive -- same check as at creation.
+      // one into digital) is the other way in to selling already-distributed
+      // media as exclusive -- same check as at creation, plus one creation
+      // never needs: the listing's OWN past buyers. An unlimited listing
+      // never becomes SOLD and every buyer keeps its media
+      // (core/access.ts canViewListing), so flipping one that has sold to
+      // 50 fans into a $500 "one-of-a-kind" sold exclusivity 50 people
+      // already had.
       const nextKind = b.kind ?? l.kind;
       const nextUnlimited = b.unlimited ?? l.unlimited;
       if (nextKind === 'DIGITAL' && !nextUnlimited && (l.unlimited || l.kind !== 'DIGITAL')) {
+        if ((await tx.listingOrder.count({ where: { listingId: l.id } })) > 0) throw statusCode('listing_has_orders', 409);
         const media = await tx.media.findMany({ where: { listingId: l.id }, select: { id: true } });
         await assertNotDistributed(tx, media.map((m) => m.id));
       }
@@ -220,6 +233,11 @@ export const marketplace: FastifyPluginAsync = async (app) => {
           throw statusCode('auction_ended', 400);
         }
         if (b.status === 'REMOVED' && l.status === 'ACTIVE') {
+          // Past its deadline the auction has been WON (placeBid refuses new
+          // bids from auctionEndsAt on); it is only still ACTIVE until the
+          // close sweep's next pass settles it. Cancelling it now let the
+          // seller see the final price and void a sale they didn't like.
+          if (l.auctionEndsAt && l.auctionEndsAt <= new Date()) throw statusCode('auction_ended', 409);
           // Same transaction as the removal: the leader gets their hold back.
           const { status: _s, ...rest } = b;
           if (Object.keys(rest).length) await tx.listing.update({ where: { id: l.id }, data: rest });
@@ -297,7 +315,8 @@ export const marketplace: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/listings/mine', { preHandler: app.creatorOk }, async (req) =>
-    prisma.listing.findMany({ where: { creatorId: req.user.id }, orderBy: { createdAt: 'desc' } }));
+    (await prisma.listing.findMany({ where: { creatorId: req.user.id }, orderBy: { createdAt: 'desc' } }))
+      .map((l) => ({ ...l, imageUrls: publicImageUrls(l.images) })));
 
   app.post('/listings/:id/buy', { preHandler: app.auth }, async (req: any) => {
     const { expectedTotalCents } = z.object({

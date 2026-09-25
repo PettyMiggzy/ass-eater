@@ -8,7 +8,8 @@ import { publish, broadcastQueue } from '../lib/redis.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { notifyDmReceived } from '../core/notify.js';
 import { page } from '../plugins/pagination.js';
-import { fileReport } from '../core/reports.js';
+import { fileReport, broadcastTakenDown } from '../core/reports.js';
+import { assertNotPublicImages } from '../core/public-images.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
@@ -143,6 +144,9 @@ export async function sendDirectMessage(
         const found = await tx.media.findMany({ where: { id: { in: ids }, ownerId: senderId, postId: null, messageId: null, listingId: null, sourceMediaId: null }, select: { status: true } });
         if (found.length !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
         if (found.some((x) => x.status !== 'READY')) throw Object.assign(new Error('media_not_ready'), { statusCode: 400 });
+        // Never an avatar, banner or listing preview photo (free to everyone,
+        // core/public-images.ts).
+        await assertNotPublicImages(tx, ids);
         const r = await tx.media.updateMany({ where: { id: { in: ids }, ownerId: senderId, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: 'READY' }, data: { messageId: m.id } });
         if (r.count !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
@@ -372,6 +376,9 @@ export const messages: FastifyPluginAsync = async (app) => {
       const found = await prisma.media.findMany({ where: { id: { in: ids }, ownerId: req.user.id, listingId: null, sourceMediaId: null }, select: { status: true } });
       if (found.length !== ids.length) return reply.code(400).send({ error: 'bad_media' });
       if (found.some((m) => m.status !== 'READY')) return reply.code(400).send({ error: 'media_not_ready' });
+      // Not an avatar, banner or listing preview photo: those are free to
+      // everyone, unwatermarked (core/public-images.ts).
+      await assertNotPublicImages(prisma, ids);
     }
     if (b.priceCents > 0 && !ids.length && !b.text.trim()) return reply.code(400).send({ error: 'empty_message' });
     // broadcastId makes the job resumable: workers/broadcast.ts writes it on
@@ -383,11 +390,22 @@ export const messages: FastifyPluginAsync = async (app) => {
     // exists (same jobId) and, after that job is gone, the worker's
     // (conversationId, broadcastId) unique index skips every fan it already
     // reached.
+    //
+    // Neither completed NOR failed jobs are retained (removeOn*: true), the
+    // same rule as core/payout-queue.ts: BullMQ ignores add() for a jobId it
+    // still holds in ANY state, so a failed job kept around (it used to be
+    // removeOnFail: 100) swallowed the documented retry -- the creator got
+    // {queued:true} and the subscribers the failed run never reached never
+    // got the drop. A re-run is safe: the per-conversation broadcastId unique
+    // index skips every fan already reached.
     const { requestId, ...content } = b;
     const broadcastId = broadcastIdFor(req.user.id, requestId);
+    // A drop an admin already took down is never re-queued under the same
+    // request (the worker refuses it too -- workers/broadcast.ts).
+    if (await broadcastTakenDown(req.user.id, broadcastId)) return reply.code(409).send({ error: 'broadcast_removed' });
     await broadcastQueue.add('broadcast', { creatorId: req.user.id, broadcastId, ...content }, {
       jobId: `broadcast-${broadcastId}`, attempts: 5, backoff: { type: 'exponential', delay: 10_000 },
-      removeOnComplete: true, removeOnFail: 100,
+      removeOnComplete: true, removeOnFail: true,
     });
     return { queued: true, broadcastId };
   });

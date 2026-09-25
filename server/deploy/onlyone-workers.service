@@ -1,5 +1,5 @@
 [Unit]
-Description=OnlyOne background workers (deposit-indexer, payout, renewals, transcode, broadcast, hedge, auction-close, burn)
+Description=OnlyOne key-holding workers (deposit-indexer, payout, treasury hedge, burn)
 After=network.target postgresql.service redis-server.service onlyone-api.service
 Wants=postgresql.service redis-server.service
 
@@ -7,8 +7,16 @@ Wants=postgresql.service redis-server.service
 Type=simple
 # Its own user, not the API's: the API process (uid onlyone) must not be
 # able to read this process's environment -- it holds the treasury key --
-# through /proc/<pid>/environ. In the onlyone group so it can read the build.
+# through /proc/<pid>/environ. In the onlyone group so it can read the build,
+# which app-setup.sh gives to the onlyone-deploy build user, NOT writable by the API user
+# (or this one): a file-write bug in the API must not be able to plant code
+# this process then runs with the key loaded.
 # Created by deploy/app-setup.sh.
+#
+# Runs ONLY the loops that need a signing key (workers/index.ts). Nothing
+# here parses user uploads: transcode (ffmpeg/libvips over any account's
+# files), broadcast, renewals and auction-close run in
+# onlyone-media-workers.service, which never loads .env.workers.
 User=onlyone-workers
 Group=onlyone
 WorkingDirectory=/opt/onlyone/server
@@ -22,10 +30,10 @@ ExecStart=/usr/bin/node dist/workers/index.js
 Restart=on-failure
 RestartSec=3
 # Contain an overrun to this unit. The droplet has 2 GB shared with
-# Postgres, Redis and the API; without a cap a runaway transcode could get
-# the kernel OOM killer to take Postgres instead of this process.
-MemoryHigh=900M
-MemoryMax=1200M
+# Postgres, Redis, the API and the media workers (which carry the transcode
+# memory now); these loops need far less.
+MemoryHigh=400M
+MemoryMax=600M
 # On SIGTERM (every redeploy) the workers stop taking jobs and wait for the
 # active ones -- a payout can sit in its confirmation wait for minutes, and
 # being killed there is what used to leave payouts stuck in PROCESSING
@@ -33,6 +41,12 @@ MemoryMax=1200M
 TimeoutStopSec=420
 NoNewPrivileges=true
 PrivateTmp=true
+# The code and .env are read-only to this process whatever the file modes
+# say (defence in depth for app-setup.sh's ownership lock): it cannot swap
+# the code, the checkout or the /opt/onlyone/server symlink out from under
+# the key-holding workers. Nothing here writes under /opt/onlyone; scratch
+# files go to the private /tmp.
+ReadOnlyPaths=/opt/onlyone
 
 [Install]
 WantedBy=multi-user.target

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { getCreators } from '../lib/creators-store';
@@ -189,6 +189,27 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
     };
   }, []);
 
+  // The sticky filter bar sits directly under the sticky header. The header
+  // is two rows below md (the link scroller) and one from md up, so a single
+  // fixed offset hid the phone category chips under it once the bar stuck.
+  // Measured here and kept current on resize/rotation; the responsive class
+  // on the bar is only the before-measurement fallback.
+  const navRef = useRef(null);
+  const [navHeight, setNavHeight] = useState(null);
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return undefined;
+    const measure = () => setNavHeight(Math.round(el.getBoundingClientRect().height));
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Back/forward or a client navigation to another ?category= link.
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -251,8 +272,12 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
     for (const t of Array.isArray(c.tags) ? c.tags : []) tagCounts[t] = (tagCounts[t] || 0) + 1;
   }
 
-  // Real content count across the roster, for the stats bar.
-  const totalPosts = creators.reduce((n, c) => n + (c.galleryCount || 0), 0);
+  // Real counts for the stats bar: only real creators. Seed/demo profiles
+  // are samples OnlyOne made (labelled "Demo — not for sale" elsewhere);
+  // counting them here would be the same invented social proof the old
+  // hard-coded numbers were.
+  const realCreators = creators.filter((c) => !c.demo);
+  const totalPosts = realCreators.reduce((n, c) => n + (c.galleryCount || 0), 0);
 
   return (
     <>
@@ -291,7 +316,7 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
 
       <div className="min-h-screen bg-gradient-luxury text-white">
         {/* Header */}
-        <nav className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
+        <nav ref={navRef} className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
             <a href="/" className="flex items-center shrink-0">
               <Lockup className="h-6 md:h-8" />
@@ -362,14 +387,25 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
                 numbers -- "12.4K Members", "340+ Exclusive Drops", and a
                 creator count of 6 against a roster of 2. */}
             <div className="flex flex-wrap justify-center gap-6 md:gap-12 mb-12">
-              <div className="text-center">
-                <p className="text-3xl font-black text-brand-gold">{creators.length}</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide">Creators</p>
-              </div>
-              <div className="text-center">
-                <p className="text-3xl font-black text-brand-gold">{totalPosts}</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide">Pieces of Content</p>
-              </div>
+              {realCreators.length > 0 ? (
+                <>
+                  <div className="text-center">
+                    <p className="text-3xl font-black text-brand-gold">{realCreators.length}</p>
+                    <p className="text-xs text-gray-400 uppercase tracking-wide">Creators</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-3xl font-black text-brand-gold">{totalPosts}</p>
+                    <p className="text-xs text-gray-400 uppercase tracking-wide">Pieces of Content</p>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center">
+                  <p className="text-xl font-black text-brand-gold">Be one of the first</p>
+                  <p className="text-xs text-gray-400 uppercase tracking-wide">
+                    {creators.length > 0 ? 'We\'re just opening — the profiles below are demos' : 'Creators are just joining'}
+                  </p>
+                </div>
+              )}
               <div className="text-center">
                 <p className="text-3xl font-black text-brand-gold">{PLATFORM_FEE_PCT}%</p>
                 <p className="text-xs text-gray-400 uppercase tracking-wide">Platform Fee ({MARKETPLACE_FEE_PCT}% on marketplace)</p>
@@ -391,7 +427,11 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
 
         {/* Filter Bar. Below md it also carries the categories as a
             horizontal scroll row (the sidebar is md+ only). */}
-        <div id="creators" className="sticky top-[73px] z-40 bg-brand-dark/90 backdrop-blur border-b border-brand-gold/10 py-4">
+        <div
+          id="creators"
+          className="sticky top-[114px] md:top-[73px] z-40 bg-brand-dark/90 backdrop-blur border-b border-brand-gold/10 py-4"
+          style={navHeight ? { top: navHeight } : undefined}
+        >
           <div className="md:hidden max-w-7xl mx-auto px-6 mb-3 flex gap-2 overflow-x-auto whitespace-nowrap">
             {[{ key: null, label: 'All' }, ...CATEGORIES].map((k) => {
               const on = (category || null) === k.key;

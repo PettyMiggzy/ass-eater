@@ -176,7 +176,8 @@ app.setErrorHandler((err: any, _req, reply) => {
 // Email is off unless a provider is explicitly configured. Nothing breaks
 // when it is off -- notifications are recorded either way (core/notify.ts),
 // so the in-app inbox is complete on its own and email is a second channel.
-configureSes(app.log);
+// Awaited: switched on, it refuses to start without credentials that resolve.
+await configureSes(app.log);
 // Values set under the pre-rename ONLYASS_*/USDC_ADDRESS names do nothing.
 warnLegacyEnv((msg) => app.log.warn(msg));
 

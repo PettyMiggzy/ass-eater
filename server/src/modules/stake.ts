@@ -6,6 +6,7 @@ import { charge, money } from '../core/ledger.js';
 import { getUsdPrice } from '../lib/price.js';
 import { DECIMALS } from '../lib/chain.js';
 import { page } from '../plugins/pagination.js';
+import { withProfileImageUrls } from '../core/public-images.js';
 
 const PERIOD_MS = 30 * 864e5;
 
@@ -103,10 +104,10 @@ export const stake: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/me', { preHandler: app.auth }, async (req) =>
-    prisma.tokenLock.findMany({
+    (await prisma.tokenLock.findMany({
       where: { fanId: req.user.id, currentPeriodEnd: { gt: new Date() } },
       include: { creator: { select: { username: true, creator: { select: { displayName: true, avatarKey: true, stakePerkDescription: true } } } } },
-    }));
+    })).map((l) => ({ ...l, creator: { ...l.creator, creator: l.creator.creator && withProfileImageUrls(l.creator.creator) } })));
 
   app.get('/locked-fans', { preHandler: app.creatorOk }, async (req: any) =>
     prisma.tokenLock.findMany({

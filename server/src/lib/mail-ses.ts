@@ -19,7 +19,10 @@ import { registerMailTransport } from './mailer.js';
  * replacing it should be writing one function, not an audit.
  */
 
-export function configureSes(log: { info: (o: unknown, m: string) => void }) {
+export async function configureSes(
+  log: { info: (o: unknown, m: string) => void },
+  deps: { client?: Pick<SESv2Client, 'send' | 'config'> } = {},
+): Promise<boolean> {
   if (process.env.EMAIL_PROVIDER !== 'ses') return false;
 
   const from = process.env.EMAIL_FROM;
@@ -35,7 +38,23 @@ export function configureSes(log: { info: (o: unknown, m: string) => void }) {
   // Credentials come from the standard AWS chain -- env vars, or an IAM role
   // if this ever runs on AWS. Deliberately not read or logged here: this
   // file should never be the place a key ends up in a stack trace.
-  const client = new SESv2Client({ region: process.env.AWS_REGION || 'us-east-1' });
+  const client = deps.client ?? new SESv2Client({ region: process.env.AWS_REGION || 'us-east-1' });
+
+  // Resolved ONCE, now. The droplet is not on AWS, so there is no instance
+  // role: without AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY the chain finds
+  // nothing, and it used to start cleanly ("SES transport registered") and
+  // then fail every single send -- which mailer.ts swallows by design. The
+  // same quiet failure as a missing EMAIL_FROM, so the same loud refusal.
+  // The error names the variables, never a value.
+  let creds: { accessKeyId?: string } | undefined;
+  try {
+    creds = await client.config.credentials();
+  } catch {
+    creds = undefined;
+  }
+  if (!creds?.accessKeyId) {
+    throw new Error('EMAIL_PROVIDER=ses but no AWS credentials resolve: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (an IAM user limited to ses:SendEmail) -- see server/.env.example');
+  }
 
   registerMailTransport(async ({ to, subject, text }) => {
     await client.send(

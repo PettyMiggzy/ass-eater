@@ -1,11 +1,14 @@
 import { getSessionUser } from '../../../../lib/session';
 import { query, rowToRecord } from '../../../../lib/db';
 import { getListingById } from '../../../../lib/listings-store';
+import { preservedSubset } from '../../../../lib/media-preservation';
+import { blobPathnameFromSrc } from '../../../../lib/blob-cleanup';
 
 /**
  * GET /api/marketplace/orders/delivery?orderId=<id>
  *   -> 200 { orderId, listingId, title, removed: boolean,
  *            removedReason: null | 'moderation' | 'creator_deleted' | 'deleted',
+ *            withheld: number,
  *            items: [{ type, src, aiGenerated }] }
  *   -> 401 not logged in; 404 not the caller's paid digital order
  *
@@ -26,6 +29,11 @@ import { getListingById } from '../../../../lib/listings-store';
  * orders still deliver even though the listing is off sale. Before, a deleted
  * seller's order answered removed:false with srcs whose files were gone, and
  * /orders drew broken tiles with no explanation.
+ *
+ * Files quarantined as evidence (lib/media-preservation.js) are never served,
+ * to buyers either, so they are left out of `items` and counted in `withheld`
+ * rather than listed as tiles that 404; when every file is withheld the order
+ * reads removed with removedReason 'moderation'.
  *
  * Items the creator removed from the listing AFTER this order was placed
  * (`retainedMedia`, removedAt later than the order) are still delivered; ones
@@ -75,6 +83,7 @@ export default async function handler(req, res) {
     const removed = removedReason !== null;
 
     let items = [];
+    let withheld = 0;
     if (!removed) {
       const placed = orderTime(order);
       const live = (Array.isArray(listing.media) ? listing.media : []).filter(isOurs);
@@ -84,14 +93,20 @@ export default async function handler(req, res) {
           const gone = Date.parse(m.removedAt || '');
           return placed !== null && !Number.isNaN(gone) && placed <= gone;
         });
-      items = [...live, ...retained].map((m) => toItem(m, listing));
+      const all = [...live, ...retained];
+      const preserved = await preservedSubset(all.map((m) => blobPathnameFromSrc(m.src)).filter(Boolean));
+      const served = all.filter((m) => !preserved.has(blobPathnameFromSrc(m.src)));
+      withheld = all.length - served.length;
+      items = served.map((m) => toItem(m, listing));
+      if (withheld && !items.length) removedReason = 'moderation';
     }
     return res.status(200).json({
       orderId: order.id,
       listingId: order.listingId,
       title: order.title || listing?.title || null,
-      removed,
+      removed: removedReason !== null,
       removedReason,
+      withheld,
       items,
     });
   } catch (err) {

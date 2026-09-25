@@ -263,8 +263,11 @@ export default function Privacy() {
                 <li>
                   Credit, sale, order, and payout records are kept as financial records and are not deleted on
                   request while we are required to keep them; once the account is deleted they are no longer
-                  linked to a login, email address or username. Reports and moderation records are kept the same
-                  way. If you have earnings waiting to be paid out, a pending payout, or a physical order that
+                  linked to a login, email address or username. Reports and moderation records are different: they
+                  keep a copy of the reported or removed content, including who wrote or sent it (the username or
+                  login email that account had at the time), for as long as the report, a legal hold, or a legal
+                  obligation requires — that copy is the evidence, so deleting the account does not remove it. If
+                  you have earnings waiting to be paid out, a pending payout, or a physical order that
                   hasn&apos;t shipped yet, we&apos;ll settle that with you before deleting the account — the
                   Settings page won&apos;t delete an account while one of its orders is still waiting to ship.
                   An account that is suspended or under review for a report is deleted only through support.

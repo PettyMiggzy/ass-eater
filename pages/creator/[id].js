@@ -18,7 +18,7 @@ import SiteNav from '../../components/SiteNav';
 import DemoBadge from '../../components/public/DemoBadge';
 import PremiumBadge from '../../components/public/PremiumBadge';
 import ListingPreview from '../../components/public/ListingPreview';
-import ReportModal, { postReport } from '../../components/public/ReportModal';
+import ReportModal, { postReport, takedownFormHref } from '../../components/public/ReportModal';
 import MediaLightbox from '../../components/public/MediaLightbox';
 import TokenUnlockPanel from '../../components/public/TokenUnlockPanel';
 import { isDemoCreator, isDemoListing, DEMO_LABEL, marketplaceHrefFor } from '../../components/public/cards';
@@ -139,7 +139,7 @@ function formatWallDate(value) {
 // answers no-store with a freshly presigned redirect, so nothing could be
 // reused: one serverless call (plus a holder check for a gated creator) and
 // a full re-download per tile, per state change.
-function GalleryTile({ item, badge, locked, creatorImg, mark, onOpen }) {
+function GalleryTile({ item, badge, locked, creatorImg, mark, onOpen, onReport }) {
   const isLocked = locked || !!item?.locked || !item?.src;
   return (
     <div className="relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/5">
@@ -182,6 +182,20 @@ function GalleryTile({ item, badge, locked, creatorImg, mark, onOpen }) {
       {badge && (
         <span className="absolute bottom-2 left-2 text-[11px] px-2 py-0.5 rounded bg-black/70 text-white font-semibold pointer-events-none">{badge}</span>
       )}
+      {/* Only an item this viewer can actually see (it has a src) can be
+          reported -- the server checks the src against the creator's
+          current gallery. */}
+      {!isLocked && onReport && (
+        <button
+          type="button"
+          onClick={() => onReport(item)}
+          title="Report this"
+          aria-label="Report this photo or video"
+          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 text-white/80 hover:text-brand-pink flex items-center justify-center transition"
+        >
+          <Icons.flag className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }
@@ -210,6 +224,10 @@ export default function CreatorProfile({
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [viewing, setViewing] = useState(null);
   const closeViewer = useCallback(() => setViewing(null), []);
+  // Reporting one item of this profile (a gallery photo/video or the avatar)
+  // through POST /api/creator/report-media: { targetType, src, label }.
+  const [reportingMedia, setReportingMedia] = useState(null);
+  const [mediaReportNotice, setMediaReportNotice] = useState('');
 
   // /creators' "Hold to Unlock" links here with ?unlock=1 -- bring the
   // unlock control into view rather than leaving the visitor to find it.
@@ -223,6 +241,24 @@ export default function CreatorProfile({
     setToast(msg);
     setTimeout(() => setToast(null), ms);
   };
+
+  // A possible-minor report puts the file on hold server-side at filing, so
+  // the creator can't delete it before an admin looks (see the route).
+  const submitMediaReport = async ({ reason, category }) => {
+    await postReport('/api/creator/report-media', {
+      creatorId: creator.id,
+      targetType: reportingMedia.targetType,
+      src: reportingMedia.src,
+      reason,
+      category,
+    });
+    setReportingMedia(null);
+    setMediaReportNotice('Thanks — an admin will review it.');
+  };
+  const reportGalleryItem = useCallback(
+    (item) => item?.src && setReportingMedia({ targetType: 'gallery_item', src: item.src, label: item.type === 'video' ? 'this video' : 'this photo' }),
+    [],
+  );
 
   const toggleFavorite = async () => {
     if (!viewerId) {
@@ -334,7 +370,10 @@ export default function CreatorProfile({
     }
   };
 
-  const tileProps = { locked, creatorImg: creator.img, mark: overlayMark, onOpen: setViewing };
+  const tileProps = { locked, creatorImg: creator.img, mark: overlayMark, onOpen: setViewing, onReport: isOwner ? null : reportGalleryItem };
+  // What the takedown form's "where is the content" field is prefilled with
+  // when a reporter follows the link out of the report dialog or the sidebar.
+  const profileLocation = `Creator profile ${creator.handle || ''} (#${creator.id}) -- /creator/${creator.id}`;
 
   const markNotice = (
     <p className="mt-4 text-[11px] text-gray-500 text-center">
@@ -357,6 +396,16 @@ export default function CreatorProfile({
       )}
 
       <MediaLightbox item={viewing} mark={overlayMark} onClose={closeViewer} />
+
+      {reportingMedia && (
+        <ReportModal
+          title={reportingMedia.targetType === 'avatar' ? 'Report this profile photo' : `Report ${reportingMedia.label}`}
+          subject={reportingMedia.targetType === 'avatar' ? 'this profile photo' : reportingMedia.label}
+          onSubmit={submitMediaReport}
+          onClose={() => setReportingMedia(null)}
+          takedownContent={`${reportingMedia.targetType === 'avatar' ? 'Profile photo' : 'Gallery item'} ${reportingMedia.src} on ${profileLocation}`}
+        />
+      )}
 
       <div className="min-h-screen bg-brand-ink text-white pb-20">
         <SiteNav signedIn={!!viewerId} />
@@ -542,6 +591,31 @@ export default function CreatorProfile({
                   </>
                 )}
               </div>
+
+              {/* Reporting this profile. Each visible gallery tile has its
+                  own flag; the avatar is reported from here. The takedown
+                  form needs no account and starts a 48-hour removal clock. */}
+              {!isOwner && (
+                <div className="text-xs text-gray-500 space-y-1.5">
+                  {mediaReportNotice && <p className="text-gray-400">{mediaReportNotice}</p>}
+                  <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <Icons.flag className="h-3.5 w-3.5 shrink-0" />
+                    {creator.img && (
+                      <button
+                        type="button"
+                        onClick={() => setReportingMedia({ targetType: 'avatar', src: creator.img, label: 'this profile photo' })}
+                        className="hover:text-brand-pink underline"
+                      >
+                        Report profile photo
+                      </button>
+                    )}
+                    <a href={takedownFormHref({ content: profileLocation })} className="hover:text-brand-pink underline">
+                      Takedown request
+                    </a>
+                  </p>
+                  <p>Use the flag on a photo or video to report that one item.</p>
+                </div>
+              )}
             </aside>
 
             {/* Main column */}
@@ -863,10 +937,29 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
       if (!res.ok) throw new Error(data.error || 'Could not update the block.');
       applyConversation(data.conversation);
       setNotice(next ? `${otherName} is blocked.` : `${otherName} is unblocked.`);
+      // canSend / the price were quoted under the old block state; re-read
+      // them so Send isn't left disabled (or wrongly enabled) after this.
+      await requote();
     } catch (err) {
       setError(err.message);
     } finally {
       setBlockBusy(false);
+    }
+  };
+
+  // Re-reads the server's quote for this thread (price, canSend, block
+  // state). Unlike the initial load it sets canSend both ways.
+  const requote = async () => {
+    try {
+      const res = await fetch(`/api/messages/with/${encodeURIComponent(otherUserId)}`);
+      const data = await readJson(res);
+      if (!res.ok) return;
+      applyConversation(data.conversation);
+      if (Number.isInteger(data.dmPriceCents)) setPriceCents(data.dmPriceCents);
+      setCanSend(data.canSend !== false);
+      setCannotSendReason(data.canSend === false && typeof data.cannotSendReason === 'string' ? data.cannotSendReason : '');
+    } catch {
+      // keep what is shown; the next send gets the server's answer anyway
     }
   };
 
@@ -997,6 +1090,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
             subject="this message"
             onSubmit={submitMessageReport}
             onClose={() => setReportingMessage(null)}
+            takedownContent={`Direct message ${reportingMessage.id} from user ${otherUserId}`}
           />
         )}
 
@@ -1192,6 +1286,7 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
           subject="this comment"
           onSubmit={submitReport}
           onClose={() => setReporting(null)}
+          takedownContent={`Wall comment #${reporting.id} on creator #${creatorId}'s wall -- /creator/${creatorId}`}
         />
       )}
       {reportNotice && <p className="text-xs text-gray-400 mb-3">{reportNotice}</p>}

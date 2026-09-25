@@ -16,6 +16,12 @@ Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
+# The code and .env are read-only to this process whatever the file modes
+# say (defence in depth for app-setup.sh's ownership lock): it cannot swap
+# the code, the checkout or the /opt/onlyone/server symlink out from under
+# the key-holding workers. Nothing here writes under /opt/onlyone; scratch
+# files go to the private /tmp.
+ReadOnlyPaths=/opt/onlyone
 
 [Install]
 WantedBy=multi-user.target

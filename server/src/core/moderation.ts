@@ -23,30 +23,50 @@ type RoomDeleter = { deleteRoom: (name: string) => Promise<unknown> };
  * the SITE applied is lifted by the site saying the creator is active again
  * (its suspensions expire on their own after 30 days); one an admin applied
  * here stays until an admin lifts it.
+ *
+ * A site-driven change is CONDITIONAL in the database, never a blind write
+ * of a status read earlier: every bySite caller (the lapse sweep, a bridge
+ * exchange, a status push) decides from a row it read before this runs, and
+ * an admin ban or suspension landing in between used to be overwritten --
+ * the lapse sweep flipped a creator banned moments earlier back to ACTIVE.
+ * So the site may only:
+ *  - lift (ACTIVE) a row that is still SUSPENDED by the site;
+ *  - suspend a row that is still ACTIVE (never downgrade a ban, nor take
+ *    over an admin's suspension, which the site could then lift);
+ *  - ban anything not already BANNED.
+ * An admin's change (bySite unset) always applies. Returns whether the
+ * change was applied; when it was not, nothing else here runs.
  */
 export async function applyUserStatus(
   userId: string,
   status: ModerationStatus,
   opts: { bySite?: boolean; log?: Log; rooms?: RoomDeleter } = {},
-) {
+): Promise<boolean> {
   const log = opts.log ?? { error: (o: unknown, m?: string) => console.error(m ?? 'moderation', o) };
-  await prisma.$transaction([
-    prisma.user.update({ where: { id: userId }, data: { status, statusBySite: !!opts.bySite } }),
-    prisma.refreshToken.deleteMany({ where: { userId } }),
-    ...(status !== 'ACTIVE' ? [prisma.creatorProfile.updateMany({ where: { userId }, data: { payoutsFrozen: true } })] : []),
-    // Their own subscriptions and token locks AS A FAN stop renewing: a
-    // suspended or banned account fails app.auth on every route, cancelling
-    // included, so it could never turn auto-renew off itself and would keep
-    // being charged. Access already paid for runs to its period end.
-    // (workers/renewals.ts also refuses to renew a non-ACTIVE fan, which
-    // covers rows this misses, e.g. a status set before this existed.)
-    ...(status !== 'ACTIVE' ? [
-      prisma.subscription.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } }),
-      prisma.tokenLock.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } }),
-    ] : []),
-    ...(status === 'BANNED' ? [prisma.subscription.updateMany({ where: { creatorId: userId }, data: { autoRenew: false, status: 'CANCELLED' } })] : []),
-  ]);
-  if (status === 'ACTIVE') return;
+  const guard = !opts.bySite ? {}
+    : status === 'ACTIVE' ? { status: 'SUSPENDED' as const, statusBySite: true }
+      : status === 'SUSPENDED' ? { status: 'ACTIVE' as const }
+        : { status: { not: 'BANNED' as const } };
+  const applied = await prisma.$transaction(async (tx) => {
+    const r = await tx.user.updateMany({ where: { id: userId, ...guard }, data: { status, statusBySite: !!opts.bySite } });
+    if (!r.count) return false;
+    await tx.refreshToken.deleteMany({ where: { userId } });
+    if (status !== 'ACTIVE') {
+      await tx.creatorProfile.updateMany({ where: { userId }, data: { payoutsFrozen: true } });
+      // Their own subscriptions and token locks AS A FAN stop renewing: a
+      // suspended or banned account fails app.auth on every route, cancelling
+      // included, so it could never turn auto-renew off itself and would keep
+      // being charged. Access already paid for runs to its period end.
+      // (workers/renewals.ts also refuses to renew a non-ACTIVE fan, which
+      // covers rows this misses, e.g. a status set before this existed.)
+      await tx.subscription.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } });
+      await tx.tokenLock.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } });
+    }
+    if (status === 'BANNED') await tx.subscription.updateMany({ where: { creatorId: userId }, data: { autoRenew: false, status: 'CANCELLED' } });
+    return true;
+  });
+  if (!applied) return false;
+  if (status === 'ACTIVE') return true;
 
   // A suspended or banned creator stops broadcasting now. Their publish token
   // lasts 6h, so the room itself is deleted (which disconnects everyone in
@@ -81,4 +101,5 @@ export async function applyUserStatus(
     }
     await prisma.listing.updateMany({ where: { creatorId: userId, saleType: 'FIXED', status: 'ACTIVE' }, data: { status: 'REMOVED' } });
   }
+  return true;
 }

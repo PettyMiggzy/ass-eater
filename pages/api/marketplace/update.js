@@ -64,8 +64,13 @@ export default async function handler(req, res) {
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
 
-  const { listingId, fields } = req.body || {};
+  const { listingId, fields } = req.body && typeof req.body === 'object' ? req.body : {};
   if (!listingId) return res.status(400).json({ error: 'Missing listing id' });
+  // `key in fields` below throws a TypeError on a string or number, which
+  // escaped as an unhandled 500 -- refuse anything but a plain object.
+  if (fields !== undefined && (fields === null || typeof fields !== 'object' || Array.isArray(fields))) {
+    return res.status(400).json({ error: 'Invalid fields' });
+  }
 
   const { limited, retryAfterSeconds } = consumeAttempt(`marketplace-update:creator:${ctx.creator.id}`, {
     limit: MAX_PER_CREATOR,
@@ -108,7 +113,7 @@ export default async function handler(req, res) {
     const tagHit = findCircumventionInTags(safeFields.tags);
     if (tagHit) {
       await addViolation({ userId: ctx.user.id, context: 'listing_tags', reasons: tagHit.reasons, snippet: tagHit.snippet });
-      return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+      return res.status(400).json({ error: tagHit.message || PAYMENT_CIRCUMVENTION_MESSAGE });
     }
   }
 

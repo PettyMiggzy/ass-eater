@@ -36,4 +36,24 @@ describe('watermarkImage', () => {
     expect([meta.width, meta.height]).toEqual([80, 60]);
     expect(watermarkFormat('image/png').ext).toBe('jpg');
   });
+
+  it('keeps every frame of an animated WebP and returns a WebP', async () => {
+    const gif = await animatedGif(3);
+    const raw = await sharp(gif, { animated: true }).raw().toBuffer({ resolveWithObject: true });
+    const webp = await sharp(raw.data, { raw: { width: raw.info.width, height: raw.info.height, channels: raw.info.channels, pageHeight: 48 } as any }).webp().toBuffer();
+    expect((await sharp(webp, { animated: true }).metadata()).pages).toBe(3);
+    const out = await watermarkImage(webp, 'fan_1 · abcd1234', 'image/webp');
+    const meta = await sharp(out, { animated: true }).metadata();
+    expect([meta.format, meta.pages, meta.pageHeight]).toEqual(['webp', 3, 48]);
+    expect(watermarkFormat('image/webp')).toEqual({ ext: 'webp', contentType: 'image/webp' });
+  });
+
+  it('watermarks a many-frame GIF past 50M pixels in total instead of throwing', async () => {
+    const w = 480, h = 480, n = 220;
+    const buf = Buffer.alloc(w * h * n * 3, 0);
+    for (let i = 0; i < n; i++) for (let y = 0; y < h; y++) buf[(i * w * h + y * w + ((i * 7) % w)) * 3] = 255;
+    const gif = await sharp(buf, { raw: { width: w, height: h * n, channels: 3, pageHeight: h } as any }).gif().toBuffer();
+    const out = await watermarkImage(gif, 'fan_1 · abcd1234', 'image/gif');
+    expect((await sharp(out, { animated: true }).metadata()).pages).toBe(n);
+  }, 60_000);
 });

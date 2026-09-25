@@ -2,15 +2,25 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
 import sharp from 'sharp';
+import { checkedImageShape, keepsFrames, MAX_ANIMATED_PIXELS, MAX_FRAME_PIXELS } from '../lib/image-limits.js';
 
 // Pure-ish steps of the transcode worker, kept out of transcode.ts so they can
 // be tested without starting a BullMQ worker.
 
 const run = promisify(execFile);
 
+/**
+ * The environment ffmpeg/ffprobe children get: PATH only. They parse
+ * untrusted uploads, and execFile with no `env` hands a child the whole
+ * process environment -- every secret this unit loads. (The media workers
+ * run in their own key-less unit anyway -- deploy/onlyone-media-workers.service
+ * -- so this is the second line, not the first.)
+ */
+export const CHILD_ENV = { env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' } } as const;
+
 /** Does the source have an audio stream? Silent clips (muted teasers, screen recordings, GIF-derived MP4s) do not. */
 export async function hasAudio(src: string): Promise<boolean> {
-  const { stdout } = await run('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', src]);
+  const { stdout } = await run('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', src], CHILD_ENV);
   return stdout.trim().length > 0;
 }
 
@@ -43,16 +53,37 @@ export function hlsArgs(src: string, hlsDir: string, audio: boolean): string[] {
  * Same format out as in, so the stored mime stays true.
  */
 // A decompression bomb (a small file declaring enormous dimensions) is
-// refused before it is decoded into memory. ~50 megapixels covers any real
-// camera/phone photo.
-const LIMIT_INPUT_PIXELS = 50_000_000;
-
+// refused before it is decoded into memory: ~50 megapixels per frame covers
+// any real camera/phone photo, and an animation is bounded per frame, by
+// frame count and in total (lib/image-limits.ts -- sharp's own limit counts
+// every frame stacked, which refused ordinary many-frame GIFs outright).
+//
+// Animated WebP keeps its frames like GIF does. It used to be decoded as a
+// still (sharp reads page 0 only without `animated`), and this output
+// REPLACES the raw object in place (transcode.ts), so the animation was
+// destroyed at the origin for every buyer, with nothing to recover it from.
 export async function sanitizeImage(input: Buffer | string, mime: string): Promise<Buffer> {
-  if (mime === 'image/gif') return sharp(input, { animated: true, limitInputPixels: LIMIT_INPUT_PIXELS }).gif().toBuffer();
-  const img = sharp(input, { autoOrient: true, limitInputPixels: LIMIT_INPUT_PIXELS });
+  const shape = await checkedImageShape(input);
+  if (keepsFrames(mime, shape)) {
+    // autoOrient does not apply to GIF/WebP animations. Delay and loop are
+    // carried through by sharp.
+    const img = sharp(input, { animated: true, limitInputPixels: MAX_ANIMATED_PIXELS });
+    return mime === 'image/gif' ? img.gif().toBuffer() : img.webp({ quality: 92 }).toBuffer();
+  }
+  const img = sharp(input, { autoOrient: true, limitInputPixels: MAX_FRAME_PIXELS });
   if (mime === 'image/png') return img.png().toBuffer();
   if (mime === 'image/webp') return img.webp({ quality: 92 }).toBuffer();
   return img.jpeg({ quality: 92 }).toBuffer();
+}
+
+/**
+ * The first frame of a (sanitized) image as a still PNG, for the blurred
+ * preview. ffmpeg's WebP decoder cannot read an ANIMATED WebP at all, so
+ * handing it one -- which sanitizeImage now keeps animated -- failed every
+ * such upload. The preview only ever shows one frame anyway.
+ */
+export async function firstFrameStill(input: Buffer | string): Promise<Buffer> {
+  return sharp(input, { page: 0, pages: 1, limitInputPixels: MAX_FRAME_PIXELS }).png().toBuffer();
 }
 
 /**
@@ -73,7 +104,7 @@ export function previewArgs(src: string, out: string, opts: { seekSeconds?: numb
 /** The source's duration in seconds (ffprobe), NaN when it cannot be read. */
 export async function probeDuration(src: string): Promise<number> {
   try {
-    const { stdout } = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', src]);
+    const { stdout } = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', src], CHILD_ENV);
     return Number.parseFloat(stdout.trim());
   } catch {
     return Number.NaN;

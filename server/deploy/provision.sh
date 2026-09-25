@@ -35,7 +35,13 @@ npm -v
 echo "==> app user + directories"
 id -u "$APP_USER" &>/dev/null || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
 mkdir -p "$APP_DIR"
-chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
+# Root-owned and not writable by the app user: every unit reaches its code
+# and .env through $APP_DIR/server, and a writable $APP_DIR would let the
+# internet-facing API swap that symlink (or the checkout next to it) for its
+# own before the key-holding workers' next restart. app-setup.sh gives the
+# checkout to its own deploy user and re-checks this on every run.
+chown root:root "$APP_DIR"
+chmod 755 "$APP_DIR"
 
 echo "==> Postgres: create role + database"
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='onlyone'" | grep -q 1 || \

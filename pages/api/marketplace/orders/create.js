@@ -9,6 +9,7 @@ import {
   listingHasDeliverable,
 } from '../../../../lib/creators-store';
 import { createOrdersFromCredits, ALREADY_OWNED, isCheckoutKeyClaimed } from '../../../../lib/orders-store';
+import { listingMediaBlocked } from '../../../../lib/media-preservation';
 import {
   getBalanceCents,
   accountStanding,
@@ -127,6 +128,12 @@ export default async function handler(req, res) {
     // row inside createOrdersFromCredits.
     if (!listingHasDeliverable(listing)) {
       return res.status(409).json({ error: `"${listing.title}" isn't available yet -- the creator hasn't attached its files.`, listingId: String(listingId) });
+    }
+    // Files quarantined as evidence or held by an open possible-minor report
+    // are never served, so the listing is not sold (re-checked on the locked
+    // row inside createOrdersFromCredits).
+    if (await listingMediaBlocked(listing)) {
+      return res.status(404).json({ error: `A listing in your cart is no longer available (#${listingId})`, listingId: String(listingId) });
     }
     // A creator's login account is separate from their public creator
     // profile -- credits move between USER accounts, so a listing whose

@@ -6,6 +6,7 @@ import { canViewPost, creatorIsActive, inVipWindow, type ViewMemo } from '../cor
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
 import type { MediaStatus } from '@prisma/client';
+import { withProfileImageUrls, assertNotPublicImages } from '../core/public-images.js';
 
 // strip locked media down to preview thumbnails, and locked text down to a
 // teaser that can never be the whole thing
@@ -140,6 +141,9 @@ export const posts: FastifyPluginAsync = async (app) => {
         if (found.length !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
         const okStatuses: MediaStatus[] = b.visibility === 'PPV' ? ['READY'] : ['UPLOADING', 'PROCESSING', 'READY'];
         if (found.some((m) => !okStatuses.includes(m.status))) throw Object.assign(new Error('media_not_ready'), { statusCode: 400 });
+        // Never an avatar, banner or listing preview photo: those are free
+        // to everyone, unwatermarked (core/public-images.ts).
+        await assertNotPublicImages(tx, ids);
         const r = await tx.media.updateMany({ where: { id: { in: ids }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: { in: okStatuses } }, data: { postId: p.id } });
         if (r.count !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
@@ -167,7 +171,7 @@ export const posts: FastifyPluginAsync = async (app) => {
       include: { media: true, creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } } },
       orderBy: { createdAt: 'desc' }, take: 30, skip: page(req.query).offset,
     });
-    return redact(req.user.id, rows);
+    return redact(req.user.id, rows.map((r) => ({ ...r, creator: withProfileImageUrls(r.creator) })));
   });
 
   app.post('/:id/unlock', { preHandler: app.auth }, async (req: any, reply) => {

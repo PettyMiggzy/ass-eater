@@ -2,6 +2,7 @@ import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { setCreatorAvatar } from '../../../lib/creators-store';
 import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
+import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
 
 /**
  * POST /api/me/avatar -- finalize an avatar upload.
@@ -45,6 +46,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     if (err instanceof MediaRejected) return res.status(err.status).json({ error: err.message });
+    // The file was reaped by the orphan sweep before this finalize (lib/media-refs.js).
+    if (err.code === MEDIA_UPLOAD_EXPIRED) return res.status(409).json({ error: MEDIA_UPLOAD_EXPIRED_MESSAGE });
     console.error('[me/avatar] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

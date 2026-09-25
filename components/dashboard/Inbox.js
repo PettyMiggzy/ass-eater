@@ -36,6 +36,24 @@ function mergeMessages(older, current, newer) {
 }
 
 /** Newer page first; conversations already loaded further down keep their place. */
+/**
+ * The thread's `other` from GET /api/messages/with/<userId> (same naming as
+ * the conversation list: creator name, screened username, or a stable
+ * 'Fan #XXXXXX' label -- never an email), falling back to what the list row
+ * said. userId always stays the one the thread was opened for.
+ */
+function mergeOther(fallback, fromThread) {
+  if (!fromThread || typeof fromThread !== 'object') return fallback;
+  const pick = (k) => (typeof fromThread[k] === 'string' && fromThread[k] ? fromThread[k] : fallback?.[k] ?? null);
+  return {
+    ...fallback,
+    name: pick('name'),
+    handle: pick('handle'),
+    img: pick('img'),
+    isCreator: typeof fromThread.isCreator === 'boolean' ? fromThread.isCreator : fallback?.isCreator,
+  };
+}
+
 function mergeConversations(firstPage, current) {
   const ids = new Set(firstPage.map((c) => c.id));
   return [...firstPage, ...current.filter((c) => !ids.has(c.id))];
@@ -132,6 +150,7 @@ export default function Inbox({ currentUserId, isCreator }) {
         const gap = latest.length > 0 && prev.messages.length > 0 && !latest.some((m) => have.has(String(m.id))) && !!data?.conversation?.hasMore;
         return {
           ...prev,
+          other: mergeOther(prev.other, data?.other),
           messages: gap ? mergeMessages(null, latest, null) : mergeMessages(null, prev.messages, latest),
           hasMore: gap ? true : prev.hasMore,
           dmPriceCents: Number.isInteger(data?.dmPriceCents) ? data.dmPriceCents : prev.dmPriceCents,
@@ -225,7 +244,7 @@ export default function Inbox({ currentUserId, isCreator }) {
       }
       const page = Array.isArray(data?.conversation?.messages) ? data.conversation.messages : [];
       setOpen((prev) => ({
-        other,
+        other: mergeOther(other, data?.other),
         conversationId: conversation.id,
         messages: before && prev ? mergeMessages(page, prev.messages, null) : mergeMessages(null, page, null),
         hasMore: !!data?.conversation?.hasMore,
@@ -339,6 +358,11 @@ export default function Inbox({ currentUserId, isCreator }) {
         ? { ...prev, blockedByMe: !!data?.conversation?.blockedByMe, blockedByThem: !!data?.conversation?.blockedByThem }
         : prev));
       if (openRef.current?.conversationId === target) setSendNote(next ? `${name} is blocked.` : `${name} is unblocked.`);
+      // canSend, cannotSendReason and the price were quoted while the old
+      // block state applied (a blocked thread quotes { allowed: false,
+      // priceCents: 0 }). Re-read them from the server now rather than leave
+      // Send disabled with "You blocked this account" until the next poll.
+      if (openRef.current?.conversationId === target) await refreshOpenThread();
     } catch {
       if (openRef.current?.conversationId === target) setSendError('Could not reach the server. Try again.');
     } finally {
@@ -412,6 +436,7 @@ export default function Inbox({ currentUserId, isCreator }) {
                     subject="this message"
                     onSubmit={submitMessageReport}
                     onClose={() => setReportingMessage(null)}
+                    takedownContent={`Direct message ${reportingMessage.message.id} from user ${reportingMessage.other.userId} to user ${currentUserId}`}
                   />
                 )}
                 <div className="flex items-center justify-between gap-2 mb-2">

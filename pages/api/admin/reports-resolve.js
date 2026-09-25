@@ -9,7 +9,9 @@ import {
   REPORT_NOT_REOPENABLE,
   REPORT_REASON_REQUIRED,
   REPORT_NOTE_MAX,
+  PROFILE_MEDIA_TARGETS,
 } from '../../../lib/reports-store';
+import { removeGalleryItem, setCreatorAvatar, GALLERY_ITEM_GONE } from '../../../lib/creators-store';
 import { markListingRemoved, getListingById } from '../../../lib/listings-store';
 import { deleteWallPost } from '../../../lib/wall-store';
 import { removeConversationMessage } from '../../../lib/messages-store';
@@ -33,10 +35,14 @@ import { query, withTransaction } from '../../../lib/db';
  *   404 no such report.
  *
  * remove_content takes the reported thing down: a listing (files deleted), a
- * wall comment, or a direct message (removed from the conversation).
+ * wall comment, a direct message (removed from the conversation), a gallery
+ * item (removed, file deleted) or an avatar (reset to the placeholder, file
+ * deleted) -- the last two only while the reported item is still the one on
+ * the profile.
  *
  * A report filed under category 'minor' is evidence as well as a takedown
- * (18 U.S.C. 2258A): a listing's files -- every file the listing had when the
+ * (18 U.S.C. 2258A): a gallery item's or avatar's file (on hold since filing)
+ * is quarantined before it comes down, the same way; a listing's files -- every file the listing had when the
  * report was FILED (they have been on hold since, lib/media-preservation.js)
  * plus whatever it has now -- are QUARANTINED for the report first (kept,
  * never served, never deleted) and then the listing comes down; a text target
@@ -57,6 +63,8 @@ import { query, withTransaction } from '../../../lib/db';
  * exhaust the small per-instance pool.)
  */
 const CLAIM_STALE_SECONDS = 300;
+// The same placeholder the admin avatar takedown resets to (pages/api/admin/avatar.js).
+const AVATAR_PLACEHOLDER = '/images/avatar-placeholder.png';
 
 async function claimReport(id, action) {
   const { rows } = await query(
@@ -176,6 +184,48 @@ export default async function handler(req, res) {
             contentNote = 'removed';
           } else {
             contentNote = 'already_gone';
+          }
+        } else if (PROFILE_MEDIA_TARGETS.includes(report.targetType)) {
+          const creatorId = normalizeTargetId(report.targetId);
+          const src = typeof report.src === 'string' ? report.src : null;
+          if (report.category === 'minor') {
+            // The held file (and the reported src) is quarantined first, in
+            // its own commit: removing the item below then skips deleting it.
+            const held = (await heldPathsForReport(reportRef('report', report.id))).map(mediaSrc);
+            preserved = (await withTransaction(async (c) => {
+              const out = await preserveMedia([...held, ...(src ? [src] : [])], {
+                reportId: reportRef('report', report.id),
+                reason: `possible minor report (in-product) #${report.id}: ${report.targetType} of creator ${creatorId}`,
+                client: c,
+              });
+              await releaseReportHolds(report.id, c);
+              return out;
+            })).length;
+          }
+          contentNote = 'already_gone';
+          if (creatorId && src) {
+            if (report.targetType === 'gallery_item') {
+              try {
+                await removeGalleryItem(creatorId, { src });
+                contentNote = 'removed';
+              } catch (err) {
+                if (err.code !== GALLERY_ITEM_GONE && err.message !== 'Creator not found') throw err;
+              }
+            } else {
+              // Reset only while the reported photo is still the avatar: a
+              // creator who has since replaced it must not lose the new one.
+              const NOT_CURRENT = 'avatar_not_current';
+              try {
+                await setCreatorAvatar(creatorId, AVATAR_PLACEHOLDER, {
+                  beforeChange: async (_client, current) => {
+                    if (current !== src) throw Object.assign(new Error('Avatar changed'), { code: NOT_CURRENT });
+                  },
+                });
+                contentNote = 'removed';
+              } catch (err) {
+                if (err.code !== NOT_CURRENT && err.message !== 'Creator not found') throw err;
+              }
+            }
           }
         } else if (report.targetType === 'wall_post') {
           const targetId = normalizeTargetId(report.targetId);

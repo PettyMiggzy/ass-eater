@@ -7,11 +7,22 @@
 set -euo pipefail
 
 APP_USER="onlyone"
-# The workers (which hold the treasury key and deposit mnemonic) run as their
-# own system user, in APP_USER's group so they can read the build. The
+# The key-holding workers (treasury key, deposit mnemonic) run as their own
+# system user, in APP_USER's group so they can read the build. The
 # internet-facing API runs as APP_USER and so can read neither .env.workers
 # (root-owned, below) nor the workers' /proc/<pid>/environ.
 WORKERS_USER="onlyone-workers"
+# The media workers (transcode: ffmpeg/libvips over untrusted uploads, plus
+# broadcast, renewals, auction-close) run as a third user with NO signing
+# secrets at all (deploy/onlyone-media-workers.service).
+MEDIA_USER="onlyone-media"
+# Owns the checkout and runs git pull / npm ci / the build. None of the
+# runtime users (API, workers, media) may WRITE the code the key-holding
+# workers execute: a file-write bug in the API, or anything running as it,
+# could otherwise plant code in dist/ or node_modules/ -- or replace the
+# directories outright -- and the next restart would run it with the
+# treasury key loaded. Runtime users get read-only access through the group.
+DEPLOY_USER="onlyone-deploy"
 APP_DIR="${APP_DIR:-/opt/onlyone/server}"
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
@@ -43,33 +54,95 @@ echo "    building commit $DEPLOYED_COMMIT from $(git -c safe.directory='*' -C "
 echo "==> ffmpeg (every media upload is transcoded with it)"
 command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null || apt-get install -y ffmpeg
 
-echo "==> ownership: the app user must own the code it builds"
+echo "==> users"
+id -u "$WORKERS_USER" &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin -g "$APP_USER" "$WORKERS_USER"
+id -u "$MEDIA_USER" &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin -g "$APP_USER" "$MEDIA_USER"
+# A home for npm's cache; primary group onlyone so every file it builds is
+# group-readable by the runtime users (and, with the modes below, nothing
+# more).
+id -u "$DEPLOY_USER" &>/dev/null || useradd --system --create-home --home-dir "/var/lib/$DEPLOY_USER" --shell /usr/sbin/nologin -g "$APP_USER" "$DEPLOY_USER"
+
+echo "==> ownership: the deploy user owns the code; runtime users can only read it"
 # Code copied or cloned as root (both documented ways of getting it here)
-# left npm ci failing with EACCES on node_modules, and a later git pull by
-# the app user failing the same way. Own the whole checkout when this is one
+# left npm ci failing with EACCES. It used to be handed to APP_USER -- the
+# API's own user -- which made every file the key-holding workers execute
+# writable by the internet-facing process. Now the whole checkout belongs to
+# DEPLOY_USER, group APP_USER, with no group or other write anywhere: the
+# API, workers and media users can read and run it, and none can change it
+# (not a file, and not a directory entry -- a writable server/ dir would let
+# the API swap dist/ out wholesale). Own the whole checkout when this is one
 # (APP_DIR is normally a symlink to <checkout>/server), else just APP_DIR.
 REPO_ROOT="$(git -c safe.directory='*' -C "$APP_DIR/" rev-parse --show-toplevel 2>/dev/null || echo "$APP_DIR")"
-chown -R "$APP_USER":"$APP_USER" "$REPO_ROOT/"
-chown -R "$APP_USER":"$APP_USER" "$APP_DIR/"
+# The env files are pruned: they keep the owners and modes set below, and a
+# recursive chmod g+r must never, even for a moment, make .env.workers (the
+# treasury key) readable by the onlyone group.
+lock_code() {
+  find "$REPO_ROOT/" "$APP_DIR/" \( -name .env -o -name .env.workers \) -prune -o -exec chown -h "$DEPLOY_USER":"$APP_USER" {} +
+  find "$REPO_ROOT/" "$APP_DIR/" \( -name .env -o -name .env.workers \) -prune -o ! -type l -exec chmod u+rwX,g+rX,g-w,o-rwx {} +
+}
+lock_code
+
+echo "==> locking the path above the code"
+# Locking the checkout is not enough if the directory ABOVE it is writable:
+# /opt/onlyone used to be owned by the API user (provision.sh chown -R), so a
+# compromised API process could `ln -sfn` /opt/onlyone/server at a directory
+# it controls, or rename /opt/onlyone/app and put its own in its place. Every
+# unit reaches its WorkingDirectory, EnvironmentFile= and ExecStart through
+# that path, so the next restart of the key-holding workers would run its
+# code (or load its .env, e.g. NODE_OPTIONS=--require) with the treasury key
+# in the environment. Every ancestor of the symlink and of the checkout must
+# therefore be root-owned and not group/other-writable. Ancestors one of our
+# own users owns (the old layout) are taken back to root; anything else that
+# is writable by someone else (a sticky /tmp, a user's home) is refused
+# rather than chown'd -- that is not a layout to deploy the key into.
+lock_parents() {
+  local start d owner
+  for start in "$(dirname "$APP_DIR")" "$(dirname "$REPO_ROOT")"; do
+    d="$start"
+    while [[ -n "$d" && "$d" != "/" ]]; do
+      owner="$(stat -c %U "$d")"
+      case "$owner" in
+        "$APP_USER"|"$WORKERS_USER"|"$MEDIA_USER"|"$DEPLOY_USER")
+          chown root:root "$d"
+          chmod go-w "$d"
+          ;;
+      esac
+      if [[ "$(stat -c %U "$d")" != "root" ]] || [[ -n "$(find "$d" -maxdepth 0 -perm /022)" ]]; then
+        echo "ERROR: $d is writable by someone other than root ($(stat -c '%U:%G %A' "$d"))." >&2
+        echo "       A runtime user could swap the code or .env out from under the key-holding workers." >&2
+        echo "       Make it root-owned and not group/other-writable, or deploy under /opt/onlyone." >&2
+        exit 1
+      fi
+      d="$(dirname "$d")"
+    done
+  done
+  # The symlink itself (APP_DIR is normally /opt/onlyone/server -> app/server).
+  # Its own owner does not decide who can replace it -- the parent above does
+  # -- but it should not look like the API's.
+  if [[ -L "$APP_DIR" ]]; then chown -h root:root "$APP_DIR"; fi
+}
+lock_parents
 
 echo "==> locking down env files"
-chmod 600 "$APP_DIR/.env"
+# .env is read by systemd (as root) for every unit, and by prisma during
+# this deploy (as DEPLOY_USER, via the group). No runtime user may WRITE it:
+# the key-holding workers load it too, so a writable .env was a way to
+# inject e.g. NODE_OPTIONS into the process that holds the treasury key.
+chown root:"$APP_USER" "$APP_DIR/.env"
+chmod 640 "$APP_DIR/.env"
 # Signing secrets live ONLY in .env.workers, which only onlyone-workers
-# loads: the internet-facing API process never needs the treasury key or the
-# deposit mnemonic (it derives deposit addresses from DEPOSIT_XPUB).
+# loads: the internet-facing API process and the media workers never need
+# the treasury key or the deposit mnemonic (the API derives deposit
+# addresses from DEPOSIT_XPUB).
 #
-# .env.workers is owned by ROOT, not the app user. The recursive chown above
-# used to hand it to APP_USER -- the same user the API runs as -- so any
-# file-read bug in the API (or a dependency) reached the treasury key
-# directly, defeating the split. systemd reads EnvironmentFile= as root, so
-# the workers unit still gets it; nothing else needs to open the file.
-id -u "$WORKERS_USER" &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin -g "$APP_USER" "$WORKERS_USER"
+# .env.workers is owned by ROOT, mode 600: systemd reads EnvironmentFile= as
+# root, so the workers unit still gets it; nothing else needs to open it.
 if [[ -f "$APP_DIR/.env.workers" ]]; then
   chown root:root "$APP_DIR/.env.workers"
   chmod 600 "$APP_DIR/.env.workers"
 fi
 if grep -Eq '^(TREASURY_PRIVATE_KEY|DEPOSIT_MNEMONIC)=.+' "$APP_DIR/.env"; then
-  echo "WARNING: TREASURY_PRIVATE_KEY / DEPOSIT_MNEMONIC are set in .env, which the API process loads." >&2
+  echo "WARNING: TREASURY_PRIVATE_KEY / DEPOSIT_MNEMONIC are set in .env, which the API and media workers load." >&2
   echo "         Move them to $APP_DIR/.env.workers and set DEPOSIT_XPUB in .env (see DEPLOY.md)." >&2
 fi
 if grep -Eq '^(ONLYASS_[A-Z0-9_]+|USDC_ADDRESS)=' "$APP_DIR/.env"; then
@@ -77,37 +150,47 @@ if grep -Eq '^(ONLYASS_[A-Z0-9_]+|USDC_ADDRESS)=' "$APP_DIR/.env"; then
   echo "         Rename them to ONLYONE_* / USDG_ADDRESS (see .env.example)." >&2
 fi
 # systemd's EnvironmentFile= keeps a trailing '# comment' as part of the value.
-# Names only -- never print values, some of them are secrets.
-COMMENTED=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=[^#]*[[:space:]]#' "$APP_DIR/.env" | cut -d= -f1 || true)
-if [ -n "$COMMENTED" ]; then
-  echo "WARNING: these .env lines end in an inline '# comment', which systemd keeps as part of the value:" >&2
-  echo "$COMMENTED" | sed 's/^/           /' >&2
-  echo "         Move each comment onto its own line." >&2
-fi
+# Both files: a signing secret with a comment after it is unusable, and the
+# only symptom is every payout refunding. Names only -- never print values,
+# some of them are secrets (this runs as root, so it can read .env.workers).
+for ENVF in "$APP_DIR/.env" "$APP_DIR/.env.workers"; do
+  [[ -f "$ENVF" ]] || continue
+  COMMENTED=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=[^#]*[[:space:]]#' "$ENVF" | cut -d= -f1 || true)
+  if [ -n "$COMMENTED" ]; then
+    echo "WARNING: these $(basename "$ENVF") lines end in an inline '# comment', which systemd keeps as part of the value:" >&2
+    echo "$COMMENTED" | sed 's/^/           /' >&2
+    echo "         Move each comment onto its own line." >&2
+  fi
+done
 
 cd "$APP_DIR"
 
+AS_DEPLOY=(sudo -H -u "$DEPLOY_USER")
+
 echo "==> npm ci"
-sudo -u "$APP_USER" npm ci
+"${AS_DEPLOY[@]}" npm ci
 
 echo "==> prisma generate + migrate deploy"
-sudo -u "$APP_USER" npx prisma generate
-sudo -u "$APP_USER" npx prisma migrate deploy
+"${AS_DEPLOY[@]}" npx prisma generate
+"${AS_DEPLOY[@]}" npx prisma migrate deploy
 
 echo "==> build"
-sudo -u "$APP_USER" npm run build
+"${AS_DEPLOY[@]}" npm run build
+# Whatever the build and install just wrote: same modes as the rest.
+lock_code
 
 echo "==> seeding system accounts (platform + escrow pseudo-users)"
-sudo -u "$APP_USER" node dist/scripts/seed-system-accounts.js
+"${AS_DEPLOY[@]}" node dist/scripts/seed-system-accounts.js
 
 echo "==> operator admin account"
 # Reminder only (never fails the deploy): without an ADMIN row nobody can
 # resolve a FAILED/HELD payout -- see DEPLOY.md step 4b.
-sudo -u "$APP_USER" node dist/scripts/admin-check.js || true
+"${AS_DEPLOY[@]}" node dist/scripts/admin-check.js || true
 
 echo "==> install systemd units"
 cp "$APP_DIR/deploy/onlyone-api.service" /etc/systemd/system/onlyone-api.service
 cp "$APP_DIR/deploy/onlyone-workers.service" /etc/systemd/system/onlyone-workers.service
+cp "$APP_DIR/deploy/onlyone-media-workers.service" /etc/systemd/system/onlyone-media-workers.service
 systemctl daemon-reload
 # `enable --now` only STARTS a unit if it isn't already running -- on every
 # redeploy after the first, both services are already active, so it was a
@@ -116,8 +199,8 @@ systemctl daemon-reload
 # the API kept serving 404s for it because the old process was still the
 # one running. `enable` (persist across reboots) and `restart` (always pick
 # up the new build) are two different things and both are needed here.
-systemctl enable onlyone-api onlyone-workers
-systemctl restart onlyone-api onlyone-workers
+systemctl enable onlyone-api onlyone-workers onlyone-media-workers
+systemctl restart onlyone-api onlyone-workers onlyone-media-workers
 
 echo "==> nginx site"
 # Certbot rewrites this file in place to add the HTTPS server block once TLS
@@ -145,9 +228,13 @@ echo "==> Deployed commit: $DEPLOYED_COMMIT"
 cat <<'EOF'
 
 ==> Done. Check status with:
-  systemctl status onlyone-api onlyone-workers
+  systemctl status onlyone-api onlyone-workers onlyone-media-workers
   journalctl -u onlyone-api -f
   journalctl -u onlyone-workers -f
+  journalctl -u onlyone-media-workers -f
+
+Redeploys: git pull as the deploy user (it owns the checkout now):
+  sudo -H -u onlyone-deploy git -C /opt/onlyone/app pull
 
 Then point api.joinonlyone.com's DNS A record at this droplet's IP and run:
   certbot --nginx -d api.joinonlyone.com

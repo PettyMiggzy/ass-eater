@@ -2,6 +2,7 @@ import { addGalleryItem, getCreatorById, GALLERY_CAP_EXCEEDED } from '../../../l
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { PREMIUM_GALLERY_SLOTS, mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
+import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
 
 /**
  * POST /api/admin/upload -- admin finalize of a gallery upload for a creator.
@@ -60,6 +61,8 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, creator, item });
   } catch (err) {
     if (err instanceof MediaRejected) return res.status(err.status).json({ error: err.message });
+    // The file was reaped by the orphan sweep before this finalize (lib/media-refs.js).
+    if (err.code === MEDIA_UPLOAD_EXPIRED) return res.status(409).json({ error: MEDIA_UPLOAD_EXPIRED_MESSAGE });
     console.error('[admin/upload] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

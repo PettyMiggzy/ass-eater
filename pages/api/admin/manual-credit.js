@@ -1,5 +1,5 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM } from '../../../lib/deposit';
+import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM, ACCOUNT_GONE } from '../../../lib/deposit';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import { findUserById } from '../../../lib/users-store';
 import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
@@ -19,6 +19,12 @@ import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
  * exact address actually exists before anything is credited. This can't be
  * fabricated -- it can only misattribute a real payment if the admin is
  * given a wrong address, which is a support-process risk, not a code one.
+ *
+ * POST { userId, txHash, fromAddress, expectedLogin, creditFrozen? }
+ *   expectedLogin (required): the email/username of the account the admin
+ *   means to credit. 400 CONFIRM_ACCOUNT when missing (the body carries the
+ *   resolved { userId, login, role } to confirm), 409 ACCOUNT_MISMATCH when it
+ *   is not user `userId`'s -- both before anything is credited.
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -31,7 +37,10 @@ export default async function handler(req, res) {
     return res.status(501).json({ error: 'Credits payments are not configured.' });
   }
 
-  const { userId, txHash, fromAddress, creditFrozen } = req.body || {};
+  const { userId, txHash, fromAddress, creditFrozen, expectedLogin } = req.body && typeof req.body === 'object' ? req.body : {};
+  if (expectedLogin !== undefined && expectedLogin !== null && (typeof expectedLogin !== 'string' || expectedLogin.length > 320)) {
+    return res.status(400).json({ error: 'expectedLogin must be text' });
+  }
   if ((typeof userId !== 'string' && typeof userId !== 'number') || !String(userId)
     || typeof txHash !== 'string' || !txHash || typeof fromAddress !== 'string' || !fromAddress) {
     return res.status(400).json({ error: 'userId, txHash, and fromAddress are all required' });
@@ -55,7 +64,6 @@ export default async function handler(req, res) {
     if (!user) {
       return res.status(404).json({ error: `No account with id "${userId}" exists. Double-check it before crediting real money -- this cannot be undone once submitted.` });
     }
-
     // A suspended or banned account's credits are frozen: they can't be spent
     // or cashed out. Crediting one claims the hash for good and parks real
     // money where nobody can use it -- the exact case /api/credits/buy refuses
@@ -78,11 +86,34 @@ export default async function handler(req, res) {
       });
     }
 
+    // The echo below (creditedUserEmail) only comes back AFTER the credit has committed, when a
+    // typo'd id can no longer be undone. `expectedLogin` is the login the
+    // admin confirmed (the panel resolves the id with GET
+    // /api/admin/user-moderation and asks first); it is REQUIRED, and a
+    // mismatch refuses before anything moves -- so a stale or bypassed UI
+    // cannot credit the wrong account. Matched the way sign-in matches it.
+    const actualLogin = typeof user.email === 'string' ? user.email : '';
+    if (typeof expectedLogin !== 'string' || !expectedLogin.trim()) {
+      return res.status(400).json({
+        code: 'CONFIRM_ACCOUNT',
+        error: 'Confirm which account this is for: send expectedLogin (the account\'s email or username) with the credit.',
+        account: { userId: String(user.id), login: actualLogin || null, role: user.role || null },
+      });
+    }
+    if (expectedLogin.trim().toLowerCase() !== actualLogin.trim().toLowerCase()) {
+      return res.status(409).json({
+        code: 'ACCOUNT_MISMATCH',
+        error: `User ${user.id} is not the account you confirmed. Nothing was credited -- check the user id.`,
+        account: { userId: String(user.id), login: actualLogin || null, role: user.role || null },
+      });
+    }
+
     const result = await creditDepositFromChain({ userId: String(userId), txHash, expectedFrom: fromAddress, config });
     return res.status(200).json({ ok: true, ...result, creditedUserEmail: user.email, frozen: isFrozenStanding(standing) });
   } catch (err) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });
+    if (err.code === ACCOUNT_GONE) return res.status(404).json({ error: 'That account no longer exists -- nothing was credited and the transaction is still unused.', code: err.code });
     if (err.code === 'SENDER_MISMATCH') return res.status(400).json({ error: `That transaction was not sent from ${fromAddress}.` });
     // Same fix as pages/api/credits/buy.js: enumerate the actual known-safe
     // codes lib/chain-verify.js can throw rather than a bare `if (err.code)`,

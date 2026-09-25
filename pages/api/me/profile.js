@@ -193,14 +193,15 @@ export default async function handler(req, res) {
     }
   }
   // Each tag was screened on its own above; this also screens them JOINED, so a handle or
-  // phone number split across two tags ("venmo", "@janedoe") is caught the
+  // phone number split across two tags ("venmo", "@janedoe") -- or a
+  // prohibited phrase split across two ("barely", "legal") -- is caught the
   // same way it is on a marketplace listing. Skipped when the tags are just
   // the stored ones echoed back.
   if (fields && 'tags' in fields && !tagsUnchanged) {
     const tagHit = findCircumventionInTags(fields.tags);
     if (tagHit) {
       await addViolation({ userId: ctx.user.id, context: 'tags', reasons: tagHit.reasons, snippet: tagHit.snippet });
-      return res.status(400).json({ error: `Tags: ${PAYMENT_CIRCUMVENTION_MESSAGE}`, field: 'tags' });
+      return res.status(400).json({ error: `Tags: ${tagHit.message || PAYMENT_CIRCUMVENTION_MESSAGE}`, field: 'tags' });
     }
   }
 

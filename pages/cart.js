@@ -48,8 +48,13 @@ function newIdempotencyKey() {
 //   the cart it was minted for, so a DUPLICATE_CHECKOUT answer always refers
 //   to the cart on screen.
 //
-// An attempt is `uncertain` when a request's outcome was never learned
-// (network failure or 5xx): it may already have committed. While it is,
+// An attempt is `uncertain` from the moment a request under its key is SENT
+// until a definitive answer comes back (200, DUPLICATE_CHECKOUT, or a refusal
+// with no earlier request unaccounted for). It is written as uncertain BEFORE
+// the fetch: a tab closed or reloaded mid-request may still commit, and an
+// attempt stored as "not sent" would let an edited cart mint a new key and
+// charge again. It stays uncertain after a network failure or a 5xx. While it
+// is,
 // the page asks GET /api/marketplace/orders/checkout-status whether that key
 // was claimed -- on load, right after the failure, and from a "Check payment
 // status" button that works whatever the balance now is (the first request
@@ -62,7 +67,8 @@ function newIdempotencyKey() {
 // key, since the cart changed). Not claimed -> the key stays pinned for
 // that cart (a retry can't pay twice), and is only dropped for a different
 // cart once enough time has passed that the old request can no longer
-// commit.
+// commit. An uncertain attempt is never discarded on age alone -- a fan who
+// comes back days later is still asked about it first.
 const ATTEMPT_STORAGE_PREFIX = 'onlyone-checkout-attempt-v2:';
 const LEGACY_ATTEMPT_STORAGE_KEY = 'onlyone-checkout-attempt-v1';
 const ATTEMPT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -92,7 +98,11 @@ function attemptListingIds(attempt) {
 
 function validAttempt(rec, uid) {
   if (!rec || typeof rec.key !== 'string' || typeof rec.fp !== 'string') return null;
-  if (!Number.isFinite(rec.at) || Date.now() - rec.at > ATTEMPT_MAX_AGE_MS) return null;
+  if (!Number.isFinite(rec.at)) return null;
+  // Only a settled attempt (nothing in flight under its key) may age out.
+  // An uncertain one is kept until checkout-status says it was never claimed
+  // and the grace period has passed -- see resolveStored on load.
+  if (!rec.uncertain && Date.now() - rec.at > ATTEMPT_MAX_AGE_MS) return null;
   if (String(rec.uid) !== String(uid)) return null;
   return rec;
 }
@@ -222,20 +232,37 @@ export default function CartPage({ sessionUser }) {
     return 'claimed';
   };
 
-  // On load: pick up this account's stored attempt and, if its outcome is
-  // unknown, resolve it without the fan having to press anything.
+  // On load: pick up this account's stored attempt and ask the server about
+  // it, whatever it is marked -- a request can commit after the page that
+  // sent it is gone. Claimed -> settled (bought items leave the cart).
+  // Unclaimed and uncertain past the grace period -> it can no longer
+  // commit, so it is dropped; within the grace period it stays pinned and
+  // the banner offers a re-check. A failed lookup keeps everything as is.
   useEffect(() => {
     if (!uid || !cart.hydrated || loadCheckDone.current) return;
     loadCheckDone.current = true;
     const stored = readAttempt(uid);
     setMemAttempt(stored);
-    if (stored && stored.uncertain) {
-      resolveUncertain(stored).catch(() => {});
+    if (stored) {
+      resolveUncertain(stored)
+        .then((outcome) => {
+          if (
+            outcome === 'unclaimed' &&
+            stored.uncertain &&
+            Date.now() - (stored.uncertainAt || stored.at) >= UNCERTAIN_GRACE_MS
+          ) {
+            endAttempt();
+          }
+        })
+        .catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, cart.hydrated]);
 
-  const uncertainAttempt = memAttempt && memAttempt.uncertain ? memAttempt : null;
+  // The stored attempt is marked uncertain while its own request is in
+  // flight too; the "couldn't confirm" banner is only for an outcome that
+  // is actually unknown, not for the request this page is waiting on.
+  const uncertainAttempt = memAttempt && memAttempt.uncertain && !paying ? memAttempt : null;
 
   const hasEnough = balanceCents !== null && balanceCents >= cart.totalCents;
   const canCheckout =
@@ -303,15 +330,32 @@ export default function CartPage({ sessionUser }) {
         endAttempt(); // it can no longer commit: start fresh for this cart
         stored = null;
       }
-      const attempt =
+      const base =
         stored && stored.fp === fp
           ? stored
           : { key: newIdempotencyKey(), fp, uid, at: Date.now(), uncertain: false };
+      // A refusal is only proof that nothing was charged when no earlier request
+      // under this key is unaccounted for. Read before the attempt is marked
+      // in flight below.
+      const priorUncertain = !!base.uncertain;
+      // Stored as uncertain BEFORE the request goes out: if the tab is closed
+      // or reloaded while it runs, it may still commit, and the next load must
+      // ask about it rather than treat it as never sent.
+      const attempt = { ...base, uncertain: true, uncertainAt: Date.now() };
       writeAttempt(uid, attempt);
       setMemAttempt(attempt);
       const idempotencyKey = attempt.key;
-      // The outcome of this request may be unknown (lost response / 5xx): pin
-      // the key so no later refusal can rotate it. See the note at the top.
+      // A definitive refusal of THIS request with nothing earlier unaccounted
+      // for: the key stays (reusing an unclaimed key is harmless) but the
+      // attempt is no longer in doubt.
+      const markSettled = () => {
+        const { uncertainAt, ...rest } = attempt; // eslint-disable-line no-unused-vars
+        const rec = { ...rest, uncertain: false };
+        writeAttempt(uid, rec);
+        setMemAttempt(rec);
+      };
+      // The outcome of this request is unknown (lost response / 5xx): keep the
+      // key pinned so no later refusal can rotate it. See the note at the top.
       const markUncertain = () => {
         const rec = { ...attempt, uncertain: true, uncertainAt: Date.now() };
         writeAttempt(uid, rec);
@@ -329,13 +373,11 @@ export default function CartPage({ sessionUser }) {
           return false;
         }
       };
-      // A refusal is only proof that nothing was charged when no earlier request
-      // under this key is unaccounted for.
-      const priorUncertain = !!attempt.uncertain;
       const UNCERTAIN_NOTE =
         ' An earlier payment attempt for this cart may already have gone through -- use "Check payment status" or look in your order history before paying again. Pressing Pay again is safe and won\'t charge you twice for that attempt.';
       // Forget the attempt after a definitive refusal -- unless an earlier
-      // request under this key is unaccounted for, in which case keep it.
+      // request under this key is unaccounted for, in which case keep it
+      // pinned and uncertain.
       const endIfCertain = () => {
         if (!priorUncertain) endAttempt();
       };
@@ -421,6 +463,8 @@ export default function CartPage({ sessionUser }) {
           const rec = markUncertain();
           refreshBalance();
           if (await confirmAfterUnknown(rec)) return;
+        } else if (!priorUncertain) {
+          markSettled();
         }
         throw new Error((data.error || 'Payment could not be confirmed') + (priorUncertain || res.status >= 500 ? UNCERTAIN_NOTE : ''));
       }

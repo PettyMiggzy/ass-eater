@@ -171,10 +171,15 @@ export default function Marketplace({
   const [sort, setSort] = useState('newest');
   // Clamped to the listing price ceiling the create/update routes enforce,
   // so one legacy absurd price can't make the slider useless for everyone.
-  const maxCents = Math.min(
-    LISTING_LIMITS.maxPriceCents,
-    Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => (Number.isFinite(l.priceCents) ? l.priceCents : 0))),
-  );
+  // Rounded UP to the slider's $1 step: a range input snaps its value to a
+  // step at or below max, so a top price like $250.99 was unreachable once
+  // the slider was touched. The ceiling is itself a multiple of 100.
+  const maxCents = Math.ceil(
+    Math.min(
+      LISTING_LIMITS.maxPriceCents,
+      Math.max(FALLBACK_MAX_CENTS, ...listings.map((l) => (Number.isFinite(l.priceCents) ? l.priceCents : 0))),
+    ) / 100,
+  ) * 100;
   const [maxPriceCents, setMaxPriceCents] = useState(maxCents);
 
   // Bring the listing the fan clicked into view, and fade its highlight.
@@ -252,7 +257,9 @@ export default function Marketplace({
     (!creatorId || String(l.creatorId) === String(creatorId))
     && (!creatorQ.trim() || String(l.creatorName || '').toLowerCase().includes(creatorQ.trim().toLowerCase()));
   const matchesTag = (l, t) => !t || (Array.isArray(l.tags) && l.tags.includes(t));
-  const matchesPrice = (l) => (l.priceCents || 0) <= maxPriceCents;
+  // The slider's far-right position means "no limit", whatever the browser
+  // snapped the value to.
+  const matchesPrice = (l) => maxPriceCents >= maxCents || (l.priceCents || 0) <= maxPriceCents;
   const matchesCategory = (l, c) => !c || (Array.isArray(l.creatorCategories) && l.creatorCategories.includes(c));
 
   const filtered0 = listings.filter(
@@ -437,7 +444,7 @@ export default function Marketplace({
                 onChange={(e) => setMaxPriceCents(Number(e.target.value))}
                 className="w-full accent-brand-pink"
               />
-              <p className="text-xs text-gray-500 mt-1">Up to ${(maxPriceCents / 100).toFixed(0)}</p>
+              <p className="text-xs text-gray-500 mt-1">{maxPriceCents >= maxCents ? 'Any price' : `Up to $${(maxPriceCents / 100).toFixed(0)}`}</p>
             </div>
 
             <div>

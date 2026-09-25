@@ -24,15 +24,27 @@ const POSITIVE_INT = /^[1-9]\d{0,17}$/;
 // inflate a 3MB ID photo past Vercel's request limit for no gain.
 export const config = { api: { bodyParser: false } };
 
+// Returns the body, or null when it is over the limit. Never returns out of
+// the for-await loop: that calls the stream's return(), which DESTROYS the
+// request and its socket, so the 413 below was written to a dead connection
+// and the admin saw "Failed to fetch" instead of "too large". Past the limit
+// the rest is read and discarded (bounded anyway by the platform's own
+// request-size cap).
 async function readBody(req) {
   const chunks = [];
   let total = 0;
+  let over = false;
   for await (const chunk of req) {
     total += chunk.length;
-    if (total > MAX_DOCUMENT_BYTES) return null;
-    chunks.push(chunk);
+    if (total > MAX_DOCUMENT_BYTES) over = true;
+    if (!over) chunks.push(chunk);
   }
-  return Buffer.concat(chunks);
+  return over ? null : Buffer.concat(chunks);
+}
+
+function declaredTooLarge(req) {
+  const len = Number(req.headers['content-length']);
+  return Number.isFinite(len) && len > MAX_DOCUMENT_BYTES;
 }
 
 /**
@@ -67,6 +79,12 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
+      // A declared size over the limit is refused before a byte is buffered.
+      // The body is drained (not destroyed) so the 413 reaches the client.
+      if (declaredTooLarge(req)) {
+        req.resume();
+        return res.status(413).json({ error: 'That document is too large (4MB maximum).' });
+      }
       const body = await readBody(req);
       if (!body) return res.status(413).json({ error: 'That document is too large (4MB maximum).' });
       // The filename travels URL-encoded -- `?fileName=` or an

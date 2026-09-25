@@ -1,0 +1,47 @@
+[Unit]
+Description=OnlyOne media + key-less workers (transcode, broadcast, renewals, auction-close)
+After=network.target postgresql.service redis-server.service onlyone-api.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+# Transcode parses ANY bridged account's uploads with ffmpeg and libvips --
+# the largest memory-unsafe attack surface in the stack. So it runs here, as
+# its own user, loading .env ONLY: never .env.workers, which holds the
+# treasury key and the deposit mnemonic (those belong to onlyone-workers,
+# which runs no parser over user input). A parser exploit here finds no
+# signing key in its environment, and this user cannot read .env.workers
+# (root:root 600) or the key-holding process's /proc/<pid>/environ.
+# In the onlyone group so it can read the build (owned by onlyone-deploy,
+# not writable by any runtime user).
+# Created by deploy/app-setup.sh.
+User=onlyone-media
+Group=onlyone
+WorkingDirectory=/opt/onlyone/server
+EnvironmentFile=/opt/onlyone/server/.env
+ExecStart=/usr/bin/node dist/workers/media.js
+Restart=on-failure
+RestartSec=3
+# Contain an overrun to this unit: the droplet has 2 GB shared with
+# Postgres, Redis and the API, and a runaway transcode must not get the
+# kernel OOM killer to take Postgres. Two transcodes run at once; animated
+# images are bounded to fit this (lib/image-limits.ts).
+MemoryHigh=900M
+MemoryMax=1200M
+# A transcode killed mid-job is re-queued by the reconciler
+# (core/transcode-reconcile.ts); renewals and auction settlement are
+# idempotent. No payout ever runs here.
+TimeoutStopSec=120
+NoNewPrivileges=true
+PrivateTmp=true
+# The code and .env are read-only to this process whatever the file modes
+# say (defence in depth for app-setup.sh's ownership lock): it cannot swap
+# the code, the checkout or the /opt/onlyone/server symlink out from under
+# the key-holding workers. Nothing here writes under /opt/onlyone; scratch
+# files go to the private /tmp.
+ReadOnlyPaths=/opt/onlyone
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

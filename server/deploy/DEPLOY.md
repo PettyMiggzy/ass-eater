@@ -21,8 +21,17 @@ git clone <your repo url> /opt/onlyone/app
 ln -sfn /opt/onlyone/app/server /opt/onlyone/server
 ```
 
-(`app-setup.sh` gives the `onlyone` user ownership of the whole checkout,
-so it does not matter that it was cloned as root.)
+(`app-setup.sh` hands the whole checkout to the `onlyone-deploy` build
+user, readable but NOT writable by the runtime users, so it does not matter
+that it was cloned as root. None of the processes that run the code -- the
+API, the key-holding workers, the media workers -- can modify it. That
+includes the path ABOVE it: `/opt/onlyone` itself must be root-owned and not
+group/other-writable, or the API could re-point the `/opt/onlyone/server`
+symlink (or swap `/opt/onlyone/app`) and the key-holding workers would run
+its code, or load its `.env`, on their next restart. `provision.sh` creates
+it that way; `app-setup.sh` takes it back from an old `chown -R onlyone`
+layout and refuses to deploy under any ancestor another user can write. The
+units also mount `/opt/onlyone` read-only (`ReadOnlyPaths=`).)
 
 ## 2. System setup (run once, as root, on the droplet)
 
@@ -45,11 +54,13 @@ cd /opt/onlyone/server
 cp .env.example .env
 nano .env            # API + shared settings
 nano .env.workers    # ONLY the two signing secrets below
-chmod 600 .env .env.workers
+chmod 600 .env.workers
 chown root:root .env.workers   # app-setup.sh enforces this too: no app user may read it
+# .env: app-setup.sh makes it root:onlyone 640 -- readable, never writable,
+# by the runtime users (all three units load it).
 ```
 
-`.env` (loaded by both units) -- every variable name in `.env.example` is
+`.env` (loaded by all three units) -- every variable name in `.env.example` is
 one the code actually reads. **Keep every comment on its own line**:
 systemd's `EnvironmentFile=` does not strip a trailing `# ...` after a
 value, it keeps it as part of the value (`app-setup.sh` and the services
@@ -72,13 +83,26 @@ warn about any line that does this). In particular:
   `INDEX_ONLYONE_DEPOSITS=false` (nothing spends an $ONLYONE balance).
 - `RPC_URL` -- `https://rpc.mainnet.chain.robinhood.com`, or a private RPC.
 - S3/Bunny (incl. `BUNNY_API_KEY` for takedown cache purges), SES
-  (`EMAIL_PROVIDER`, `EMAIL_FROM`, `AWS_REGION`, `SES_SNS_TOPIC_ARNS`),
-  Sumsub, LiveKit once you have those accounts.
+  (`EMAIL_PROVIDER`, `EMAIL_FROM`, `AWS_REGION`, `SES_SNS_TOPIC_ARNS`, and
+  `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` -- see below), Sumsub,
+  LiveKit once you have those accounts.
+- SES credentials: this droplet is not on AWS, so there is no instance role
+  and the SES client has nothing to sign with unless `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY` are set. Create a dedicated IAM user whose only
+  permission is `ses:SendEmail` on the verified `EMAIL_FROM` identity. (The
+  S3 keys are separate -- `S3_ACCESS_KEY` / `S3_SECRET_KEY` -- and SES does
+  not read them.) With `EMAIL_PROVIDER=ses` the API refuses to start if no
+  credentials resolve, rather than starting and failing every send silently.
 - `TREASURY_ADDRESS` -- the treasury wallet's PUBLIC address (never the
   key). The API needs it to accept an admin "mark sent" on a payout: it only
   accepts a USDG transfer FROM this address.
 
-`.env.workers` (loaded ONLY by `onlyone-workers`):
+`.env.workers` (loaded ONLY by `onlyone-workers`, the key-holding unit --
+never by the API or `onlyone-media-workers`, which parses uploads). One
+variable per line and **no comment on the same line**: systemd keeps a
+trailing `# ...` as part of the value, and a key with one appended is
+rejected -- every payout refunds and every sweep fails (the workers and
+`app-setup.sh` warn, naming the variable only):
 - `TREASURY_PRIVATE_KEY` -- the mainnet wallet key you generate yourself.
 - `DEPOSIT_MNEMONIC` -- same rule.
 **Generate both on the droplet or on a machine you trust; never paste them
@@ -95,10 +119,21 @@ bash app-setup.sh
 ```
 
 This makes sure ffmpeg is installed (the transcode worker needs it for every
-upload), gives the `onlyone` user ownership of the code, runs `npm ci`,
-`prisma migrate deploy`, builds the TypeScript, seeds the system accounts,
-installs and restarts the `onlyone-api` and `onlyone-workers` systemd
-services, and wires up the nginx reverse proxy on port 80.
+upload), creates the service users, gives the `onlyone-deploy` build user
+ownership of the code (group-readable, not writable, by the runtime users),
+makes `/opt/onlyone` and every directory above the code root-owned,
+runs `npm ci`, `prisma migrate deploy` and the build as that user, seeds the
+system accounts, installs and restarts the three systemd services, and wires
+up the nginx reverse proxy on port 80:
+
+- `onlyone-api` (user `onlyone`) -- the internet-facing API. Loads `.env`.
+- `onlyone-workers` (user `onlyone-workers`) -- ONLY the loops that sign:
+  deposit sweeps, payouts, treasury hedge, token burn. The only unit that
+  loads `.env.workers`.
+- `onlyone-media-workers` (user `onlyone-media`) -- transcode (ffmpeg and
+  libvips over every account's uploads), mass-DM broadcast, renewals,
+  auction close. Loads `.env` only: a parser exploit in an uploaded file
+  lands in a process with no signing key.
 
 ## 4b. Create the operator admin account (once; re-run to rotate the password)
 
@@ -142,7 +177,7 @@ certbot --nginx -d api.joinonlyone.com
 ## 6. Verify
 
 ```bash
-systemctl status onlyone-api onlyone-workers
+systemctl status onlyone-api onlyone-workers onlyone-media-workers
 journalctl -u onlyone-api -f
 curl https://api.joinonlyone.com/health                    # {"ok":true}
 curl https://api.joinonlyone.com/messages/conversations     # 401 (no token) -- confirms auth is wired up, not a connection error
@@ -157,9 +192,13 @@ already allows out.
 
 ```bash
 cd /opt/onlyone/app
-sudo -u onlyone git pull
+sudo -H -u onlyone-deploy git pull
 bash server/deploy/app-setup.sh    # as root
 ```
+
+(The first redeploy after the checkout was handed to `onlyone-deploy` is the
+one exception: until `app-setup.sh` has run once, the checkout is still owned
+by `onlyone`, so pull with `sudo -u onlyone git pull` that one time.)
 
 Nothing else. `app-setup.sh` is the one place the install, migrate, build,
 seed, restart and nginx steps live, so a hand-written list here cannot drift
@@ -180,7 +219,7 @@ and the old code keeps being rebuilt (`app-setup.sh` now refuses that
 layout). As root:
 
 ```bash
-systemctl stop onlyone-api onlyone-workers
+systemctl stop onlyone-api onlyone-workers onlyone-media-workers 2>/dev/null || true
 mv /opt/onlyone/server /opt/onlyone/server.old
 git clone <your repo url> /opt/onlyone/app
 cp -p /opt/onlyone/server.old/.env /opt/onlyone/app/server/.env
@@ -220,7 +259,7 @@ cd /opt/onlyone/server
 sudo -u onlyone node dist/scripts/derive-deposit-xpub.js < /dev/tty   # paste the mnemonic (hidden)
 # add the printed DEPOSIT_XPUB=... line to .env
 # cut the TREASURY_PRIVATE_KEY= and DEPOSIT_MNEMONIC= lines out of .env into .env.workers
-chmod 600 .env .env.workers
+chmod 600 .env.workers
 chown root:root .env.workers   # app-setup.sh enforces this too: no app user may read it
 bash deploy/app-setup.sh
 ```
