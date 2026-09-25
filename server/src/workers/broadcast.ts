@@ -33,10 +33,10 @@ registerWorker(new Worker('broadcast', async (job) => {
   if (creator?.status !== 'ACTIVE') return;
 
   const sourceMedia = mediaIds.length
-    ? await prisma.media.findMany({ where: { id: { in: mediaIds }, ownerId: creatorId, status: 'READY', sourceMediaId: null } })
+    ? await prisma.media.findMany({ where: { id: { in: mediaIds }, ownerId: creatorId, status: 'READY', listingId: null, sourceMediaId: null } })
     : [];
   // All or nothing. The route checks this at queue time, but media can be
-  // taken down (REJECTED) between then and now; a priced message that went
+  // taken down (REJECTED) or attached to a listing between then and now; a priced message that went
   // out with part of its content missing would still be sold at full price
   // to every subscriber. Sends nothing rather than something partial. Not
   // thrown: a retry cannot make missing media reappear.

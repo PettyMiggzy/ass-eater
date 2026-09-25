@@ -6,6 +6,7 @@ import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_T
 import { placeBid, cancelAuction, statusCode, hasDeliverable } from '../core/auctions.js';
 import { OPERATING_CREATOR_USER_WHERE, creatorMayBePaidById } from '../core/creator-standing.js';
 import { page } from '../plugins/pagination.js';
+import { fileReport } from '../core/reports.js';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 // Physical orders pay the creator at purchase time, same as digital -- no
@@ -232,6 +233,14 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       select: { ...LISTING_SELECT, media: { select: { id: true, mime: true, previewKey: true } } },
     });
     return l ? publicListing(l, viewerId) : reply.code(404).send({ error: 'not_found' });
+  });
+
+  // Report a listing. Anyone signed in except its seller.
+  app.post('/listings/:id/report', { preHandler: app.auth, config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req: any, reply) => {
+    const { reason } = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body);
+    const l = await prisma.listing.findUnique({ where: { id: String(req.params.id ?? '') }, select: { id: true, creatorId: true } });
+    if (!l || l.creatorId === req.user.id) return reply.code(404).send({ error: 'not_found' });
+    return fileReport(req.user.id, 'listing', l.id, reason);
   });
 
   app.get('/listings/mine', { preHandler: app.creatorOk }, async (req) =>

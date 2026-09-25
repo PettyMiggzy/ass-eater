@@ -10,6 +10,10 @@ import { sendNotificationMail } from '../lib/mailer.js';
  * the account tomorrow. Recording first means the in-app inbox works with
  * no provider at all and nothing is lost while email is off.
  */
+// One notification email per creator per window: a burst of DMs is one
+// "you have new messages" nudge, not a mail per message.
+export const NOTIFY_MAIL_COOLDOWN_MS = 15 * 60_000;
+
 export async function notifyDmReceived(opts: {
   recipientId: string;
   actorId: string;
@@ -19,7 +23,7 @@ export async function notifyDmReceived(opts: {
   const [recipient, actor] = await Promise.all([
     prisma.user.findUnique({
       where: { id: opts.recipientId },
-      select: { email: true, creator: { select: { notifyEmail: true, notifyOnDm: true, displayName: true } } },
+      select: { creator: { select: { notifyEmail: true, notifyEmailVerifiedAt: true, notifyOnDm: true, displayName: true } } },
     }),
     prisma.user.findUnique({ where: { id: opts.actorId }, select: { username: true } }),
   ]);
@@ -38,7 +42,25 @@ export async function notifyDmReceived(opts: {
   const creator = recipient.creator;
   if (!creator || !creator.notifyOnDm) return;
 
-  const to = creator.notifyEmail || recipient.email;
+  // Only a CONFIRMED notification address (modules/notifications.ts
+  // double opt-in). Never the account email: neither stack verifies that
+  // anyone owns it, and a bridged row's may be a *.invalid placeholder --
+  // mailing an address a creator merely typed let them point adult-platform
+  // mail at a third party, and every complaint counts against the SES
+  // account.
+  const to = creator.notifyEmailVerifiedAt && creator.notifyEmail ? creator.notifyEmail : null;
+  if (!to || /\.invalid$/i.test(to)) return;
+
+  // Per-recipient rate limit: at most one "you have a new message" email per
+  // NOTIFY_MAIL_COOLDOWN_MS, claimed with a guarded UPDATE so concurrent DMs
+  // can't each send one. The in-app rows carry every message either way.
+  const since = new Date(Date.now() - NOTIFY_MAIL_COOLDOWN_MS);
+  const claimed = await prisma.creatorProfile.updateMany({
+    where: { userId: opts.recipientId, OR: [{ notifyMailedAt: null }, { notifyMailedAt: { lt: since } }] },
+    data: { notifyMailedAt: new Date() },
+  });
+  if (!claimed.count) return;
+
   const result = await sendNotificationMail({
     to,
     kind: 'DM_RECEIVED',

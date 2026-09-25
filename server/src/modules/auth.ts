@@ -135,24 +135,39 @@ export const auth: FastifyPluginAsync = async (app) => {
     return { access: app.jwt.sign({ id: r.user.id, role: r.user.role }) };
   });
 
-  // Site -> server push of a creator's standing (lib/server-api.js
-  // pushCreatorStatus on the site, called when its content-violation ladder
-  // or an admin changes a creator's status). Without it a creator banned on
+  // Site -> server push of an account's standing (lib/server-api.js
+  // pushCreatorStatus/pushUserStanding on the site, called when its
+  // content-violation ladder or an admin changes a creator's status, or an
+  // admin suspends or bans a fan). Without it a creator banned on
   // the site stayed a working, earning account here until they happened to
   // bridge again. Signed with BRIDGE_SECRET under its own `typ`, single-use
   // like the exchange token. An unknown uid is fine -- nothing to apply.
   app.post('/bridge/status', {
     config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
   }, async (req, reply) => {
-    const { token } = z.object({ token: z.string().max(4096) }).parse(req.body);
-    const claims = verifyBridgeStatusToken(token);
+    // standingAt (ms epoch): when the site decided this standing. Read from
+    // the signed token first; a body value is accepted only when the token
+    // carries none (it can only arrive alongside a valid single-use token).
+    // A durable site outbox may deliver a push long after it was decided,
+    // and out of order -- syncSiteStanding ignores one older than the last
+    // standing applied (lib/bridge.ts claimStanding).
+    const body = z.object({ token: z.string().max(4096), standingAt: z.number().int().positive().optional() }).parse(req.body);
+    const claims = verifyBridgeStatusToken(body.token);
     if (!claims) return reply.code(401).send({ error: 'invalid_bridge_token' });
+    let standingAt = claims.standingAt;
+    if (standingAt === undefined && body.standingAt !== undefined) {
+      if (body.standingAt > Date.now() + 5 * 60_000) return reply.code(400).send({ error: 'bad_standing_at' });
+      standingAt = body.standingAt;
+    }
     const ttlMs = Math.max(1_000, claims.exp - Date.now() + 60_000);
     const fresh = await redis.set(`bridge:jti:${claims.jti}`, '1', 'PX', ttlMs, 'NX');
     if (fresh !== 'OK') return reply.code(401).send({ error: 'bridge_token_replayed' });
     const user = await prisma.user.findUnique({ where: { siteUid: claims.uid } });
     if (!user) return { ok: true, known: false };
-    const applied = await syncSiteStanding(user, claims.creatorStatus);
+    const applied = await syncSiteStanding(user, claims.creatorStatus, {
+      standingAt,
+      ...(claims.role ? { fan: claims.role === 'FAN' } : {}),
+    });
     return { ok: true, known: true, applied };
   });
 

@@ -86,6 +86,10 @@ const ANONYMOUS_ROUTES = new Set([
   'POST /auth/bridge', 'POST /auth/bridge/status', 'POST /auth/register', 'POST /auth/login', 'POST /auth/refresh',
   'POST /webhooks/ses', 'POST /kyc/webhook', 'POST /live/webhook',
   'GET /messages/ws', 'GET /live/:id/events',
+  // Opened from a confirmation email by whoever owns the address: the GET
+  // only shows a Confirm button, the POST it sends confirms; the single-use
+  // token is the proof (modules/notifications.ts).
+  'GET /notifications/confirm-email', 'POST /notifications/confirm-email',
 ]);
 const requireJwt = async (req: any, reply: any) => {
   if (req.method === 'OPTIONS') return;             // CORS preflight

@@ -172,6 +172,19 @@ model User {
   // status push) rather than by an admin here. Only a site-set suspension
   // is lifted by the site reporting the creator active again.
   statusBySite Boolean @default(false)
+  // When the site decided the last standing applied to this row (the
+  // `standingAt` stamp on a bridge exchange or status push, lib/bridge.ts
+  // claimStanding). Orders site standing messages: one older than this is
+  // ignored, so a stale 'active' cannot lift a newer suspension.
+  siteStatusAt DateTime?
+  // The same two facts for the OTHER standing the site keeps on an account:
+  // its account (user-moderation) standing -- 'active' | 'suspended' |
+  // 'banned', sent as a FAN-role message -- and when the site decided it.
+  // Kept apart from siteCreatorStatus/siteStatusAt so each is ordered on its
+  // own clock, and so 'active' in one never lifts a suspension the other
+  // still holds (lib/bridge.ts siteMayLift).
+  siteAccountStatus   String?
+  siteAccountStatusAt DateTime?
   kycStatus    KycStatus  @default(NONE)
   kycRef       String? // provider applicant id (2257-adjacent record pointer)
   referredById String?
@@ -207,9 +220,21 @@ model CreatorProfile {
   displayName         String
   bio                 String    @default("")
   // Where to email this creator when something needs their attention.
-  // Null = use their account email. A separate field because a creator may
-  // well want work mail somewhere other than the address they log in with.
+  // Only ever a CONFIRMED address: set from notifyEmailPending when the
+  // confirmation link mailed to it is opened (modules/notifications.ts).
+  // Null = no email notifications -- the account email is never mailed
+  // (neither stack verifies it, and a bridged row's may be *.invalid).
   notifyEmail         String?
+  notifyEmailVerifiedAt DateTime?
+  // An address the creator asked for but hasn't confirmed, and the sha256
+  // of the single-use confirmation token mailed to it.
+  notifyEmailPending    String?
+  notifyEmailTokenHash  String?   @unique
+  notifyEmailTokenExpiresAt DateTime?
+  // Last confirmation mail sent (resend cooldown) and last notification
+  // mail sent (per-recipient rate limit, core/notify.ts).
+  notifyConfirmSentAt   DateTime?
+  notifyMailedAt        DateTime?
   // Creators can turn DM notification off. On by default: a creator who
   // does not know a fan messaged them does not reply, and the reply is the
   // product.
@@ -229,7 +254,8 @@ model CreatorProfile {
 
   // Token-lock perk: opt-in, creator sets the terms. A fan who locks
   // stakeUsdCents (worth of $ONLYONE at lock time) gets stakePerkDescription.
-  // Opting in also waives the 2% instant-payout fee for this creator.
+  // (It used to waive the 2% instant-payout fee too; that waiver was a free
+  // toggle and was removed -- see modules/payouts.ts.)
   stakePerkEnabled     Boolean @default(false)
   stakePerkDescription String?
   stakeUsdCents        Int?
@@ -691,6 +717,18 @@ model ChainCursor {
   lastBlock BigInt
 }
 
+// Paid-DM idempotency: one row per (sender, client requestId), inserted in
+// the same transaction as the message and its DM_SEND charge
+// (modules/messages.ts sendDirectMessage).
+model DmSendRequest {
+  senderId  String
+  key       String // client-generated uuid, one per message the sender intends
+  messageId String
+  createdAt DateTime @default(now())
+
+  @@id([senderId, key])
+}
+
 // One row per tip request, keyed by the client's idempotency key: a retried
 // or double-clicked POST /tips collides on the primary key inside the charge's
 // transaction and gets the first request's result instead of paying again.
@@ -763,12 +801,15 @@ model LiveMinute {
 model Report {
   id         String       @id @default(uuid())
   reporterId String
-  targetType String // "post" | "user" | "message" | "stream"
+  targetType String // "post" | "user" | "message" | "listing"
   targetId   String
   reason     String
   status     ReportStatus @default(OPEN)
   resolvedBy String?
   createdAt  DateTime     @default(now())
+  // At most one OPEN report per (reporter, target): a partial unique index
+  // in the round-4 migration (Prisma can't express WHERE); core/reports.ts
+  // fileReport answers a collision with the existing report.
 }
 
 // ---------- NOTIFICATIONS ----------

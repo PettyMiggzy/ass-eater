@@ -1,9 +1,11 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { charge, money, isVip } from '../core/ledger.js';
+import { charge, money, isVip, type Tx } from '../core/ledger.js';
 import { canViewPost, creatorIsActive, inVipWindow, type ViewMemo } from '../core/access.js';
 import { page } from '../plugins/pagination.js';
+import { fileReport } from '../core/reports.js';
+import type { MediaStatus } from '@prisma/client';
 
 // strip locked media down to preview thumbnails, and locked text down to a
 // teaser that can never be the whole thing
@@ -58,6 +60,11 @@ export async function earlyAccessFilter(viewerId: string | null) {
 export async function unlockPost(fanId: string, post: { id: string; creatorId: string; priceCents: number }) {
   try {
     return await money(prisma, async (tx) => {
+      // Nothing is sold unless something viewable is behind the paywall --
+      // the same rule as a listing's hasDeliverable (core/auctions.ts).
+      // Re-read inside the charge's transaction: media can be taken down
+      // (REJECTED) after the post was created.
+      if (!(await postHasDeliverable(tx, post.id))) throw Object.assign(new Error('no_deliverable'), { statusCode: 409 });
       await tx.postUnlock.create({ data: { fanId, postId: post.id } });
       const r = await charge(tx, { fanId, creatorId: post.creatorId, grossCents: post.priceCents, type: 'PPV', refId: post.id });
       return { ok: true, ...r };
@@ -87,6 +94,19 @@ export async function unlockPost(fanId: string, post: { id: string; creatorId: s
   }
 }
 
+/**
+ * Is there something a buyer of this PPV post would actually get? Every
+ * attached media item must be READY (canViewMedia refuses anything else, so a
+ * buyer of a post with a still-uploading or REJECTED item gets a 403 for it),
+ * and a post with no media must have text. A post with neither is refused.
+ */
+export async function postHasDeliverable(tx: Tx, postId: string) {
+  const post = await tx.post.findUnique({ where: { id: postId }, select: { text: true, media: { select: { status: true } } } });
+  if (!post) return false;
+  if (post.media.some((m) => m.status !== 'READY')) return false;
+  return post.media.length > 0 || post.text.trim().length > 0;
+}
+
 export const posts: FastifyPluginAsync = async (app) => {
   app.post('/', { preHandler: app.creatorOk }, async (req) => {
     const b = z.object({
@@ -98,14 +118,30 @@ export const posts: FastifyPluginAsync = async (app) => {
       earlyAccessHours: z.number().int().min(0).max(72).default(0),
     }).parse(req.body);
     if (b.visibility === 'PPV' && b.priceCents < 100) throw Object.assign(new Error('ppv_min_price'), { statusCode: 400 });
+    const ids = [...new Set(b.mediaIds)];
+    if (ids.length !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+    // A PPV post is a paid good: it must have something in it. Mirrors the
+    // priced-broadcast rule (modules/messages.ts POST /broadcast).
+    if (b.visibility === 'PPV' && !ids.length && !b.text.trim()) throw Object.assign(new Error('empty_post'), { statusCode: 400 });
     return prisma.$transaction(async (tx) => {
       const p = await tx.post.create({ data: { creatorId: req.user.id, text: b.text, visibility: b.visibility, priceCents: b.visibility === 'PPV' ? b.priceCents : 0, vipEarlyUntil: b.earlyAccessHours ? new Date(Date.now() + b.earlyAccessHours * 3600_000) : null } });
-      if (b.mediaIds.length) {
+      if (ids.length) {
         // Unattached originals only: media already sold as a marketplace
         // listing's product (listingId) or a mass-DM copy (sourceMediaId) is
         // never re-homed onto a post -- see core/access.ts canViewMedia.
-        const r = await tx.media.updateMany({ where: { id: { in: b.mediaIds }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null }, data: { postId: p.id } });
-        if (r.count !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+        //
+        // REJECTED media is never attached (it can never be viewed). A PPV
+        // post additionally needs every item READY, exactly like a priced DM:
+        // an UPLOADING item may never complete (and is swept after 24h by
+        // workers/transcode.ts) and a PROCESSING one may still be REJECTED,
+        // so fans would pay for media they can never open. Free/subscriber
+        // posts may attach an item still transcoding; it appears once READY.
+        const found = await tx.media.findMany({ where: { id: { in: ids }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null }, select: { status: true } });
+        if (found.length !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+        const okStatuses: MediaStatus[] = b.visibility === 'PPV' ? ['READY'] : ['UPLOADING', 'PROCESSING', 'READY'];
+        if (found.some((m) => !okStatuses.includes(m.status))) throw Object.assign(new Error('media_not_ready'), { statusCode: 400 });
+        const r = await tx.media.updateMany({ where: { id: { in: ids }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: { in: okStatuses } }, data: { postId: p.id } });
+        if (r.count !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
       }
       return tx.post.findUnique({ where: { id: p.id }, include: { media: true } });
     });
@@ -149,8 +185,10 @@ export const posts: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  app.post('/:id/report', { preHandler: app.auth }, async (req: any) => {
-    const { reason } = z.object({ reason: z.string().max(500) }).parse(req.body);
-    return prisma.report.create({ data: { reporterId: req.user.id, targetType: 'post', targetId: req.params.id, reason } });
+  app.post('/:id/report', { preHandler: app.auth, config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req: any, reply) => {
+    const { reason } = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body);
+    const p = await prisma.post.findUnique({ where: { id: String(req.params.id ?? '') }, select: { id: true, creatorId: true } });
+    if (!p) return reply.code(404).send({ error: 'not_found' });
+    return fileReport(req.user.id, 'post', p.id, reason);
   });
 };

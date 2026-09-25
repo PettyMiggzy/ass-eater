@@ -18,8 +18,14 @@ export const payouts: FastifyPluginAsync = async (app) => {
     if (c.payoutAsset !== 'STABLE') return reply.code(400).send({ error: 'payout_asset_unsupported' });
 
     // Instant/on-demand payout costs an extra 2% on top of the normal withdrawal
-    // fee, waived for creators who've opted into the token-lock perk.
-    const instantBps = instant && !c.stakePerkEnabled ? FEES.INSTANT_PAYOUT_BPS : 0;
+    // fee, for every creator. It used to be waived whenever the token-lock
+    // perk was switched on -- but that perk is a free, instant toggle
+    // (modules/stake.ts PATCH /me/perk) with no fan required, so any creator
+    // could flip it on, cash out fee-free and flip it off again. Until the
+    // owner picks a waiver rule that costs something or reflects real use
+    // (e.g. an ACTIVE TokenLock at payout time, or the perk enabled for N
+    // days), the fee is charged unconditionally.
+    const instantBps = instant ? FEES.INSTANT_PAYOUT_BPS : 0;
 
     const p = await money(prisma, async (tx) => {
       // Closed loop: only EARNED credits are payable. Deposited (bought)

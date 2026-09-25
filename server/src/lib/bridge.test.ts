@@ -43,7 +43,12 @@ describe('verifyBridgeToken', () => {
     const { creatorStatus, ...noStatus } = claims({ role: 'CREATOR' });
     void creatorStatus;
     expect(verifyBridgeToken(mint(noStatus))).toBeNull();
-    expect(verifyBridgeToken(mint(claims({ role: 'FAN', creatorStatus: 'active' })))).toBeNull();
+    // A FAN's creatorStatus is read as the fan's own account standing (never
+    // 'pending'), and normalised away: creatorStatus stays null for fans.
+    const fanActive = verifyBridgeToken(mint(claims({ role: 'FAN', creatorStatus: 'active' })));
+    expect(fanActive?.creatorStatus).toBeNull();
+    expect(fanActive?.fanStatus).toBe('active');
+    expect(verifyBridgeToken(mint(claims({ role: 'FAN', creatorStatus: 'pending' })))).toBeNull();
     expect(verifyBridgeToken(mint(claims({ role: 'CREATOR', creatorStatus: 'active' })))?.creatorStatus).toBe('active');
   });
   it('rejects a bad signature and an expired token', () => {

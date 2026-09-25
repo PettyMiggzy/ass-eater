@@ -13,6 +13,9 @@ import { publicClient, HEDGE_STABLE, TRANSFER_EVENT, treasuryAddress, TOKENS, DE
 import { decodeEventLog, formatUnits, parseUnits, TransactionReceiptNotFoundError } from 'viem';
 import { Prisma } from '@prisma/client';
 import { storageKeyOf } from '../core/media-key.js';
+import { cancelAuction } from '../core/auctions.js';
+import { CREATOR_STANDING_SELECT, creatorMayBePaid } from '../core/creator-standing.js';
+import { REPORT_TARGETS } from '../core/reports.js';
 
 export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));
@@ -115,23 +118,106 @@ export const admin: FastifyPluginAsync = async (app) => {
     return { executed: out(executed), pending: out(pending), executedCents: sum(executed), pendingCents: sum(pending) };
   });
 
+  // The takedown itself (see the comment on DELETE /media/:id below); shared with
+  // /reports/:id/resolve, which takes down a reported message's or
+  // listing's media the same way.
+  const takedownMedia = async (mediaId: string, log: { error: (o: unknown, m?: string) => void }) => {
+    const target = await prisma.media.findUniqueOrThrow({ where: { id: mediaId } });
+    const root = target.sourceMediaId
+      ? (await prisma.media.findUnique({ where: { id: target.sourceMediaId } })) ?? target
+      : target;
+    const copies = await prisma.media.findMany({ where: { sourceMediaId: root.id }, select: { id: true } });
+    const ids = [root.id, target.id, ...copies.map((c) => c.id)];
+    const rejected = await prisma.media.updateMany({
+      where: { id: { in: [...new Set(ids)] } },
+      data: { status: 'REJECTED', hlsKey: null, previewKey: null },
+    });
+
+    const errors: string[] = [];
+    const attempt = async (label: string, fn: () => Promise<unknown>) => {
+      try { await fn(); } catch (e) { log.error({ err: e, mediaId: root.id }, `takedown: ${label} failed`); errors.push(label); }
+    };
+    const outputPrefix = `media/${root.ownerId}/${root.id}/`;
+    await attempt('raw object', () => deleteObject(storageKeyOf(root.key)));
+    await attempt('transcode output', () => deletePrefix(outputPrefix));
+    for (const id of new Set(ids)) await attempt(`watermarked copies of ${id}`, () => deletePrefix(wmPrefix(id)));
+
+    const purged: boolean[] = [];
+    purged.push(await purgeCdnPrefix(`/${storageKeyOf(root.key)}`));
+    purged.push(await purgeCdnPrefix(`/${outputPrefix}`));
+    for (const id of new Set(ids)) purged.push(await purgeCdnPrefix(`/${wmPrefix(id)}`));
+
+    return { ok: errors.length === 0, rootMediaId: root.id, rejected: rejected.count, storageErrors: errors, cdnPurged: purged.every(Boolean) };
+  };
+
   app.get('/reports', async (req: any) =>
     prisma.report.findMany({ where: { status: (req.query.status ?? 'OPEN') as any }, orderBy: { createdAt: 'asc' }, take: 100 }));
 
-  app.post('/reports/:id/resolve', async (req: any) => {
+  app.post('/reports/:id/resolve', async (req: any, reply) => {
     const { action } = z.object({ action: z.enum(['dismiss', 'remove_content', 'suspend_user', 'ban_user']) }).parse(req.body);
     const r = await prisma.report.findUniqueOrThrow({ where: { id: req.params.id } });
+    if (r.status !== 'OPEN') return reply.code(409).send({ error: 'already_resolved', status: r.status });
 
+    // Refusals that need no claim (nothing is changed by them).
+    let owner: string | undefined;
     if (action !== 'dismiss') {
-      if (r.targetType === 'post') await prisma.post.update({ where: { id: r.targetId }, data: { removed: true } });
-      if (action !== 'remove_content') {
-        const userId = r.targetType === 'user' ? r.targetId
-          : r.targetType === 'post' ? (await prisma.post.findUnique({ where: { id: r.targetId } }))?.creatorId
-          : (await prisma.message.findUnique({ where: { id: r.targetId } }))?.senderId;
-        if (userId) await setStatus(userId, action === 'ban_user' ? 'BANNED' : 'SUSPENDED');
-      }
+      if (!(REPORT_TARGETS as string[]).includes(r.targetType)) return reply.code(409).send({ error: 'unsupported_target', targetType: r.targetType });
+      // A report on a USER has no single item to remove: 'remove_content' is
+      // refused rather than marked ACTIONED with nothing done.
+      if (r.targetType === 'user' && action === 'remove_content') return reply.code(409).send({ error: 'nothing_to_remove_for_target', targetType: r.targetType });
+      // Who the reported content belongs to (for suspend/ban), per type.
+      owner = r.targetType === 'user' ? (await prisma.user.findUnique({ where: { id: r.targetId }, select: { id: true } }))?.id
+        : r.targetType === 'post' ? (await prisma.post.findUnique({ where: { id: r.targetId } }))?.creatorId
+        : r.targetType === 'message' ? (await prisma.message.findUnique({ where: { id: r.targetId } }))?.senderId
+        : (await prisma.listing.findUnique({ where: { id: r.targetId } }))?.creatorId;
+      if (!owner) return reply.code(409).send({ error: 'target_not_found' });
     }
-    return prisma.report.update({ where: { id: r.id }, data: { status: action === 'dismiss' ? 'DISMISSED' : 'ACTIONED', resolvedBy: req.user.id } });
+
+    // CLAIM the report before acting: a guarded OPEN -> final update, so of
+    // two concurrent resolves exactly one runs the takedown and the
+    // suspend/ban, and the other gets already_resolved. A failure while
+    // acting puts it back to OPEN so it can be retried.
+    const finalStatus = action === 'dismiss' ? 'DISMISSED' : 'ACTIONED';
+    const claimed = await prisma.report.updateMany({ where: { id: r.id, status: 'OPEN' }, data: { status: finalStatus, resolvedBy: req.user.id } });
+    if (claimed.count === 0) {
+      const now = await prisma.report.findUnique({ where: { id: r.id }, select: { status: true } });
+      return reply.code(409).send({ error: 'already_resolved', status: now?.status ?? null });
+    }
+
+    const takedowns: Awaited<ReturnType<typeof takedownMedia>>[] = [];
+    try {
+      if (action !== 'dismiss') {
+        // Content comes down for every action but dismiss -- a suspension or
+        // ban over a report is not a reason to leave the reported item up.
+        if (r.targetType === 'post') {
+          await prisma.post.update({ where: { id: r.targetId }, data: { removed: true } });
+        } else if (r.targetType === 'message') {
+          // The message's media is taken down like any NCII takedown (storage,
+          // copies, CDN), and its text blanked -- a message has no "removed"
+          // flag, and its text is paid content in its own right.
+          const media = await prisma.media.findMany({ where: { messageId: r.targetId }, select: { id: true } });
+          for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
+          await prisma.message.update({ where: { id: r.targetId }, data: { text: '' } });
+        } else if (r.targetType === 'listing') {
+          const l = await prisma.listing.findUniqueOrThrow({ where: { id: r.targetId }, select: { saleType: true, status: true } });
+          // A live auction is cancelled with the leader's hold returned; a
+          // fixed-price listing just leaves sale. Its media comes down too, so
+          // it stops being served to past buyers as well.
+          if (l.saleType === 'AUCTION' && l.status === 'ACTIVE') await money(prisma, (tx) => cancelAuction(tx, r.targetId, 'removed_by_admin'));
+          else await prisma.listing.updateMany({ where: { id: r.targetId, status: 'ACTIVE' }, data: { status: 'REMOVED' } });
+          const media = await prisma.media.findMany({ where: { listingId: r.targetId }, select: { id: true } });
+          for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
+        }
+        if (action !== 'remove_content') await setStatus(owner!, action === 'ban_user' ? 'BANNED' : 'SUSPENDED');
+      }
+    } catch (err) {
+      // Every step above is safe to repeat (takedowns re-reject, status
+      // updates are idempotent), so reopening for a retry is the safe side.
+      await prisma.report.updateMany({ where: { id: r.id, status: finalStatus }, data: { status: 'OPEN', resolvedBy: null } });
+      throw err;
+    }
+    const updated = await prisma.report.findUniqueOrThrow({ where: { id: r.id } });
+    return { ...updated, takedowns, takedownOk: takedowns.every((t) => t.ok) };
   });
 
   // Suspend/ban/reactivate, with everything that implies (payout freeze,
@@ -176,34 +262,7 @@ export const admin: FastifyPluginAsync = async (app) => {
    * Storage failures are reported, not swallowed: a takedown that silently
    * left files behind is the failure this exists to prevent.
    */
-  app.delete('/media/:id', async (req: any) => {
-    const target = await prisma.media.findUniqueOrThrow({ where: { id: req.params.id } });
-    const root = target.sourceMediaId
-      ? (await prisma.media.findUnique({ where: { id: target.sourceMediaId } })) ?? target
-      : target;
-    const copies = await prisma.media.findMany({ where: { sourceMediaId: root.id }, select: { id: true } });
-    const ids = [root.id, target.id, ...copies.map((c) => c.id)];
-    const rejected = await prisma.media.updateMany({
-      where: { id: { in: [...new Set(ids)] } },
-      data: { status: 'REJECTED', hlsKey: null, previewKey: null },
-    });
-
-    const errors: string[] = [];
-    const attempt = async (label: string, fn: () => Promise<unknown>) => {
-      try { await fn(); } catch (e) { req.log.error({ err: e, mediaId: root.id }, `takedown: ${label} failed`); errors.push(label); }
-    };
-    const outputPrefix = `media/${root.ownerId}/${root.id}/`;
-    await attempt('raw object', () => deleteObject(storageKeyOf(root.key)));
-    await attempt('transcode output', () => deletePrefix(outputPrefix));
-    for (const id of new Set(ids)) await attempt(`watermarked copies of ${id}`, () => deletePrefix(wmPrefix(id)));
-
-    const purged: boolean[] = [];
-    purged.push(await purgeCdnPrefix(`/${storageKeyOf(root.key)}`));
-    purged.push(await purgeCdnPrefix(`/${outputPrefix}`));
-    for (const id of new Set(ids)) purged.push(await purgeCdnPrefix(`/${wmPrefix(id)}`));
-
-    return { ok: errors.length === 0, rootMediaId: root.id, rejected: rejected.count, storageErrors: errors, cdnPurged: purged.every(Boolean) };
-  });
+  app.delete('/media/:id', async (req: any) => takedownMedia(String(req.params.id ?? ''), req.log));
 
   /** Manual credit/debit (refunds, goodwill, corrections). Counter-posted against treasury. */
   app.post('/users/:id/adjust', async (req: any) => {
@@ -263,7 +322,7 @@ export const admin: FastifyPluginAsync = async (app) => {
       z.object({ action: z.literal('release') }),
       z.object({ action: z.literal('hold') }),
     ]).parse(req.body);
-    const p = await prisma.payout.findUniqueOrThrow({ where: { id: req.params.id }, include: { creator: { select: { payoutsFrozen: true, user: { select: { status: true } } } } } });
+    const p = await prisma.payout.findUniqueOrThrow({ where: { id: req.params.id }, include: { creator: { select: { payoutsFrozen: true, user: { select: CREATOR_STANDING_SELECT } } } } });
     const by = { by: req.user.id };
 
     if (b.action === 'hold') {
@@ -358,6 +417,10 @@ export const admin: FastifyPluginAsync = async (app) => {
     // settled only by mark_sent or refund, where the receipt checks apply.
     if (p.txHash) return reply.code(409).send({ error: 'signed_use_mark_sent_or_refund', txHash: p.txHash });
     if (p.creator.payoutsFrozen || p.creator.user.status !== 'ACTIVE') return reply.code(409).send({ error: 'creator_frozen' });
+    // Same gate as the worker's claim (workers/payout-worker.ts): a creator
+    // whose approval was withdrawn (KYC, or site standing no longer
+    // 'active') is not paid by releasing a held payout either.
+    if (!creatorMayBePaid(p.creator.user)) return reply.code(409).send({ error: 'creator_not_approved' });
     const r = await prisma.payout.updateMany({ where: { id: p.id, status: 'HELD', txHash: null }, data: { status: 'PENDING', error: null } });
     if (!r.count) return reply.code(409).send({ error: 'status_changed' });
     await payoutQueue.add('send', { payoutId: p.id }, payoutJobOptions(p.id, p.instant)).catch((err) => {

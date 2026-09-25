@@ -5,6 +5,7 @@ import { isAddress } from 'viem';
 import { money, lockBalance, post, InsufficientFunds, postPlatformRevenue, getTopSupporters, FEES } from '../core/ledger.js';
 import { isSubscribed, creatorMayOperate } from '../core/access.js';
 import { page } from '../plugins/pagination.js';
+import { fileReport } from '../core/reports.js';
 
 // What anyone may see of a creator's profile. userId and user.kycStatus are
 // also needed by the visibility check in GET /:username below.
@@ -69,6 +70,14 @@ export const creators: FastifyPluginAsync = async (app) => {
     // above, never returned.
     const { siteUid: _uid, siteCreatorStatus: _scs, ...user } = c.user;
     return { ...c, user, dmPriceCents, acceptingPayments: approved };
+  });
+
+  // Report a creator (their profile, or them). Anyone signed in but themself.
+  app.post('/:username/report', { preHandler: app.auth, config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req: any, reply) => {
+    const { reason } = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body);
+    const u = await prisma.user.findFirst({ where: { username: String(req.params.username ?? ''), role: 'CREATOR' }, select: { id: true } });
+    if (!u || u.id === req.user.id) return reply.code(404).send({ error: 'not_found' });
+    return fileReport(req.user.id, 'user', u.id, reason);
   });
 
   app.patch('/me', { preHandler: app.role('CREATOR') }, async (req) => {

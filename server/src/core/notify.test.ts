@@ -25,7 +25,9 @@ async function makeUser() {
   return id;
 }
 
-async function makeCreator(opts: { notifyOnDm?: boolean; notifyEmail?: string } = {}) {
+// Only a CONFIRMED notifyEmail is ever mailed (round 4) -- the default here
+// is a confirmed address so the delivery tests exercise a real send.
+async function makeCreator(opts: { notifyOnDm?: boolean; notifyEmail?: string | null; verified?: boolean } = {}) {
   const userId = await makeUser();
   await prisma.user.update({ where: { id: userId }, data: { role: 'CREATOR', kycStatus: 'APPROVED' } });
   await prisma.creatorProfile.create({
@@ -34,7 +36,8 @@ async function makeCreator(opts: { notifyOnDm?: boolean; notifyEmail?: string } 
       displayName: 'Test Creator',
       payoutAsset: 'STABLE',
       notifyOnDm: opts.notifyOnDm ?? true,
-      notifyEmail: opts.notifyEmail,
+      notifyEmail: opts.notifyEmail === undefined ? `notify-${userId}@example.test` : opts.notifyEmail,
+      notifyEmailVerifiedAt: opts.verified === false ? null : new Date(),
     },
   });
   return userId;
@@ -91,10 +94,20 @@ describe('DM notifications', () => {
   });
 
   it('uses the forwarding address when the creator set one', async () => {
-    const creator = await makeCreator({ notifyEmail: 'work@example.test' });
+    const creator = await makeCreator({ notifyEmail: 'work@example.test' });   // confirmed
     const fan = await makeUser();
     await notifyDmReceived({ recipientId: creator, actorId: fan, messageId: randomUUID(), siteUrl: 'https://example.test' });
     expect(sent[0].to).toBe('work@example.test');
+  });
+
+  it('never emails an unconfirmed address, nor the account email', async () => {
+    const typed = await makeCreator({ notifyEmail: 'typed@example.test', verified: false });
+    const none = await makeCreator({ notifyEmail: null });
+    const fan = await makeUser();
+    await notifyDmReceived({ recipientId: typed, actorId: fan, messageId: randomUUID(), siteUrl: 'https://example.test' });
+    await notifyDmReceived({ recipientId: none, actorId: fan, messageId: randomUUID(), siteUrl: 'https://example.test' });
+    expect(sent).toHaveLength(0);
+    expect(await prisma.notification.count({ where: { userId: { in: [typed, none] } } })).toBe(2);
   });
 
   it('never emails a FAN, even one messaged by a creator', async () => {

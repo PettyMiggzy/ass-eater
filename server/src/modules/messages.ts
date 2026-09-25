@@ -8,6 +8,7 @@ import { publish, broadcastQueue } from '../lib/redis.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { notifyDmReceived } from '../core/notify.js';
 import { page } from '../plugins/pagination.js';
+import { fileReport } from '../core/reports.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
@@ -34,6 +35,95 @@ export async function unlockMessage(fanId: string, message: { id: string; sender
     const bought = await prisma.messageUnlock.findUnique({ where: { fanId_messageId: { fanId, messageId: message.id } } });
     if (!bought) throw e;
     return { ok: true, already: true };
+  }
+}
+
+const SENT_INCLUDE = { media: { select: { id: true, mime: true, previewKey: true } }, conversation: { select: { aId: true, bId: true } } } as const;
+
+/**
+ * Writes one direct message (and, for a fan sender, charges the send fee) in a
+ * single money() transaction, at most once per (sender, requestId). Exported
+ * so the idempotency is testable against a real Postgres, like unlockPost.
+ * Authorization (who may message whom, who may price) is the route's job.
+ */
+export async function sendDirectMessage(
+  senderId: string, to: string, isCreator: boolean,
+  b: { text: string; mediaIds: string[]; priceCents: number; expectedPriceCents?: number; requestId?: string },
+) {
+  // money(), not a plain $transaction: this now moves money, and every
+  // other charge path on the platform runs Serializable with a retry on
+  // serialization failure. Leaving this one at the default isolation would
+  // make the balance check weaker here than anywhere else that spends it.
+  //
+  // A retry of a send that already went through returns it before anything
+  // else is re-checked: the price may have moved since, and the retry must
+  // not answer price_changed for a message that was delivered and paid for.
+  if (b.requestId) {
+    const prior = await prisma.dmSendRequest.findUnique({ where: { senderId_key: { senderId, key: b.requestId } } });
+    if (prior) return { msg: await prisma.message.findUniqueOrThrow({ where: { id: prior.messageId }, include: SENT_INCLUDE }), already: true };
+  }
+  try {
+    const msg = await money(prisma, async (tx) => {
+      // The price is read INSIDE this transaction and compared with the one
+      // the fan confirmed, so nothing that moves it between their click and
+      // this charge can make them pay a price they didn't see.
+      let sendFeeCents = 0;
+      if (!isCreator) {
+        const [cfg, target] = await Promise.all([
+          tx.platformConfig.findUnique({ where: { id: 1 }, select: { minDmPriceCents: true } }),
+          tx.creatorProfile.findUnique({ where: { userId: to }, select: { inboundDmPriceCents: true } }),
+        ]);
+        const floor = cfg?.minDmPriceCents ?? FEES.MIN_DM_PRICE_CENTS;
+        // max(), not ??: a creator who set a price BELOW a floor that has since
+        // risen must not keep the old one, and null means "just use the floor".
+        sendFeeCents = Math.max(floor, target?.inboundDmPriceCents ?? 0);
+        if (sendFeeCents !== b.expectedPriceCents) {
+          throw Object.assign(new Error('price_changed'), { statusCode: 409, priceCents: sendFeeCents });
+        }
+      }
+      // Charged inside the same transaction that writes the message, so a
+      // failure anywhere below cannot leave a fan paying for a message that
+      // was never delivered.
+      if (sendFeeCents > 0) {
+        await charge(tx, { fanId: senderId, creatorId: to, grossCents: sendFeeCents, type: 'DM_SEND', refId: `dm:${senderId}:${b.requestId ?? Date.now()}` });
+      }
+      const conv = await tx.conversation.upsert({ where: { aId_bId: pair(senderId, to) }, create: pair(senderId, to), update: { updatedAt: new Date() } });
+      const m = await tx.message.create({ data: { conversationId: conv.id, senderId: senderId, text: b.text, priceCents: b.priceCents } });
+      if (b.mediaIds.length) {
+        // Stricter than a mass DM (POST /broadcast), which copies its media
+        // and so may reuse a post's or DM's item: a single DM re-homes the
+        // original itself, so every attachment must be the sender's own
+        // unattached original -- never media already sold
+        // as a listing's product (re-homing it cut the listing's buyers off,
+        // core/access.ts canViewMedia) or someone's broadcast copy -- and
+        // READY. A priced DM used to accept an upload still UPLOADING, which
+        // could later be swept or REJECTED: the fan paid for a message whose
+        // media never became viewable.
+        const ids = [...new Set(b.mediaIds)];
+        if (ids.length !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+        const found = await tx.media.findMany({ where: { id: { in: ids }, ownerId: senderId, postId: null, messageId: null, listingId: null, sourceMediaId: null }, select: { status: true } });
+        if (found.length !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+        if (found.some((x) => x.status !== 'READY')) throw Object.assign(new Error('media_not_ready'), { statusCode: 400 });
+        const r = await tx.media.updateMany({ where: { id: { in: ids }, ownerId: senderId, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: 'READY' }, data: { messageId: m.id } });
+        if (r.count !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
+      }
+      // Keyed on (sender, requestId): a retried or double-clicked send
+      // collides on the primary key and this whole transaction -- charge
+      // included -- rolls back.
+      if (b.requestId) await tx.dmSendRequest.create({ data: { senderId, key: b.requestId, messageId: m.id } });
+      return tx.message.findUniqueOrThrow({ where: { id: m.id }, include: SENT_INCLUDE });
+    });
+    return { msg, already: false };
+  } catch (e: any) {
+    // As in tips.ts chargeTip: P2002 alone is not proof of a replay
+    // (charge() and the conversation upsert touch rows other requests can
+    // collide on), so the re-read decides -- on `prisma`, never on the
+    // rolled-back transaction.
+    if (e?.code !== 'P2002' || !b.requestId) throw e;
+    const prior = await prisma.dmSendRequest.findUnique({ where: { senderId_key: { senderId, key: b.requestId } } });
+    if (!prior) throw e;
+    const msg = await prisma.message.findUniqueOrThrow({ where: { id: prior.messageId }, include: SENT_INCLUDE });
+    return { msg, already: true };
   }
 }
 
@@ -101,6 +191,12 @@ export const messages: FastifyPluginAsync = async (app) => {
       // fan reading it and pressing send -- a click must never buy at a
       // price nobody saw. Ignored for creator senders, who pay nothing.
       expectedPriceCents: z.number().int().min(0).max(50_000).optional(),
+      // A fresh uuid per message the sender intends, REUSED on any retry of
+      // that same message -- same contract as a tip's idempotencyKey
+      // (modules/tips.ts chargeTip). Required for fan senders, whose send is
+      // charged: without it a retry after a lost response, or a double-tap,
+      // charged again and delivered a duplicate. Optional for creators.
+      requestId: z.string().uuid().optional(),
     }).parse(req.body);
     const to = req.params.userId as string;
     if (to === req.user.id) return reply.code(400).send({ error: 'self' });
@@ -129,55 +225,21 @@ export const messages: FastifyPluginAsync = async (app) => {
     if (!isCreator && b.expectedPriceCents === undefined) {
       return reply.code(400).send({ error: 'expected_price_required' });
     }
+    if (!isCreator && !b.requestId) return reply.code(400).send({ error: 'request_id_required' });
 
-    // money(), not a plain $transaction: this now moves money, and every
-    // other charge path on the platform runs Serializable with a retry on
-    // serialization failure. Leaving this one at the default isolation would
-    // make the balance check weaker here than anywhere else that spends it.
-    const msg = await money(prisma, async (tx) => {
-      // The price is read INSIDE this transaction and compared with the one
-      // the fan confirmed, so nothing that moves it between their click and
-      // this charge can make them pay a price they didn't see.
-      let sendFeeCents = 0;
-      if (!isCreator) {
-        const [cfg, target] = await Promise.all([
-          tx.platformConfig.findUnique({ where: { id: 1 }, select: { minDmPriceCents: true } }),
-          tx.creatorProfile.findUnique({ where: { userId: to }, select: { inboundDmPriceCents: true } }),
-        ]);
-        const floor = cfg?.minDmPriceCents ?? FEES.MIN_DM_PRICE_CENTS;
-        // max(), not ??: a creator who set a price BELOW a floor that has since
-        // risen must not keep the old one, and null means "just use the floor".
-        sendFeeCents = Math.max(floor, target?.inboundDmPriceCents ?? 0);
-        if (sendFeeCents !== b.expectedPriceCents) {
-          throw Object.assign(new Error('price_changed'), { statusCode: 409, priceCents: sendFeeCents });
-        }
-      }
-      // Charged inside the same transaction that writes the message, so a
-      // failure anywhere below cannot leave a fan paying for a message that
-      // was never delivered.
-      if (sendFeeCents > 0) {
-        await charge(tx, { fanId: req.user.id, creatorId: to, grossCents: sendFeeCents, type: 'DM_SEND', refId: `dm:${req.user.id}:${Date.now()}` });
-      }
-      const conv = await tx.conversation.upsert({ where: { aId_bId: pair(req.user.id, to) }, create: pair(req.user.id, to), update: { updatedAt: new Date() } });
-      const m = await tx.message.create({ data: { conversationId: conv.id, senderId: req.user.id, text: b.text, priceCents: b.priceCents } });
-      if (b.mediaIds.length) {
-        // Same rules as a mass DM (POST /broadcast): every attachment must be
-        // the sender's own unattached original -- never media already sold
-        // as a listing's product (re-homing it cut the listing's buyers off,
-        // core/access.ts canViewMedia) or someone's broadcast copy -- and
-        // READY. A priced DM used to accept an upload still UPLOADING, which
-        // could later be swept or REJECTED: the fan paid for a message whose
-        // media never became viewable.
-        const ids = [...new Set(b.mediaIds)];
-        if (ids.length !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
-        const found = await tx.media.findMany({ where: { id: { in: ids }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null }, select: { status: true } });
-        if (found.length !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
-        if (found.some((x) => x.status !== 'READY')) throw Object.assign(new Error('media_not_ready'), { statusCode: 400 });
-        const r = await tx.media.updateMany({ where: { id: { in: ids }, ownerId: req.user.id, postId: null, messageId: null, listingId: null, sourceMediaId: null, status: 'READY' }, data: { messageId: m.id } });
-        if (r.count !== ids.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
-      }
-      return tx.message.findUniqueOrThrow({ where: { id: m.id }, include: { media: { select: { id: true, mime: true, previewKey: true } } } });
-    });
+    const sent = await sendDirectMessage(req.user.id, to, isCreator, b);
+    if (sent.already) {
+      // A replay of a message already sent (and, for a fan, already paid
+      // for): the same message back, with no second charge, notification or
+      // realtime push. A key reused for a DIFFERENT recipient is a client
+      // bug, not a retry -- refuse it rather than claim delivery.
+      const conv = sent.msg.conversation;
+      if (![conv.aId, conv.bId].includes(to)) return reply.code(409).send({ error: 'request_id_reused' });
+      const { conversation: _c, ...prior } = sent.msg;
+      return { ...prior, already: true };
+    }
+    const { conversation: _conv, ...msg } = sent.msg;
+
     // Notify the recipient, OUTSIDE the transaction above and deliberately
     // not awaited into the response.
     //
@@ -219,18 +281,45 @@ export const messages: FastifyPluginAsync = async (app) => {
     return result;
   });
 
+  // Report a message you RECEIVED (the likeliest route for non-consensual
+  // intimate content on this stack). Only its recipient -- the other
+  // participant, never the sender -- may report it.
+  app.post('/:id/report', { preHandler: app.auth, config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req: any, reply) => {
+    const { reason } = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body);
+    const m = await prisma.message.findUnique({ where: { id: String(req.params.id ?? '') }, include: { conversation: { select: { aId: true, bId: true } } } });
+    if (!m || m.senderId === req.user.id || ![m.conversation.aId, m.conversation.bId].includes(req.user.id)) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+    return fileReport(req.user.id, 'message', m.id, reason);
+  });
+
+  // Report a person you have a conversation with (harassment, a fan or a
+  // creator). Limited to someone who has actually interacted with you, so
+  // the queue can't be flooded with reports against arbitrary accounts.
+  app.post('/with/:userId/report', { preHandler: app.auth, config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req: any, reply) => {
+    const { reason } = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body);
+    const other = String(req.params.userId ?? '');
+    if (other === req.user.id) return reply.code(400).send({ error: 'self' });
+    const conv = await prisma.conversation.findUnique({ where: { aId_bId: pair(req.user.id, other) }, select: { id: true } });
+    if (!conv) return reply.code(404).send({ error: 'not_found' });
+    return fileReport(req.user.id, 'user', other, reason);
+  });
+
   // Mass DM to all active subscribers (huge OF revenue feature: paid mass PPV drops)
   app.post('/broadcast', { preHandler: app.creatorOk }, async (req, reply) => {
     const b = z.object({ text: z.string().max(4000).default(''), mediaIds: z.array(z.string().uuid()).max(10).default([]), priceCents: z.number().int().min(0).max(50_000).refine(zeroOrAtLeast(FEES.MIN_PRICED_MESSAGE_CENTS), 'message_min_price').default(0) }).parse(req.body);
     // Every requested attachment must exist, belong to this creator, be an
-    // original (not someone's broadcast copy) and be READY. The worker used
+    // original (not someone's broadcast copy), not be a marketplace listing's
+    // product (listingId -- copying a sold one-of-a-kind item out to every
+    // subscriber would break its buyer's exclusivity and sell it twice), and
+    // be READY. Re-checked by workers/broadcast.ts at send time. The worker used
     // to filter silently to what was ready and send the priced message
     // anyway, so a creator broadcasting straight after an upload (transcodes
     // take minutes) sold every subscriber an empty message at full price.
     const ids = [...new Set(b.mediaIds)];
     if (ids.length !== b.mediaIds.length) return reply.code(400).send({ error: 'bad_media' });
     if (ids.length) {
-      const found = await prisma.media.findMany({ where: { id: { in: ids }, ownerId: req.user.id, sourceMediaId: null }, select: { status: true } });
+      const found = await prisma.media.findMany({ where: { id: { in: ids }, ownerId: req.user.id, listingId: null, sourceMediaId: null }, select: { status: true } });
       if (found.length !== ids.length) return reply.code(400).send({ error: 'bad_media' });
       if (found.some((m) => m.status !== 'READY')) return reply.code(400).send({ error: 'media_not_ready' });
     }

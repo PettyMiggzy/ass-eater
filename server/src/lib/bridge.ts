@@ -36,9 +36,33 @@ export type BridgeClaims = {
   // set for CREATOR (verifyBridgeToken rejects one without it), null for fans. The content-violation ladder lives on the site, so without this a
   // creator banned there was still bridged here as a working CREATOR.
   creatorStatus: SiteCreatorStatus | null;
+  // A FAN's account standing on the site (lib/user-moderation.js), null for
+  // creators and for a site too old to send it. Sent by the site as
+  // `standing` (or, equivalently, `creatorStatus` on a FAN token);
+  // normalised here so creatorStatus stays null for every fan.
+  fanStatus?: SiteFanStatus | null;
+  // When the site decided the standing this token carries (ms epoch).
+  // Optional (older site code omits it). Orders standing messages: one
+  // older than the last applied in the same dimension (User.siteStatusAt
+  // for a creator token, User.siteAccountStatusAt for a fan token) changes
+  // nothing.
+  standingAt?: number;
   jti: string;       // single-use id; /auth/bridge burns it in Redis
   exp: number;       // ms since epoch; short-lived, this is a one-time exchange token
 };
+
+export type SiteFanStatus = 'active' | 'suspended' | 'banned';
+const FAN_STATUSES = ['active', 'suspended', 'banned'];
+
+// Tolerated clock skew between the site and here for `standingAt`. A stamp
+// further in the future is refused outright: accepted, it would sit on the
+// row as the newest standing and make every genuine later message "older".
+const STANDING_SKEW_MS = 5 * 60_000;
+
+/** A valid standingAt: a finite ms timestamp, not after the token's own expiry, not in the future beyond skew. */
+function validStandingAt(v: unknown, exp: number) {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= exp && v <= Date.now() + STANDING_SKEW_MS;
+}
 
 function sign(payloadB64: string): string {
   if (!SECRET) throw new Error('BRIDGE_SECRET is not configured -- cannot accept bridged sessions from the Next.js site.');
@@ -78,8 +102,23 @@ export function verifyBridgeToken(token: unknown): BridgeClaims | null {
   // missing status is not "unrestricted" -- the site sends 'banned' for
   // anything it can't vouch for, so null here means a malformed token.
   if (claims.role === 'CREATOR' && cs === null) return null;
-  if (claims.role === 'FAN' && cs !== null) return null;
-  claims.creatorStatus = cs;
+  const raw = claims as BridgeClaims & { standing?: unknown };
+  if (claims.role === 'FAN') {
+    // A fan's standing may arrive as `standing` or as `creatorStatus`; a fan
+    // is never 'pending', and two fields that disagree are a malformed token.
+    const fs = raw.standing ?? cs ?? null;
+    if (fs !== null && !FAN_STATUSES.includes(fs as string)) return null;
+    if (raw.standing != null && cs !== null && raw.standing !== cs) return null;
+    claims.fanStatus = fs as SiteFanStatus | null;
+    claims.creatorStatus = null;
+  } else {
+    if (raw.standing != null) return null;
+    claims.fanStatus = null;
+    claims.creatorStatus = cs;
+  }
+  delete raw.standing;
+  if (claims.standingAt !== undefined && claims.standingAt !== null && !validStandingAt(claims.standingAt, claims.exp)) return null;
+  if (claims.standingAt === null) delete claims.standingAt;
   return claims;
 }
 
@@ -126,6 +165,8 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
   // Fail closed (verifyBridgeToken already rejects this shape; repeated so
   // no other caller can bridge a creator of unknown standing as unrestricted).
   if (claims.role === 'CREATOR' && !claims.creatorStatus) return { ok: false, status: 403, error: 'banned' };
+  const fan = claims.role === 'FAN';
+  const at = claims.standingAt;
 
   let user = await prisma.user.findUnique({ where: { siteUid: claims.uid } });
 
@@ -134,10 +175,17 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
   // subscriptions renewing, listings buyable, a queued payout going out --
   // while the owner believes it is banned. The site also pushes status
   // changes directly (POST /auth/bridge/status), so this is the second of
-  // two routes, not the only one.
-  if (claims.creatorStatus === 'banned' || claims.creatorStatus === 'suspended') {
-    if (user) await syncSiteStanding(user, claims.creatorStatus);
-    return { ok: false, status: 403, error: claims.creatorStatus };
+  // two routes, not the only one. The same holds for a FAN the site has
+  // suspended or banned: without it their subscriptions and token locks
+  // kept renewing here, and a site-banned fan can no longer sign in to
+  // cancel them. The exchange is refused either way; whether the standing
+  // is applied depends on its order (claimStanding).
+  const restriction = fan
+    ? (claims.fanStatus === 'banned' || claims.fanStatus === 'suspended' ? claims.fanStatus : null)
+    : (claims.creatorStatus === 'banned' || claims.creatorStatus === 'suspended' ? claims.creatorStatus : null);
+  if (restriction) {
+    if (user) await syncSiteStanding(user, restriction, { standingAt: at, fan });
+    return { ok: false, status: 403, error: restriction };
   }
 
   if (!user) user = await provisionBridgedUser(claims);
@@ -145,41 +193,132 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
     return { ok: false, status: 403, error: 'forbidden' };
   }
 
-  // Only an APPROVED ('active') site creator is a creator here. A 'pending'
-  // one -- not yet approved, and by the owner's rule unapprovable without a
-  // §2257 performer record -- is provisioned and kept as a FAN, so it cannot
-  // start server KYC and publish, sell or withdraw outside the site's
-  // approval queue. The last-seen site status is stored on the row and
-  // checked by app.creatorOk (plugins/auth.ts), which also catches a creator
-  // who was active here and later reverted on the site.
-  if (claims.role === 'CREATOR' && claims.creatorStatus === 'active' && user.role === 'FAN') {
-    // Upgrade in one transaction so a row can never be a CREATOR with no
-    // CreatorProfile (every creator route assumes one exists).
-    const [updated] = await prisma.$transaction([
-      prisma.user.update({ where: { id: user.id }, data: { role: 'CREATOR', siteCreatorStatus: 'active' } }),
-      prisma.creatorProfile.upsert({
-        where: { userId: user.id },
-        create: { userId: user.id, displayName: claims.username },
-        update: {},
-      }),
-    ]);
-    user = updated;
+  // The standing this token carries is applied only if it is not older than
+  // the last standing applied to this row: a token minted 'active' just
+  // before a suspension, but exchanged just after the suspension push, must
+  // not lift it (or re-mark a creator the site moved back to 'pending' as
+  // approved). A stale token still bridges -- into whatever standing the
+  // row already has.
+  const standing = fan ? (claims.fanStatus ?? null) : claims.creatorStatus;
+  const dim: StandingDim = fan ? 'account' : 'creator';
+  const fresh = standing ? await claimStanding(user, at, standing, dim) : true;
+
+  if (fresh) {
+    // Only an APPROVED ('active') site creator is a creator here. A 'pending'
+    // one -- not yet approved, and by the owner's rule unapprovable without a
+    // §2257 performer record -- is provisioned and kept as a FAN, so it cannot
+    // start server KYC and publish, sell or withdraw outside the site's
+    // approval queue. The last-seen site status is stored on the row and
+    // checked by app.creatorOk (plugins/auth.ts), which also catches a creator
+    // who was active here and later reverted on the site.
+    if (claims.role === 'CREATOR' && claims.creatorStatus === 'active' && user.role === 'FAN') {
+      // Upgrade in one transaction so a row can never be a CREATOR with no
+      // CreatorProfile (every creator route assumes one exists).
+      const [updated] = await prisma.$transaction([
+        prisma.user.update({ where: { id: user.id }, data: { role: 'CREATOR', siteCreatorStatus: 'active' } }),
+        prisma.creatorProfile.upsert({
+          where: { userId: user.id },
+          create: { userId: user.id, displayName: claims.username },
+          update: {},
+        }),
+      ]);
+      user = updated;
+    }
+    const data: Prisma.UserUpdateInput = {};
+    if (fan) {
+      // A fan token carries the ACCOUNT standing. It still says the site
+      // user is not an approved creator, so creator approval is dropped as
+      // before (fail closed) -- but a creator RESTRICTION is never erased by
+      // it: that would let the fan 'active' below lift the creator ladder's
+      // suspension.
+      if (standing && user.siteAccountStatus !== standing) data.siteAccountStatus = standing;
+      if (user.siteCreatorStatus === 'active' || user.siteCreatorStatus === 'pending') data.siteCreatorStatus = null;
+    } else if (user.siteCreatorStatus !== claims.creatorStatus) {
+      data.siteCreatorStatus = claims.creatorStatus;
+    }
+    if (Object.keys(data).length) user = await prisma.user.update({ where: { id: user.id }, data });
+    // A suspension the SITE applied lifts when the site says the account is
+    // active again (its creator suspensions expire by themselves after 30
+    // days) -- unless the site's OTHER standing for this account still
+    // restricts it (siteMayLift). One an admin applied here, and any ban, is
+    // not lifted this way. Payouts stay frozen either way until an admin
+    // unfreezes them (core/moderation.ts).
+    if (standing === 'active' && siteMayLift(user, dim)) {
+      await applyUserStatus(user.id, 'ACTIVE', { bySite: true });
+    }
   }
-  const standing = claims.creatorStatus ?? null;
-  if (user.siteCreatorStatus !== standing) {
-    user = await prisma.user.update({ where: { id: user.id }, data: { siteCreatorStatus: standing } });
-  }
-  // A suspension the SITE applied lifts when the site says the creator is
-  // active again (its suspensions expire by themselves after 30 days). One
-  // an admin applied here, and any ban, is not lifted this way. Payouts stay
-  // frozen either way until an admin unfreezes them (core/moderation.ts).
-  if (standing === 'active' && user.status === 'SUSPENDED' && user.statusBySite) {
-    await applyUserStatus(user.id, 'ACTIVE', { bySite: true });
-    user = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-  }
+  user = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
 
   if (user.status !== 'ACTIVE') return { ok: false, status: 403, error: 'account_' + user.status.toLowerCase() };
   return { ok: true, user };
+}
+
+/**
+ * The site keeps TWO standings on an account, and each reaches here as its
+ * own kind of message:
+ *  - 'creator': the creator record's status (the content-violation ladder),
+ *    made stricter by any account moderation -- a CREATOR token or push.
+ *    Stored as siteCreatorStatus, ordered by siteStatusAt.
+ *  - 'account': the login's own moderation (lib/user-moderation.js) -- a FAN
+ *    token or a role 'FAN' push. Stored as siteAccountStatus, ordered by
+ *    siteAccountStatusAt.
+ * One shared stamp let a creator message (e.g. a 'pending' exchange) make a
+ * late account suspension look stale, and one shared "suspended by the site"
+ * flag let 'active' in one dimension lift the other's suspension.
+ */
+export type StandingDim = 'creator' | 'account';
+
+const RESTRICTIVE = new Set(['suspended', 'banned']);
+
+/**
+ * May a site message in dimension `dim` saying 'active' lift this row's
+ * suspension? Only one the site applied (statusBySite), and only while the
+ * site's standing in the OTHER dimension, as last recorded here, does not
+ * itself restrict the account.
+ */
+export function siteMayLift(
+  u: Pick<User, 'status' | 'statusBySite' | 'siteCreatorStatus' | 'siteAccountStatus'>,
+  dim: StandingDim,
+) {
+  if (u.status !== 'SUSPENDED' || !u.statusBySite) return false;
+  const other = dim === 'creator' ? u.siteAccountStatus : u.siteCreatorStatus;
+  return !RESTRICTIVE.has(other ?? '');
+}
+
+/**
+ * Orders site standing messages, per dimension. Claims the right to apply a
+ * standing decided at `at` (ms epoch, the site's `standingAt`) to this row,
+ * by advancing that dimension's stamp with a guarded UPDATE -- so of two
+ * messages racing, or arriving out of order, the older one never overrides
+ * the newer.
+ *
+ * An unstamped message (older site code) is treated asymmetrically, because
+ * lifting a restriction is the dangerous direction: a restriction always
+ * applies (fail safe), a lift ('active') only while no stamped message has
+ * ever been applied in that dimension.
+ */
+export async function claimStanding(
+  user: { id: string },
+  at: number | undefined,
+  status: string,
+  dim: StandingDim = 'creator',
+): Promise<boolean> {
+  if (at === undefined) {
+    if (status !== 'active') return true;
+    const where = dim === 'creator' ? { id: user.id, siteStatusAt: null } : { id: user.id, siteAccountStatusAt: null };
+    return (await prisma.user.count({ where })) > 0;
+  }
+  const d = new Date(at);
+  const r = dim === 'creator'
+    ? await prisma.user.updateMany({
+      where: { id: user.id, OR: [{ siteStatusAt: null }, { siteStatusAt: { lte: d } }] },
+      data: { siteStatusAt: d },
+    })
+    : await prisma.user.updateMany({
+      where: { id: user.id, OR: [{ siteAccountStatusAt: null }, { siteAccountStatusAt: { lte: d } }] },
+      data: { siteAccountStatusAt: d },
+    });
+  return r.count > 0;
 }
 
 /**
@@ -187,12 +326,31 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
  * 'suspended' run the same effects as an admin action here
  * (core/moderation.ts), marked as coming from the site; 'active' lifts only
  * a suspension the site itself applied. Never touches a system or ADMIN
- * row, and never softens an existing ban. Returns what it did.
+ * row, and never softens an existing ban. A message older than the last one
+ * applied (claimStanding) changes nothing and returns 'stale'.
+ *
+ * `fan`: the standing is the account (user-moderation) standing, not the
+ * creator standing -- it is recorded as siteAccountStatus and ordered on its
+ * own clock, and siteCreatorStatus (creator approval) is left alone. When
+ * the caller can't say (a push without a role), a FAN row that never was a
+ * site creator (siteCreatorStatus null) is treated as a fan. Either
+ * dimension's 'active' lifts only a site suspension the other dimension
+ * does not also hold (siteMayLift).
  */
-export async function syncSiteStanding(user: User, status: SiteCreatorStatus): Promise<'banned' | 'suspended' | 'reactivated' | 'unchanged'> {
+export async function syncSiteStanding(
+  user: User,
+  status: SiteCreatorStatus,
+  opts: { standingAt?: number; fan?: boolean } = {},
+): Promise<'banned' | 'suspended' | 'reactivated' | 'unchanged' | 'stale'> {
   if (SYSTEM_IDS.has(user.id) || user.role === 'ADMIN' || !user.siteUid) return 'unchanged';
-  if (user.siteCreatorStatus !== status) {
-    await prisma.user.update({ where: { id: user.id }, data: { siteCreatorStatus: status } });
+  const fan = opts.fan ?? (user.role === 'FAN' && user.siteCreatorStatus == null && status !== 'pending');
+  if (fan && status === 'pending') return 'unchanged'; // a fan is never 'pending'
+  const dim: StandingDim = fan ? 'account' : 'creator';
+  if (!(await claimStanding(user, opts.standingAt, status, dim))) return 'stale';
+  if (fan && user.siteAccountStatus !== status) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { siteAccountStatus: status } });
+  } else if (!fan && user.siteCreatorStatus !== status) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { siteCreatorStatus: status } });
   }
   if (status === 'banned') {
     if (user.status === 'BANNED') return 'unchanged';
@@ -204,14 +362,20 @@ export async function syncSiteStanding(user: User, status: SiteCreatorStatus): P
     await applyUserStatus(user.id, 'SUSPENDED', { bySite: true });
     return 'suspended';
   }
-  if (status === 'active' && user.status === 'SUSPENDED' && user.statusBySite) {
+  if (status === 'active' && siteMayLift(user, dim)) {
     await applyUserStatus(user.id, 'ACTIVE', { bySite: true });
     return 'reactivated';
   }
   return 'unchanged';
 }
 
-export type BridgeStatusClaims = { typ: 'bridge_status'; uid: string; creatorStatus: SiteCreatorStatus; jti: string; exp: number };
+export type BridgeStatusClaims = {
+  typ: 'bridge_status'; uid: string; creatorStatus: SiteCreatorStatus; jti: string; exp: number;
+  // Optional: when the site decided this standing (ms epoch), and whose
+  // standing it is. Both absent from older site code.
+  standingAt?: number;
+  role?: 'FAN' | 'CREATOR';
+};
 
 /**
  * Verifies a site -> server standing push (lib/server-api.js
@@ -232,7 +396,18 @@ export function verifyBridgeStatusToken(token: unknown): BridgeStatusClaims | nu
   if (typeof c.exp !== 'number' || c.exp < Date.now()) return null;
   if (typeof c.uid !== 'string' || !c.uid || c.uid.length > 128) return null;
   if (typeof c.jti !== 'string' || c.jti.length < 16 || c.jti.length > 128) return null;
+  // A fan's push may name its status `standing`; either field, not two that disagree.
+  const raw = c as BridgeStatusClaims & { standing?: unknown };
+  if (raw.standing != null) {
+    if (c.creatorStatus != null && c.creatorStatus !== raw.standing) return null;
+    c.creatorStatus = raw.standing as SiteCreatorStatus;
+    delete raw.standing;
+  }
   if (!['active', 'pending', 'suspended', 'banned'].includes(c.creatorStatus)) return null;
+  if (c.role !== undefined && c.role !== 'FAN' && c.role !== 'CREATOR') return null;
+  if (c.role === 'FAN' && c.creatorStatus === 'pending') return null;
+  if (c.standingAt !== undefined && c.standingAt !== null && !validStandingAt(c.standingAt, c.exp)) return null;
+  if (c.standingAt === null) delete c.standingAt;
   return c;
 }
 
@@ -255,6 +430,12 @@ async function provisionBridgedUser(claims: BridgeClaims): Promise<User> {
           // has approved it ('active'); see resolveBridgedUser.
           siteUid: claims.uid, email, username, role: isApprovedCreator(claims) ? 'CREATOR' : 'FAN',
           siteCreatorStatus: claims.creatorStatus ?? null,
+          siteAccountStatus: claims.role === 'FAN' ? (claims.fanStatus ?? null) : null,
+          // Ordering starts from this token's own standing, if stamped, in
+          // the dimension the token speaks for.
+          ...(claims.standingAt !== undefined
+            ? (claims.role === 'FAN' ? { siteAccountStatusAt: new Date(claims.standingAt) } : { siteStatusAt: new Date(claims.standingAt) })
+            : {}),
           // Bridged accounts never log in directly with a password -- this
           // hash is unusable (nobody knows it), and /login refuses any row
           // with a siteUid regardless.

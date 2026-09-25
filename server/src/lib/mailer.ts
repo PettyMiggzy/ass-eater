@@ -54,17 +54,34 @@ export function mailProvider(): string {
  * Making that a type-level fact rather than a code-review convention is the
  * point: there is no field here that message text could be put into.
  */
-export type NotificationMail = {
-  to: string;
-  kind: 'DM_RECEIVED';
-  actorName?: string;
-  siteUrl: string;
-};
+export type NotificationMail =
+  | {
+    to: string;
+    kind: 'DM_RECEIVED';
+    actorName?: string;
+    siteUrl: string;
+  }
+  | {
+    // Double opt-in for a creator's notification address: nothing else is
+    // ever mailed to an address until its owner opens this link
+    // (modules/notifications.ts). Carries a link, no content.
+    to: string;
+    kind: 'CONFIRM_NOTIFY_EMAIL';
+    confirmUrl: string;
+  };
 
 function render(mail: NotificationMail): { subject: string; text: string } {
-  const who = mail.actorName ? `${mail.actorName}` : 'Someone';
   switch (mail.kind) {
-    case 'DM_RECEIVED':
+    case 'CONFIRM_NOTIFY_EMAIL':
+      return {
+        subject: 'Confirm your notification email',
+        text:
+          `Someone asked for OnlyOne creator notifications to be sent to this address.\n\n` +
+          `If that was you, open this link within 24 hours and press Confirm: ${mail.confirmUrl}\n\n` +
+          `If it wasn't, ignore this email -- nothing more will be sent here unless someone presses Confirm on that page.`,
+      };
+    case 'DM_RECEIVED': {
+      const who = mail.actorName ? `${mail.actorName}` : 'Someone';
       return {
         subject: 'You have a new message',
         text:
@@ -73,6 +90,7 @@ function render(mail: NotificationMail): { subject: string; text: string } {
           `We never include message contents in email.\n` +
           `Turn these off any time in your dashboard settings.`,
       };
+    }
   }
 }
 
@@ -109,6 +127,10 @@ export function mailConfigured(): boolean {
 
 export async function sendNotificationMail(mail: NotificationMail): Promise<MailResult> {
   if (!mail.to) return { sent: false, reason: 'no_address' };
+  // The reserved .invalid TLD (lib/bridge.ts syntheticBridgeEmail) can never
+  // be delivered; a send would only be a guaranteed hard bounce counted
+  // against this account.
+  if (/\.invalid$/i.test(mail.to.trim())) return { sent: false, reason: 'no_address' };
 
   // Checked before the transport, not after a failed send -- an address
   // that bounced or complained gets no further attempts at all, which is

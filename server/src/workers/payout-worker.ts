@@ -5,6 +5,7 @@ import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, HEDGE_
 import { getUsdPrice } from '../lib/price.js';
 import { money } from '../core/ledger.js';
 import { refundPayout, markPayoutSent, isOwnNonceCancel } from '../core/payouts.js';
+import { CREATOR_STANDING_SELECT, creatorMayBePaid } from '../core/creator-standing.js';
 import { payoutJobId, payoutJobOptions, jobInFlight } from '../core/payout-queue.js';
 import { publish, connection, payoutQueue } from '../lib/redis.js';
 import { registerWorker, onStop, isStopping } from './process-guards.js';
@@ -53,11 +54,22 @@ async function nodeKnows(hash: `0x${string}`): Promise<boolean> {
  * transaction answers false. Any doubt (an RPC error included) answers
  * false, and the payout is held FAILED with its hash for an admin.
  */
+/** Is this payout still one the worker/reconciler may act on (not HELD/settled by an admin)? */
+async function stillReconcilable(payoutId: string) {
+  const row = await prisma.payout.findUnique({ where: { id: payoutId }, select: { status: true } });
+  return !!row && (row.status === 'PROCESSING' || row.status === 'FAILED');
+}
+
 async function provablyNeverSent(p: { id: string; txHash: string; nonce: number; cancelTxHash: string | null }): Promise<boolean> {
   const hash = p.txHash as `0x${string}`;
   const nonce = p.nonce;
   try {
     await new Promise(r => setTimeout(r, BROADCAST_SETTLE_MS));
+    // The settle sleep is exactly the window the runbook gives an admin to
+    // hold a FAILED payout and send it by hand from the treasury -- at this
+    // very nonce. Once the row has left PROCESSING/FAILED it is the admin's,
+    // and no cancel may be broadcast over their transfer.
+    if (!(await stillReconcilable(p.id))) return false;
     if (await nodeKnows(hash)) return false;   // it went out
     const me = treasuryAccount().address;
     const consumed = async () => (await publicClient.getTransactionCount({ address: me, blockTag: 'latest' })) > nonce;
@@ -76,8 +88,13 @@ async function provablyNeverSent(p: { id: string; txHash: string; nonce: number;
           } as any);
           const serialized = await wallet.signTransaction(request as any);
           const h = keccak256(serialized);
-          // Persisted before broadcast, like the payout's own hash.
-          await prisma.payout.updateMany({ where: { id: p.id, status: { in: ['PROCESSING', 'FAILED'] } }, data: { cancelTxHash: h } });
+          // Persisted before broadcast, like the payout's own hash -- and the
+          // guarded update is also the last ownership check: if it matched no
+          // row (an admin HELD it meanwhile), nothing is broadcast. A cancel
+          // at this nonce with doubled fees would otherwise replace the
+          // admin's own manual transfer sitting in the mempool.
+          const owned = await prisma.payout.updateMany({ where: { id: p.id, status: { in: ['PROCESSING', 'FAILED'] } }, data: { cancelTxHash: h } });
+          if (owned.count === 0) return null;
           await wallet.sendRawTransaction({ serializedTransaction: serialized });
           return h;
         } catch {
@@ -103,7 +120,7 @@ async function provablyNeverSent(p: { id: string; txHash: string; nonce: number;
 /**
  * Claims PENDING -> PROCESSING with a guarded update (only one run can own a
  * payout) and then checks the creator may still be paid. A creator frozen,
- * suspended or banned after requesting -- a moderation action while the
+ * suspended, banned or no longer approved (KYC / site standing) after requesting -- a moderation action while the
  * queue was busy with another payout's receipt wait -- is NOT paid: the
  * payout is HELD, money still reserved, for an admin to release or refund.
  * Refunding automatically would hand a banned creator their balance back.
@@ -113,10 +130,17 @@ async function claimPayout(payoutId: string) {
   if (!claimed.count) return null;
   const p = await prisma.payout.findUniqueOrThrow({
     where: { id: payoutId },
-    include: { creator: { select: { payoutsFrozen: true, user: { select: { status: true } } } } },
+    include: { creator: { select: { payoutsFrozen: true, user: { select: CREATOR_STANDING_SELECT } } } },
   });
-  if (p.creator.payoutsFrozen || p.creator.user.status !== 'ACTIVE' || p.asset !== 'STABLE') {
-    const why = p.asset !== 'STABLE' ? 'held: payouts are USDG only' : 'held: creator frozen or not active';
+  // creatorMayBePaid, not just status: withdrawing is something only an
+  // APPROVED creator may do (core/creator-standing.ts), and approval can be
+  // withdrawn without a suspension -- KYC set to REJECTED, or the site moving
+  // the creator back to 'pending' -- while the payout sat in the queue.
+  const approved = creatorMayBePaid(p.creator.user);
+  if (p.creator.payoutsFrozen || !approved || p.asset !== 'STABLE') {
+    const why = p.asset !== 'STABLE' ? 'held: payouts are USDG only'
+      : p.creator.payoutsFrozen || p.creator.user.status !== 'ACTIVE' ? 'held: creator frozen or not active'
+        : 'held: creator not approved';
     await prisma.payout.updateMany({ where: { id: p.id, status: 'PROCESSING', txHash: null }, data: { status: 'HELD', error: why } });
     await publish(p.creatorId, { type: 'payout', status: 'HELD' });
     return null;

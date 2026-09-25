@@ -6,8 +6,11 @@ import { getUsdPrice, rawToUsdCents } from '../lib/price.js';
 import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
 import { registerWorker } from './process-guards.js';
+import { chunk } from './indexer-chunks.js';
 
 const BATCH = 1000n;
+// Deposit addresses per eth_getLogs `to` filter (geth caps a position at 1000).
+const ADDRESS_CHUNK = envInt('DEPOSIT_LOG_ADDRESS_CHUNK', 500, 1, 1000);
 const TRACK_NATIVE_ETH = process.env.TRACK_NATIVE_ETH === 'true';
 const ONLYONE_BONUS_BPS = envInt('ONLYONE_DEPOSIT_BONUS_BPS', 0, 0, 10_000);
 const REPRICE_MS = envInt('DEPOSIT_REPRICE_INTERVAL_MS', 10 * 60_000, 60_000);
@@ -209,7 +212,17 @@ async function scan() {
     // Filtering by contract address in the log query is what makes this an
     // allowlist rather than a ticker match -- a token that calls itself USDG
     // from a different contract is never even looked at.
-    const logs = await publicClient.getLogs({ address: WATCHED_TOKENS.map(t => t.address), event: TRANSFER_EVENT, args: { to: [...addrs.values()].map(a => a.address as `0x${string}`) }, fromBlock: from, toBlock: to });
+    //
+    // The `to` addresses go out ADDRESS_CHUNK at a time (see
+    // indexer-chunks.ts: one filter with every deposit address ever issued
+    // passes the RPC's per-position cap and then fails forever). Every chunk
+    // for this block range is fetched before anything is credited or the
+    // cursor moves, so a failure part-way leaves the whole range to be
+    // retried; crediting is idempotent per (txHash, logIndex) regardless.
+    const logs = [];
+    for (const part of chunk([...addrs.values()].map(a => a.address as `0x${string}`), ADDRESS_CHUNK)) {
+      logs.push(...await publicClient.getLogs({ address: WATCHED_TOKENS.map(t => t.address), event: TRANSFER_EVENT, args: { to: part }, fromBlock: from, toBlock: to }));
+    }
     for (const l of logs) {
       const row = addrs.get(l.args.to!.toLowerCase()); const asset = ADDR_TO_ASSET.get(l.address.toLowerCase());
       if (!row || !asset || !l.args.value) continue;
