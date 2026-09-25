@@ -8,7 +8,7 @@ import {
 } from '../../../lib/messages-store';
 import { createNotification } from '../../../lib/notifications-store';
 import { RECIPIENT_UNAVAILABLE, ACCOUNT_FROZEN } from '../../../lib/credits-store';
-import { detectPaymentCircumvention, PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
+import { screenPublicText } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
@@ -30,6 +30,7 @@ const STATUS_FOR = {
   [DM_ERRORS.SENDER_RESTRICTED]: 403,
   [DM_ERRORS.INSUFFICIENT_BALANCE]: 402,
   [DM_ERRORS.PRICE_CHANGED]: 409,
+  [DM_ERRORS.BLOCKED]: 403,
   // Thrown by transferWithFee itself when standing changes between the
   // pre-check above and the locked transfer (the creator is suspended or
   // banned in that window, or the sender's own credits are frozen). Their
@@ -101,10 +102,15 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'You are sending messages too quickly. Give it a moment.' });
   }
 
-  const check = detectPaymentCircumvention(text);
-  if (check.flagged) {
-    await addViolation({ userId: uid, context: 'message', reasons: check.reasons, snippet: text });
-    return res.status(400).json({ error: PAYMENT_CIRCUMVENTION_MESSAGE });
+  // Both screens every other free-text surface runs (wall, bio, listings):
+  // the prohibited-terms list as well as payment circumvention. A DM is where
+  // an "I'm 16" or a solicitation would actually be sent, and it used to get
+  // only the payment check. A hit is refused and logged to the violations
+  // queue, the same as on the wall.
+  const hit = screenPublicText(text);
+  if (hit) {
+    await addViolation({ userId: uid, context: 'message', reasons: hit.reasons, snippet: text });
+    return res.status(400).json({ error: hit.message });
   }
 
   let result;

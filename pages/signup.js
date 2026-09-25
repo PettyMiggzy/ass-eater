@@ -117,6 +117,9 @@ export default function Signup({ open }) {
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Email</label>
                 <input type="email" required value={form.email} onChange={update('email')} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                <p className="text-xs text-gray-500 mt-1.5">
+                  Use a real address you check: it&apos;s how our team contacts you about your application. It is never shown publicly.
+                </p>
               </div>
             )}
             <div>
@@ -141,6 +144,14 @@ export default function Signup({ open }) {
                 </div>
                 <p className="text-xs text-gray-500">
                   You must be 18 or older to create a creator profile. Build it out now — our team reviews every profile before it appears on the platform.
+                </p>
+                <p className="text-xs text-gray-400">
+                  <strong className="text-gray-300">Before we can approve you:</strong> federal law (18 U.S.C. §2257) requires us to
+                  keep a record of every performer&apos;s legal name, date of birth and a copy of a government-issued photo ID. We&apos;ll
+                  email you at the address above to collect it — or send it first to{' '}
+                  <a href="mailto:team@onlyone1.fun?subject=Creator%20ID%20for%20%C2%A72257%20record" className="text-brand-gold underline">team@onlyone1.fun</a>{' '}
+                  from that same address, with your handle. It&apos;s stored encrypted, is never shown on the site, and is kept only
+                  for this record (see the <a href="/privacy#performer-records" target="_blank" rel="noreferrer" className="text-brand-gold underline">Privacy Policy</a>).
                 </p>
               </>
             )}

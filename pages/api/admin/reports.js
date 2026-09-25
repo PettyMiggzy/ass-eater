@@ -1,4 +1,4 @@
-import { getReports, attachReportTargets } from '../../../lib/reports-store';
+import { getReports, attachReportTargets, reportPriority } from '../../../lib/reports-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 
 export default async function handler(req, res) {
@@ -12,7 +12,10 @@ export default async function handler(req, res) {
     const reports = await getReports();
     const status = req.query.status || 'open';
     const filtered = status === 'all' ? reports : reports.filter((r) => r.status === status);
-    filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    // Reports filed as possibly showing a minor come first, then
+    // non-consensual ones, then everything else; newest first within each.
+    // A safety report used to sit among spam, sorted only by date.
+    filtered.sort((a, b) => reportPriority(a) - reportPriority(b) || new Date(b.createdAt) - new Date(a.createdAt));
     // Each report carries `target` -- the reported comment's text and wall,
     // or the listing's title, status and seller -- so a moderator can see
     // what they are about to remove. `targetId` is always a string.

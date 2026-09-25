@@ -235,9 +235,9 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
       <div className="min-h-screen bg-gradient-luxury text-white">
         {/* Header */}
         <nav className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/" className="flex items-center">
-              <Lockup className="h-7 md:h-8" />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
+            <a href="/" className="flex items-center shrink-0">
+              <Lockup className="h-6 md:h-8" />
             </a>
             <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
               <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
@@ -249,21 +249,39 @@ export default function Creators({ creators, sessionUser, paymentsLive }) {
               <a href="/favorites" className="hover:text-brand-gold transition">Favorites</a>
             </div>
             <div className="flex items-center gap-3">
-              <a href="/" className="text-sm text-gray-400 hover:text-brand-gold transition hidden sm:block">Home</a>
+              <a href="/" className="text-sm text-gray-400 hover:text-brand-gold transition hidden md:block">Home</a>
+              {/* Account links show at EVERY width: on a phone this header
+                  used to offer nothing but the logo and Buy Credits, so a
+                  signed-out visitor here had no way to log in. */}
               {sessionUser ? (
-                <a href="/dashboard" className="text-sm text-gray-300 hover:text-brand-gold transition hidden sm:block">
-                  {sessionUser.role === 'creator' ? 'Creator Dashboard' : 'My Account'}
+                <a href="/dashboard" className="text-sm text-gray-300 hover:text-brand-gold transition">
+                  {sessionUser.role === 'creator' ? 'Dashboard' : 'My Account'}
                 </a>
               ) : (
                 <>
-                  <a href="/login" className="text-sm text-gray-400 hover:text-brand-gold transition hidden sm:block">Log In</a>
+                  <a href="/login" className="text-sm text-gray-400 hover:text-brand-gold transition">Log In</a>
                   <a href="/signup" className="text-sm text-gray-300 hover:text-brand-gold transition hidden sm:block">Sign Up</a>
                 </>
               )}
               {/* Was a "Connect Wallet" button wired to a toast saying wallet
                   features weren't live. The one wallet step a fan needs is
                   buying credits, and that page works. */}
-              <a href="/credits" className="premium-button text-sm px-6 py-2">Buy Credits</a>
+              <a href="/credits" className="premium-button text-sm px-4 sm:px-6 py-2 whitespace-nowrap">Buy Credits</a>
+            </div>
+          </div>
+          {/* Below md the section links above are hidden, so they scroll
+              horizontally here instead -- Marketplace and Search were
+              otherwise unreachable from this page on a phone. */}
+          <div className="md:hidden overflow-x-auto border-t border-brand-gold/10">
+            <div className="flex items-center gap-5 px-6 py-2.5 text-sm text-gray-300 whitespace-nowrap">
+              <a href="/home" className="hover:text-brand-gold transition">Home</a>
+              <a href="/marketplace" className="hover:text-brand-gold transition">Marketplace</a>
+              <a href="/search" className="hover:text-brand-gold transition">Search</a>
+              <a href="/favorites" className="hover:text-brand-gold transition">Favorites</a>
+              {!sessionUser && <a href="/signup" className="text-brand-gold font-semibold">Sign Up</a>}
+              <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
+              <a href="#pricing" className="hover:text-brand-gold transition">Pricing</a>
+              <a href="/token" className="hover:text-brand-gold transition">Roadmap</a>
             </div>
           </div>
         </nav>

@@ -439,6 +439,12 @@ export default function Dashboard({
                 <div className="px-4 py-3 rounded-md bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
                   Your profile is pending review and not yet visible on the platform. Build it out below — you can upload
                   and create listings now, and they go live (and can sell) once our team approves your profile.
+                  <span className="block mt-2">
+                    Approval needs a §2257 record: your legal name, date of birth and a copy of a government-issued
+                    photo ID. Our team will email the address you signed up with, or you can send it first to
+                    team@onlyone1.fun from that address, including your handle. It is stored encrypted and never
+                    shown publicly (<a href="/privacy#performer-records" className="underline">details</a>).
+                  </span>
                 </div>
               )}
               {creatorStatus === 'suspended' && (
@@ -1071,6 +1077,23 @@ function ShareKit({ creator, foundingLeft, founding, origin, publiclyVisible, si
   );
 }
 
+/**
+ * The marketplace fee is charged on item price PLUS shipping (orders-store
+ * places one transferWithFee over the total), so a creator pricing shipping to
+ * match postage has to know that where they type the number -- otherwise they
+ * lose the fee on every order's postage. Founding creators inside their waiver
+ * window pay no fee, so the note says so instead.
+ */
+function ShippingFeeNote({ founding }) {
+  return (
+    <p className="mt-1 text-[11px] text-gray-500">
+      {founding?.active
+        ? `No fee is taken from shipping during your Founding Creator fee-free window; after it ends the ${MARKETPLACE_FEE_PCT}% marketplace fee applies to shipping too.`
+        : `The ${MARKETPLACE_FEE_PCT}% marketplace fee (${PLATFORM_FEE_PCT}% platform + ${LISTING_FEE_PCT}% listing) is also taken from shipping — price it to cover postage after the fee.`}
+    </p>
+  );
+}
+
 const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: true, physical: false, shipping: '', signatureRequired: false, aiGenerated: false, tags: '' };
 
 /**
@@ -1083,7 +1106,7 @@ const BLANK_LISTING_FORM = { title: '', description: '', price: '', unlimited: t
  * mistake is caught before the round trip; the server's error is shown as-is
  * otherwise.
  */
-function ListingEditor({ listing, busy, onSave, onCancel }) {
+function ListingEditor({ listing, founding, busy, onSave, onCancel }) {
   const [f, setF] = useState(() => ({
     title: listing.title || '',
     price: Number.isFinite(listing.priceCents) ? (listing.priceCents / 100).toFixed(2) : '',
@@ -1162,16 +1185,19 @@ function ListingEditor({ listing, busy, onSave, onCancel }) {
         className="sm:col-span-2 w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
       />
       {listing.kind === 'physical' && (
-        <input
-          value={f.shipping}
-          onChange={(e) => setF({ ...f, shipping: e.target.value })}
-          placeholder="Shipping fee (USD, 0 for free shipping)"
-          type="number"
-          min="0"
-          max={LISTING_LIMITS.maxShippingCents / 100}
-          step="0.01"
-          className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
-        />
+        <div>
+          <input
+            value={f.shipping}
+            onChange={(e) => setF({ ...f, shipping: e.target.value })}
+            placeholder="Shipping fee (USD, 0 for free shipping)"
+            type="number"
+            min="0"
+            max={LISTING_LIMITS.maxShippingCents / 100}
+            step="0.01"
+            className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+          />
+          <ShippingFeeNote founding={founding} />
+        </div>
       )}
       <label className="sm:col-span-2 flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
         <input type="checkbox" checked={f.aiGenerated} onChange={(e) => setF({ ...f, aiGenerated: e.target.checked })} />
@@ -1259,7 +1285,8 @@ function MarketplaceSection({
         List images, videos, or anything else at whatever price you want (${(LISTING_LIMITS.minPriceCents / 100).toFixed(2)}
         {' '}to ${(LISTING_LIMITS.maxPriceCents / 100).toLocaleString('en-US')}). When it sells the platform keeps
         {` ${MARKETPLACE_FEE_PCT}%`} — a {PLATFORM_FEE_PCT}% platform fee plus a {LISTING_FEE_PCT}% listing fee — and the rest is
-        credited to your balance.
+        credited to your balance. The {MARKETPLACE_FEE_PCT}% is taken from the whole amount the buyer pays, item price
+        plus shipping, so on a physical item price shipping to cover your postage after the fee.
         {founding?.isFounding && ' During your Founding Creator fee-free window neither fee is charged.'}{' '}
         {paymentsLive
           ? `Buying is live: fans pay with credits they bought with ${SETTLE_ASSET}, so they need a crypto wallet to buy credits but not to spend them.`
@@ -1391,13 +1418,14 @@ function MarketplaceSection({
               step="0.01"
               className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
             />
+            <ShippingFeeNote founding={founding} />
             <label className="flex items-center gap-2 text-sm text-gray-400">
               <input
                 type="checkbox"
                 checked={form.signatureRequired}
                 onChange={(e) => setForm({ ...form, signatureRequired: e.target.checked })}
               />
-              Require signature on delivery — your call with the carrier when you ship; price your shipping fee to cover it
+              Require signature on delivery — your call with the carrier when you ship; price your shipping fee to cover it after the fee
             </label>
           </>
         )}
@@ -1434,7 +1462,7 @@ function MarketplaceSection({
                     </p>
                     <p className="text-xs text-gray-500">
                       {l.moderationRemoved ? 'removed by moderation' : l.status} · {l.unlimited ? 'unlimited' : 'one-of-a-kind'}
-                      {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping)` : ' (free shipping)'}${l.signatureRequired ? ' · signature required' : ''}`}
+                      {l.kind === 'physical' && ` · ships to buyer${l.shippingCents ? ` (+$${(l.shippingCents / 100).toFixed(2)} shipping, fee applies)` : ' (free shipping)'}${l.signatureRequired ? ' · signature required' : ''}`}
                       {l.aiGenerated && ' · AI'}
                     </p>
                     {Array.isArray(l.tags) && l.tags.length > 0 && (
@@ -1473,7 +1501,7 @@ function MarketplaceSection({
                   </p>
                 )}
                 {editable && editingId === l.id && !disabled && (
-                  <ListingEditor listing={l} busy={busy} onSave={onEdit} onCancel={() => setEditingId(null)} />
+                  <ListingEditor listing={l} founding={founding} busy={busy} onSave={onEdit} onCancel={() => setEditingId(null)} />
                 )}
                 <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                   {(l.media || []).map((item, i) => (

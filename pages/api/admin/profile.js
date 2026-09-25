@@ -94,6 +94,9 @@ export default async function handler(req, res) {
   // exact same guard.
   const invalid = validateTextFields(safeFields, ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress', 'img']);
   if (invalid) return res.status(400).json({ error: invalid });
+  // Trimmed on every write; a blank name is allowed only while pending (an
+  // unfinished application) -- the go-live check below refuses it.
+  if ('name' in safeFields && typeof safeFields.name === 'string') safeFields.name = safeFields.name.trim();
 
   if ('status' in safeFields && !STATUSES.has(safeFields.status)) {
     return res.status(400).json({ error: 'status must be pending, active, suspended or banned' });
@@ -231,6 +234,9 @@ export default async function handler(req, res) {
   const merged = { ...existing, ...safeFields };
 
   if (goingLive) {
+    if (!String(merged.name || '').trim()) {
+      return res.status(409).json({ error: 'Set a display name before making this creator live.' });
+    }
     if (!String(merged.handle || '').replace(/^@+/, '').trim()) {
       return res.status(409).json({ error: 'Set a handle before making this creator live.' });
     }
@@ -429,14 +435,16 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 
-  // A change of standing (suspend, ban, reinstate, approve, revert to
-  // pending) reaches the creator's server/ account too -- after the commit,
-  // best effort, never failing the save. Without it a site ban left the
-  // server/ account renewing subscriptions and paying out until the creator
-  // bridged again, which a banned creator never does.
-  if ((effectiveCreatorStatus(creator) ?? 'active') !== previousStatus) {
-    reportPushFailure(await pushCreatorStatus(existing.id), `admin status change ${existing.id}`);
-  }
+  // The creator's CURRENT effective standing reaches their server/ account on
+  // EVERY save, not only when this save changed it (the push is idempotent):
+  // a suspension that lapsed by itself has no event of its own, so re-saving
+  // the creator here is how an admin re-syncs server/. Queued durably
+  // (lib/standing-outbox.js) and delivered now; never fails the save, and an
+  // undelivered push is retried and shown in /api/admin/standing-pushes.
+  // Without it a site ban left the server/ account renewing subscriptions
+  // and paying out until the creator bridged again, which a banned creator
+  // never does.
+  reportPushFailure(await pushCreatorStatus(existing.id), `admin save ${existing.id}`);
 
   // A ban set by hand takes the creator's listings off sale: every listing --
   // including ones the creator had pulled themselves, which could otherwise

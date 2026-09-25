@@ -1,4 +1,4 @@
-import { effectiveCreatorStatus } from '../../lib/creator-status';
+import { effectiveCreatorStatus, sanitizeTags } from '../../lib/creator-status';
 import { gateTokensOf } from '../../lib/token-gate';
 
 // Pure helpers for the admin creator editor (pages/admin/index.js), kept out
@@ -38,6 +38,13 @@ export function draftFrom(c) {
     walletAddress: c.walletAddress || '',
     // Edited in dollars, stored in cents; blank = the platform floor.
     dmPrice: Number.isInteger(dmCents) && dmCents > 0 ? (dmCents / 100).toFixed(2) : '',
+    // Tags, location and age are public profile fields the server re-screens
+    // on go-live (pages/api/admin/profile.js). The panel has to be able to
+    // edit them, or a refusal that says "Clear the Tags field" names a field
+    // the admin cannot reach. Tags are edited as one comma-separated string.
+    tags: Array.isArray(c.tags) ? c.tags.join(', ') : '',
+    location: typeof c.location === 'string' ? c.location : '',
+    age: Number.isFinite(Number(c.age)) && c.age !== null && c.age !== '' ? String(c.age) : '',
     socials: {
       twitter: c.socials?.twitter || '',
       instagram: c.socials?.instagram || '',
@@ -52,13 +59,13 @@ export function draftFrom(c) {
 // never edited on its own, only carried alongside a status change.
 export const EDITABLE_KEYS = [
   'name', 'handle', 'bio', 'price', 'locked', 'gateTokens', 'trending', 'premium',
-  'founding', 'status', 'walletAddress', 'dmPrice', 'socials',
+  'founding', 'status', 'walletAddress', 'dmPrice', 'tags', 'location', 'age', 'socials',
 ];
 
 const FIELD_NAMES = {
   name: 'name', handle: 'handle', bio: 'bio', price: 'price', locked: 'token gate', gateTokens: 'gate amount',
   trending: 'trending', premium: 'premium', founding: 'Founding', status: 'status', walletAddress: 'payout wallet',
-  dmPrice: 'message price', socials: 'socials',
+  dmPrice: 'message price', tags: 'tags', location: 'location', age: 'age', socials: 'socials',
 };
 
 /** Human label for a draft key (used in conflict messages). */
@@ -68,6 +75,10 @@ export function fieldName(key) {
 
 function norm(key, value) {
   if (key === 'socials') return JSON.stringify(value || {});
+  // Compared as the list the server would store, so "a, b" vs "a,b" (or a
+  // re-cased tag) is not a change and not a false rebase conflict.
+  if (key === 'tags') return sanitizeTags(Array.isArray(value) ? value : String(value ?? '')).join(',');
+  if (key === 'location') return String(value ?? '').replace(/\s+/g, ' ').trim();
   if (typeof value === 'boolean') return value;
   if (key === 'dmPrice') {
     const cents = parseDmPrice(value);
@@ -79,6 +90,19 @@ function norm(key, value) {
 /** Whether the draft's value for `key` differs from the baseline's. */
 export function changedFrom(draft, baseline, key) {
   return norm(key, draft?.[key]) !== norm(key, baseline?.[key]);
+}
+
+/**
+ * The age box: blank clears it, otherwise a whole number of years, 18 or
+ * over. Refused here as well as on the server (sanitizeAge throws
+ * UnderageProfile), so a typo is caught before anything is sent.
+ */
+function parseAge(age) {
+  const raw = String(age ?? '').trim();
+  if (!raw) return { value: '' };
+  if (!/^\d{1,3}$/.test(raw)) return { error: 'Age must be a whole number of years, or blank.' };
+  if (Number(raw) < 18) return { error: 'Refused: a creator profile cannot state an age under 18.' };
+  return { value: raw };
 }
 
 function parseDmPrice(dmPrice) {
@@ -110,6 +134,16 @@ export function fieldsFromDraft(draft, baseline) {
   const fields = {};
   for (const key of ['name', 'handle', 'bio', 'price', 'trending', 'premium', 'founding', 'walletAddress', 'socials']) {
     if (changed(key)) fields[key] = draft[key];
+  }
+  // Tags go as the raw comma-separated string: the server sanitizes it AND
+  // runs the payment-circumvention check over the raw items (a split handle
+  // like "venmo, @jane" is only visible before sanitizing).
+  if (changed('tags')) fields.tags = String(draft.tags ?? '');
+  if (changed('location')) fields.location = String(draft.location ?? '');
+  if (changed('age')) {
+    const parsed = parseAge(draft.age);
+    if (parsed.error) return { error: parsed.error };
+    fields.age = parsed.value;
   }
   if (changed('locked') || changed('gateTokens')) {
     fields.locked = !!draft.locked;

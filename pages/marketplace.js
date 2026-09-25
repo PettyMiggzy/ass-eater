@@ -12,6 +12,7 @@ import { useCart } from '../lib/cart';
 import { marketplacePaymentsLive, getMarketplacePaymentConfig } from '../lib/marketplace-payment-config';
 import ListingPreview from '../components/public/ListingPreview';
 import DemoBadge from '../components/public/DemoBadge';
+import ReportModal, { postReport } from '../components/public/ReportModal';
 import { isDemoListing, DEMO_LABEL } from '../components/public/cards';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
@@ -139,8 +140,6 @@ export default function Marketplace({
   const cart = useCart();
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
-  const [reason, setReason] = useState('');
-  const [sending, setSending] = useState(false);
   const [q, setQ] = useState('');
   const [creatorQ, setCreatorQ] = useState('');
   // Exact creator scope from a ?creator= link (by id, not by name: two
@@ -180,26 +179,10 @@ export default function Marketplace({
     showToast(`Added "${listing.title}" to your cart.`);
   };
 
-  const submitReport = async (e) => {
-    e.preventDefault();
-    if (!reason.trim()) return;
-    setSending(true);
-    try {
-      const res = await fetch('/api/marketplace/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId: reporting.id, reason }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed to report');
-      showToast('Reported — our team will review it.');
-      setReporting(null);
-      setReason('');
-    } catch (err) {
-      showToast(err.message);
-    } finally {
-      setSending(false);
-    }
+  const submitReport = async ({ reason, category }) => {
+    await postReport('/api/marketplace/report', { listingId: reporting.id, reason, category });
+    setReporting(null);
+    showToast('Reported — our team will review it.');
   };
 
   // Filters are derived, never stored -- a listing's kind/media is the source
@@ -271,27 +254,12 @@ export default function Marketplace({
       )}
 
       {reporting && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-          <form onSubmit={submitReport} className="w-full max-w-sm p-6 rounded-2xl bg-brand-card border border-white/10">
-            <p className="font-bold text-white mb-1">Report "{reporting.title}"</p>
-            <p className="text-xs text-gray-500 mb-4">Tell us what's wrong with this listing.</p>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={3}
-              placeholder="Reason..."
-              className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm mb-4 focus:outline-none focus:border-brand-pink/60"
-            />
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setReporting(null)} className="flex-1 text-sm px-4 py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 transition">
-                Cancel
-              </button>
-              <button type="submit" disabled={sending} className="flex-1 text-sm px-4 py-2.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold transition disabled:opacity-50">
-                Submit
-              </button>
-            </div>
-          </form>
-        </div>
+        <ReportModal
+          title={`Report "${reporting.title}"`}
+          subject="this listing"
+          onSubmit={submitReport}
+          onClose={() => setReporting(null)}
+        />
       )}
 
       <div className="min-h-screen bg-brand-ink text-white pb-20">

@@ -2,6 +2,7 @@ import { setCreatorAvatar, getCreatorById } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteBlobQuietly, MediaRejected } from '../../../lib/media';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
+import { preserveMediaForReport, NCII_REPORT_NOT_FOUND } from '../../../lib/ncii-reports-store';
 
 const AVATAR_PLACEHOLDER = '/images/avatar-placeholder.png';
 
@@ -15,13 +16,17 @@ const AVATAR_PLACEHOLDER = '/images/avatar-placeholder.png';
  *     co-performer answer is required, with the admin rules: othersAppear
  *     true must list a record id (with an ID on file) for every other person
  *     (lib/performer-attestation.js).
- *   JSON { creatorId, remove: true }   -> 200 { ok: true, creator, removed }
+ *   JSON { creatorId, remove: true, preserveForNciiReportId? } -> 200 { ok: true, creator, removed, preserved }
  *     TAKE DOWN the current photo: resets it to the neutral placeholder and
  *     deletes the old file from storage. The avatar is the most public image
  *     on the site (every browse card), and a reported one used to be
  *     removable only by uploading some other image as the creator's face or
  *     deleting the whole account. `removed` is false when there was no
  *     uploaded photo to delete (already a placeholder or a site image).
+ *     With `preserveForNciiReportId` (a photo reported as possibly showing a
+ *     minor) the file is quarantined for that report first
+ *     (lib/media-preservation.js) and is then kept, never deleted; if the
+ *     preservation fails nothing is removed.
  *
  * Both go through setCreatorAvatar, which locks the row and deletes the file
  * it replaced after the change commits.
@@ -39,13 +44,23 @@ export default async function handler(req, res) {
   }
 
   if (remove === true) {
+    const preserveFor = req.body.preserveForNciiReportId;
+    const wantsPreserve = preserveFor !== undefined && preserveFor !== null && preserveFor !== '';
+    if (wantsPreserve && !/^[1-9][0-9]{0,17}$/.test(String(preserveFor))) {
+      return res.status(400).json({ error: 'Invalid takedown report id' });
+    }
     try {
       const existing = await getCreatorById(String(creatorId));
       if (!existing) return res.status(404).json({ error: 'Creator not found' });
       const removed = typeof existing.img === 'string' && existing.img.startsWith('/api/media/');
+      let preserved = false;
+      if (wantsPreserve && removed) {
+        preserved = (await preserveMediaForReport(String(preserveFor), [existing.img])).preserved.length > 0;
+      }
       const creator = await setCreatorAvatar(String(creatorId), AVATAR_PLACEHOLDER);
-      return res.status(200).json({ ok: true, creator, removed });
+      return res.status(200).json({ ok: true, creator, removed, preserved });
     } catch (err) {
+      if (err.code === NCII_REPORT_NOT_FOUND) return res.status(404).json({ error: 'Takedown report not found. Nothing was removed.' });
       console.error('[admin/avatar] remove failed:', err);
       return res.status(500).json({ error: 'Something went wrong. Please try again.' });
     }
@@ -60,7 +75,7 @@ export default async function handler(req, res) {
       await deleteBlobQuietly(pathname);
       return res.status(404).json({ error: 'Creator not found' });
     }
-    const attested = await resolvePerformerAttestation(req.body, { admin: true });
+    const attested = await resolvePerformerAttestation(req.body, { admin: true, creatorId: String(creatorId) });
     if (attested.error) {
       await deleteBlobQuietly(pathname);
       return res.status(attested.status).json({ error: attested.error });

@@ -28,6 +28,11 @@ export default function AdminPanel() {
   const [adminKey, setAdminKey] = useState('');
   const [unlocked, setUnlocked] = useState(false);
   const [creators, setCreators] = useState([]);
+  // creatorId -> the login account that owns it ({ userId, login, createdAt,
+  // tosVersion }) from /api/admin/creators. Kept apart from the creator
+  // records so a save response (which has no account) never erases it. A
+  // creator with no entry has no login at all.
+  const [accounts, setAccounts] = useState({});
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState({});
@@ -51,6 +56,10 @@ export default function AdminPanel() {
   const [nextUploadIsAi, setNextUploadIsAi] = useState(false);
   const [mediaSessionOk, setMediaSessionOk] = useState(true);
   const [nciiSummary, setNciiSummary] = useState(null);
+  // A takedown request the next gallery/avatar removal is QUARANTINED for
+  // (content reported as possibly showing a minor): 18 U.S.C. 2258A needs it
+  // preserved, not deleted. Blank = a normal removal that deletes the file.
+  const [preserveReportId, setPreserveReportId] = useState('');
 
   // Live off the loaded roster, so the counter and the cap agree with what
   // the server will decide on save.
@@ -65,6 +74,7 @@ export default function AdminPanel() {
         throw new Error(res.status === 401 || res.status === 403 ? 'Bad admin key' : errorFrom(res, data, 'Could not load creators'));
       }
       setCreators(data.creators);
+      setAccounts(data.accounts && typeof data.accounts === 'object' ? data.accounts : {});
       return true;
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -129,9 +139,8 @@ export default function AdminPanel() {
     setUnlocked(false);
     setAdminKey('');
     setCreators([]);
-    setSelectedId(null);
-    setDraft({});
-    setBaseline(null);
+    setAccounts({});
+    clearSelection();
     setStatus('');
   };
 
@@ -164,7 +173,30 @@ export default function AdminPanel() {
       return null;
     }
     setCreators(data.creators);
+    setAccounts(data.accounts && typeof data.accounts === 'object' ? data.accounts : {});
     return data.creators;
+  };
+
+  // The §2257 co-performer answers and the AI label belong to ONE upload for
+  // ONE creator: "asked per upload and reset after each one, never
+  // remembered". Every path that changes which creator is open calls this --
+  // an answer given for creator A (with A's co-performer records ticked) must
+  // never be carried into the next creator's upload.
+  const resetUploadAttestations = () => {
+    setOthersAppear(null);
+    setCoPerformerIds([]);
+    setAvatarOthersAppear(null);
+    setAvatarCoPerformerIds([]);
+    setNextUploadIsAi(false);
+  };
+
+  /** Closes the editor (the creator is gone or the panel is locking). */
+  const clearSelection = () => {
+    selectSeq.current += 1;
+    setSelectedId(null);
+    setDraft({});
+    setBaseline(null);
+    resetUploadAttestations();
   };
 
   // Selecting a creator re-reads them, rather than editing the roster
@@ -176,15 +208,13 @@ export default function AdminPanel() {
     setSelectedId(id);
     const snap = creators.find((c) => String(c.id) === String(id));
     if (snap) { setDraft(draftFrom(snap)); setBaseline(draftFrom(snap)); }
-    setOthersAppear(null);
-    setCoPerformerIds([]);
-    setAvatarOthersAppear(null);
-    setAvatarCoPerformerIds([]);
+    resetUploadAttestations();
+    setPreserveReportId('');
     try {
       const roster = await fetchRoster();
       if (!roster || seq !== selectSeq.current) return;
       const fresh = roster.find((c) => String(c.id) === String(id));
-      if (!fresh) { setSelectedId(null); setStatus('That creator no longer exists.'); return; }
+      if (!fresh) { clearSelection(); setStatus('That creator no longer exists.'); return; }
       setDraft(draftFrom(fresh));
       setBaseline(draftFrom(fresh));
     } catch {
@@ -215,7 +245,7 @@ export default function AdminPanel() {
       const roster = await fetchRoster();
       if (!roster) return;
       const current = roster.find((c) => String(c.id) === String(selectedId));
-      if (!current) { setSelectedId(null); setStatus('Error: that creator no longer exists. Nothing was saved.'); return; }
+      if (!current) { clearSelection(); setStatus('Error: that creator no longer exists. Nothing was saved.'); return; }
       const rebased = rebaseDraft(draft, baseline, current);
       setBaseline(rebased.baseline);
       setDraft(rebased.draft);
@@ -324,14 +354,31 @@ export default function AdminPanel() {
   // Takes a reported or unwanted profile photo down: resets it to the
   // placeholder and deletes the file (pages/api/admin/avatar.js remove:true).
   const removeAvatar = async () => {
-    if (!confirm("Remove this creator's profile photo? It is replaced with the neutral placeholder and the file is deleted from storage.")) return;
+    const preserveFor = preserveReportId.trim();
+    if (preserveFor && !/^[1-9][0-9]{0,17}$/.test(preserveFor)) {
+      setStatus('Error: the takedown request number must be a plain number like 12 (or leave it blank).');
+      return;
+    }
+    if (!confirm(preserveFor
+      ? `Remove this creator's profile photo and QUARANTINE it as evidence for takedown request #${preserveFor}? It is replaced with the placeholder, never served again, and kept (not deleted) for the NCMEC report.`
+      : "Remove this creator's profile photo? It is replaced with the neutral placeholder and the file is deleted from storage.")) return;
     setBusy(true);
     setStatus('Removing photo...');
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/avatar', { creatorId: String(selectedId), remove: true });
+      const { res, data } = await adminPost(adminKey, '/api/admin/avatar', {
+        creatorId: String(selectedId),
+        remove: true,
+        ...(preserveFor ? { preserveForNciiReportId: preserveFor } : {}),
+      });
       if (!res.ok || !data.creator) throw new Error(errorFrom(res, data, 'Could not remove the photo'));
       applyCreator(data.creator);
-      setStatus(data.removed ? 'Photo removed and the file deleted.' : 'Photo reset to the placeholder (there was no uploaded file to delete).');
+      setStatus(
+        data.preserved
+          ? `Photo removed and quarantined as evidence for takedown request #${preserveFor} (Evidence tab).`
+          : data.removed
+            ? 'Photo removed and the file deleted.'
+            : 'Photo reset to the placeholder (there was no uploaded file to delete).',
+      );
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -404,6 +451,14 @@ export default function AdminPanel() {
   // clicked or nothing at all (409), never whatever now sits at that index.
   const deleteGalleryItem = async (item, index) => {
     if (!item || typeof item.src !== 'string') return;
+    const preserveFor = preserveReportId.trim();
+    if (preserveFor && !/^[1-9][0-9]{0,17}$/.test(preserveFor)) {
+      setStatus('Error: the takedown request number must be a plain number like 12 (or leave it blank).');
+      return;
+    }
+    if (preserveFor && !confirm(
+      `Remove this item and QUARANTINE it as evidence for takedown request #${preserveFor}? It is never served again and is kept (not deleted) for the NCMEC report.`,
+    )) return;
     setBusy(true);
     setStatus('Removing...');
     try {
@@ -411,6 +466,7 @@ export default function AdminPanel() {
         creatorId: selectedId,
         src: item.src,
         index,
+        ...(preserveFor ? { preserveForNciiReportId: preserveFor } : {}),
       });
       if (res.status === 409) {
         await loadCreators();
@@ -419,7 +475,9 @@ export default function AdminPanel() {
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Delete failed'));
       applyCreator(data.creator);
-      setStatus('Removed (the file is deleted from storage too).');
+      setStatus(data.preserved
+        ? `Removed and quarantined as evidence for takedown request #${preserveFor} (Evidence tab).`
+        : 'Removed (the file is deleted from storage too).');
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -435,10 +493,17 @@ export default function AdminPanel() {
       if (!res.ok || !data.creator) throw new Error(errorFrom(res, data, 'Create failed'));
       setCreators((prev) => [...prev, data.creator]);
       selectSeq.current += 1;
+      resetUploadAttestations();
       setSelectedId(data.creator.id);
       setDraft(draftFrom(data.creator));
       setBaseline(draftFrom(data.creator));
-      setStatus('Model created as a hidden, pending draft. Fill in the details and a handle, add a §2257 record for them in the Records tab (ID attached or marked held offline), then set Status to Active.');
+      setStatus(
+        'Model created as a hidden, pending draft with NO LOGIN: nobody can sign in to this profile, so it cannot '
+        + 'reply to or receive paid messages, create listings, or request payouts, and if the real person later signs '
+        + 'up themselves that creates a second, separate profile. Use it only for a managed profile. To publish it: '
+        + 'fill in the details and a handle, add a §2257 record for them in the Records tab (ID attached or marked held '
+        + 'offline), then set Status to Active.',
+      );
     } catch (err) {
       setStatus(`Error: ${err.message}`);
     } finally {
@@ -473,7 +538,7 @@ export default function AdminPanel() {
         }
         if (!res.ok || !Array.isArray(data.creators)) throw new Error(errorFrom(res, data, 'Delete failed'));
         setCreators(data.creators);
-        if (String(selectedId) === String(id)) setSelectedId(null);
+        if (String(selectedId) === String(id)) clearSelection();
         const stranded = Array.isArray(data.stranded) ? data.stranded : [];
         setStatus(
           stranded.length
@@ -501,7 +566,7 @@ export default function AdminPanel() {
       const { res, data } = await adminPost(adminKey, '/api/admin/delete-all', { includeSeed: includeSeed === true });
       if (!res.ok || !Array.isArray(data.creators)) throw new Error(errorFrom(res, data, 'Delete failed'));
       setCreators(data.creators);
-      setSelectedId(null);
+      clearSelection();
       const skipped = Array.isArray(data.skipped) ? data.skipped : [];
       const stranded = Array.isArray(data.stranded) ? data.stranded : [];
       const parts = [includeSeed ? 'Models deleted, seed rows included.' : 'Real models deleted, seed/demo rows kept.'];
@@ -519,17 +584,58 @@ export default function AdminPanel() {
 
   // Reaps uploads that were never finalized and retries failed deletions
   // (lib/media.js sweepOrphanedMedia). Runs in small batches on every upload
-  // anyway; this runs it in full. Never touches a file a record references.
+  // and from the daily cron anyway; this runs it now. Never touches a file a
+  // record references or a file preserved as evidence.
+  //
+  // One call stops at a time budget and reports `remaining` (rows it claimed
+  // but handed back unprocessed) -- so it is called again while that is above
+  // 0, up to SWEEP_MAX_ROUNDS times, and the totals are added up. It used to
+  // report "Sweep done" after the first batch, so a ban that queued 600 files
+  // read as finished with 400 still in storage.
   const sweepMedia = async () => {
+    const SWEEP_MAX_ROUNDS = 10;
+    const SWEEP_LIMIT = 200;
     setBusy(true);
     setStatus('Sweeping orphaned uploads...');
+    const n = (v) => Number(v) || 0;
+    const total = { checked: 0, deleted: 0, kept: 0, failed: 0 };
+    let remaining = 0;
+    let rounds = 0;
+    let stoppedEarly = false;
+    let outstanding = null;
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/media-sweep', {});
-      if (!res.ok) throw new Error(errorFrom(res, data, 'Sweep failed'));
-      const n = (v) => Number(v) || 0;
-      setStatus(`Sweep done: ${n(data.checked)} checked, ${n(data.deleted)} deleted, ${n(data.kept)} still in use, ${n(data.failed)} failed (retried next sweep).`);
+      for (;;) {
+        rounds += 1;
+        const { res, data } = await adminPost(adminKey, '/api/admin/media-sweep', { limit: SWEEP_LIMIT });
+        if (!res.ok) throw new Error(errorFrom(res, data, 'Sweep failed'));
+        for (const k of Object.keys(total)) total[k] += n(data[k]);
+        remaining = n(data.remaining);
+        outstanding = data.outstanding && typeof data.outstanding === 'object' ? data.outstanding : outstanding;
+        const more = remaining > 0 || n(data.checked) >= SWEEP_LIMIT;
+        if (!more) break;
+        if (rounds >= SWEEP_MAX_ROUNDS) { stoppedEarly = true; break; }
+        setStatus(`Sweeping orphaned uploads... round ${rounds + 1} (${total.deleted} deleted so far)`);
+      }
+      const lines = [
+        `${stoppedEarly ? `Sweep stopped after ${rounds} rounds` : 'Sweep done'}: `
+          + `${total.checked} checked, ${total.deleted} deleted, ${total.kept} still in use, ${total.failed} failed (retried next sweep).`,
+      ];
+      if (stoppedEarly) {
+        lines.push(`More may remain${remaining > 0 ? ` (at least ${remaining} not reached)` : ''} -- press Sweep again.`);
+      }
+      if (outstanding) {
+        const waiting = n(outstanding.deletePending) + n(outstanding.deleteFailed);
+        lines.push(
+          waiting > 0
+            ? `Still waiting to be deleted: ${n(outstanding.deletePending)} queued, ${n(outstanding.deleteFailed)} failed`
+              + `${outstanding.oldestAt ? ` (oldest since ${new Date(outstanding.oldestAt).toLocaleString()})` : ''}.`
+              + ' A takedown file that keeps failing to delete stays here until it succeeds.'
+            : 'Nothing is waiting to be deleted.',
+        );
+      }
+      setStatus(lines.join('\n'));
     } catch (err) {
-      setStatus(`Error: ${err.message}`);
+      setStatus(total.checked ? `Error after ${total.deleted} deleted: ${err.message}` : `Error: ${err.message}`);
     } finally {
       setBusy(false);
     }
@@ -570,6 +676,7 @@ export default function AdminPanel() {
     { key: 'violations', label: 'VIOLATIONS' },
     { key: 'takedowns', label: 'TAKEDOWN REQUESTS', badge: nciiOpen },
     { key: 'records', label: '§2257 RECORDS' },
+    { key: 'evidence', label: 'EVIDENCE' },
     { key: 'waitlist', label: 'WAITLIST' },
     { key: 'payouts', label: 'PAYOUTS' },
     { key: 'accounts', label: 'ACCOUNTS' },
@@ -692,6 +799,8 @@ export default function AdminPanel() {
             />
           ) : page === 'records' ? (
             <PerformerRecordsPanel adminKey={adminKey} creators={creators} />
+          ) : page === 'evidence' ? (
+            <EvidencePanel adminKey={adminKey} />
           ) : page === 'waitlist' ? (
             <WaitlistPanel adminKey={adminKey} />
           ) : page === 'payouts' ? (
@@ -726,6 +835,9 @@ export default function AdminPanel() {
                       </p>
                       <p className="text-xs text-gray-400 truncate">{c.handle || '(no handle yet)'}</p>
                       {(c.seed || c.demo) && <p className="text-[10px] text-gray-500">Demo — not for sale</p>}
+                      {!c.seed && !c.demo && !accounts[String(c.id)] && (
+                        <p className="text-[10px] text-yellow-400/80" title="Created from this panel: nobody can sign in to this profile">No login (managed)</p>
+                      )}
                     </div>
                     {cStatus === 'pending' && (
                       <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-bold">PENDING</span>
@@ -784,6 +896,7 @@ export default function AdminPanel() {
                         ids={avatarCoPerformerIds}
                         onIds={setAvatarCoPerformerIds}
                         recordOptions={recordOptions}
+                        excludeCreatorId={selected.id}
                         loading={recordOptionsLoading}
                         onRefresh={loadRecordOptions}
                       />
@@ -806,10 +919,27 @@ export default function AdminPanel() {
                     </button>
                   </div>
 
+                  <CreatorAccountInfo creator={selected} account={accounts[String(selected.id)]} />
+
                   <div className="grid sm:grid-cols-2 gap-4">
                     <Field label="Name" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} />
                     <Field label="Handle (required to go live)" value={draft.handle} onChange={(v) => setDraft({ ...draft, handle: v })} />
                     <Field label="Price" value={draft.price} onChange={(v) => setDraft({ ...draft, price: v })} />
+                    <Field label="Location (optional)" value={draft.location} onChange={(v) => setDraft({ ...draft, location: v })} />
+                    <Field label="Age (optional, 18+)" value={draft.age} onChange={(v) => setDraft({ ...draft, age: v })} />
+                  </div>
+                  {/* Tags, location and age are public and are re-screened when a
+                      creator goes live; a refusal names the field, so the
+                      field has to be here for the admin to clear it. */}
+                  <div>
+                    <Field
+                      label="Tags (comma-separated, up to 8 -- shown as #chips and in search)"
+                      value={draft.tags}
+                      onChange={(v) => setDraft({ ...draft, tags: v })}
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      Letters, numbers, spaces and hyphens only. Clearing this removes every tag.
+                    </p>
                   </div>
                   {/* No Subscribers / Posts / Likes: the site has no such
                       counters. Posts shown publicly is the real gallery size;
@@ -865,7 +995,10 @@ export default function AdminPanel() {
                       This profile is pending review and hidden from the public platform. To publish it: give it a handle,
                       add a §2257 performer record linked to this creator in the Records tab (with the photo ID attached, or
                       marked as held offline), then set Status to Active.
-                      Every public field is screened again when it goes live.
+                      {accounts[String(selected.id)]?.login
+                        ? ` If you don't have their legal name, date of birth and photo ID yet, ask for them at their login address above (${accounts[String(selected.id)].login}).`
+                        : ' This profile has no login, so there is nobody to ask through the platform -- get the performer\'s ID directly.'}
+                      {' '}Every public field -- tags, location and socials included -- is screened again when it goes live.
                     </div>
                   )}
 
@@ -1088,9 +1221,27 @@ export default function AdminPanel() {
                       ids={coPerformerIds}
                       onIds={setCoPerformerIds}
                       recordOptions={recordOptions}
+                      excludeCreatorId={selected.id}
                       loading={recordOptionsLoading}
                       onRefresh={loadRecordOptions}
                     />
+                    <div className="mb-3 px-3 py-2 rounded-md bg-red-900/10 border border-red-500/30 text-xs text-gray-300">
+                      <label className="flex flex-wrap items-center gap-2">
+                        Removing content reported as possibly showing a MINOR? Quarantine it for takedown request #
+                        <input
+                          value={preserveReportId}
+                          onChange={(e) => setPreserveReportId(e.target.value.replace(/[^0-9]/g, '').slice(0, 18))}
+                          placeholder="e.g. 12"
+                          inputMode="numeric"
+                          className="w-24 px-2 py-1 rounded-md bg-black/40 border border-red-500/40 text-white text-xs"
+                        />
+                      </label>
+                      <p className="text-[10px] text-gray-500 mt-1">
+                        With a request number, the next removals here (gallery items and the profile photo) are kept as
+                        evidence instead of deleted -- never served, listed in the Evidence tab -- as 18 U.S.C. 2258A
+                        requires. Leave blank for an ordinary removal, which deletes the file.
+                      </p>
+                    </div>
                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                       {(selected.gallery || []).map((item, i) => (
                         <div key={`${item.src}-${i}`} className="relative aspect-square rounded-md overflow-hidden border border-brand-purple/20 group">
@@ -1125,6 +1276,39 @@ export default function AdminPanel() {
   );
 }
 
+/**
+ * Who owns this creator profile: the login account (id + the identifier they
+ * signed up with) from /api/admin/creators `accounts`. Admin-only -- the
+ * login never reaches a public page. A profile made with "+ Add Model" has
+ * no login at all, and the panel says so plainly, because it can't reply to
+ * messages, sell, or be paid.
+ */
+function CreatorAccountInfo({ creator, account }) {
+  if (creator?.seed || creator?.demo) {
+    return <p className="text-xs text-gray-500">Demo / seed profile -- no login, not for sale.</p>;
+  }
+  if (!account) {
+    return (
+      <div className="px-3 py-2 rounded-md bg-yellow-900/20 border border-yellow-500/40 text-xs text-yellow-200">
+        No login (managed): nobody can sign in to this profile. It can't reply to or receive paid messages, create
+        listings, or request payouts, and if the real person signs up later that creates a separate second profile.
+      </div>
+    );
+  }
+  return (
+    <div className="text-xs text-gray-400">
+      Login account: <span className="font-mono text-white break-all">{String(account.login || '(no identifier)')}</span>
+      {' '}· user <span className="font-mono">{String(account.userId)}</span>
+      {account.createdAt ? ` · signed up ${new Date(account.createdAt).toLocaleDateString()}` : ''}
+      {account.tosVersion ? ` · accepted Terms ${String(account.tosVersion)}` : ''}
+      <span className="block text-[10px] text-gray-500 mt-0.5">
+        Creators must sign up with a real email address -- use it to reach them (for example, to ask for the photo ID
+        their §2257 record needs). Admin-only; never shown publicly.
+      </span>
+    </div>
+  );
+}
+
 function Field({ label, value, onChange }) {
   return (
     <div>
@@ -1147,7 +1331,12 @@ function Field({ label, value, onChange }) {
  * admin is told to add a missing record in the Records tab, so a list cached
  * from the first answer would never show it.
  */
-function PerformerAttestation({ name, question, value, onChange, ids, onIds, recordOptions, loading, onRefresh }) {
+function PerformerAttestation({ name, question, value, onChange, ids, onIds, recordOptions: allOptions, loading, onRefresh, excludeCreatorId }) {
+  // The creator's OWN §2257 record is never a co-performer: the server
+  // refuses it (lib/performer-attestation.js, 409), so it isn't offered.
+  const recordOptions = Array.isArray(allOptions) && excludeCreatorId !== undefined && excludeCreatorId !== null
+    ? allOptions.filter((r) => String(r.creatorId ?? '') !== String(excludeCreatorId))
+    : allOptions;
   return (
     <div className="mt-3 mb-3 text-xs text-gray-300">
       <p className="mb-1">{question}</p>
@@ -1222,14 +1411,26 @@ function ReportsPanel({ adminKey }) {
   useEffect(() => { load(statusFilter); }, [statusFilter]);
 
   const resolve = async (r, action) => {
+    const minorReport = r.category === 'minor';
     if (action === 'remove_content') {
-      const what = r.targetType === 'listing' ? 'take this listing down (and delete its media)' : 'delete this comment';
-      if (!confirm(`Remove the reported content? This will ${what}.`)) return;
+      const what = r.targetType === 'listing'
+        ? (minorReport ? 'take this listing down and QUARANTINE its media as evidence (kept, never served)' : 'take this listing down (and delete its media)')
+        : r.targetType === 'message' ? 'delete this direct message' : 'delete this comment';
+      const keep = minorReport || r.category === 'non_consensual' ? ' A copy of the text is kept on the report as evidence.' : '';
+      if (!confirm(`Remove the reported content? This will ${what}.${keep}`)) return;
+    } else if (action === 'dismiss' && (minorReport || r.category === 'non_consensual')) {
+      if (!confirm(`Dismiss this report filed as ${minorReport ? 'showing a POSSIBLE MINOR' : 'NON-CONSENSUAL content'}? The content stays up.`)) return;
     }
     setBusyId(r.id);
     setError('');
     try {
       const { res, data } = await adminPost(adminKey, '/api/admin/reports-resolve', { id: r.id, action });
+      if (res.status === 409) {
+        // Someone else resolved it first -- re-read rather than keep a stale row.
+        setError(errorFrom(res, data, 'That report was already resolved.'));
+        await load(statusFilter);
+        return;
+      }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
       setReports((prev) => prev.filter((x) => String(x.id) !== String(r.id)));
     } catch (err) {
@@ -1239,7 +1440,10 @@ function ReportsPanel({ adminKey }) {
     }
   };
 
-  const targetLabel = (r) => (r.targetType === 'wall_post' ? 'Wall comment' : r.targetType === 'listing' ? 'Marketplace listing' : String(r.targetType ?? 'Unknown'));
+  const targetLabel = (r) => (r.targetType === 'wall_post' ? 'Wall comment'
+    : r.targetType === 'listing' ? 'Marketplace listing'
+      : r.targetType === 'message' ? 'Direct message'
+        : String(r.targetType ?? 'Unknown'));
 
   return (
     <div>
@@ -1268,11 +1472,28 @@ function ReportsPanel({ adminKey }) {
               <div className="flex items-center justify-between mb-1">
                 {/* String(): a stored targetId that isn't a plain value used to
                     crash the whole tab ("Objects are not valid as a React child"). */}
-                <p className="text-xs font-bold text-brand-gold">{targetLabel(r)} #{String(r.targetId ?? '')}</p>
+                <p className="text-xs font-bold text-brand-gold">
+                  {targetLabel(r)} #{String(r.targetId ?? '')}
+                  {REPORT_CATEGORY_LABELS[r.category] && (
+                    <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full font-bold ${r.category === 'minor' ? 'bg-red-600 text-white' : r.category === 'non_consensual' ? 'bg-red-500/30 text-red-200' : 'bg-white/10 text-gray-300'}`}>
+                      {REPORT_CATEGORY_LABELS[r.category]}
+                    </span>
+                  )}
+                </p>
                 <p className="text-[10px] text-gray-600">{r.createdAt ? new Date(r.createdAt).toLocaleString() : ''}</p>
               </div>
               <p className="text-sm text-gray-300 mb-3"><span className="text-gray-500">Reason:</span> {String(r.reason ?? '')}</p>
               <ReportTarget report={r} />
+              {r.removedContent && typeof r.removedContent === 'object' && (
+                <div className="mb-3 px-3 py-2 rounded-md bg-red-900/10 border border-red-500/30 text-xs text-gray-300">
+                  <p className="text-red-300 mb-1">
+                    Evidence copy of the removed {r.removedContent.type === 'message' ? 'message' : 'comment'}
+                    {r.removedContent.senderId || r.removedContent.authorId ? ` (by user #${String(r.removedContent.senderId || r.removedContent.authorId)})` : ''}
+                    {r.removedContent.createdAt ? `, ${new Date(r.removedContent.createdAt).toLocaleString()}` : ''}:
+                  </p>
+                  <p className="whitespace-pre-wrap break-words">"{String(r.removedContent.text ?? '')}"</p>
+                </div>
+              )}
               {r.status === 'open' ? (
                 <div className="flex gap-2">
                   <button
@@ -1301,6 +1522,12 @@ function ReportsPanel({ adminKey }) {
   );
 }
 
+// lib/reports-store.js REPORT_CATEGORIES. 'other' is shown without a badge.
+const REPORT_CATEGORY_LABELS = {
+  minor: 'POSSIBLE MINOR',
+  non_consensual: 'NON-CONSENSUAL',
+};
+
 /**
  * What a report is actually about -- the comment text and whose wall, or the
  * listing's title, status and seller -- from the `target` the reports API
@@ -1319,6 +1546,19 @@ function ReportTarget({ report }) {
         <p className="text-gray-500 mb-1">
           Comment by {String(t.authorName ?? 'someone')}{t.authorId ? ` (user #${t.authorId})` : ''} on {seller}'s wall
           {t.createdAt ? `, ${new Date(t.createdAt).toLocaleString()}` : ''}:
+        </p>
+        <p className="whitespace-pre-wrap break-words">"{String(t.text ?? '')}"</p>
+      </div>
+    );
+  }
+  if (report.targetType === 'message') {
+    return (
+      <div className="mb-3 px-3 py-2 rounded-md bg-black/30 border border-white/10 text-xs text-gray-300">
+        <p className="text-gray-500 mb-1">
+          Direct message from user #{String(t.senderId ?? '?')}
+          {t.senderLogin ? ` (${String(t.senderLogin)}${t.senderRole ? `, ${String(t.senderRole)}` : ''})` : ''}
+          {t.createdAt ? `, ${new Date(t.createdAt).toLocaleString()}` : ''}
+          {Array.isArray(t.participantIds) && t.participantIds.length ? ` · conversation between users ${t.participantIds.map(String).join(' and ')}` : ''}:
         </p>
         <p className="whitespace-pre-wrap break-words">"{String(t.text ?? '')}"</p>
       </div>
@@ -1580,6 +1820,26 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
     const banAfter = action === 'removed_ban';
     const apiAction = banAfter ? 'removed' : action;
     const before = creatorId ? (creators || []).find((c) => String(c.id) === String(creatorId)) : null;
+    let reason = null;
+    if (action === 'dismiss') {
+      // Dismissing takes a legally clocked request out of the open queue, and
+      // it sits one tap from the removal buttons: confirm it (more strongly
+      // for a possible minor) and require a reason, which is kept on the
+      // report. A mistaken dismissal can be reopened from the Dismissed list.
+      const report = reports.find((x) => String(x.id) === String(id));
+      const minorReport = report?.category === 'minor';
+      reason = window.prompt(
+        minorReport
+          ? `DISMISS report #${id}, which was filed as showing a POSSIBLE MINOR?\n\nOnly do this if you have checked the content and it does not show a minor (or does not exist here). The content stays up and nobody is banned.\n\nWhy is it invalid? (kept on the report)`
+          : `Dismiss takedown request #${id} as invalid? The content stays up.\n\nWhy is it invalid? (kept on the report)`,
+      );
+      if (reason === null) return;
+      if (!reason.trim()) {
+        setError('A reason is required to dismiss a takedown request. Nothing was changed.');
+        return;
+      }
+      if (minorReport && !confirm(`Last check: dismiss the POSSIBLE MINOR report #${id} with the reason "${reason.trim()}"?`)) return;
+    }
     if (banAfter) {
       const banNote = creatorId
         ? ' The selected creator will be PERMANENTLY BANNED and all their listings taken down, including files earlier buyers paid for.'
@@ -1599,7 +1859,12 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
     setError('');
     setNotice('');
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/ncii-reports-resolve', { id, action: apiAction, creatorId });
+      const { res, data } = await adminPost(adminKey, '/api/admin/ncii-reports-resolve', {
+        id,
+        action: apiAction,
+        creatorId: apiAction === 'removed' ? creatorId : null,
+        ...(reason !== null ? { reason: reason.trim() } : {}),
+      });
       if (res.status === 409) {
         // Someone else resolved it first -- re-read rather than keep a stale row.
         setNotice(errorFrom(res, data, 'That report was already resolved.'));
@@ -1607,7 +1872,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
         return;
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
-      const messages = [`Report #${id} resolved.`];
+      const messages = [action === 'dismiss' ? `Report #${id} dismissed (reason recorded). It can be reopened from the Dismissed list.` : `Report #${id} resolved.`];
       const creator = data.creator || null;
       if (creator) {
         if (onCreatorChanged) onCreatorChanged(creator);
@@ -1624,6 +1889,27 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       // the resolve's own transaction (lib/ncii-reports-store.js
       // resolveNciiReport); a failure rolls the whole resolve back and the
       // report stays open to retry. There is no after-commit takedown warning.
+      await load(statusFilter);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // A dismissed request back into the open queue (a mistaken dismissal). Its
+  // 48-hour clock still counts from the original filing.
+  const reopen = async (r) => {
+    const reason = window.prompt(`Reopen takedown request #${r.id}? It goes back into the open queue; its 48-hour clock still counts from when it was filed.\n\nWhy is it being reopened? (kept on the report)`);
+    if (reason === null) return;
+    if (!reason.trim()) { setError('A reason is required to reopen a request.'); return; }
+    setBusyId(r.id);
+    setError('');
+    setNotice('');
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/ncii-reports-resolve', { id: r.id, action: 'reopen', reason: reason.trim() });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not reopen that request'));
+      setNotice(`Report #${r.id} reopened and back in the open queue.`);
       await load(statusFilter);
     } catch (err) {
       setError(err.message);
@@ -1703,6 +1989,34 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
                 <p className="text-xs text-gray-500 mb-1">Contact: {String(r.reporterContact ?? '')}</p>
                 <p className="text-sm text-gray-300 mb-1 whitespace-pre-wrap break-words"><span className="text-gray-500">Content:</span> {String(r.contentLocation ?? '')}</p>
                 {r.description && <p className="text-sm text-gray-400 mb-3 whitespace-pre-wrap break-words">{String(r.description)}</p>}
+                {r.status === 'dismiss' && (
+                  <div className="mb-2 flex flex-wrap items-center gap-3">
+                    <p className="text-xs text-gray-400">
+                      Dismissed{r.resolvedAt ? ` ${new Date(r.resolvedAt).toLocaleString()}` : ''}
+                      {r.dismissReason ? ` — reason: ${String(r.dismissReason)}` : ' — no reason was recorded'}
+                    </p>
+                    <button
+                      onClick={() => reopen(r)}
+                      disabled={busyId === r.id}
+                      className="text-xs px-3 py-1.5 rounded-md border border-yellow-500/50 text-yellow-300 hover:bg-yellow-500/10 transition disabled:opacity-50"
+                    >
+                      Reopen
+                    </button>
+                  </div>
+                )}
+                {Array.isArray(r.history) && r.history.length > 0 && (
+                  <ul className="mb-2 text-[11px] text-gray-500 space-y-0.5">
+                    {r.history.map((h, i) => (
+                      <li key={i}>
+                        {h?.at ? new Date(h.at).toLocaleString() : ''} — {String(h?.action ?? '')} by {String(h?.by ?? 'admin')}
+                        {h?.reason ? `: ${String(h.reason)}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {Array.isArray(r.preservedMedia) && r.preservedMedia.length > 0 && (
+                  <p className="mb-2 text-[11px] text-red-300">{r.preservedMedia.length} file(s) quarantined as evidence for this report (Evidence tab).</p>
+                )}
                 {r.status === 'open' && (
                   <>
                     <div className="mb-2">
@@ -1730,7 +2044,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
                         disabled={busyId === r.id}
                         className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
                       >
-                        Dismiss (invalid)
+                        Dismiss (invalid)…
                       </button>
                       {minor ? (
                         <button
@@ -2101,9 +2415,25 @@ function PayoutsPanel({ adminKey }) {
     setManualMsg('');
     setManualBusy(true);
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/manual-credit', manual);
+      let { res, data } = await adminPost(adminKey, '/api/admin/manual-credit', manual);
+      // A suspended or banned account's credits are frozen: crediting it
+      // claims the transaction for good with nothing spendable. The server
+      // refuses unless that is an explicit decision (creditFrozen: true).
+      if (res.status === 409 && data.code === 'ACCOUNT_FROZEN') {
+        if (!confirm(
+          `${data.error || 'That account is suspended or banned, so its credits are frozen.'}\n\n`
+          + 'Credit it anyway? The transaction is claimed permanently and the credits stay frozen until the account is reinstated.',
+        )) {
+          setManualMsg('Nothing was credited.');
+          return;
+        }
+        ({ res, data } = await adminPost(adminKey, '/api/admin/manual-credit', { ...manual, creditFrozen: true }));
+      }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not credit that payment'));
-      setManualMsg(`Credited ${formatCredits(data.creditedCents)} to ${data.creditedUserEmail || `user ${manual.userId}`}.`);
+      setManualMsg(
+        `Credited ${formatCredits(data.creditedCents)} to ${data.creditedUserEmail || `user ${manual.userId}`}.`
+        + (data.frozen ? ' The account is suspended or banned, so these credits are frozen until it is reinstated.' : ''),
+      );
       setManual({ userId: '', txHash: '', fromAddress: '' });
     } catch (err) {
       setManualMsg(err.message);
@@ -2812,9 +3142,13 @@ function PerformerRecordsPanel({ adminKey, creators }) {
  * Account tools that don't belong to one creator record:
  *  - Find the account a leaked screenshot came off, from the viewer mark tiled
  *    over private media (POST /api/admin/viewer-mark; lib/viewer-mark.js).
- *  - Suspend, ban or clear a FAN account (GET/POST /api/admin/user-moderation).
- *    A creator's standing is set on their creator record instead; the API
- *    refuses creator accounts here.
+ *  - Suspend, ban or clear an account (GET/POST /api/admin/user-moderation):
+ *    any fan, and a creator account whose profile is not approved. An
+ *    APPROVED creator is suspended or banned from their creator record; the
+ *    API refuses suspend/ban for one (400) but 'clear' works on every account.
+ *  - Delete a fan account on request (POST /api/admin/delete-user; Privacy
+ *    Policy section 7).
+ *  - Undelivered standing messages to server/ (/api/admin/standing-pushes).
  */
 function AccountsPanel({ adminKey, creators, onOpenCreator }) {
   const [mark, setMark] = useState('');
@@ -2892,6 +3226,58 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
     }
   };
 
+  // Privacy Policy section 7: a fan's deletion request. The server refuses
+  // (409) while the account has a credit balance, earnings, a pending payout
+  // or an unshipped order -- each listed -- and deleting anyway is its own
+  // explicit confirmation (force). A creator account is deleted from its
+  // creator record instead (Delete Model), which also handles their listings.
+  const deleteAccount = async () => {
+    if (!account) return;
+    if (!confirm(
+      `Delete account ${account.userId} on request?\n\nRemoves the login, their wall comments, the messages they sent, `
+      + 'favorites and notifications, and signs them out everywhere. Credit, order and payout records and moderation '
+      + 'records are kept (without the login), and §2257 records are never deleted. This cannot be undone.',
+    )) return;
+    setModBusy(true);
+    setModError('');
+    setModNotice('');
+    try {
+      let force = false;
+      for (;;) {
+        const { res, data } = await adminPost(adminKey, '/api/admin/delete-user', { userId: account.userId, force });
+        if (res.status === 409 && data.code === 'account_has_obligations' && !force) {
+          const o = data.obligations || {};
+          const lines = [];
+          if (Number(o.balanceCents) > 0) lines.push(`• ${formatCredits(o.balanceCents)} credit balance (forfeited -- credits are never refunded)`);
+          if (Number(o.withdrawableCents) > 0) lines.push(`• of which ${formatCredits(o.withdrawableCents)} is withdrawable earnings`);
+          if (Number(o.pendingPayouts) > 0) lines.push(`• ${o.pendingPayouts} pending payout(s) totalling ${formatCredits(o.pendingPayoutCents)}`);
+          if (Number(o.unshippedOrders) > 0) lines.push(`• ${o.unshippedOrders} physical order(s) they bought that have not shipped yet`);
+          if (!confirm(`${data.error || 'This account still has money or orders attached.'}\n\n${lines.join('\n')}\n\nDelete anyway?`)) {
+            setModNotice('Nothing was deleted.');
+            return;
+          }
+          force = true;
+          continue;
+        }
+        if (res.status === 409 && data.code === 'account_is_creator') {
+          throw new Error(`${data.error || 'That is a creator account.'} Open it from the Creators tab and use Delete Model.`);
+        }
+        if (!res.ok) throw new Error(errorFrom(res, data, 'Could not delete that account'));
+        setAccount(null);
+        setUserId('');
+        setModNotice(
+          `Account ${data.deletedUserId} deleted.`
+          + (Number(data.forfeitedCents) > 0 ? ` ${formatCredits(data.forfeitedCents)} of credits were forfeited.` : ''),
+        );
+        return;
+      }
+    } catch (err) {
+      setModError(err.message);
+    } finally {
+      setModBusy(false);
+    }
+  };
+
   const creatorFor = (id) => (creators || []).find((c) => String(c.id) === String(id));
 
   return (
@@ -2941,11 +3327,13 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
       </div>
 
       <div className="premium-card p-5">
-        <p className="font-bold text-white mb-1">Fan account moderation</p>
+        <p className="font-bold text-white mb-1">Account moderation and deletion</p>
         <p className="text-xs text-gray-500 mb-3">
-          By user id (shown on wall-comment reports and violations). A suspension makes the account read-only until it
-          lapses; a ban signs it out everywhere and refuses every future sign-in. Creators are suspended or banned from
-          their creator record instead.
+          By user id (shown on reports, violations and each creator's login line). A suspension makes the account
+          read-only until it lapses; a ban signs it out everywhere and refuses every future sign-in. An approved
+          creator is suspended or banned from their creator record instead, but Clear works on any account (for
+          example, a pending applicant who was banned here and has since been approved). Delete honours a fan&apos;s
+          deletion request (Privacy Policy section 7).
         </p>
         <div className="flex flex-wrap gap-2 mb-3">
           <input
@@ -2972,10 +3360,13 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
               {account.moderationUntil && ` until ${new Date(account.moderationUntil).toLocaleString()}`}
               {account.moderationReason && ` — ${String(account.moderationReason)}`}
             </p>
-            {account.role === 'creator' ? (
-              <p className="text-xs text-yellow-400/90">This is a creator account: change its standing from its creator record (Status).</p>
-            ) : (
-              <>
+            {account.role === 'creator' && (
+              <p className="text-xs text-yellow-400/90">
+                Creator account. If their profile is approved, suspend or ban them from the creator record (Status);
+                Suspend and Ban here only work while the profile is not approved. Clear always works.
+              </p>
+            )}
+            <>
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     value={reason}
@@ -3005,12 +3396,225 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
                   <button onClick={() => moderate('clear')} disabled={modBusy} className="text-xs px-3 py-1.5 rounded-md border border-white/15 text-gray-300 hover:text-white transition disabled:opacity-50">
                     Clear
                   </button>
+                  {account.role !== 'creator' && (
+                    <button onClick={deleteAccount} disabled={modBusy} className="ml-auto text-xs px-3 py-1.5 rounded-md border border-red-500/60 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50">
+                      Delete account…
+                    </button>
+                  )}
                 </div>
-              </>
-            )}
+            </>
           </div>
         )}
       </div>
+
+      <StandingPushesPanel adminKey={adminKey} />
+    </div>
+  );
+}
+
+/**
+ * Bans, suspensions, reinstatements and deletions server/ has not confirmed
+ * yet (lib/standing-outbox.js via /api/admin/standing-pushes). Each row is
+ * an account that may still be renewing subscriptions or taking payouts on
+ * server/. Rows retry by themselves; "Retry now" delivers every one at once.
+ */
+function StandingPushesPanel({ adminKey }) {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const load = async () => {
+    setError('');
+    try {
+      const { res, data } = await adminGet(adminKey, '/api/admin/standing-pushes');
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not load the server/ sync queue'));
+      setState({ configured: data.configured !== false, pending: Array.isArray(data.pending) ? data.pending : [] });
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const retry = async () => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/standing-pushes', {});
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Retry failed'));
+      setState({ configured: data.configured !== false, pending: Array.isArray(data.pending) ? data.pending : [] });
+      setNotice(`Delivered ${Number(data.sent) || 0}, failed ${Number(data.failed) || 0}.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pending = state?.pending || [];
+  return (
+    <div className="premium-card p-5">
+      <div className="flex flex-wrap items-center gap-3 mb-1">
+        <p className="font-bold text-white">Account standing not yet synced to server/</p>
+        <div className="flex-1" />
+        <button onClick={load} disabled={busy} className="text-xs px-3 py-1.5 rounded-md border border-white/15 text-gray-300 hover:text-white transition disabled:opacity-50">
+          Refresh
+        </button>
+        <button onClick={retry} disabled={busy || !pending.length} className="premium-button text-xs px-4 py-1.5 disabled:opacity-50">
+          {busy ? 'Retrying…' : 'Retry now'}
+        </button>
+      </div>
+      <p className="text-xs text-gray-500 mb-3">
+        A ban, suspension, reinstatement or deletion made on this site that the payments backend has not confirmed yet
+        -- that account may still be renewing subscriptions or taking payouts there. Rows retry on their own (backing
+        off up to 6 hours, plus the daily maintenance run). A row stuck on http_404 usually means the backend needs a
+        redeploy.
+      </p>
+      {state && !state.configured && (
+        <p className="text-xs text-yellow-300 mb-2">The link to the backend is not configured, so nothing can be delivered.</p>
+      )}
+      {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
+      {notice && <p className="text-sm text-green-400 mb-2">{notice}</p>}
+      {!state ? (
+        <p className="text-xs text-gray-500">{error ? '' : 'Loading…'}</p>
+      ) : !pending.length ? (
+        <p className="text-xs text-gray-500">Nothing waiting -- every change has been delivered.</p>
+      ) : (
+        <div className="space-y-1 text-xs text-gray-300">
+          {pending.map((p) => (
+            <div key={String(p.uid)} className="flex flex-wrap gap-x-3 gap-y-0.5 px-3 py-2 rounded-md bg-black/30 border border-white/10">
+              <span className="font-mono text-white">user {String(p.uid)}</span>
+              <span className="uppercase font-bold">{String(p.status ?? '')}</span>
+              {p.role && <span className="text-gray-500">{String(p.role)}</span>}
+              {p.suspendedUntil && <span className="text-gray-500">until {new Date(p.suspendedUntil).toLocaleString()}</span>}
+              <span className="text-gray-500">{Number(p.attempts) || 0} attempt(s)</span>
+              {p.nextAttemptAt && <span className="text-gray-500">next {new Date(p.nextAttemptAt).toLocaleString()}</span>}
+              {p.lastError && <span className="text-red-300">last error: {String(p.lastError)}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Files QUARANTINED as evidence (lib/media-preservation.js) -- content
+ * removed over a report of a possible minor, kept (never served, never
+ * deleted) because 18 U.S.C. 2258A requires it to be preserved for a year
+ * after the CyberTipline report. Listing and download go through
+ * /api/admin/preserved-media with the admin key header only (never a URL a
+ * page could embed); every download is counted on the row. Nothing here is
+ * rendered inline.
+ */
+function EvidencePanel({ adminKey }) {
+  const [items, setItems] = useState(null);
+  const [filter, setFilter] = useState('');
+  const [busyPath, setBusyPath] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setError('');
+    const f = filter.trim();
+    const report = /^[1-9][0-9]{0,17}$/.test(f) ? `ncii:${f}` : /^(ncii|report):[1-9][0-9]{0,17}$/.test(f) ? f : '';
+    if (f && !report) { setError('Filter by a takedown request number (12), or ncii:12 / report:34.'); return; }
+    try {
+      const { res, data } = await adminGet(adminKey, `/api/admin/preserved-media${report ? `?report=${encodeURIComponent(report)}` : ''}`);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not load preserved evidence'));
+      setItems(Array.isArray(data.items) ? data.items : []);
+    } catch (err) {
+      setItems((prev) => prev ?? []);
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const download = async (item) => {
+    if (!confirm(
+      'Download this preserved file? It was removed over a report of a POSSIBLE MINOR. Download it only to make or '
+      + 'support a report to the NCMEC CyberTipline or to answer law enforcement -- never share it otherwise. Every '
+      + 'download is recorded.',
+    )) return;
+    setBusyPath(item.pathname);
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/preserved-media?pathname=${encodeURIComponent(item.pathname)}&download=1`, {
+        headers: { 'x-admin-key': adminKey },
+      });
+      if (!res.ok) throw new Error(errorFrom(res, await readJson(res), 'Could not download that file'));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = String(item.pathname).split('/').pop() || 'evidence';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyPath(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="premium-card p-5 text-sm text-gray-400">
+        <p className="text-white font-bold mb-1">Preserved evidence</p>
+        <p className="text-xs">
+          Files removed over a report of a possible minor are quarantined here: never deleted and never served to
+          anyone. Federal law (18 U.S.C. 2258A) requires reporting apparent child sexual abuse material to the NCMEC
+          CyberTipline (report.cybertip.org) and preserving it for one year after the report. The report itself is
+          filed outside this panel. Nothing here is deleted automatically after the retention date; that decision
+          belongs to the owner and counsel.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && load()}
+          placeholder="Takedown request # (or report:34)"
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm w-64"
+        />
+        <button onClick={load} className="premium-button text-sm">Show</button>
+      </div>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      {items === null ? (
+        <p className="text-sm text-gray-500">Loading…</p>
+      ) : !items.length ? (
+        <p className="text-sm text-gray-500">Nothing preserved{filter.trim() ? ' for that report' : ''}.</p>
+      ) : (
+        <div className="space-y-2">
+          {items.map((it) => (
+            <div key={String(it.pathname)} className="premium-card p-3 text-xs text-gray-300 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="font-mono text-white break-all">{String(it.pathname)}</span>
+              <span className="text-gray-500">{String(it.reportId ?? '')}</span>
+              {it.preservedAt && <span className="text-gray-500">preserved {new Date(it.preservedAt).toLocaleString()}</span>}
+              {it.retainUntil && <span className="text-gray-500">keep until {String(it.retainUntil).slice(0, 10)}</span>}
+              {it.missingAt && <span className="text-red-400 font-bold">FILE MISSING (since {new Date(it.missingAt).toLocaleString()})</span>}
+              {!it.missingAt && !it.movedAt && <span className="text-yellow-300">not yet moved to evidence storage</span>}
+              <span className="text-gray-500">{Number(it.exportCount) || 0} download(s)</span>
+              {it.reason && <span className="basis-full text-gray-500">{String(it.reason)}</span>}
+              <div className="flex-1" />
+              {!it.missingAt && (
+                <button
+                  onClick={() => download(it)}
+                  disabled={busyPath === it.pathname}
+                  className="text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50"
+                >
+                  {busyPath === it.pathname ? 'Downloading…' : 'Download'}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

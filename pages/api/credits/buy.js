@@ -68,7 +68,11 @@ export default async function handler(req, res) {
   // put real money where it can never be spent or withdrawn. Refused WITHOUT
   // claiming the hash: if USDG was already sent (the earlier steps refuse
   // first, so only a hand-sent transfer or a ban landing mid-purchase gets
-  // here), support can still credit or return it from the admin panel.
+  // here), the hash stays unused. Support can credit it later from the admin
+  // panel if the account is reinstated (/api/admin/manual-credit refuses a
+  // frozen account unless explicitly overridden). There is NO tool that
+  // sends USDG back: a refund is a manual on-chain transfer from the payout
+  // wallet, done by the owner outside this app.
   if (isFrozenStanding(await accountStanding(uid))) {
     return res.status(403).json({
       code: 'ACCOUNT_FROZEN',

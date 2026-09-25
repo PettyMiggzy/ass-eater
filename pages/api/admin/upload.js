@@ -39,7 +39,7 @@ export default async function handler(req, res) {
       await deleteBlobQuietly(pathname);
       return res.status(404).json({ error: 'Creator not found' });
     }
-    const attested = await resolvePerformerAttestation(req.body, { admin: true });
+    const attested = await resolvePerformerAttestation(req.body, { admin: true, creatorId: String(creatorId) });
     if (attested.error) {
       // Not deleted: the admin can correct the record ids and finalize the
       // same upload again (an abandoned one is swept as an orphan).

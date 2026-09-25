@@ -23,6 +23,22 @@ export async function getServerSideProps({ req }) {
   return { props: { creators, sessionUser, gatingLive: tokenGateLive() } };
 }
 
+// Every fixed marketing photograph on this page (the hero, the For Creators /
+// For Fans cards and the closing-CTA background) is an AI-generated persona,
+// and each carries this label. The live "Creators on OnlyOne" strip is not
+// covered by it: it shows whatever avatar each creator uploaded, and demo
+// creators there are marked with DemoBadge instead. Terms §7 makes
+// an AI label mandatory for creators, under a suspension ladder; the
+// platform's own marketing art can't be the one exception, and it must never
+// read as real people. Same chip style as the gallery's "AI" badge.
+function AiArtLabel({ className = '' }) {
+  return (
+    <span className={`pointer-events-none text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold ${className}`}>
+      AI-generated
+    </span>
+  );
+}
+
 const PROMISES = [
   { Icon: Icons.shield, title: 'Safe & Secure', sub: 'Your privacy matters' },
   { Icon: Icons.bolt, title: 'Fast Payouts', sub: 'Creators first' },
@@ -91,7 +107,7 @@ export default function Home({ creators, sessionUser, gatingLive }) {
         <section className="relative">
           <div className="max-w-6xl mx-auto grid lg:grid-cols-2 items-stretch">
             <div className="px-6 py-14 lg:py-24 flex flex-col justify-center">
-              <p className="text-[11px] tracking-[0.25em] text-gray-400 mb-5">REAL PEOPLE. REAL CONNECTIONS.</p>
+              <p className="text-[11px] tracking-[0.25em] text-gray-400 mb-5">CREATORS FIRST. FANS CLOSER.</p>
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[0.95] tracking-tight mb-6">
                 MORE THAN<br />CONTENT.<br />
                 <span className="text-brand-pink">IT&apos;S PERSONAL.</span>
@@ -138,6 +154,7 @@ export default function Home({ creators, sessionUser, gatingLive }) {
               <div className="absolute inset-0 bg-gradient-to-r from-brand-ink via-brand-ink/40 to-transparent lg:from-brand-ink lg:via-transparent" />
               <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-transparent to-transparent" />
               <Tagline className="absolute bottom-10 right-8 text-right">You&apos;re Not Alone Here</Tagline>
+              <AiArtLabel className="absolute top-3 right-3" />
             </div>
           </div>
         </section>
@@ -155,11 +172,12 @@ export default function Home({ creators, sessionUser, gatingLive }) {
             <div className="grid md:grid-cols-2 gap-5">
               {[
                 { title: 'For Creators', copy: 'Take control of your content, your income and your freedom.', points: CREATOR_POINTS, cta: 'Start Creating', href: '/signup?role=creator', img: '/images/demo_male_1.jpg', primary: true },
-                { title: 'For Fans', copy: 'Discover real creators, exclusive content and genuine connections.', points: FAN_POINTS, cta: 'Start Exploring', href: '/creators', img: '/images/demo_female_2.jpg', primary: false },
+                { title: 'For Fans', copy: 'Discover creators, exclusive content and genuine connections.', points: FAN_POINTS, cta: 'Start Exploring', href: '/creators', img: '/images/demo_female_2.jpg', primary: false },
               ].map((card) => (
                 <div key={card.title} className="relative rounded-2xl overflow-hidden border border-white/10 bg-brand-card">
                   <img src={card.img} alt="" className="absolute left-0 top-0 h-full w-40 object-cover opacity-70" />
                   <div className="absolute left-0 top-0 h-full w-40 bg-gradient-to-r from-transparent to-brand-card" />
+                  <AiArtLabel className="absolute left-2 bottom-2" />
                   <div className="relative pl-44 pr-6 py-7">
                     <h3 className="text-xl font-black mb-2">{card.title}</h3>
                     <p className="text-sm text-gray-400 mb-4">{card.copy}</p>
@@ -287,13 +305,14 @@ export default function Home({ creators, sessionUser, gatingLive }) {
           <img src="/images/demo_male_avatar.jpg" alt="" className="absolute inset-0 w-full h-full object-cover object-center" />
           <div className="absolute inset-0 bg-brand-ink/70" />
           <div className="absolute inset-0 bg-gradient-to-r from-brand-ink via-brand-ink/85 to-transparent" />
+          <AiArtLabel className="absolute right-3 bottom-3" />
           <div className="relative max-w-6xl mx-auto px-6 py-16 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
             <div>
               <p className="text-[11px] tracking-[0.25em] text-gray-400 mb-3">IT STARTS HERE</p>
               <p className="text-4xl sm:text-5xl font-black tracking-tight">
                 ONLY<span className="text-brand-pink">ONE</span>
               </p>
-              <p className="text-[11px] tracking-[0.25em] text-gray-400 mt-3">REAL PEOPLE. REAL CONNECTIONS.</p>
+              <p className="text-[11px] tracking-[0.25em] text-gray-400 mt-3">CREATORS FIRST. FANS CLOSER.</p>
             </div>
             <a
               href="/signup"

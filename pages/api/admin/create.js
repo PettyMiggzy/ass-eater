@@ -31,6 +31,12 @@ export default async function handler(req, res) {
   // visible.
   const invalid = validateTextFields(profile, ['name', 'handle', 'bio', 'price', 'img']);
   if (invalid) return res.status(400).json({ error: invalid });
+  // Trimmed like every other write path; a blank name falls back to the
+  // store's placeholder rather than being stored as whitespace.
+  if (typeof profile.name === 'string') {
+    profile.name = profile.name.trim();
+    if (!profile.name) delete profile.name;
+  }
 
   // No handle yet is the normal case: the panel posts an empty body. It used
   // to default to '@newmodel', which the unique index then refused for every

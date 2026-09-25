@@ -150,8 +150,13 @@ const SFW_PREFIXES = [...BRAND_ART_PATHS];
 // shape as the /images/ one already fixed here.
 //
 // Anything added here must return NO creator data and require no account.
-// These three qualify; almost nothing else will.
-const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content', '/api/waitlist'];
+// These qualify; almost nothing else will.
+// /api/cron/ is Vercel's scheduled maintenance (media-deletion retries, the
+// server/ standing outbox). Vercel runs crons from iad1 (Virginia, a blocked
+// state) with no age cookie, so gating it would silently stop every retry.
+// It serves no content and refuses anything without the CRON_SECRET bearer
+// (pages/api/cron/maintenance.js), which is what actually protects it.
+const SFW_API_PREFIXES = ['/api/age-verify/', '/api/report-content', '/api/waitlist', '/api/cron/'];
 
 // ---------------------------------------------------------------------------
 // PRE-LAUNCH PREVIEW GATE
@@ -209,7 +214,7 @@ const PREVIEW_PUBLIC_PATHS = new Set([
 // exempting the page and forgetting the API left a form that rendered and
 // then refused on submit. A page and the endpoint it posts to are exempted
 // together or not at all.
-const PREVIEW_PUBLIC_API_PREFIXES = ['/api/waitlist', '/api/report-content', '/api/age-verify/'];
+const PREVIEW_PUBLIC_API_PREFIXES = ['/api/waitlist', '/api/report-content', '/api/age-verify/', '/api/cron/'];
 
 function isPreviewPublic(path) {
   if (PREVIEW_PUBLIC_PATHS.has(path)) return true;

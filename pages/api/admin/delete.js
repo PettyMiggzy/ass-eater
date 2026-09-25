@@ -1,6 +1,6 @@
 import { deleteCreator, CREATOR_HAS_OBLIGATIONS } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { pushUserStanding, reportPushFailure } from '../../../lib/server-api';
+import { deliverFor, reportPushFailure } from '../../../lib/server-api';
 
 /**
  * POST /api/admin/delete
@@ -28,12 +28,11 @@ export default async function handler(req, res) {
 
   try {
     const { creators, stranded, removedUserIds } = await deleteCreator(String(creatorId), { force: force === true });
-    // The deleted login's server/ account is stopped too (after the commit;
-    // best effort, never fails the delete). With the site user gone, nothing
-    // would ever tell server/ otherwise.
-    for (const uid of removedUserIds) {
-      reportPushFailure(await pushUserStanding(uid, 'banned'), `delete creator ${creatorId}`);
-    }
+    // The deleted login's server/ account is stopped too: queued as banned
+    // in the delete's own commit (lib/standing-outbox.js), delivered here,
+    // and retried by the cron if this delivery fails -- never lost, even
+    // though the site user no longer exists.
+    reportPushFailure(await deliverFor(removedUserIds), `delete creator ${creatorId}`);
     return res.status(200).json({ ok: true, creators, stranded });
   } catch (err) {
     if (err.code === CREATOR_HAS_OBLIGATIONS) {

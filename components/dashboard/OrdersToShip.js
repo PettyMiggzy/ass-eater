@@ -76,6 +76,12 @@ export default function OrdersToShip() {
           {error && <p className="text-xs text-red-400">{error}</p>}
           {pending.length === 0 && <p className="text-sm text-gray-500">Nothing waiting to ship.</p>}
           {pending.map((o) => {
+            // getOrdersForCreator returns shippingAddress: null for a row whose
+            // address won't decrypt (rotated/wrong ORDERS_ENCRYPTION_KEY or a
+            // corrupt row) so one bad order can't blank the whole queue. That
+            // order must not look shippable: a blank address block with a live
+            // Mark Shipped button sends a paid order nowhere.
+            const unreadable = !o.shippingAddress || typeof o.shippingAddress !== 'object';
             const addr = o.shippingAddress || {};
             const form = shipForm[o.id] || { carrier: '', trackingNumber: '' };
             return (
@@ -84,33 +90,44 @@ export default function OrdersToShip() {
                 {o.signatureRequired && (
                   <p className="text-xs text-brand-gold mt-1">Select signature confirmation with your carrier for this one — you marked this listing as requiring it.</p>
                 )}
-                <p className="text-xs text-gray-400 mt-1">
-                  {addr.fullName}<br />
-                  {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}<br />
-                  {addr.city}, {addr.region} {addr.postalCode}<br />
-                  {addr.country}{addr.phone ? ` · ${addr.phone}` : ''}
-                </p>
-                <p className="text-[11px] text-gray-500 mt-1">
-                  This address was shared with you only so you can ship this order. Don&apos;t use or keep it for anything else.
-                </p>
+                {unreadable ? (
+                  <p className="text-xs text-red-400 mt-1">
+                    This order&apos;s shipping address can&apos;t be read. Don&apos;t ship it — contact{' '}
+                    <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> with the order number first.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {addr.fullName}<br />
+                      {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}<br />
+                      {[addr.city, addr.region].filter(Boolean).join(', ')} {addr.postalCode}<br />
+                      {addr.country}{addr.phone ? ` · ${addr.phone}` : ''}
+                    </p>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      This address was shared with you only so you can ship this order. Don&apos;t use or keep it for anything else.
+                    </p>
+                  </>
+                )}
                 <div className="flex flex-wrap gap-2 mt-3">
                   <input
                     value={form.carrier}
                     maxLength={100}
+                    disabled={unreadable}
                     onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, carrier: e.target.value } })}
                     placeholder="Carrier (e.g. USPS)"
-                    className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
+                    className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs disabled:opacity-50"
                   />
                   <input
                     value={form.trackingNumber}
                     maxLength={100}
+                    disabled={unreadable}
                     onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, trackingNumber: e.target.value } })}
                     placeholder="Tracking number"
-                    className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
+                    className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs disabled:opacity-50"
                   />
                   <button
                     onClick={() => markShipped(o.id)}
-                    disabled={busyId === o.id}
+                    disabled={busyId === o.id || unreadable}
                     className="premium-button text-xs px-4 disabled:opacity-50"
                   >
                     Mark Shipped

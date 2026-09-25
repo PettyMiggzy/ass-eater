@@ -1,6 +1,6 @@
 import { deleteAllCreators } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { pushUserStanding, reportPushFailure } from '../../../lib/server-api';
+import { deliverFor, reportPushFailure } from '../../../lib/server-api';
 
 /**
  * POST /api/admin/delete-all
@@ -26,13 +26,10 @@ export default async function handler(req, res) {
 
   try {
     const { creators, skipped, stranded, removedUserIds } = await deleteAllCreators(includeSeed, { force });
-    // Each deleted login's server/ account is stopped too (after the commit;
-    // best effort, a few at a time, never fails the delete).
-    for (let i = 0; i < removedUserIds.length; i += 8) {
-      const batch = removedUserIds.slice(i, i + 8);
-      const results = await Promise.all(batch.map((uid) => pushUserStanding(uid, 'banned')));
-      results.forEach((r, j) => reportPushFailure(r, `delete-all user ${batch[j]}`));
-    }
+    // Each deleted login's server/ account is stopped too: queued as banned
+    // in the delete's own commit, delivered here (retried by the cron if
+    // this fails -- lib/standing-outbox.js).
+    reportPushFailure(await deliverFor(removedUserIds), 'delete-all');
     return res.status(200).json({ ok: true, creators, skipped, stranded });
   } catch (err) {
     console.error('[admin/delete-all] unexpected error:', err);

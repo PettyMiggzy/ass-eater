@@ -1,6 +1,7 @@
 import { getSessionUser } from '../../../lib/session';
 import { userWriteRestriction } from '../../../lib/user-moderation';
-import { addReport, normalizeTargetId } from '../../../lib/reports-store';
+import { addReport, normalizeTargetId, validateReportInput } from '../../../lib/reports-store';
+import { sendReportAlert } from '../../../lib/alerts';
 import { query } from '../../../lib/db';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
@@ -20,7 +21,7 @@ export default async function handler(req, res) {
   const accountRestricted = userWriteRestriction(user);
   if (accountRestricted) return res.status(403).json({ error: accountRestricted });
 
-  const { listingId: rawListingId, reason } = req.body || {};
+  const { listingId: rawListingId, reason, category } = req.body || {};
   // A positive integer, normalised, and a listing that actually exists --
   // this used to store whatever it was sent, and an object stored as the
   // target crashed the admin REPORTS panel for everyone.
@@ -28,6 +29,11 @@ export default async function handler(req, res) {
   if (!listingId || typeof reason !== 'string' || !reason.trim()) {
     return res.status(400).json({ error: 'Missing listing id or reason' });
   }
+  // Reason length is refused, not cut; category is one of
+  // lib/reports-store.js REPORT_CATEGORIES ('minor' | 'non_consensual' |
+  // 'other', default 'other').
+  const input = validateReportInput({ reason, category });
+  if (input.error) return res.status(400).json(input);
 
   const { limited, retryAfterSeconds } = consumeAttempt(`marketplace-report:user:${uid}`, {
     limit: MAX_REPORTS,
@@ -45,8 +51,12 @@ export default async function handler(req, res) {
       targetType: 'listing',
       targetId: listingId,
       reporterId: uid,
-      reason: String(reason).slice(0, 500),
+      reason: input.reason,
+      category: input.category,
     });
+    // A possible-minor or non-consensual report alerts the operator (no PII,
+    // never blocks the filing) -- the same channel as a takedown request.
+    await sendReportAlert(report);
     return res.status(200).json({ ok: true, report });
   } catch (err) {
     console.error('[marketplace/report] unexpected error:', err);

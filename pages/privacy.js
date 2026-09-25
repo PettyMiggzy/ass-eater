@@ -224,6 +224,13 @@ export default function Privacy() {
                 any of them more than what&apos;s needed for that purpose.
               </p>
               <p className="mt-3">
+                Our pages load their typefaces from Google Fonts (fonts.googleapis.com and fonts.gstatic.com).
+                When a page loads, your browser requests those font files from Google directly, so Google
+                receives your IP address, browser details and the address of the page that asked for the font
+                — this happens on every page, including creator pages. We send Google nothing else, and it is
+                not used for advertising or analytics by us; Google handles it under its own privacy policy.
+              </p>
+              <p className="mt-3">
                 Other users see only what the Platform shows them: a creator&apos;s public profile, what
                 you post publicly, and messages you send them. The one case where another user receives
                 your personal details is a physical Marketplace order, where the selling creator receives
@@ -233,8 +240,14 @@ export default function Privacy() {
 
             <Section title="7. Data Retention & Deletion">
               <p>
-                You can request deletion of your account and associated off-chain data (profile info,
-                messages, uploaded content) at any time by emailing team@onlyone1.fun. Some limits on that:
+                You can request deletion of your account and associated off-chain data at any time by emailing
+                team@onlyone1.fun from the address (or with the username) on the account. For a fan account we
+                delete the login, your wall comments, the messages you sent, your favorites and your
+                notifications, and sign you out everywhere. A creator account is deleted together with its
+                profile and uploaded content, and its listings are taken down (a file a buyer already paid for
+                stays available to that buyer). Any credit balance left on a deleted account is forfeited
+                — credits are never refunded (Terms of Service) — so spend it, or tell us to go ahead anyway.
+                Some limits on that:
               </p>
               <ul className="list-disc pl-5 space-y-2 mt-3">
                 <li>On-chain transaction history cannot be deleted — see Section 4.</li>
@@ -244,8 +257,11 @@ export default function Privacy() {
                   it. They cannot be deleted on request during that period.
                 </li>
                 <li>
-                  Credit, sale, and payout records are kept as financial records and are not deleted on
-                  request while we are required to keep them.
+                  Credit, sale, order, and payout records are kept as financial records and are not deleted on
+                  request while we are required to keep them; once the account is deleted they are no longer
+                  linked to a login, email address or username. Reports and moderation records are kept the same
+                  way. If you have earnings waiting to be paid out, a pending payout, or a physical order that
+                  hasn&apos;t shipped yet, we&apos;ll settle that with you before deleting the account.
                 </li>
                 <li>
                   A physical order&apos;s shipping name and address stay with the order record so the creator

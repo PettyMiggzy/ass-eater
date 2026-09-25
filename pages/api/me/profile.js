@@ -48,6 +48,12 @@ export default async function handler(req, res) {
   // ordinary creator account. See lib/field-validation.js.
   const invalid = validateTextFields(safeFields, ['name', 'handle', 'bio', 'price', 'payoutMethod', 'walletAddress']);
   if (invalid) return res.status(400).json({ error: invalid });
+  // A creator's display name is shown on every card and as the author of
+  // their wall posts and DMs: trimmed, and never blank.
+  if ('name' in safeFields) {
+    safeFields.name = String(safeFields.name ?? '').trim();
+    if (!safeFields.name) return res.status(400).json({ error: 'Display name cannot be blank.' });
+  }
   if ('locked' in safeFields) safeFields.locked = !!safeFields.locked;
   // Payouts are USDG only (payoutMethod is forced to 'usdg'), and the wallet
   // must be a real EVM address: a typo'd one is refused now, when it is

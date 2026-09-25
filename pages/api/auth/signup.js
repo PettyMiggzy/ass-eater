@@ -48,7 +48,11 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: SIGNUPS_CLOSED_MESSAGE });
   }
 
-  const { password, role, displayName, bio } = req.body || {};
+  const { password, role, displayName: rawDisplayName, bio } = req.body || {};
+  // Trimmed on the way in: a whitespace-only name passed the "required"
+  // check and was stored as-is, so the creator showed with a blank name on
+  // every card and as the author of their wall posts and DMs.
+  const displayName = typeof rawDisplayName === 'string' ? rawDisplayName.trim() : rawDisplayName;
   let { handle } = req.body || {};
   // Field is still called "email" internally (nothing here ever sends real
   // email, it's purely a unique login identifier + display-name fallback --

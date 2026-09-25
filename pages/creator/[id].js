@@ -18,6 +18,7 @@ import SiteNav from '../../components/SiteNav';
 import DemoBadge from '../../components/public/DemoBadge';
 import PremiumBadge from '../../components/public/PremiumBadge';
 import ListingPreview from '../../components/public/ListingPreview';
+import ReportModal, { postReport } from '../../components/public/ReportModal';
 import MediaLightbox from '../../components/public/MediaLightbox';
 import TokenUnlockPanel from '../../components/public/TokenUnlockPanel';
 import { isDemoCreator, isDemoListing, DEMO_LABEL, marketplaceHrefFor } from '../../components/public/cards';
@@ -125,6 +126,64 @@ function formatWallDate(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// A locked item has no src (toPublicCreator stripped it), so it is drawn
+// from nothing but its type: the creator's public avatar, blurred, under a
+// padlock. It carries no mark -- there is nothing identifiable to leak.
+//
+// Module scope on purpose. Declared inside CreatorProfile it was a NEW
+// component type every render, so any state change on the page (opening the
+// lightbox, a toast, a favorite toggle, switching tabs) unmounted and
+// remounted every tile -- and each remount re-requested /api/media, which
+// answers no-store with a freshly presigned redirect, so nothing could be
+// reused: one serverless call (plus a holder check for a gated creator) and
+// a full re-download per tile, per state change.
+function GalleryTile({ item, badge, locked, creatorImg, mark, onOpen }) {
+  const isLocked = locked || !!item?.locked || !item?.src;
+  return (
+    <div className="relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/5">
+      {isLocked ? (
+        <>
+          {creatorImg ? (
+            <img src={creatorImg} alt="" className="w-full h-full object-cover blur-xl scale-110 opacity-60" draggable={false} />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-br from-brand-pink/20 to-black/40" />
+          )}
+          <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+            <span className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center text-white"><SolidIcons.lock className="h-4 w-4" /></span>
+          </div>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onOpen(item)}
+          aria-label={item.type === 'video' ? 'Play video' : 'View photo'}
+          className="block w-full h-full"
+        >
+          <ProtectedMedia
+            src={item.src}
+            type={item.type === 'video' ? 'video' : 'image'}
+            mark={mark}
+            className="w-full h-full object-cover"
+          />
+          {item.type === 'video' && (
+            <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="w-11 h-11 rounded-full bg-black/60 flex items-center justify-center text-white">
+                <svg viewBox="0 0 20 20" className="h-5 w-5 ml-0.5" fill="currentColor" aria-hidden="true"><path d="M6 4l10 6-10 6z" /></svg>
+              </span>
+            </span>
+          )}
+        </button>
+      )}
+      {item?.aiGenerated && (
+        <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold pointer-events-none">AI</span>
+      )}
+      {badge && (
+        <span className="absolute bottom-2 left-2 text-[11px] px-2 py-0.5 rounded bg-black/70 text-white font-semibold pointer-events-none">{badge}</span>
+      )}
+    </div>
+  );
 }
 
 export default function CreatorProfile({
@@ -275,55 +334,7 @@ export default function CreatorProfile({
     }
   };
 
-  // A locked item has no src (toPublicCreator stripped it), so it is drawn
-  // from nothing but its type: the creator's public avatar, blurred, under a
-  // padlock. It carries no mark -- there is nothing identifiable to leak.
-  const Tile = ({ item, badge }) => {
-    const isLocked = locked || !!item?.locked || !item?.src;
-    return (
-      <div className="relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/5">
-        {isLocked ? (
-          <>
-            {creator.img ? (
-              <img src={creator.img} alt="" className="w-full h-full object-cover blur-xl scale-110 opacity-60" draggable={false} />
-            ) : (
-              <div className="w-full h-full bg-gradient-to-br from-brand-pink/20 to-black/40" />
-            )}
-            <div className="absolute inset-0 flex items-center justify-center bg-black/25">
-              <span className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center text-white"><SolidIcons.lock className="h-4 w-4" /></span>
-            </div>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setViewing(item)}
-            aria-label={item.type === 'video' ? 'Play video' : 'View photo'}
-            className="block w-full h-full"
-          >
-            <ProtectedMedia
-              src={item.src}
-              type={item.type === 'video' ? 'video' : 'image'}
-              mark={overlayMark}
-              className="w-full h-full object-cover"
-            />
-            {item.type === 'video' && (
-              <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <span className="w-11 h-11 rounded-full bg-black/60 flex items-center justify-center text-white">
-                  <svg viewBox="0 0 20 20" className="h-5 w-5 ml-0.5" fill="currentColor" aria-hidden="true"><path d="M6 4l10 6-10 6z" /></svg>
-                </span>
-              </span>
-            )}
-          </button>
-        )}
-        {item?.aiGenerated && (
-          <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold pointer-events-none">AI</span>
-        )}
-        {badge && (
-          <span className="absolute bottom-2 left-2 text-[11px] px-2 py-0.5 rounded bg-black/70 text-white font-semibold pointer-events-none">{badge}</span>
-        )}
-      </div>
-    );
-  };
+  const tileProps = { locked, creatorImg: creator.img, mark: overlayMark, onOpen: setViewing };
 
   const markNotice = (
     <p className="mt-4 text-[11px] text-gray-500 text-center">
@@ -625,7 +636,7 @@ export default function CreatorProfile({
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         {latestPosts.map((item, i) => (
-                          <Tile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} />
+                          <GalleryTile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} {...tileProps} />
                         ))}
                       </div>
                     </div>
@@ -639,7 +650,7 @@ export default function CreatorProfile({
                       <h2 className="font-bold mb-3">{locked ? 'Locked Content Preview' : 'More Content'}</h2>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         {morePosts.map((item, i) => (
-                          <Tile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} />
+                          <GalleryTile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} {...tileProps} />
                         ))}
                       </div>
                     </div>
@@ -704,7 +715,7 @@ export default function CreatorProfile({
                       </div>
                     )}
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {gallery.map((item, i) => <Tile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} />)}
+                      {gallery.map((item, i) => <GalleryTile key={i} item={item} badge={item.type === 'video' ? 'Video' : null} {...tileProps} />)}
                     </div>
                     {/* The mark deters because the viewer knows it is there,
                         and the notice says exactly what kind of mark it is. */}
@@ -817,8 +828,57 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
   const [canSend, setCanSend] = useState(true);
   const [cannotSendReason, setCannotSendReason] = useState('');
   const [notice, setNotice] = useState('');
+  // Per-conversation block (POST /api/messages/block) and per-message report
+  // (POST /api/messages/report). Blocking needs an existing conversation --
+  // the endpoint 404s otherwise -- so the control only shows once there is one.
+  const [hasConversation, setHasConversation] = useState(false);
+  const [blockedByMe, setBlockedByMe] = useState(false);
+  const [blockedByThem, setBlockedByThem] = useState(false);
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [reportingMessage, setReportingMessage] = useState(null);
   // Reused across retries of the SAME text, replaced once a send lands.
   const attemptId = useRef(null);
+
+  const applyConversation = (conversation) => {
+    if (!conversation || typeof conversation !== 'object') return;
+    setHasConversation(!!conversation.id);
+    setBlockedByMe(!!conversation.blockedByMe);
+    setBlockedByThem(!!conversation.blockedByThem);
+  };
+
+  const toggleBlock = async () => {
+    if (blockBusy) return;
+    const next = !blockedByMe;
+    if (next && typeof window !== 'undefined' && !window.confirm(`Block ${otherName}? They won't be able to message you until you unblock them.`)) return;
+    setBlockBusy(true);
+    setError('');
+    try {
+      const res = await fetch('/api/messages/block', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: otherUserId, blocked: next }),
+      });
+      const data = await readJson(res);
+      if (!res.ok) throw new Error(data.error || 'Could not update the block.');
+      applyConversation(data.conversation);
+      setNotice(next ? `${otherName} is blocked.` : `${otherName} is unblocked.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBlockBusy(false);
+    }
+  };
+
+  const submitMessageReport = async ({ reason, category }) => {
+    await postReport('/api/messages/report', {
+      withUserId: otherUserId,
+      messageId: String(reportingMessage.id),
+      reason,
+      category,
+    });
+    setReportingMessage(null);
+    setNotice('Thanks — an admin will review that message. You can also block this person.');
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -829,6 +889,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
         if (cancelled) return;
         if (res.ok) {
           setMessages(Array.isArray(data.conversation?.messages) ? data.conversation.messages : []);
+          applyConversation(data.conversation);
           // Exactly the quoted price -- not max(page price, quote): the value
           // shown is the value sent as expectedPriceCents, and the server
           // refuses a paid send whose expected price is not the real one.
@@ -894,6 +955,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
         // creator is not taking messages -- the server's text says which.
         throw new Error(data.error || (res.status === 409 ? "This creator isn't accepting messages right now." : 'Failed to send'));
       }
+      applyConversation(data.conversation);
       // Merged by id, not replaced: the send answers with the latest page.
       if (Array.isArray(data.conversation?.messages)) {
         const page = data.conversation.messages;
@@ -917,8 +979,25 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
         <div className="flex items-center gap-3 p-4 border-b border-white/10">
           {otherImg && <img src={otherImg} alt={otherName} className="w-9 h-9 rounded-full object-cover object-top" />}
           <p className="font-bold text-white flex-1 truncate">{otherName}</p>
+          {hasConversation && (
+            <button
+              onClick={toggleBlock}
+              disabled={blockBusy}
+              className="text-[11px] px-2.5 py-1 rounded-full border border-white/10 text-gray-400 hover:text-white hover:border-white/30 transition disabled:opacity-50"
+            >
+              {blockedByMe ? 'Unblock' : 'Block'}
+            </button>
+          )}
           <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-white"><Icons.close className="h-5 w-5" /></button>
         </div>
+        {reportingMessage && (
+          <ReportModal
+            title="Report this message"
+            subject="this message"
+            onSubmit={submitMessageReport}
+            onClose={() => setReportingMessage(null)}
+          />
+        )}
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {loading ? (
@@ -926,22 +1005,43 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
           ) : messages.length === 0 ? (
             <p className="text-gray-500 text-sm text-center">Say hi to {otherName}</p>
           ) : (
-            messages.map((m) => (
-              <div
-                key={m.id}
-                className={`max-w-[80%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap break-words ${
-                  String(m.senderId) === String(otherUserId)
-                    ? 'bg-black/40 text-gray-200 mr-auto'
-                    : 'bg-brand-pink text-black ml-auto'
-                }`}
-              >
-                {m.text}
-              </div>
-            ))
+            messages.map((m) => {
+              const fromThem = String(m.senderId) === String(otherUserId);
+              return (
+                <div key={m.id} className={`flex items-end gap-1 ${fromThem ? 'justify-start' : 'justify-end'}`}>
+                  <div
+                    className={`max-w-[80%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap break-words ${
+                      fromThem ? 'bg-black/40 text-gray-200' : 'bg-brand-pink text-black'
+                    }`}
+                  >
+                    {m.text}
+                  </div>
+                  {/* Only the other side's messages can be reported (the
+                      endpoint refuses your own). */}
+                  {fromThem && m.id != null && (
+                    <button
+                      type="button"
+                      onClick={() => setReportingMessage(m)}
+                      title="Report this message"
+                      aria-label="Report this message"
+                      className="shrink-0 p-1 text-gray-600 hover:text-brand-pink transition"
+                    >
+                      <Icons.flag className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
 
-        {!canSend && (
+        {blockedByMe ? (
+          <p className="text-[11px] text-gray-400 px-4 pt-2">
+            You blocked {otherName}. Unblock them to message each other again.
+          </p>
+        ) : blockedByThem ? (
+          <p className="text-[11px] text-gray-400 px-4 pt-2">You can&apos;t message {otherName} right now.</p>
+        ) : !canSend && (
           <p className="text-[11px] text-gray-400 px-4 pt-2">
             {cannotSendReason || `You can't message ${otherName} right now.`}
           </p>
@@ -975,7 +1075,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
             placeholder="Type a message..."
             className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm"
           />
-          <button type="submit" disabled={sending || loading || !canSend || !text.trim()} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
+          <button type="submit" disabled={sending || loading || !canSend || blockedByMe || blockedByThem || !text.trim()} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
             {sending ? 'Sending…' : priceCents > 0 ? `Send · $${(priceCents / 100).toFixed(2)}` : 'Send'}
           </button>
         </form>
@@ -1003,28 +1103,12 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [reporting, setReporting] = useState(null);
-  const [reportReason, setReportReason] = useState('');
-  const [reportSending, setReportSending] = useState(false);
+  const [reportNotice, setReportNotice] = useState('');
 
-  const submitReport = async (e) => {
-    e.preventDefault();
-    if (!reportReason.trim()) return;
-    setReportSending(true);
-    try {
-      const res = await fetch('/api/wall/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postId: reporting.id, reason: reportReason }),
-      });
-      const data = await readJson(res);
-      if (!res.ok) throw new Error(data.error || 'Failed to report');
-      setReporting(null);
-      setReportReason('');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setReportSending(false);
-    }
+  const submitReport = async ({ reason, category }) => {
+    await postReport('/api/wall/report', { postId: reporting.id, reason, category });
+    setReporting(null);
+    setReportNotice('Thanks — an admin will review that comment.');
   };
 
   // Re-reads the NEWEST page and merges it in, so older pages the viewer
@@ -1102,28 +1186,14 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
   return (
     <div>
       {reporting && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-          <form onSubmit={submitReport} className="rounded-xl border border-white/10 bg-brand-card w-full max-w-sm p-6">
-            <p className="font-bold text-white mb-1">Report this comment</p>
-            <p className="text-xs text-gray-500 mb-4">Tell us what's wrong with it.</p>
-            <textarea
-              value={reportReason}
-              onChange={(e) => setReportReason(e.target.value)}
-              rows={3}
-              placeholder="Reason..."
-              className="w-full px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm mb-4"
-            />
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setReporting(null)} className="flex-1 text-sm px-4 py-2 rounded-md border border-white/10 text-gray-300 hover:bg-white/5 transition">
-                Cancel
-              </button>
-              <button type="submit" disabled={reportSending} className="flex-1 px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition text-sm disabled:opacity-50">
-                Submit
-              </button>
-            </div>
-          </form>
-        </div>
+        <ReportModal
+          title="Report this comment"
+          subject="this comment"
+          onSubmit={submitReport}
+          onClose={() => setReporting(null)}
+        />
       )}
+      {reportNotice && <p className="text-xs text-gray-400 mb-3">{reportNotice}</p>}
 
       <form onSubmit={submit} className="mb-6">
         <textarea

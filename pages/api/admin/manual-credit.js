@@ -2,6 +2,7 @@ import { requireAdminKey } from '../../../lib/admin-auth';
 import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM } from '../../../lib/deposit';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import { findUserById } from '../../../lib/users-store';
+import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
 
 /**
  * Support fallback for a fan whose payment landed on-chain but the browser
@@ -30,30 +31,55 @@ export default async function handler(req, res) {
     return res.status(501).json({ error: 'Credits payments are not configured.' });
   }
 
-  const { userId, txHash, fromAddress } = req.body || {};
-  if (!userId || !txHash || !fromAddress) {
+  const { userId, txHash, fromAddress, creditFrozen } = req.body || {};
+  if ((typeof userId !== 'string' && typeof userId !== 'number') || !String(userId)
+    || typeof txHash !== 'string' || !txHash || typeof fromAddress !== 'string' || !fromAddress) {
     return res.status(400).json({ error: 'userId, txHash, and fromAddress are all required' });
   }
   if (!/^0x[0-9a-fA-F]{40}$/.test(String(fromAddress))) {
     return res.status(400).json({ error: 'fromAddress is not a valid wallet address' });
   }
 
-  // credit_balances/credit_ledger have no foreign key to users -- a typo'd
-  // userId would otherwise silently succeed (crediting an orphan row nobody
-  // can ever see, or worse, a real DIFFERENT account) and there is no
-  // reversal tool: used_payment_tx permanently claims the real hash the
-  // instant this succeeds, so even a caught mistake can't be resubmitted.
-  // Resolving the account FIRST, before anything is credited, and echoing
-  // back who it actually belongs to, is what makes this a real check
-  // rather than a typo waiting to happen.
-  const user = await findUserById(userId);
-  if (!user) {
-    return res.status(404).json({ error: `No account with id "${userId}" exists. Double-check it before crediting real money -- this cannot be undone once submitted.` });
-  }
-
+  // Everything that touches the database runs inside the try, so a lookup
+  // failure is the logged, generic 500 below rather than an unhandled rejection.
   try {
-    const result = await creditDepositFromChain({ userId, txHash, expectedFrom: fromAddress, config });
-    return res.status(200).json({ ok: true, ...result, creditedUserEmail: user.email });
+    // credit_balances/credit_ledger have no foreign key to users -- a typo'd
+    // userId would otherwise silently succeed (crediting an orphan row nobody
+    // can ever see, or worse, a real DIFFERENT account) and there is no
+    // reversal tool: used_payment_tx permanently claims the real hash the
+    // instant this succeeds, so even a caught mistake can't be resubmitted.
+    // Resolving the account FIRST, before anything is credited, and echoing
+    // back who it actually belongs to, is what makes this a real check
+    // rather than a typo waiting to happen.
+    const user = await findUserById(String(userId));
+    if (!user) {
+      return res.status(404).json({ error: `No account with id "${userId}" exists. Double-check it before crediting real money -- this cannot be undone once submitted.` });
+    }
+
+    // A suspended or banned account's credits are frozen: they can't be spent
+    // or cashed out. Crediting one claims the hash for good and parks real
+    // money where nobody can use it -- the exact case /api/credits/buy refuses
+    // and sends to support. So it is refused here too, with the standing
+    // spelled out, unless the admin re-sends with `creditFrozen: true` having
+    // decided to anyway. There is no tool that returns USDG: once claimed, a
+    // refund is a manual on-chain transfer by the owner.
+    const standing = await accountStanding(String(userId));
+    if (isFrozenStanding(standing) && creditFrozen !== true) {
+      const rawUntil = standing.effectiveStatus === 'suspended'
+        ? (standing.creator?.suspendedUntil || standing.user?.moderationUntil || null)
+        : null;
+      // A malformed stored date must not throw (RangeError) out of the 409.
+      const until = rawUntil && Number.isFinite(Date.parse(rawUntil)) ? new Date(rawUntil).toISOString() : null;
+      return res.status(409).json({
+        code: 'ACCOUNT_FROZEN',
+        status: standing.effectiveStatus,
+        until,
+        error: `That account is ${standing.effectiveStatus}${until ? ` until ${until.slice(0, 10)}` : ''}, so its credits are frozen. Crediting it claims this transaction for good and the credits can't be spent or withdrawn. Re-send with creditFrozen: true only if you have decided to anyway.`,
+      });
+    }
+
+    const result = await creditDepositFromChain({ userId: String(userId), txHash, expectedFrom: fromAddress, config });
+    return res.status(200).json({ ok: true, ...result, creditedUserEmail: user.email, frozen: isFrozenStanding(standing) });
   } catch (err) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });

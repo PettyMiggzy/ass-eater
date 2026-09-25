@@ -55,6 +55,12 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
   // the page says so up front instead of offering a Pay button that can only
   // fail -- or, worse, fail AFTER the wallet has been asked to sign.
   const [frozen, setFrozen] = useState(false);
+  // This is the one page where a fan pays real money, and credit purchases
+  // are final (Terms §5). The terms have to be in front of them at the moment
+  // of payment -- not only on /terms and /get-crypto, which a buyer arriving
+  // from the cart never passes through -- so Pay stays disabled until they
+  // tick that they've read it.
+  const [finalityAck, setFinalityAck] = useState(false);
 
   const loadBalance = () => {
     fetch('/api/credits/balance')
@@ -140,6 +146,10 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
   const buy = async () => {
     setError(null);
     if (frozen) return;
+    if (!finalityAck) {
+      setError('Confirm you understand credit purchases are final first.');
+      return;
+    }
     if (belowMinimum) {
       setError(`The minimum is $${(MIN_DEPOSIT_CENTS / 100).toFixed(2)}.`);
       return;
@@ -212,7 +222,8 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
         <div className="max-w-lg mx-auto px-6 py-10">
           <h1 className="text-3xl font-black mb-2">Buy Credits</h1>
           <p className="text-sm text-gray-400 mb-6">
-            1 credit = $1. Buy once with a crypto wallet, then spend anywhere on OnlyOne with no wallet needed.
+            1 credit = $1. Buy once with a crypto wallet, then spend credits on Marketplace items and messages to
+            creators with no wallet needed. Tips and subscriptions aren&apos;t available yet.
           </p>
 
           <div className="rounded-xl bg-white/5 border border-white/5 p-4 mb-6 flex items-center justify-between">
@@ -238,7 +249,10 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
           {result ? (
             <div className="text-center py-10">
               <p className="text-lg font-bold mb-2">Credited {formatCredits(result.creditedCents)}</p>
-              <p className="text-xs text-gray-500 mb-6">(${(result.feeCents / 100).toFixed(2)} kept as the {FEES.DEPOSIT_BPS / 100}% deposit fee)</p>
+              <p className="text-xs text-gray-500 mb-2">(${(result.feeCents / 100).toFixed(2)} kept as the {FEES.DEPOSIT_BPS / 100}% deposit fee)</p>
+              <p className="text-xs text-gray-500 mb-6">
+                Credits are final: they don&apos;t expire, and they can&apos;t be refunded or cashed out.
+              </p>
               <a href="/marketplace" className="inline-block px-6 py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition">
                 Start spending
               </a>
@@ -337,9 +351,30 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                 <p className="text-xs text-red-400 text-center mb-3">No wallet extension detected — install MetaMask or a compatible wallet.</p>
               )}
 
+              <div className="mb-4 px-4 py-3 rounded-xl border border-white/10 bg-white/5 text-xs text-gray-300 leading-relaxed">
+                <p className="mb-2">
+                  <span className="font-bold text-white">Credits are final.</span> They&apos;re non-refundable, can&apos;t be
+                  cashed back out or transferred to anyone, and never expire. Right now they can be spent on Marketplace
+                  items and messages to creators only. See{' '}
+                  <a href="/terms#payments" target="_blank" rel="noreferrer" className="text-brand-pink underline">
+                    Terms §5
+                  </a>
+                  .
+                </p>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={finalityAck}
+                    onChange={(e) => setFinalityAck(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  I understand credit purchases are final and non-refundable, and that credits can&apos;t be cashed out.
+                </label>
+              </div>
+
               <button
                 onClick={buy}
-                disabled={buying || frozen || !paymentsLive || belowMinimum || (simResult?.available && simResult.safe === false)}
+                disabled={buying || frozen || !paymentsLive || belowMinimum || !finalityAck || (simResult?.available && simResult.safe === false)}
                 className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <Icons.wallet className="h-4 w-4" />

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { formatCredits } from '../../lib/brand';
 import { getJson, postJson } from './media-upload';
 import { responseErrorMessage } from './helpers';
+import ReportModal, { postReport } from '../public/ReportModal';
 
 // Mirrors MAX_MESSAGE_LENGTH in lib/messages-store.js (not imported: that
 // module pulls in the Postgres driver, which must never reach a client
@@ -71,6 +72,11 @@ export default function Inbox({ currentUserId, isCreator }) {
   const [sendNote, setSendNote] = useState('');
   const pendingIdRef = useRef(null);
   const threadRequest = useRef(0);
+  // Per-conversation block and per-message report (lib/messages-store.js
+  // setConversationBlocked; /api/messages/report). A creator drowning in an
+  // abusive fan's messages, or a fan being harassed, needs both.
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [reportingMessage, setReportingMessage] = useState(null);
   // The thread on screen right now. The poll's interval closure and an
   // in-flight send() both outlive the render they were created in, so they
   // read this rather than their own stale copy of `open`.
@@ -131,6 +137,8 @@ export default function Inbox({ currentUserId, isCreator }) {
           dmPriceCents: Number.isInteger(data?.dmPriceCents) ? data.dmPriceCents : prev.dmPriceCents,
           canSend: data?.canSend !== false,
           cannotSendReason: typeof data?.cannotSendReason === 'string' ? data.cannotSendReason : null,
+          blockedByMe: !!data?.conversation?.blockedByMe,
+          blockedByThem: !!data?.conversation?.blockedByThem,
         };
       });
       // The GET just marked this thread read server-side.
@@ -224,6 +232,8 @@ export default function Inbox({ currentUserId, isCreator }) {
         dmPriceCents: Number.isInteger(data?.dmPriceCents) ? data.dmPriceCents : 0,
         canSend: data?.canSend !== false,
         cannotSendReason: typeof data?.cannotSendReason === 'string' ? data.cannotSendReason : null,
+        blockedByMe: !!data?.conversation?.blockedByMe,
+        blockedByThem: !!data?.conversation?.blockedByThem,
       }));
       if (!before) {
         // Opening the thread marked it read server-side.
@@ -310,6 +320,39 @@ export default function Inbox({ currentUserId, isCreator }) {
     }
   };
 
+  const toggleBlock = async () => {
+    const current = openRef.current;
+    if (!current?.other?.userId || blockBusy) return;
+    const target = current.conversationId;
+    const next = !current.blockedByMe;
+    const name = current.other.name || 'this person';
+    if (next && typeof window !== 'undefined' && !window.confirm(`Block ${name}? They won't be able to message you until you unblock them.`)) return;
+    setBlockBusy(true);
+    setSendError('');
+    try {
+      const { res, data } = await postJson('/api/messages/block', { userId: current.other.userId, blocked: next });
+      if (!res.ok) {
+        if (openRef.current?.conversationId === target) setSendError(responseErrorMessage(res.status, data, 'Could not update the block.'));
+        return;
+      }
+      setOpen((prev) => (prev && prev.conversationId === target
+        ? { ...prev, blockedByMe: !!data?.conversation?.blockedByMe, blockedByThem: !!data?.conversation?.blockedByThem }
+        : prev));
+      if (openRef.current?.conversationId === target) setSendNote(next ? `${name} is blocked.` : `${name} is unblocked.`);
+    } catch {
+      if (openRef.current?.conversationId === target) setSendError('Could not reach the server. Try again.');
+    } finally {
+      setBlockBusy(false);
+    }
+  };
+
+  const submitMessageReport = async ({ reason, category }) => {
+    const { other, message } = reportingMessage;
+    await postReport('/api/messages/report', { withUserId: other.userId, messageId: String(message.id), reason, category });
+    setReportingMessage(null);
+    setSendNote('Thanks — an admin will review that message. You can also block this person.');
+  };
+
   if (loading) return null;
   // A fan with no conversations has nothing to reply to here -- they start one
   // from a creator's profile. A creator always sees the panel, so they know
@@ -363,6 +406,25 @@ export default function Inbox({ currentUserId, isCreator }) {
               <p className="text-gray-500 text-sm">{threadLoading ? 'Loading…' : 'Select a conversation.'}</p>
             ) : (
               <div className="flex flex-col h-80">
+                {reportingMessage && (
+                  <ReportModal
+                    title="Report this message"
+                    subject="this message"
+                    onSubmit={submitMessageReport}
+                    onClose={() => setReportingMessage(null)}
+                  />
+                )}
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-sm font-bold text-white truncate">{open.other?.name || 'Conversation'}</p>
+                  <button
+                    type="button"
+                    onClick={toggleBlock}
+                    disabled={blockBusy}
+                    className="shrink-0 text-[11px] px-2.5 py-1 rounded-full border border-brand-purple/30 text-gray-400 hover:text-white transition disabled:opacity-50"
+                  >
+                    {open.blockedByMe ? 'Unblock' : 'Block'}
+                  </button>
+                </div>
                 <div className="flex-1 overflow-y-auto space-y-2 mb-3 pr-1">
                   {open.hasMore && (
                     <button
@@ -373,24 +435,39 @@ export default function Inbox({ currentUserId, isCreator }) {
                       {threadLoading ? 'Loading…' : 'Load earlier messages'}
                     </button>
                   )}
-                  {open.messages.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`max-w-[80%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap break-words ${
-                        String(m.senderId) === String(currentUserId)
-                          ? 'bg-brand-gold text-black ml-auto'
-                          : 'bg-black/40 text-gray-200 mr-auto'
-                      }`}
-                    >
-                      {m.text}
-                    </div>
-                  ))}
+                  {open.messages.map((m) => {
+                    const mine = String(m.senderId) === String(currentUserId);
+                    return (
+                      <div key={m.id} className={`flex items-end gap-1 ${mine ? 'justify-end' : 'justify-start'}`}>
+                        <div
+                          className={`max-w-[80%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap break-words ${
+                            mine ? 'bg-brand-gold text-black' : 'bg-black/40 text-gray-200'
+                          }`}
+                        >
+                          {m.text}
+                        </div>
+                        {!mine && m.id != null && (
+                          <button
+                            type="button"
+                            onClick={() => setReportingMessage({ other: open.other, message: m })}
+                            title="Report this message"
+                            aria-label="Report this message"
+                            className="shrink-0 text-[10px] px-1 text-gray-600 hover:text-brand-pink transition"
+                          >
+                            Report
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                {open.canSend === false && (
+                {open.blockedByMe ? (
+                  <p className="text-xs text-gray-400 mb-2">You blocked {open.other?.name || 'this person'}. Unblock them to message each other again.</p>
+                ) : open.canSend === false ? (
                   <p className="text-xs text-gray-400 mb-2">
                     {open.cannotSendReason || "You can't send messages in this conversation right now."}
                   </p>
-                )}
+                ) : null}
                 {open.dmPriceCents > 0 && (
                   <p className="text-xs text-gray-400 mb-2">
                     Each message to {open.other?.name || 'this creator'} costs {formatCredits(open.dmPriceCents)}, paid from your credits.
@@ -417,7 +494,7 @@ export default function Inbox({ currentUserId, isCreator }) {
                     placeholder="Reply..."
                     className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm resize-none"
                   />
-                  <button type="submit" disabled={sending || !text.trim() || open.canSend === false} className="premium-button py-2 px-4 text-sm disabled:opacity-50">
+                  <button type="submit" disabled={sending || !text.trim() || open.canSend === false || open.blockedByMe || open.blockedByThem} className="premium-button py-2 px-4 text-sm disabled:opacity-50">
                     {sending ? 'Sending…' : open.dmPriceCents > 0 ? `Send · $${(open.dmPriceCents / 100).toFixed(2)}` : 'Send'}
                   </button>
                 </form>
