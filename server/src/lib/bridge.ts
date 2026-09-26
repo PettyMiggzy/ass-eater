@@ -321,8 +321,10 @@ export function siteMayLift(
  *
  * An unstamped message (older site code) is treated asymmetrically, because
  * lifting a restriction is the dangerous direction: a restriction always
- * applies (fail safe), a lift ('active') only while no stamped message has
- * ever been applied in that dimension.
+ * applies (fail safe), a lift ('active', or a creator 'pending') only while
+ * no stamped message has ever been applied in that dimension -- except that
+ * a creator 'pending' on an ACTIVE account (nothing to lift, only an
+ * approval to withdraw) still applies.
  */
 export async function claimStanding(
   user: { id: string },
@@ -331,8 +333,20 @@ export async function claimStanding(
   dim: StandingDim = 'creator',
 ): Promise<boolean> {
   if (at === undefined) {
-    if (status !== 'active') return true;
-    const where = dim === 'creator' ? { id: user.id, siteStatusAt: null } : { id: user.id, siteAccountStatusAt: null };
+    // Every value that LIFTS in this dimension counts as a lift: 'active',
+    // and for the creator dimension 'pending' too (syncSiteStanding and
+    // resolveBridgedUser lift a site ban or suspension on it). Treating an
+    // unstamped 'pending' as a restriction let a late message from older
+    // site code override a newer stamped ban -- and then lift it.
+    const lifts = status === 'active' || (dim === 'creator' && status === 'pending');
+    if (!lifts) return true;
+    const unstamped = dim === 'creator' ? { siteStatusAt: null } : { siteAccountStatusAt: null };
+    // 'pending' is also a demotion of an approved creator (fail safe), so it
+    // still applies while the account is ACTIVE -- there is nothing for it to
+    // lift then; the lift in syncSiteStanding reads the row it was handed.
+    const where = status === 'pending'
+      ? { id: user.id, OR: [unstamped, { status: 'ACTIVE' as const }] }
+      : { id: user.id, ...unstamped };
     return (await prisma.user.count({ where })) > 0;
   }
   const d = new Date(at);

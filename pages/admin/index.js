@@ -1075,17 +1075,18 @@ export default function AdminPanel() {
                   <CreatorAccountInfo creator={selected} account={accounts[String(selected.id)]} />
 
                   <div className="grid sm:grid-cols-2 gap-4">
-                    <Field label="Name" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} />
-                    <Field label="Handle (required to go live)" value={draft.handle} onChange={(v) => setDraft({ ...draft, handle: v })} />
-                    <Field label="Price" value={draft.price} onChange={(v) => setDraft({ ...draft, price: v })} />
-                    <Field label="Location (optional)" value={draft.location} maxLength={MAX_LOCATION_LENGTH} onChange={(v) => setDraft({ ...draft, location: v })} />
-                    <Field label="Age (optional, 18+)" value={draft.age} onChange={(v) => setDraft({ ...draft, age: v })} />
+                    <Field disabled={busy} label="Name" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} />
+                    <Field disabled={busy} label="Handle (required to go live)" value={draft.handle} onChange={(v) => setDraft({ ...draft, handle: v })} />
+                    <Field disabled={busy} label="Price" value={draft.price} onChange={(v) => setDraft({ ...draft, price: v })} />
+                    <Field disabled={busy} label="Location (optional)" value={draft.location} maxLength={MAX_LOCATION_LENGTH} onChange={(v) => setDraft({ ...draft, location: v })} />
+                    <Field disabled={busy} label="Age (optional, 18+)" value={draft.age} onChange={(v) => setDraft({ ...draft, age: v })} />
                   </div>
                   {/* Tags, location and age are public and are re-screened when a
                       creator goes live; a refusal names the field, so the
                       field has to be here for the admin to clear it. */}
                   <div>
                     <Field
+                      disabled={busy}
                       label="Tags (comma-separated, up to 8 -- shown as #chips and in search)"
                       value={draft.tags}
                       onChange={(v) => setDraft({ ...draft, tags: v })}
@@ -1111,7 +1112,7 @@ export default function AdminPanel() {
                             type="button"
                             key={c.key}
                             aria-pressed={active}
-                            disabled={full}
+                            disabled={full || busy}
                             onClick={() =>
                               setDraft({
                                 ...draft,
@@ -1139,6 +1140,7 @@ export default function AdminPanel() {
                     <textarea
                       value={draft.bio}
                       onChange={(e) => setDraft({ ...draft, bio: e.target.value })}
+                      disabled={busy}
                       rows={3}
                       className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                     />
@@ -1147,19 +1149,19 @@ export default function AdminPanel() {
                   <div>
                     <label className="block text-sm text-gray-400 mb-2">Socials</label>
                     <div className="grid sm:grid-cols-2 gap-3">
-                      <Field label="X / Twitter username" value={draft.socials?.twitter} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, twitter: v } })} />
-                      <Field label="Instagram username" value={draft.socials?.instagram} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, instagram: v } })} />
-                      <Field label="TikTok username" value={draft.socials?.tiktok} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, tiktok: v } })} />
-                      <Field label="Reddit username" value={draft.socials?.reddit} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, reddit: v } })} />
+                      <Field disabled={busy} label="X / Twitter username" value={draft.socials?.twitter} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, twitter: v } })} />
+                      <Field disabled={busy} label="Instagram username" value={draft.socials?.instagram} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, instagram: v } })} />
+                      <Field disabled={busy} label="TikTok username" value={draft.socials?.tiktok} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, tiktok: v } })} />
+                      <Field disabled={busy} label="Reddit username" value={draft.socials?.reddit} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, reddit: v } })} />
                     </div>
                     <div className="mt-3">
-                      <Field label="Website (https://...)" value={draft.socials?.website} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, website: v } })} />
+                      <Field disabled={busy} label="Website (https://...)" value={draft.socials?.website} onChange={(v) => setDraft({ ...draft, socials: { ...draft.socials, website: v } })} />
                     </div>
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div>
-                      <Field label="Payout Wallet Address (paid in USDG)" value={draft.walletAddress} onChange={(v) => setDraft({ ...draft, walletAddress: v })} />
+                      <Field disabled={busy} label="Payout Wallet Address (paid in USDG)" value={draft.walletAddress} onChange={(v) => setDraft({ ...draft, walletAddress: v })} />
                       {draft.walletAddress && !HEX_WALLET_RE.test(String(draft.walletAddress).trim()) && (
                         <p className="text-xs text-yellow-400/80 mt-1">Must be 0x followed by 40 hex characters, or blank.</p>
                       )}
@@ -1169,6 +1171,7 @@ export default function AdminPanel() {
                     </div>
                     <div>
                       <Field
+                        disabled={busy}
                         label={`Price for a fan to message them (USD, blank = $${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)} default)`}
                         value={draft.dmPrice}
                         onChange={(v) => setDraft({ ...draft, dmPrice: v })}
@@ -1197,6 +1200,7 @@ export default function AdminPanel() {
                         type="checkbox"
                         checked={!!draft.locked}
                         onChange={(e) => setDraft({ ...draft, locked: e.target.checked })}
+                        disabled={busy}
                       />
                       Token-gated (fans must hold $ONLYONE)
                     </label>
@@ -1214,6 +1218,7 @@ export default function AdminPanel() {
                           step="1"
                           value={draft.gateTokens}
                           onChange={(e) => setDraft({ ...draft, gateTokens: e.target.value })}
+                          disabled={busy}
                           placeholder="e.g. 2500000"
                           className="w-40 px-3 py-1.5 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
                         />
@@ -1234,6 +1239,7 @@ export default function AdminPanel() {
                         type="checkbox"
                         checked={!!draft.trending}
                         onChange={(e) => setDraft({ ...draft, trending: e.target.checked })}
+                        disabled={busy}
                       />
                       Trending
                     </label>
@@ -1242,6 +1248,7 @@ export default function AdminPanel() {
                         type="checkbox"
                         checked={!!draft.premium}
                         onChange={(e) => setDraft({ ...draft, premium: e.target.checked })}
+                        disabled={busy}
                       />
                       Premium (gold check, 200 content slots)
                     </label>
@@ -1258,7 +1265,7 @@ export default function AdminPanel() {
                       <input
                         type="checkbox"
                         checked={!!draft.founding}
-                        disabled={foundingCapReached && !draft.founding && !isFoundingCreator(selected)}
+                        disabled={busy || (foundingCapReached && !draft.founding && !isFoundingCreator(selected))}
                         onChange={(e) => setDraft({ ...draft, founding: e.target.checked })}
                       />
                       Founding Creator — {foundingCount} of {FOUNDING_LIMIT} taken
@@ -1308,6 +1315,7 @@ export default function AdminPanel() {
                       <select
                         value={draft.status}
                         onChange={(e) => setDraft({ ...draft, status: e.target.value })}
+                        disabled={busy}
                         className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white"
                       >
                         <option value="active">Active (public)</option>
@@ -1556,7 +1564,11 @@ function CreatorAccountInfo({ creator, account }) {
   );
 }
 
-function Field({ label, value, onChange, maxLength }) {
+// `disabled`: the creator editor passes `busy`, so nothing can be typed while a
+// save is in flight -- the save rebuilds the draft from what was clicked, and an
+// edit made during the round-trip used to be reverted silently (round-17
+// admin-ui#2).
+function Field({ label, value, onChange, maxLength, disabled = false }) {
   return (
     <div>
       <label className="block text-sm text-gray-400 mb-2">{label}</label>
@@ -1564,8 +1576,9 @@ function Field({ label, value, onChange, maxLength }) {
         type="text"
         value={value}
         maxLength={maxLength}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
+        className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white disabled:opacity-60"
       />
     </div>
   );
@@ -1652,15 +1665,32 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
   // (Open -> Dismissed -> Open) used to let a slower earlier response land
   // last and show one status's rows under another status's label.
   const loadSeq = useRef(0);
+  // Which filter the rows in `reports` belong to (null = none yet), and the
+  // filter on screen NOW (also set in the <select>'s onChange so it is current
+  // before the next render). Same guards as NciiReportsPanel (round-17
+  // admin-ui#0/#1): an action that finishes after the filter was switched must
+  // not reload the old filter over the new one, and a load for a new filter
+  // that fails must not leave the old filter's rows -- or its paging cursor --
+  // on screen under the new label.
+  const rowsFilterRef = useRef(null);
+  const statusFilterRef = useRef(statusFilter);
+  statusFilterRef.current = statusFilter;
   const load = async (status) => {
     const seq = ++loadSeq.current;
     setLoading(true);
     setLoadingMore(false);
     setError('');
+    if (rowsFilterRef.current !== status) {
+      rowsFilterRef.current = null;
+      setReports([]);
+      setHasMore(false);
+      setNextCursor(null);
+    }
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/reports?status=${encodeURIComponent(status)}`);
       if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load reports'));
+      rowsFilterRef.current = status;
       setReports(Array.isArray(data.reports) ? data.reports : []);
       setHasMore(!!data.hasMore && typeof data.nextCursor === 'string');
       setNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
@@ -1672,6 +1702,8 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
   };
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
+    // The cursor belongs to the rows on screen; never page another filter with it.
+    if (rowsFilterRef.current !== statusFilter) return;
     const seq = loadSeq.current;
     setLoadingMore(true);
     setError('');
@@ -1698,6 +1730,13 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
   };
 
   useEffect(() => { load(statusFilter); }, [statusFilter]);
+
+  // After an action: re-read the list it was started from, unless the admin
+  // has switched filters since -- then that filter's own load owns the list.
+  const reloadIfStillShown = async () => {
+    if (statusFilter !== statusFilterRef.current) return;
+    await load(statusFilter);
+  };
 
   const resolve = async (r, action) => {
     const minorReport = r.category === 'minor';
@@ -1765,7 +1804,7 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
       }
       if (res.status === 409 && data?.code === 'no_creator') {
         setError(errorFrom(res, data, 'That creator account no longer exists -- the report is still open.'));
-        await load(statusFilter);
+        await reloadIfStillShown();
         return;
       }
       if (res.status === 409 && data?.code === 'content_removed') {
@@ -1773,7 +1812,7 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
         // photo down (and stamped the report) but did not finish recording
         // it; the report is still open and cannot be dismissed as invalid.
         setError(`Report #${r.id} is still open: its content was already taken down by an earlier attempt, so it cannot be dismissed. Press "Remove Content" to finish recording it.`);
-        await load(statusFilter);
+        await reloadIfStillShown();
         return;
       }
       if (res.status >= 500) {
@@ -1781,7 +1820,7 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
         // retry is safe. Re-read so the row shows anything an earlier part of
         // the attempt did take down (contentRemovedAt).
         setError(`${errorFrom(res, data, 'Something went wrong -- the report is still open.')} Retry when ready; it is safe to press the button again.`);
-        await load(statusFilter);
+        await reloadIfStillShown();
         return;
       }
       if (res.status === 409) {
@@ -1789,7 +1828,7 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
         // not_reopenable: it is no longer dismissed. Either way nothing was
         // changed -- re-read rather than keep a stale row.
         setError(errorFrom(res, data, 'That report was already resolved.'));
-        await load(statusFilter);
+        await reloadIfStillShown();
         return;
       }
       if (!res.ok) throw new Error(errorFrom(res, data, action === 'reopen' ? 'Could not reopen that report' : 'Failed to resolve report'));
@@ -1815,7 +1854,8 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
       }
       // Out of the Open list at once; any other view is re-read so the row
       // shows its new status and history.
-      if (statusFilter === 'open') setReports((prev) => prev.filter((x) => String(x.id) !== String(r.id)));
+      if (statusFilter !== statusFilterRef.current) return;
+      if (statusFilter === 'open' && rowsFilterRef.current === 'open') setReports((prev) => prev.filter((x) => String(x.id) !== String(r.id)));
       else await load(statusFilter);
     } catch (err) {
       setError(err.message);
@@ -1835,10 +1875,13 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
+        {/* Not while an action is in flight: its result belongs to this
+            filter's list (round-17 admin-ui#0). */}
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+          onChange={(e) => { statusFilterRef.current = e.target.value; setStatusFilter(e.target.value); }}
+          disabled={busyId !== null}
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm disabled:opacity-50"
         >
           <option value="open">Open</option>
           <option value="dismissed">Dismissed</option>
@@ -1897,7 +1940,7 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
               )}
               {r.status === 'open' && r.contentRemovedAt && (
                 <p className="text-[11px] text-yellow-300 mb-2">
-                  The reported item was already taken down ({new Date(r.contentRemovedAt).toLocaleString()}{r.contentRemovedBy ? ` by ${String(r.contentRemovedBy)}` : ''}) but the report was not finished. Press "Remove Content" to record it; it can no longer be dismissed.
+                  The reported item was already taken down ({formatStamp(r.contentRemovedAt)}{r.contentRemovedBy ? ` by ${String(r.contentRemovedBy)}` : ''}) but the report was not finished. Press "Remove Content" to record it; it can no longer be dismissed.
                 </p>
               )}
               {r.status === 'open' ? (
@@ -1956,7 +1999,7 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
           ))}
         </div>
       )}
-      {!loading && hasMore && (
+      {!loading && hasMore && rowsFilterRef.current === statusFilter && (
         <button
           onClick={loadMore}
           disabled={loadingMore}
@@ -1967,6 +2010,30 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
       )}
     </div>
   );
+}
+
+/**
+ * A stored timestamp for display. New stamps are ISO 8601, but a report
+ * stamped before round 17 carries Postgres's text form
+ * ('2026-09-26 11:36:32.123456+00'), which Safari/iOS parse as Invalid Date
+ * (round-17 admin-ui#3). That form is normalised to ISO first, and anything
+ * still unparseable is shown as stored rather than as "Invalid Date".
+ */
+function formatStamp(value) {
+  if (value === null || value === undefined || value === '') return '';
+  const raw = String(value);
+  let t = Date.parse(raw);
+  if (Number.isNaN(t)) {
+    const m = raw.trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d+))?\s*(Z|[+-]\d{2}(?::?\d{2})?)?$/i);
+    if (m) {
+      const ms = m[3] ? `.${m[3].slice(0, 3).padEnd(3, '0')}` : '';
+      let zone = m[4] || 'Z';
+      if (/^[+-]\d{2}$/.test(zone)) zone = `${zone}:00`;
+      else if (/^[+-]\d{4}$/.test(zone)) zone = `${zone.slice(0, 3)}:${zone.slice(3)}`;
+      t = Date.parse(`${m[1]}T${m[2]}${ms}${zone.toUpperCase()}`);
+    }
+  }
+  return Number.isNaN(t) ? raw : new Date(t).toLocaleString();
 }
 
 // lib/reports-store.js REPORT_CATEGORIES. 'other' is shown without a badge.
@@ -2130,14 +2197,24 @@ function ViolationsPanel({ adminKey }) {
   // (Open -> Dismissed -> Open) used to let a slower earlier response land
   // last and show one status's rows under another status's label.
   const loadSeq = useRef(0);
+  // Which filter the rows belong to (null = none yet) and the filter on screen
+  // now -- see ReportsPanel (round-17 admin-ui#0/#1).
+  const rowsFilterRef = useRef(null);
+  const statusFilterRef = useRef(statusFilter);
+  statusFilterRef.current = statusFilter;
   const load = async (status) => {
     const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
+    if (rowsFilterRef.current !== status) {
+      rowsFilterRef.current = null;
+      setViolations([]);
+    }
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/violations?status=${encodeURIComponent(status)}`);
       if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load violations'));
+      rowsFilterRef.current = status;
       setViolations(Array.isArray(data.violations) ? data.violations : []);
     } catch (err) {
       if (seq === loadSeq.current) setError(err.message);
@@ -2157,11 +2234,14 @@ function ViolationsPanel({ adminKey }) {
         // Someone else resolved it first; the first decision stands. Re-read
         // rather than keep a stale row that looks still open.
         setError(errorFrom(res, data, 'That violation was already resolved.'));
-        await load(statusFilter);
+        // Switched filters meanwhile: that filter's own load owns the list.
+        if (statusFilter === statusFilterRef.current) await load(statusFilter);
         return;
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve violation'));
-      setViolations((prev) => prev.filter((v) => String(v.id) !== String(id)));
+      if (rowsFilterRef.current === statusFilter && statusFilter === statusFilterRef.current) {
+        setViolations((prev) => prev.filter((v) => String(v.id) !== String(id)));
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -2195,10 +2275,12 @@ function ViolationsPanel({ adminKey }) {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
+        {/* Not while a resolve is in flight (round-17 admin-ui#0). */}
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+          onChange={(e) => { statusFilterRef.current = e.target.value; setStatusFilter(e.target.value); }}
+          disabled={busyId !== null}
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm disabled:opacity-50"
         >
           <option value="open">Open</option>
           <option value="dismiss">Dismissed</option>
@@ -2322,6 +2404,15 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
     setLoading(true);
     setLoadingMore(false);
     setError('');
+    // Rows (and their paging cursor) from another filter are cleared at once,
+    // so a failed load cannot leave them live under this filter's label
+    // (round-17 admin-ui#1). A re-read of the same filter keeps them.
+    if (rowsFilterRef.current !== status) {
+      rowsFilterRef.current = null;
+      setReports([]);
+      setHasMore(false);
+      setNextCursor(null);
+    }
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/ncii-reports?status=${encodeURIComponent(status)}`);
       if (seq !== loadSeq.current) return;
@@ -2342,6 +2433,8 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
   };
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
+    // The cursor belongs to the rows on screen; never page another filter with it.
+    if (rowsFilterRef.current !== statusFilter) return;
     const seq = loadSeq.current;
     setLoadingMore(true);
     setError('');
@@ -2822,7 +2915,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
           })}
         </div>
       )}
-      {!loading && hasMore && (
+      {!loading && hasMore && rowsFilterRef.current === statusFilter && (
         <button
           onClick={loadMore}
           disabled={loadingMore}

@@ -7,7 +7,7 @@ import { isSubscribed, creatorMayOperate } from '../core/access.js';
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
 import { withProfileImageUrls, assertOwnPublicImages, lockMedia } from '../core/public-images.js';
-import { assertCleanText, assertCleanTags } from '../lib/text-screen.js';
+import { assertCleanText, assertCleanTags, sanitizeTags } from '../lib/text-screen.js';
 
 // What anyone may see of a creator's profile. userId and user.kycStatus are
 // also needed by the visibility check in GET /:username below.
@@ -110,6 +110,10 @@ export const creators: FastifyPluginAsync = async (app) => {
     // tags is caught too).
     assertCleanText([['displayName', b.displayName], ['bio', b.bio]]);
     assertCleanTags(b.tags);
+    // Stored in the site's tag form (lowercase, lookalikes folded,
+    // punctuation dropped): the cross-tag screens above read exactly this, so
+    // what is published is what was screened, and ?tag= matches it.
+    const data = b.tags === undefined ? b : { ...b, tags: sanitizeTags(b.tags) };
     const images = [b.avatarKey, b.bannerKey].filter((k): k is string => typeof k === 'string');
     // Check and publish in ONE transaction: assertOwnPublicImages locks the
     // image rows before counting mass-DM copies of them, which only
@@ -118,17 +122,21 @@ export const creators: FastifyPluginAsync = async (app) => {
     return withProfileImageUrls(await prisma.$transaction(async (tx) => {
       await lockMedia(tx, req.user.id, [], images);   // both at once, in id order: no lock-order deadlock with a copy
       for (const k of images) await assertOwnPublicImages(tx, req.user.id, [k]);
-      return tx.creatorProfile.update({ where: { userId: req.user.id }, data: b });
+      return tx.creatorProfile.update({ where: { userId: req.user.id }, data });
     }));
   });
 
   app.post('/me/tiers', { preHandler: app.creatorOk }, async (req) => {
     const b = z.object({ name: z.string().max(40), priceCents: z.number().int().min(299).max(100_000) }).parse(req.body);
+    // Tier names are public creator text (GET /creators/:username and the
+    // cheapest tier on every discovery card): the same screens as displayName.
+    assertCleanText([['tierName', b.name]]);
     return prisma.subscriptionTier.create({ data: { creatorId: req.user.id, ...b } });
   });
 
   app.patch('/me/tiers/:id', { preHandler: app.creatorOk }, async (req: any, reply) => {
     const b = z.object({ name: z.string().max(40).optional(), priceCents: z.number().int().min(299).max(100_000).optional(), active: z.boolean().optional() }).parse(req.body);
+    if (b.name !== undefined) assertCleanText([['tierName', b.name]]);
     const r = await prisma.subscriptionTier.updateMany({ where: { id: req.params.id, creatorId: req.user.id }, data: b });
     return r.count ? { ok: true } : reply.code(404).send({ error: 'not_found' });
   });
@@ -144,7 +152,8 @@ export const creators: FastifyPluginAsync = async (app) => {
   // promotions (soonest-to-expire last), then everyone else by subscribers.
   app.get('/', async (req: any) => {
     const q = z.string().trim().max(60).optional().parse(req.query.q || undefined);
-    const tag = z.string().trim().max(40).optional().parse(req.query.tag || undefined);
+    // Folded to the stored tag form (PATCH /me), so "Fitness" finds "fitness".
+    const tag = sanitizeTags([z.string().trim().max(40).optional().parse(req.query.tag || undefined)])[0];
     const { offset, limit: take } = page(req.query);
     const now = new Date();
     const base = {

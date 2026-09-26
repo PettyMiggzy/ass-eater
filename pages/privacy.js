@@ -4,7 +4,7 @@ import Head from 'next/head';
 // describe what the code actually collects and sets; when a feature adds a
 // field, a cookie, or a new recipient of someone's data, this file changes
 // in the same release.
-const LAST_UPDATED = 'September 26, 2026';
+const LAST_UPDATED = 'September 27, 2026';
 
 export default function Privacy() {
   return (
@@ -115,6 +115,18 @@ export default function Privacy() {
                   solely to review and act on that report. Content that shows a minor is reported to the
                   National Center for Missing &amp; Exploited Children and law enforcement as the law
                   requires; your report may be included in that referral.
+                </li>
+                <li id="reports-and-blocks">
+                  <strong>Reports and blocks inside the Platform.</strong> When you report a direct message,
+                  a wall comment, a marketplace listing, or a creator&apos;s photo or video, we keep a
+                  report record: the account that filed it, the category you picked (for example, a
+                  possible minor or non-consensual content), the reason you wrote (up to 500 characters),
+                  when, and what was reported — including a copy of the reported message, comment or
+                  listing and who posted it, so the report can still be reviewed if the item is later
+                  deleted. Only Platform administrators see report records; the person you reported is
+                  not told who reported them. When you block someone from messaging you or from commenting
+                  on your wall, we keep a record of who blocked whom so the block can be enforced. See
+                  Section 7 for what happens to both when an account is deleted.
                 </li>
               </ul>
             </Section>
@@ -282,7 +294,9 @@ export default function Privacy() {
                 and its listings are taken down (a file a buyer already paid for stays available to that
                 buyer). Notifications your account caused in other people&apos;s accounts (&ldquo;New message
                 from …&rdquo;, &ldquo;… commented on your wall&rdquo;) stay in their history but are changed to
-                read &ldquo;Someone&rdquo; instead of your name. Anything of yours that has been reported to us is copied into the moderation record
+                read &ldquo;Someone&rdquo; instead of your name. Wall blocks you set, and wall blocks set against
+                you, are deleted with the account; a message block is stored on its conversation and goes when
+                that conversation does. Anything of yours that has been reported to us is copied into the moderation record
                 before it is deleted, so a deletion does not erase a report&apos;s evidence. Any credit balance
                 left on a deleted account is forfeited — credits are never refunded (Terms of Service) — so
                 spend it, or confirm you want to go ahead anyway. Some limits on that:
@@ -302,6 +316,12 @@ export default function Privacy() {
                   keep a copy of the reported or removed content, including who wrote or sent it (the username or
                   login email that account had at the time), for as long as the report, a legal hold, or a legal
                   obligation requires — that copy is the evidence, so deleting the account does not remove it.
+                  Reports you filed yourself (Section 1) are kept as moderation records too — the category, the
+                  reason you wrote and what was reported stay — but when your account is deleted they stop
+                  naming your account. One exception: a report about a direct message keeps the conversation&apos;s
+                  internal identifier, which is built from both participants&apos; internal account numbers, so
+                  administrators can still find the reported message; it contains no username, email or other
+                  detail of yours.
                   Files taken down after a report that they may show a minor are kept as evidence too: they are moved to
                   restricted evidence storage (never shown or delivered to other users) instead of being deleted, and
                   when the account that posted them is banned for it, every file that account still has on the Platform is kept
@@ -319,11 +339,15 @@ export default function Privacy() {
                   can fulfil it. Once the order has shipped — or has been closed because the seller could not
                   fulfil it — you can ask us to delete them (email team@onlyone1.fun with the order), unless we
                   need them for a dispute or legal claim already in progress; the order record itself stays,
-                  without them. Deleting them also deletes the order&apos;s tracking number and every earlier
-                  tracking number kept for it (the carrier name and dates stay), and the tracking can no longer
-                  be changed after that. Deleting your account from the Settings page deletes the shipping
-                  name and address, and the tracking numbers, from every one of your orders that has already
-                  shipped or been closed, at the same time.
+                  without them. Deleting them also deletes, from your copy of the order and from what
+                  administrators see, the order&apos;s tracking number and every earlier tracking number kept
+                  for it (the carrier name and dates stay), and no tracking number is ever written back to your
+                  copy after that. The creator who shipped the order keeps the tracking number they entered in
+                  their own view of that order (they typed it, and can still correct it there); it is shown to
+                  no one else, and you are not notified of such a correction. Deleting your account from the
+                  Settings page deletes the shipping name and address, and the tracking numbers, from every one
+                  of your orders that has already shipped or been closed, at the same time; an order still
+                  waiting to ship keeps them only until it ships or is closed, and they are deleted then.
                 </li>
                 <li>We may retain limited data where necessary to investigate fraud, abuse, or a legal claim already in progress.</li>
               </ul>

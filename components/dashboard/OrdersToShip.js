@@ -8,10 +8,12 @@ import {
 // The carrier is one of a fixed list (lib/tracking-rules.js -- the ship route
 // enforces the same rules). Since round 16 the tracking number is refused only
 // when it cannot be a tracking number at all (8-35 letters/digits, at least 6
-// digits, no words); a number that merely doesn't match the carrier's USUAL
-// shape gets a non-blocking note (trackingFormatWarning), shown live here and
-// again from the ship response. The line under the input is the carrier's
-// TRACKING_FORMAT_HINTS entry.
+// digits, no "@", no contact/payment app name); since round 17 a run of
+// letters is never refused. A number that merely doesn't match the carrier's
+// USUAL shape (wrong length, check digit, a word in it) gets a non-blocking
+// note (trackingFormatWarning), shown live here and again, after the save,
+// in the queue's banner from the ship response. The line under the input is
+// the carrier's TRACKING_FORMAT_HINTS entry.
 function TrackingFields({ orderId, form, disabled, onChange, borderFor, orderError, labelled }) {
   const hint = form.carrier && TRACKING_FORMAT_HINTS[form.carrier];
   const typed = typeof form.trackingNumber === 'string' ? form.trackingNumber.trim() : '';
@@ -94,7 +96,14 @@ export default function OrdersToShip() {
   // The ship route's non-blocking `warning` after a successful save
   // ({ orderId, message }): the number was saved but doesn't match the
   // carrier's usual format, so the creator is asked to double-check it.
+  // Shown in the banner above the queue, not only under the order: a first
+  // shipment moves the order out of the pending list into the Shipped
+  // section, which is collapsed, so a notice only there went unseen
+  // (round-17 dashboard#2).
   const [orderNotice, setOrderNotice] = useState(null);
+  // The Shipped <details> is controlled so a post-save notice can open it:
+  // the order the notice is about, and its Edit tracking control, are there.
+  const [shippedOpen, setShippedOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -152,8 +161,9 @@ export default function OrdersToShip() {
       }
       if (res.status === 409 && data?.code === 'TRACKING_EDIT_LIMIT') {
         // Tracking can no longer be changed for this order (the correction
-        // cap is used up, or it is locked for another reason the seller is
-        // not told -- round-16 legal-journeys#2). The form is closed so it
+        // cap is used up -- the only reason since round 17: an order whose
+        // buyer copy was erased still takes corrections into the seller's
+        // own copy, lib/orders-store.js markOrderShipped). The form is closed so it
         // stops offering a save the server will refuse, and the order's
         // trackingCorrectionsLeft is zeroed locally so the Edit control stays
         // hidden and this explanation stays on screen.
@@ -169,7 +179,10 @@ export default function OrdersToShip() {
         return;
       }
       setOrders((list) => list.map((o) => (o.id === orderId ? data.order : o)));
-      if (typeof data.warning === 'string' && data.warning) setOrderNotice({ orderId, message: data.warning });
+      if (typeof data.warning === 'string' && data.warning) {
+        setOrderNotice({ orderId, message: data.warning });
+        if (data.order.status === 'shipped') setShippedOpen(true);
+      }
       setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
     } catch {
       setOrderError({ orderId, field: '', message: 'Could not reach the server. Check your connection and try again.' });
@@ -183,10 +196,12 @@ export default function OrdersToShip() {
 
   // Red outline on the input the server named for this order.
   const inputBorder = (orderId, field) => (orderError && orderError.orderId === orderId && orderError.field === field ? 'border-red-500' : 'border-brand-purple/30');
+  // A post-save notice is in the banner (see orderNotice); under the order
+  // it is repeated only as a short marker so the two can be matched up.
   const errorFor = (orderId) => (orderError && orderError.orderId === orderId ? (
     <p role="alert" className="text-xs text-red-400 mt-1 w-full">{orderError.message}</p>
   ) : orderNotice && orderNotice.orderId === orderId ? (
-    <p role="status" className="text-xs text-brand-gold mt-1 w-full">Saved. {orderNotice.message}</p>
+    <p className="text-xs text-brand-gold mt-1 w-full">Saved — double-check this number (see above).</p>
   ) : null);
 
   const openEdit = (o) => {
@@ -210,9 +225,11 @@ export default function OrdersToShip() {
     setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
   };
   // Corrections remaining for a shipped order (lib/orders-store.js
-  // toCreatorOrder derives it; 0 once the cap is used or tracking is locked).
-  // It is the only signal: the payload deliberately carries no erasure stamps
-  // (round-16 legal-journeys#2), so the seller never learns WHY it is locked.
+  // toCreatorOrder derives it; 0 once the cap is used). The payload carries
+  // no erasure stamps (round-16 legal-journeys#2) and, since round 17, the
+  // seller's view of an order doesn't change at all when the buyer deletes
+  // their account or asks for erasure: trackingNumber is the number the
+  // seller entered and the count is the same as for any order.
   // An older payload without the field counts as none known, not unlimited.
   const correctionsLeft = (o) => (Number.isInteger(o.trackingCorrectionsLeft) && o.trackingCorrectionsLeft > 0 ? o.trackingCorrectionsLeft : 0);
   const canCorrect = (o) => correctionsLeft(o) > 0;
@@ -241,6 +258,12 @@ export default function OrdersToShip() {
       ) : (
         <div className="space-y-3">
           {error && <p className="text-xs text-red-400">{error}</p>}
+          {orderNotice && (
+            <p role="status" className="text-xs text-brand-gold">
+              Order #{orderNotice.orderId} saved. {orderNotice.message}{' '}
+              <button type="button" onClick={() => setOrderNotice(null)} className="underline text-gray-400">Dismiss</button>
+            </p>
+          )}
           {pending.length === 0 && <p className="text-sm text-gray-500">Nothing waiting to ship.</p>}
           {pending.map((o) => {
             // getOrdersForCreator returns shippingAddress: null for a row whose
@@ -298,7 +321,11 @@ export default function OrdersToShip() {
             );
           })}
           {shipped.length > 0 && (
-            <details className="text-xs text-gray-500">
+            <details
+              className="text-xs text-gray-500"
+              open={shippedOpen}
+              onToggle={(e) => setShippedOpen(e.currentTarget.open)}
+            >
               <summary className="cursor-pointer">Shipped ({shipped.length})</summary>
               <div className="mt-2 space-y-2">
                 {shipped.map((o) => {

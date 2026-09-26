@@ -1,4 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { CHAIN_ID, depositAddressAt, TOKENS, publicClient } from '../lib/chain.js';
 import { getUsdPrice } from '../lib/price.js';
@@ -50,9 +51,38 @@ export const wallet: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/history', { preHandler: app.auth }, async (req: any) => {
-    const rows = await prisma.ledgerEntry.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' }, take: 100, skip: page(req.query).offset });
-    // A REFERRAL row's refId is dropped too: rows posted before round 16
-    // carry the purchase's own id there (see fanSafeMeta).
+    const offset = page(req.query).offset;
+    // REFERRAL rows are the referrer's cut of SOMEONE ELSE's spending, posted
+    // one per charge (core/ledger.ts). Listed as they are, their exact times
+    // and price-derived amounts -- one row per live minute watched, one per
+    // paid DM -- told a referrer when and how often their friend watched,
+    // messaged or bought, and at what price. So they are returned only as
+    // ONE row per UTC day per side (creator/fan referred), summed, stamped
+    // at the day's start, and only for days that have ENDED: a running
+    // total for today, polled, would give the same per-charge timing back.
+    // The per-charge rows stay in the ledger (admin-side detail). A row's
+    // refId is never returned, and the meta is just the side (fanSafeMeta).
+    const uid = String(req.user.id);
+    const rows = await prisma.$queryRaw<Array<{ id: string; userId: string; amountCents: bigint; type: string; refId: string | null; meta: unknown; createdAt: Date }>>(Prisma.sql`
+      SELECT * FROM (
+        SELECT e.id, e."userId", e."amountCents", e.type::text AS type, e."refId", e.meta, e."createdAt"
+          FROM "LedgerEntry" e
+          WHERE e."userId" = ${uid} AND e.type <> 'REFERRAL'
+        UNION ALL
+        SELECT 'referral:' || to_char(d.day, 'YYYY-MM-DD') || ':' || COALESCE(d.side, 'other') AS id, ${uid} AS "userId",
+               SUM(d."amountCents")::bigint AS "amountCents", 'REFERRAL' AS type, NULL AS "refId",
+               CASE WHEN d.side IS NULL THEN NULL ELSE jsonb_build_object('for', d.side) END AS meta, d.day AS "createdAt"
+          FROM (
+            SELECT date_trunc('day', r."createdAt") AS day, r."amountCents",
+                   CASE WHEN r.meta->>'for' IN ('creator', 'fan') THEN r.meta->>'for' END AS side
+              FROM "LedgerEntry" r
+              WHERE r."userId" = ${uid} AND r.type = 'REFERRAL'
+                AND r."createdAt" < date_trunc('day', now() AT TIME ZONE 'UTC')
+          ) d
+          GROUP BY d.day, d.side
+      ) h
+      ORDER BY h."createdAt" DESC, h.id DESC
+      LIMIT 100 OFFSET ${offset}`);
     return rows.map(r => ({ ...r, refId: r.type === 'REFERRAL' ? null : r.refId, meta: fanSafeMeta(r.type, r.meta), amountCents: Number(r.amountCents) }));
   });
 

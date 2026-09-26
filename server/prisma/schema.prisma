@@ -467,6 +467,11 @@ model Post {
   visibility    Visibility     @default(SUBSCRIBERS)
   priceCents    Int            @default(0)
   removed       Boolean        @default(false)
+  // Set with `removed` by the creator's own DELETE /posts/:id, never by a
+  // moderation takedown. A self-deleted PPV post stays viewable to fans who
+  // already paid for it (core/access.ts canViewPost), as a listing's buyers
+  // keep theirs; a moderation removal hides it from everyone.
+  removedByCreator Boolean     @default(false)
   vipEarlyUntil DateTime?
   createdAt     DateTime       @default(now())
   media         Media[]

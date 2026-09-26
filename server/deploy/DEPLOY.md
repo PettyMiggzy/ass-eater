@@ -385,7 +385,10 @@ nothing to rotate; skip this.) Rotating it:
    an accepted stablecoin balance of a dollar or more at an address that has
    a STABLE deposit on record; native ETH at an address with a CREDITED ETH
    deposit (with `TRACK_NATIVE_ETH` on); and $ONLYONE at an address with a
-   credited $ONLYONE deposit, only while `INDEX_ONLYONE_DEPOSITS` is on. A
+   credited $ONLYONE deposit, only while `INDEX_ONLYONE_DEPOSITS` is on. An
+   ETH or $ONLYONE sweep moves the address's whole balance, so neither runs
+   while ANY deposit of that asset to the address is still price-pending
+   (the sweep is deferred until `repricePending` credits it). A
    sweep that needs a gas top-up additionally needs a credited deposit of
    that asset and a balance worth a dollar. So these are **never** swept
    automatically:
@@ -395,7 +398,9 @@ nothing to rotate; skip this.) Rotating it:
      that priced to 0 cents, or one from before the indexer's start block);
    - any $ONLYONE while `INDEX_ONLYONE_DEPOSITS=false` (the recommended
      setting above -- it is never credited, so never swept);
-   - ETH from a deposit that is still price-pending.
+   - ETH or $ONLYONE at an address with a deposit of that asset that is
+     still price-pending -- including the CREDITED earlier deposits at that
+     same address, which wait with it until it is priced.
 
    **There is no tool in this repo that sweeps those today.** Moving them
    means signing from each deposit address with the OLD mnemonic, funding

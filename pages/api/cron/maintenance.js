@@ -4,6 +4,7 @@ import { movePreservedToEvidence } from '../../../lib/media-preservation';
 import { deliverStandingPushes } from '../../../lib/standing-outbox';
 import { lapsedAccountSuspensionCreatorIds } from '../../../lib/users-store';
 import { pushCreatorStatus } from '../../../lib/server-api';
+import { eraseAddressesOfDeletedBuyers } from '../../../lib/orders-store';
 
 /**
  * GET /api/cron/maintenance -- the scheduled job (vercel.json "crons").
@@ -11,7 +12,7 @@ import { pushCreatorStatus } from '../../../lib/server-api';
  * sends when CRON_SECRET is set on the project. Not the admin key: a cron
  * secret can be rotated on its own, and this route can do nothing an admin
  * could not.
- *   -> 200 { ok, media, evidence, standing, outstanding }
+ *   -> 200 { ok, media, evidence, lapsedSuspensionsRepushed, buyerAddressesErased, standing, outstanding }
  *   -> 401 wrong/missing secret; 503 CRON_SECRET not configured (refuses to run open)
  *
  * Runs the retries that must not depend on someone happening to upload a
@@ -25,6 +26,10 @@ import { pushCreatorStatus } from '../../../lib/server-api';
  *     lapsed recently: an unapproved creator's account suspension is sent to
  *     server/ with no end (lib/users-store.js combinedCreatorPushStanding), so
  *     nothing else would ever tell server/ it is over.
+ *   - erasing the shipping name/address and tracking of any finished order
+ *     whose buyer's account is gone (lib/orders-store.js
+ *     eraseAddressesOfDeletedBuyers, round-17 money#1): what account
+ *     deletion and the ship/close paths did not already erase.
  * Each step is independent: one failing does not stop the others.
  *
  * proxy.js must let /api/cron/ through the geoblock and preview gate (the
@@ -69,6 +74,12 @@ export default async function handler(req, res) {
   } catch (err) {
     out.ok = false;
     console.error('[cron/maintenance] lapsed-suspension re-push failed:', err);
+  }
+  try {
+    out.buyerAddressesErased = await eraseAddressesOfDeletedBuyers();
+  } catch (err) {
+    out.ok = false;
+    console.error('[cron/maintenance] deleted-buyer address erase failed:', err);
   }
   try {
     out.standing = await deliverStandingPushes({ limit: 100 });

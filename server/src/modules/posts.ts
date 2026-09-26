@@ -36,6 +36,21 @@ const redact = async (userId: string | null, posts: any[]) => {
  * that something exists, when it dropped and roughly how big it is, which is
  * most of what the window is selling. The creator always sees their own.
  */
+/**
+ * Which removed posts a list may still include: none, except a PPV post the
+ * CREATOR deleted that this viewer paid for (core/access.ts canViewPost --
+ * the buyer keeps it, the way a listing's buyer does). A moderation takedown
+ * is never listed.
+ */
+export function removedFilter(viewerId: string | null) {
+  return {
+    OR: [
+      { removed: false },
+      ...(viewerId ? [{ removedByCreator: true, visibility: 'PPV' as const, unlocks: { some: { fanId: viewerId } } }] : []),
+    ],
+  };
+}
+
 export async function earlyAccessFilter(viewerId: string | null) {
   const vip = viewerId ? await isVip(prisma, viewerId) : false;
   if (vip) return {};
@@ -99,10 +114,10 @@ export async function unlockPost(fanId: string, post: { id: string; creatorId: s
 
 /**
  * Is there something a buyer of this PPV post would actually get? It must
- * still be a PPV post that is not removed (canViewPost shows a removed post
- * to nobody, and the route's own check runs on a row read BEFORE the charge's
- * transaction -- a creator's DELETE committing in between used to be sold
- * anyway), every attached media item must be READY (canViewMedia refuses
+ * still be a PPV post that is not removed (a removed post is sold to nobody;
+ * canViewPost shows it only to fans who bought it before -- and the route's
+ * own check runs on a row read BEFORE the charge's transaction -- a
+ * creator's DELETE committing in between used to be sold anyway), every attached media item must be READY (canViewMedia refuses
  * anything else, so a buyer of a post with a still-uploading or REJECTED item
  * gets a 403 for it), and a post with no media must have text. A post with
  * neither is refused.
@@ -165,7 +180,9 @@ export const posts: FastifyPluginAsync = async (app) => {
     // A suspended or banned creator's posts are gone for everyone but them.
     if (req.params.creatorId !== userId && !(await creatorIsActive(String(req.params.creatorId ?? '')))) return [];
     const rows = await prisma.post.findMany({
-      where: { creatorId: req.params.creatorId, removed: false, ...(await earlyAccessFilter(userId)) },
+      // AND-ed, never spread: both filters are an OR, and spreading the
+      // second would silently replace the first.
+      where: { creatorId: req.params.creatorId, AND: [removedFilter(userId), await earlyAccessFilter(userId)] },
       include: { media: true, _count: { select: { unlocks: true } } },
       orderBy: { createdAt: 'desc' }, take: 20, skip: page(req.query).offset,
     });
@@ -175,7 +192,7 @@ export const posts: FastifyPluginAsync = async (app) => {
   app.get('/feed', { preHandler: app.auth }, async (req: any) => {
     const subs = await prisma.subscription.findMany({ where: { fanId: req.user.id, currentPeriodEnd: { gt: new Date() } }, select: { creatorId: true } });
     const rows = await prisma.post.findMany({
-      where: { creatorId: { in: subs.map(s => s.creatorId) }, removed: false, creator: { user: { status: 'ACTIVE' } }, ...(await earlyAccessFilter(req.user.id)) },
+      where: { creatorId: { in: subs.map(s => s.creatorId) }, creator: { user: { status: 'ACTIVE' } }, AND: [removedFilter(req.user.id), await earlyAccessFilter(req.user.id)] },
       include: { media: true, creator: { select: { displayName: true, avatarKey: true, user: { select: { username: true } } } } },
       orderBy: { createdAt: 'desc' }, take: 30, skip: page(req.query).offset,
     });
@@ -193,7 +210,12 @@ export const posts: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/:id', { preHandler: app.auth }, async (req: any) => {
-    await prisma.post.updateMany({ where: { id: req.params.id, creatorId: req.user.id }, data: { removed: true } });
+    // A creator's own removal (removedByCreator): hidden from feeds and from
+    // new unlocks (postHasDeliverable), but fans who already paid for a PPV
+    // post keep it -- see core/access.ts canViewPost. Only a post that is
+    // still up: re-deleting a post moderation took down must not turn the
+    // takedown into a self-delete, which would restore buyers' access.
+    await prisma.post.updateMany({ where: { id: req.params.id, creatorId: req.user.id, removed: false }, data: { removed: true, removedByCreator: true } });
     return { ok: true };
   });
 

@@ -12,7 +12,7 @@ import {
   buyerFirstDigitalOrderAt,
   canViewGatedCreatorMedia,
 } from '../../../lib/media';
-import { isMediaReaped } from '../../../lib/media-refs';
+import { isMediaReaped, isOwnerUploadInProgress } from '../../../lib/media-refs';
 
 /**
  * GET /api/media/<pathname> -- the only way any uploaded file is served.
@@ -24,7 +24,8 @@ import { isMediaReaped } from '../../../lib/media-refs';
  *
  *   avatars/<creatorId>/...        anyone, if the creator is publicly visible
  *                                  and it is their current avatar; else owner/admin
- *   gallery/<creatorId>/...        owner/admin always; otherwise the creator must
+ *   gallery/<creatorId>/...        admin always; the owner while it is on their record
+ *                                  (or still uploading); otherwise the creator must
  *                                  be publicly visible, the item still in their
  *                                  gallery, and (if token-gated) the viewer must
  *                                  pass canViewGatedCreatorMedia
@@ -44,6 +45,14 @@ import { isMediaReaped } from '../../../lib/media-refs';
  * and the session a ban leaves signed in used to keep getting fresh presigned
  * URLs for exactly the image a takedown request was about. Admins still see
  * everything; a suspended creator still sees their own files.
+ *
+ * An owner is served only a file their record still points at, or an upload
+ * still in progress (round-17 media#1, lib/media-refs.js
+ * isOwnerUploadInProgress). A takedown drops the reference and leaves the
+ * file itself to deleteMediaQuietly, which skips a file on a report hold and
+ * leaves a failed delete to the daily sweep -- the owner path used to serve
+ * any file in their prefix, so the uploader kept getting the exact file a
+ * TAKE IT DOWN request recorded as removed until it was really gone.
  *
  * Everything unentitled answers 404, not 403: "does this file exist" is not
  * something to confirm to someone who may not see it. proxy.js already puts
@@ -88,11 +97,15 @@ export default async function handler(req, res) {
       const owner = !!creator && !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id)
         && effectiveCreatorStatus(creator) !== 'banned';
       if (owner) {
-        // The owner is served any file in their prefix without a reference
-        // check (an upload in progress, a removed item), so a file this app
-        // already DELETED is refused explicitly: an upload token can outlive
-        // its file and re-create it, and such a re-upload is recorded nowhere.
+        // A file this app already DELETED is refused even while referenced:
+        // an upload token can outlive its file and re-create it, and such a
+        // re-upload is recorded nowhere. Otherwise the file must still be on
+        // the listing (not a taken-down one), or be an upload in progress.
         if (await isMediaReaped(parsed.pathname)) return notFound(res);
+        const onListing = !listing.mediaDeletedAt
+          && [...(Array.isArray(listing.media) ? listing.media : []), ...(Array.isArray(listing.retainedMedia) ? listing.retainedMedia : [])]
+            .some((m) => m && m.src === src);
+        if (!onListing && !(await isOwnerUploadInProgress(parsed.pathname))) return notFound(res);
         return await sendMedia(req, res, parsed.pathname);
       }
       if (listing.mediaDeletedAt || !user) return notFound(res);
@@ -116,10 +129,16 @@ export default async function handler(req, res) {
       && effectiveCreatorStatus(creator) !== 'banned';
 
     // Same rule as the listing branch: an owner is never served a file this
-    // app has deleted (a token-replayed re-upload nothing records).
-    if (owner && !admin && (await isMediaReaped(parsed.pathname))) return notFound(res);
+    // app has deleted (a token-replayed re-upload nothing records), and only
+    // a file their record still points at or an upload in progress.
+    let ownerMay = false;
+    if (owner && !admin && !(await isMediaReaped(parsed.pathname))) {
+      const onRecord = creator.img === src || creator.video === src
+        || (Array.isArray(creator.gallery) ? creator.gallery : []).some((g) => g && g.src === src);
+      ownerMay = onRecord || (await isOwnerUploadInProgress(parsed.pathname));
+    }
 
-    let allowed = admin || owner;
+    let allowed = admin || ownerMay;
     if (!allowed) {
       if (parsed.purpose === 'avatar') {
         allowed = isPubliclyVisible(creator) && creator.img === src;

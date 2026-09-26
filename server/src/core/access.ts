@@ -53,10 +53,21 @@ function memoized(memo: ViewMemo | undefined, key: string, fn: () => Promise<boo
 
 export async function canViewPost(
   userId: string | null,
-  post: { id: string; creatorId: string; visibility: string; removed: boolean; vipEarlyUntil?: Date | null },
+  post: { id: string; creatorId: string; visibility: string; removed: boolean; removedByCreator?: boolean; vipEarlyUntil?: Date | null },
   memo?: ViewMemo,
 ) {
-  if (post.removed) return false;
+  if (post.removed) {
+    // A moderation takedown hides it from everyone. A creator's OWN delete
+    // hides it from everyone who has not paid for it -- but a fan who
+    // unlocked a PPV post keeps it (fans get no refunds), exactly as a
+    // listing's buyers keep what they bought when the creator removes it
+    // (canViewListing). Still subject to the creator's standing below it.
+    if (!post.removedByCreator || !userId) return false;
+    if (post.creatorId === userId) return true;
+    if (post.visibility !== 'PPV') return false;
+    if (!(await memoized(memo, `active:${post.creatorId}`, () => creatorIsActive(post.creatorId)))) return false;
+    return !!(await prisma.postUnlock.findUnique({ where: { fanId_postId: { fanId: userId, postId: post.id } } }));
+  }
   if (userId && post.creatorId === userId) return true;
   if (!(await memoized(memo, `active:${post.creatorId}`, () => creatorIsActive(post.creatorId)))) return false;
   if (post.vipEarlyUntil && post.vipEarlyUntil > new Date()) {

@@ -194,12 +194,15 @@ describe("srv-money-modules#1: a referrer never sees what the referred fan bough
 
     // An older row that still carries the purchase ref (and a stray fanId).
     await prisma.ledgerEntry.create({ data: { userId: referrer, amountCents: 5n, type: 'REFERRAL', refId: 'post-123', meta: { for: 'fan', fanId: fan } } });
+    // Round 17: referral rows are shown only for ENDED UTC days, one row per
+    // day per side (round17.test.ts) -- so both are moved to yesterday here.
+    await prisma.ledgerEntry.updateMany({ where: { userId: referrer, type: 'REFERRAL' }, data: { createdAt: new Date(Date.now() - 864e5) } });
     const { wallet } = await import('../modules/wallet');
     const app = await appWith(wallet, '/wallet', referrer);
     const res = await app.inject({ method: 'GET', url: '/wallet/history' });
     expect(res.statusCode).toBe(200);
     const refs = res.json().filter((r: any) => r.type === 'REFERRAL');
-    expect(refs.length).toBe(2);
+    expect(refs.length).toBe(1);
     for (const r of refs) {
       expect(r.refId).toBeNull();
       expect(r.meta).toEqual({ for: 'fan' });
@@ -237,6 +240,10 @@ describe('srv-workers-infra#0: the ETH sweep reconciler skips uncredited deposit
     await prisma.deposit.create({ data: { ...base, txHash: `0x${randomUUID()}`, usdCents: 0n, pricePending: true } });
     expect(await ethSweepCandidates(chainId)).toEqual([]);
     await prisma.deposit.create({ data: { ...base, txHash: `0x${randomUUID()}`, usdCents: 2500n, priceUsed: 2500 } });
+    // Round 17: still none while the earlier deposit is price-pending (the
+    // sweep moves the whole balance); a candidate once it is priced.
+    expect(await ethSweepCandidates(chainId)).toEqual([]);
+    await prisma.deposit.updateMany({ where: { userId: u, chainId, pricePending: true }, data: { pricePending: false, usdCents: 100n, priceUsed: 2500 } });
     expect((await ethSweepCandidates(chainId)).map((r) => r.derivationIndex)).toEqual([idx]);
   });
 });

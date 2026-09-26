@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { charge, money, FEES } from '../core/ledger.js';
 import { publish } from '../lib/redis.js';
 import { nanoid } from 'nanoid';
+import { assertCleanText } from '../lib/text-screen.js';
 
 /**
  * Charges one tip, at most once per (fan, idempotencyKey).
@@ -56,7 +57,17 @@ export const tips: FastifyPluginAsync = async (app) => {
       // same tip -- see chargeTip(). Required: a tip without one cannot be
       // told apart from its own retry, and fans get no refunds.
       idempotencyKey: z.string().uuid(),
+      // Opt-in, per tip: show the tipper's username to everyone watching the
+      // live stream. Off by default -- a fan is otherwise anonymous to other
+      // fans everywhere here (anonymised bid labels, private top supporters),
+      // and a name on the overlay outs them as a paying customer to the room.
+      showName: z.boolean().optional(),
     }).parse(req.body);
+
+    // The note is free text shown to the creator and to every viewer of
+    // their live overlay: the same screens as any other published text,
+    // BEFORE anything is charged, so a refused note moves no money.
+    assertCleanText([['note', b.note]]);
 
     // Whether this is a LIVE tip (20%) or an ordinary one (10%) is decided
     // HERE, from the creator's actual stream state -- never from the
@@ -85,8 +96,10 @@ export const tips: FastifyPluginAsync = async (app) => {
     // note onto a different creator's live overlay, as often as they liked.
     const streamId = liveNow?.id;
     const evt = { type: 'tip', tipId, from: from?.username, amountCents: b.amountCents, note: b.note, postId: b.postId, streamId };
+    // The creator's own channel always names the tipper (it is their
+    // customer); the overlay does only when the fan opted in.
     await publish(b.creatorId, evt);
-    if (streamId) await publish(`stream:${streamId}`, evt);   // live overlay channel
+    if (streamId) await publish(`stream:${streamId}`, { ...evt, from: b.showName === true ? evt.from : null, anonymous: b.showName !== true });   // live overlay channel
     return { ok: true, tipId, ...r.charged };
   });
 

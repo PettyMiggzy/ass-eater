@@ -248,10 +248,13 @@ export default async function handler(req, res) {
       // that transaction also stamps the report, so a retry after a failure
       // between the two still records 'removed' rather than 'already_gone'
       // and the report cannot then be dismissed as though nothing came down.
+      // contentRemovedAt is an ISO 8601 string like every other stamp the
+      // admin panel renders (round-17 admin-ui#3): Postgres's now()::text
+      // ('2026-09-26 11:36:32.123456+00') is Invalid Date in Safari.
       const markRemoved = (c) => c.query(
-        `update reports set data = data || jsonb_build_object('contentRemovedAt', to_jsonb(now()::text), 'contentRemovedBy', $2::text)
+        `update reports set data = data || jsonb_build_object('contentRemovedAt', $3::text, 'contentRemovedBy', $2::text)
           where id = $1`,
-        [String(report.id), action],
+        [String(report.id), action, new Date().toISOString()],
       );
       const removedEarlier = !!report.contentRemovedAt;
       if (action === 'dismiss' && removedEarlier) {
@@ -313,10 +316,25 @@ export default async function handler(req, res) {
       // touched), so a failure in between left the content gone and the
       // report open, and the retry recorded 'already_gone' -- or let it be
       // dismissed. Now a failure rolls the removal back with the rest, and
-      // files are deleted only after COMMIT. Lock order as elsewhere: the
-      // creator and every file and listing row (when banning), then the
-      // conversation / wall rows, then the report rows.
+      // files are deleted only after COMMIT. Lock order: for a message, the
+      // conversation row FIRST (round-17 social#0) -- a paid fan -> creator
+      // send locks the conversation and then the creator row FOR SHARE
+      // (lib/messages-store.js sendDirectMessage -> transferWithFee), so
+      // taking the creator first here deadlocked a Remove & Ban against a DM
+      // arriving in that same conversation. Then the creator and every file
+      // and listing row (when banning), then the wall rows (reports before
+      // wall_posts), then the report rows. Known residual: an admin DELETING
+      // that same creator at the same moment (lib/creators-store.js
+      // deleteCreator: users -> creators -> their conversations) takes the
+      // opposite order, so the two can deadlock; Postgres aborts one, the
+      // claim is released below and the admin simply retries. Both are
+      // rare, admin-only actions, and reordering deleteCreator would invert
+      // it against the users-first money paths instead.
       updated = await withTransaction(async (client) => {
+        if (removing && report.targetType === 'message' && typeof report.conversationId === 'string') {
+          // removeConversationMessage below re-enters this lock.
+          await client.query('select 1 from conversations where id = $1 for update', [report.conversationId]);
+        }
         const listingExtra = [];
         let minorListingHeld = [];
         if (removing && report.targetType === 'listing' && report.category === 'minor') {

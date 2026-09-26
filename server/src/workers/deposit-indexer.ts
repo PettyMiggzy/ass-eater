@@ -7,9 +7,10 @@ import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
 import { registerWorker } from './process-guards.js';
 import { chunk } from './indexer-chunks.js';
-import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, ethSweepCandidates, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
+import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, depositPricePendingFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, ethSweepCandidates, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
+import { forEachPricedPending } from './reprice-scan.js';
 
 const BATCH = 1000n;
 // Deposit addresses per eth_getLogs `to` filter (geth caps a position at 1000).
@@ -196,17 +197,24 @@ async function creditIsolated(d: Parameters<typeof credit>[0]) {
  * Credits price-pending deposits once their asset can be priced. The claim
  * is a guarded UPDATE (pricePending true -> false) inside the same
  * transaction as the ledger posting, so two passes can never both credit one
- * deposit. A deposit still unpriceable is left pending for the next pass.
+ * deposit. Each asset is priced ONCE per pass, and only the assets that
+ * priced are read (workers/reprice-scan.ts): a backlog of deposits that
+ * cannot be priced never starves the ones that can. A deposit still
+ * unpriceable is left pending for the next pass.
  */
-export async function repricePending(limit = 100) {
-  const rows = await prisma.deposit.findMany({ where: { chainId: CHAIN_ID, pricePending: true }, orderBy: { createdAt: 'asc' }, take: limit });
+export async function repricePending(pageSize = 100) {
+  const prices = new Map<'ETH' | 'ONLYONE', number>();
+  for (const asset of ['ETH', 'ONLYONE'] as const) {   // a stablecoin is never parked: it is $1
+    try {
+      const px = await getUsdPrice(asset);
+      if (Number.isFinite(px) && px > 0) prices.set(asset, px);
+    } catch { /* unpriceable this pass: its rows are not read */ }
+  }
   let credited = 0;
-  for (const d of rows) {
-    const asset = d.asset as Asset;
-    if (asset === 'STABLE') continue;   // never parked; a stablecoin is $1
-    let px: number;
-    try { px = await getUsdPrice(asset); } catch { continue; }
-    if (!Number.isFinite(px) || px <= 0) continue;
+  await forEachPricedPending(CHAIN_ID, [...prices.keys()], async (d) => {
+    const asset = d.asset as 'ETH' | 'ONLYONE';
+    const px = prices.get(asset);
+    if (!px) return;
     const raw = BigInt(d.rawAmount);
     const cents = depositCents(asset, raw, DECIMALS[asset], px);
     const done = await money(prisma, async (tx) => {
@@ -220,7 +228,7 @@ export async function repricePending(limit = 100) {
       await postDeposit(tx, d.userId, asset, cents, d.id, { asset, raw: d.rawAmount, px, repriced: true });
       return true;
     });
-    if (!done) continue;
+    if (!done) return;
     credited++;
     const addr = await prisma.depositAddress.findUnique({ where: { userId_chainId: { userId: d.userId, chainId: CHAIN_ID } } });
     if (addr) {
@@ -228,7 +236,7 @@ export async function repricePending(limit = 100) {
     }
     await publish(d.userId, { type: 'deposit', asset, amount: formatUnits(raw, DECIMALS[asset]), usdCents: Number(cents) })
       .catch((e) => console.warn('indexer: deposit notification failed', e));
-  }
+  }, { pageSize });
   return credited;
 }
 
@@ -401,10 +409,9 @@ async function reconcileSweeps() {
     }
   }
   if (!INDEX_ONLYONE_DEPOSITS) return;
-  const tokenRows = await prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
-    SELECT DISTINCT a."derivationIndex", a."address"
-      FROM "DepositAddress" a JOIN "Deposit" d ON d."userId" = a."userId" AND d."chainId" = a."chainId"
-     WHERE a."chainId" = ${CHAIN_ID} AND d."asset" = 'ONLYONE' AND d."pricePending" = false AND d."usdCents" > 0`;
+  // Same bar as ETH: a credited deposit, and none still price-pending (the
+  // sweep moves the whole balance).
+  const tokenRows = await ethSweepCandidates(CHAIN_ID, 'ONLYONE');
   for (const r of tokenRows) {
     const bal = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'balanceOf', args: [r.address as `0x${string}`] });
     if (bal === 0n) continue;
@@ -478,6 +485,11 @@ registerWorker(new Worker('sweep', async (job) => {
     // queues no sweep for it), and this job's data alone is not proof. Not
     // retried (a plain return): the credit of that deposit queues its own.
     if (!(await depositCreditedFor(CHAIN_ID, derivationIndex, 'ETH'))) return;
+    // The transfer below is the WHOLE balance: while any ETH deposit to this
+    // address is still price-pending it would take that one too, uncredited.
+    // Deferred by returning -- repricePending() queues this sweep again once
+    // the pending deposit is credited.
+    if (await depositPricePendingFor(CHAIN_ID, derivationIndex, 'ETH')) return;
     const bal = await publicClient.getBalance({ address: me });
     const gas = await publicClient.estimateFeesPerGas(); const cost = 21_000n * (gas.maxFeePerGas ?? 0n) * 2n;
     if (bal > cost) await wc.sendTransaction({ to: treasuryAddress, value: bal - cost });
@@ -485,6 +497,9 @@ registerWorker(new Worker('sweep', async (job) => {
   }
   const tok = asset === 'ONLYONE' ? TOKENS.ONLYONE : ACCEPTED_STABLES.get((tokenAddress ?? '').toLowerCase());
   if (!tok?.address) return; // unknown token in a sweep job -- never guess which contract to move
+  // The same whole-balance rule for $ONLYONE: never while a deposit of it to
+  // this address is still price-pending (repricePending re-queues the sweep).
+  if (asset === 'ONLYONE' && await depositPricePendingFor(CHAIN_ID, derivationIndex, 'ONLYONE')) return;
 
   const bal = await publicClient.readContract({ address: tok.address, abi: erc20Abi, functionName: 'balanceOf', args: [me] });
   if (bal === 0n) return;

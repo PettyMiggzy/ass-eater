@@ -647,7 +647,13 @@ export default function Dashboard({
                   />
                   <p className="text-[11px] text-gray-500 mt-1">
                     Every message a fan sends you costs this in credits (${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)} minimum,
-                    ${(DM_PRICE_MAX_CENTS / 100).toFixed(2)} maximum). You earn it less the {PLATFORM_FEE_PCT}% platform fee.
+                    ${(DM_PRICE_MAX_CENTS / 100).toFixed(2)} maximum).{' '}
+                    {/* Paid messages go through transferWithFee, which waives the
+                        fee for a Founding Creator inside their window -- the same
+                        promise ShareKit and the wallet fee note make. */}
+                    {founding?.active && founding.endsAt
+                      ? `As a Founding Creator you keep all of it until ${formatDate(founding.endsAt)}; after that you earn it less the ${PLATFORM_FEE_PCT}% platform fee.`
+                      : `You earn it less the ${PLATFORM_FEE_PCT}% platform fee.`}{' '}
                     Your replies are free. Leave blank for the ${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)} default.
                   </p>
                 </div>

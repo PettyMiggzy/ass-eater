@@ -124,18 +124,37 @@ export async function depositCreditedFor(chainId: number, derivationIndex: numbe
 }
 
 /**
- * Deposit addresses the hourly reconciler may re-sweep native ETH from:
- * only those with a CREDITED (priced, non-zero) ETH deposit -- the same bar
- * the $ONLYONE reconciler uses. Selecting on any ETH Deposit row swept
- * price-pending deposits (usdCents 0, nothing on the ledger: e.g.
- * CHAINLINK_ETH_USD unset) into the treasury with no ledger record, where an
- * unpriced deposit is meant to stay at the fan's address until it is priced.
+ * Does the deposit address at this index hold a PRICE-PENDING deposit of
+ * this asset (recorded, usdCents 0, nothing on the ledger)? An ETH or
+ * $ONLYONE sweep moves the address's WHOLE balance, so while one is pending
+ * the sweep must not run at all -- a credited earlier deposit is not enough:
+ * it swept the unpriced one into the treasury with no ledger record. The
+ * sweep is deferred, not failed: repricePending() (workers/deposit-indexer.ts)
+ * queues a sweep for the address once that deposit is credited.
  */
-export async function ethSweepCandidates(chainId: number) {
+export async function depositPricePendingFor(chainId: number, derivationIndex: number, asset: 'ONLYONE' | 'ETH'): Promise<boolean> {
+  const addr = await prisma.depositAddress.findFirst({ where: { chainId, derivationIndex }, select: { userId: true } });
+  if (!addr) return false;
+  const d = await prisma.deposit.findFirst({ where: { userId: addr.userId, chainId, asset, pricePending: true }, select: { id: true } });
+  return !!d;
+}
+
+/**
+ * Deposit addresses the hourly reconciler may re-sweep native ETH (or, with
+ * asset 'ONLYONE', $ONLYONE) from: only those with a CREDITED (priced,
+ * non-zero) deposit of that asset, and with NO price-pending one. The sweep
+ * moves the whole balance, so an address holding any unpriced deposit
+ * (usdCents 0, nothing on the ledger: e.g. CHAINLINK_ETH_USD unset) is left
+ * alone until it is priced -- the unpriced deposit stays at the fan's
+ * address, as DEPLOY.md promises, even for a returning depositor.
+ */
+export async function ethSweepCandidates(chainId: number, asset: 'ETH' | 'ONLYONE' = 'ETH') {
   return prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
     SELECT DISTINCT a."derivationIndex", a."address"
       FROM "DepositAddress" a JOIN "Deposit" d ON d."userId" = a."userId" AND d."chainId" = a."chainId"
-     WHERE a."chainId" = ${chainId} AND d."asset" = 'ETH' AND d."pricePending" = false AND d."usdCents" > 0`;
+     WHERE a."chainId" = ${chainId} AND d."asset"::text = ${asset} AND d."pricePending" = false AND d."usdCents" > 0
+       AND NOT EXISTS (SELECT 1 FROM "Deposit" p WHERE p."userId" = a."userId" AND p."chainId" = a."chainId"
+                        AND p."asset"::text = ${asset} AND p."pricePending" = true)`;
 }
 
 /**

@@ -114,7 +114,9 @@ export type ReportListQuery = {
 /**
  * The moderation queue, paged, each report marked `contentRemoved` when what
  * it points at is already down (nobody is served it any more):
- *  - a post that is removed, or whose creator is BANNED;
+ *  - a post that is removed, or whose creator is BANNED -- except a PPV
+ *    post the CREATOR deleted that fans had bought: its buyers are still
+ *    served it (core/access.ts canViewPost), so it is live content;
  *  - a listing a MODERATOR took down for itself (moderatedAt set by a
  *    report takedown), or whose creator is BANNED. A BAN stamp alone does
  *    not count: it judges the seller, not the item, and once the ban is
@@ -151,7 +153,9 @@ export type ReportListQuery = {
 export async function listReports(q: ReportListQuery) {
   const banned = (col: Prisma.Sql) => Prisma.sql`EXISTS (SELECT 1 FROM "User" ou WHERE ou.id = ${col} AND ou.status = 'BANNED')`;
   const removed = Prisma.sql`CASE r."targetType"
-      WHEN 'post' THEN EXISTS (SELECT 1 FROM "Post" p WHERE p.id = r."targetId" AND (p.removed OR ${banned(Prisma.sql`p."creatorId"`)}))
+      WHEN 'post' THEN EXISTS (SELECT 1 FROM "Post" p WHERE p.id = r."targetId" AND (
+        (p.removed AND NOT (p."removedByCreator" AND p.visibility = 'PPV' AND EXISTS (SELECT 1 FROM "PostUnlock" pu WHERE pu."postId" = p.id)))
+        OR ${banned(Prisma.sql`p."creatorId"`)}))
       WHEN 'listing' THEN EXISTS (SELECT 1 FROM "Listing" l WHERE l.id = r."targetId" AND ((l."moderatedAt" IS NOT NULL AND l."moderatedReason" IS DISTINCT FROM 'BAN') OR ${banned(Prisma.sql`l."creatorId"`)}))
       WHEN 'user' THEN EXISTS (SELECT 1 FROM "User" u WHERE u.id = r."targetId" AND u.status = 'BANNED')
       WHEN 'message' THEN EXISTS (

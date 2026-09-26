@@ -225,8 +225,15 @@ export const auth: FastifyPluginAsync = async (app) => {
     const [me, referrals, earnings] = await Promise.all([
       prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { username: true } }),
       prisma.user.count({ where: { referredById: req.user.id } }),
-      prisma.ledgerEntry.aggregate({ where: { userId: req.user.id, type: 'REFERRAL' }, _sum: { amountCents: true } }),
+      // Through the end of the last UTC day only, like GET /wallet/history's
+      // referral rows: a live total, polled, dates each referred purchase.
+      prisma.ledgerEntry.aggregate({ where: { userId: req.user.id, type: 'REFERRAL', createdAt: { lt: utcDayStart() } }, _sum: { amountCents: true } }),
     ]);
     return { code: me.username, referrals, earningsCents: Number(earnings._sum.amountCents ?? 0) };
   });
 };
+
+/** Midnight UTC today: referral earnings are shown only for days that have ended. */
+function utcDayStart(now = new Date()) {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}

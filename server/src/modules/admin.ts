@@ -387,7 +387,9 @@ export const admin: FastifyPluginAsync = async (app) => {
           // the raw upload, HLS and preview stayed in storage and at the CDN
           // edge, and GET /media/:id/url handed out the preview URL to anyone
           // holding the id. Taken down like the message and listing branches.
-          await prisma.post.update({ where: { id: r.targetId }, data: { removed: true } });
+          // removedByCreator false: a takedown hides it from every buyer
+          // too, even if the creator had already deleted it themselves.
+          await prisma.post.update({ where: { id: r.targetId }, data: { removed: true, removedByCreator: false } });
           settledTargetIds = [r.targetId];
           const media = await prisma.media.findMany({ where: { postId: r.targetId }, select: { id: true } });
           takedowns.push(...(await takedownRoots(media.map((m) => m.id), req.log)));

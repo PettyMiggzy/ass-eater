@@ -544,7 +544,11 @@ export default function CreatorProfile({
                 >
                   {favorited ? <SolidIcons.heart className="h-5 w-5" /> : <Icons.heart className="h-5 w-5" />}
                 </button>
-                {!demo && (
+                {/* No Message button for a profile with no login behind it
+                    (an admin-managed model that hasn't claimed an account):
+                    /api/messages/send has nobody to deliver to, and the
+                    Support card says messaging opens once they claim it. */}
+                {!demo && creatorUserId && (
                   <button
                     onClick={openInbox}
                     className="px-5 h-11 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold text-sm transition"
@@ -626,15 +630,24 @@ export default function CreatorProfile({
                       <li className="flex items-start gap-2">
                         <Icons.check className="h-4 w-4 mt-0.5 shrink-0 text-brand-pink" />
                         <span>
-                          {dmPriceCents > 0
-                            ? `Send a message — ${dmPriceLabel} each (goes to the creator, less OnlyOne's platform fee).`
-                            : 'Send a message — free for you as a creator.'}
+                          {/* Same condition as the Message button: a creator
+                              with no claimed login can't be messaged, so no
+                              price is offered for it (credits never refund). */}
+                          {!creatorUserId
+                            ? 'Messaging opens once this creator claims their account.'
+                            : dmPriceCents > 0
+                              ? `Send a message — ${dmPriceLabel} each (goes to the creator, less OnlyOne's platform fee).`
+                              : 'Send a message — free for you as a creator.'}
                         </span>
                       </li>
                     </ul>
-                    <a href="/credits" className="mt-4 block text-center w-full py-2.5 rounded-full border border-white/15 text-sm font-semibold hover:border-brand-pink/60 transition">
-                      Get credits
-                    </a>
+                    {/* Credits only buy something here when there is a
+                        listing to buy or a message that can be sent. */}
+                    {(creatorUserId || listings.length > 0) && (
+                      <a href="/credits" className="mt-4 block text-center w-full py-2.5 rounded-full border border-white/15 text-sm font-semibold hover:border-brand-pink/60 transition">
+                        Get credits
+                      </a>
+                    )}
                     <p className="text-[11px] text-gray-500 mt-3">Subscriptions and tips aren&apos;t available yet.</p>
                   </>
                 )}
