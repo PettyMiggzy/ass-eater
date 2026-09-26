@@ -1,10 +1,18 @@
 import { clearSessionCookie, getSessionClaims } from '../../../lib/session';
 import { bumpSessionVersion, SESSION_ALREADY_REVOKED, SESSION_USER_GONE } from '../../../lib/users-store';
+import { refuseCrossSite } from '../../../lib/same-origin';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+  // Refused cross-site BEFORE the cookie is cleared (round-21 gates-token#2):
+  // the effect of this route is the Set-Cookie on the response, which a
+  // browser applies even to a cross-site top-level form POST that carried no
+  // session cookie -- so any website could sign a visitor out, over and over.
+  // The site's own caller (pages/dashboard.js) is a same-origin fetch with no
+  // body. See lib/same-origin.js.
+  if (refuseCrossSite(req, res)) return;
 
   const claims = getSessionClaims(req);
   // Clear the cookie first and unconditionally -- whatever happens below,

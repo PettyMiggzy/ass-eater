@@ -62,10 +62,15 @@ export default async function handler(req, res) {
     // and overwrites anything the client sent, which is the only reason
     // they are worth recording at all.
     //
-    // Only a US state is kept, and nothing else about location: its one
-    // purpose (the Privacy Policy, Section 1) is telling someone when their
-    // geoblocked state opens. A non-US visitor's region ('ON' for Ontario)
-    // and anyone's country were stored here without being disclosed.
+    // Only a US state is kept, and nothing else about location (Privacy
+    // Policy, Section 1): news about a change affecting that state. A non-US
+    // visitor's region ('ON' for Ontario) and anyone's country were stored
+    // here without being disclosed. DECIDED (round-21 legal-journeys#3): the
+    // country is NOT recorded -- that would widen collection on a list that
+    // now takes mostly non-US (GDPR / UK GDPR) sign-ups -- so no page may
+    // promise a non-US visitor news about the rules where they are; the list
+    // promises launch news only (the /blocked-region blurb and Privacy
+    // Section 1 wording are the copy side of this decision).
     const country = String(req.headers['x-vercel-ip-country'] || '').toUpperCase();
     await addToWaitlist({
       email,

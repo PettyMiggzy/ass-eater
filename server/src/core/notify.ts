@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { sendNotificationMail } from '../lib/mailer.js';
-import { creatorMayOperate } from './creator-standing.js';
+import { creatorMayBePaid } from './creator-standing.js';
 
 /**
  * Record that a creator should know about something, then try to email them.
@@ -25,7 +25,7 @@ export async function notifyDmReceived(opts: {
     prisma.user.findUnique({
       where: { id: opts.recipientId },
       select: {
-        role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true,
+        role: true, status: true, kycStatus: true, siteUid: true, siteCreatorStatus: true,
         creator: { select: { notifyEmail: true, notifyEmailVerifiedAt: true, notifyOnDm: true, displayName: true } },
       },
     }),
@@ -45,10 +45,15 @@ export async function notifyDmReceived(opts: {
   // exactly the harm the anonymous-signup option exists to prevent.
   const creator = recipient.creator;
   if (!creator || !creator.notifyOnDm) return;
-  // Only an OPERATING creator (KYC-approved and, if bridged, site-approved --
-  // core/creator-standing.ts). One whose approval lapsed keeps the in-app row
-  // above but gets no mail; they can still opt out in settings regardless.
-  if (!creatorMayOperate(recipient)) return;
+  // Only an ACTIVE, OPERATING creator (not suspended or banned, KYC-approved
+  // and, if bridged, site-approved -- core/creator-standing.ts
+  // creatorMayBePaid). Anyone else keeps the in-app row above but gets no
+  // mail. The mail says it can be turned off any time in settings; a creator
+  // whose approval lapsed still can (modules/notifications.ts), but a
+  // suspended or banned account fails app.auth everywhere and has its refresh
+  // tokens revoked (core/moderation.ts), so it could never reach that switch
+  // -- it must simply not be mailed.
+  if (!creatorMayBePaid(recipient)) return;
 
   // Only a CONFIRMED notification address (modules/notifications.ts
   // double opt-in). Never the account email: neither stack verifies that

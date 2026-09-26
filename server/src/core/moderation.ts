@@ -100,7 +100,11 @@ export async function applyUserStatus(
       await tx.subscription.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } });
       await tx.tokenLock.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } });
     }
-    if (status === 'BANNED') await tx.subscription.updateMany({ where: { creatorId: userId }, data: { autoRenew: false, status: 'CANCELLED' } });
+    // Only LIVE rows: an EXPIRED subscription has nothing to cancel, and
+    // flipping every historic one to CANCELLED (with a past period end) used
+    // to flood the renewals worker's due set with cleanup rows, starving real
+    // renewals past core/access.ts's live grace (round 21).
+    if (status === 'BANNED') await tx.subscription.updateMany({ where: { creatorId: userId, status: 'ACTIVE' }, data: { autoRenew: false, status: 'CANCELLED' } });
     // Reversing a ban gives the creator's subscribers back the period they
     // already paid for: the ban CANCELLED every subscription to them (the
     // only writer of CANCELLED), which cut access at once, and fans get no

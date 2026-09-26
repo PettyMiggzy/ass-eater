@@ -1,6 +1,7 @@
-# Most of this site sits behind a 27-state legal age-verification geoblock
-# (see proxy.js). A crawler with no session whose IP geolocates to one of
-# those states (or to the US with no resolvable state) gets gated pages
+# Most of this site sits behind a legal age-verification gate (see
+# proxy.js). A crawler with no session whose IP geolocates outside the US,
+# to one of the 27 gated US states, to the US with no resolvable state, or
+# to no resolvable country at all gets gated pages
 # rewritten to the /blocked-region page with a 200; only /api and
 # /_next/data requests answer 451. This file, sitemap.xml and the pages
 # sitemap.xml lists are exempt from that check, so they read the same from

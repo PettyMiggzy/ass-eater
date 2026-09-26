@@ -193,6 +193,11 @@ model User {
   siteAccountSuspendedUntil DateTime?
   kycStatus    KycStatus  @default(NONE)
   kycRef       String? // provider applicant id (2257-adjacent record pointer)
+  // Time of the KYC decision kycStatus currently reflects: the Sumsub event's
+  // own createdAt, or now() for an admin override (POST /admin/users/:id/kyc).
+  // The webhook applies an event only if it is not older than this, so a
+  // delayed or retried stale event can't undo a newer one (core/kyc-events.ts).
+  kycStatusAt  DateTime?
   referredById String?
   referredBy   User?      @relation("Referral", fields: [referredById], references: [id])
   referrals    User[]     @relation("Referral")
@@ -862,6 +867,9 @@ model AdminAdjustRequest {
   targetId    String
   amountCents BigInt
   reason      String
+  // Adjusted withdrawable (earned, payable) credits rather than spendable
+  // ones -- part of what a replay must match (core/admin-adjust.ts).
+  earnings    Boolean  @default(false)
   createdAt   DateTime @default(now())
 
   @@index([targetId, createdAt])

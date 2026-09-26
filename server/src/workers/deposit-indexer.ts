@@ -7,7 +7,7 @@ import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
 import { registerWorker } from './process-guards.js';
 import { chunk } from './indexer-chunks.js';
-import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, depositPricePendingFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, ethSweepCandidates, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
+import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, depositPricePendingFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, sweepCandidates, sweepWorthTopUp, DEPOSIT_ADDRESS_MAX, TooManyDepositAddresses, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
 import { forEachPricedPending, settleRepriced, drainSweepRequeues } from './reprice-scan.js';
@@ -93,9 +93,10 @@ async function postDeposit(tx: Tx, userId: string, asset: Asset, cents: bigint, 
  * anything) above DEPOSIT_ADDRESS_MAX, and only the three columns used are
  * read, a page at a time.
  */
-const DEPOSIT_ADDRESS_MAX = envInt('DEPOSIT_ADDRESS_MAX', 250_000, 1);
+// DEPOSIT_ADDRESS_MAX and TooManyDepositAddresses live in sweep-gas.ts so the
+// hourly sweep reconciler is bounded by the same limit.
 const ADDRESS_PAGE = 10_000;
-export class TooManyDepositAddresses extends Error {}
+export { TooManyDepositAddresses };
 type AddrRow = { address: string; userId: string; derivationIndex: number };
 async function addressMap() {
   const n = await prisma.depositAddress.count({ where: { chainId: CHAIN_ID } });
@@ -414,42 +415,55 @@ let tokensVerified = false;
  * under the top-up floor.
  */
 async function reconcileSweeps() {
-  const rows = await prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
-    SELECT DISTINCT a."derivationIndex", a."address"
-      FROM "DepositAddress" a JOIN "Deposit" d ON d."userId" = a."userId" AND d."chainId" = a."chainId"
-     WHERE a."chainId" = ${CHAIN_ID} AND d."asset" = 'STABLE'`;
-  for (const r of rows) {
+  // Every candidate walk is bounded and paged (workers/sweep-gas.ts
+  // sweepCandidates: counted first, refused above DEPOSIT_ADDRESS_MAX, never
+  // loaded whole), and each address is checked in its own try/catch: one RPC
+  // timeout or 5xx used to throw out of the whole pass and leave every
+  // address after it unchecked until the next hour. A refusal of one asset's
+  // walk does not stop the others.
+  let failures = 0;
+  const each = async (asset: 'STABLE' | 'ETH' | 'ONLYONE', fn: (r: { derivationIndex: number; address: string }) => Promise<void>) => {
+    try {
+      for await (const r of sweepCandidates(CHAIN_ID, asset)) {
+        try { await fn(r); } catch (e) { failures++; console.error(`indexer: sweep reconcile of ${asset} at index ${r.derivationIndex} failed`, e); }
+      }
+    } catch (e) {
+      if (e instanceof TooManyDepositAddresses) console.error(e.message);
+      else console.error(`indexer: sweep reconcile of ${asset} aborted`, e);
+    }
+  };
+  await each('STABLE', async (r) => {
     for (const s of STABLECOINS) {
       const bal = await publicClient.readContract({ address: s.address, abi: erc20Abi, functionName: 'balanceOf', args: [r.address as `0x${string}`] });
       if (bal < 10n ** BigInt(s.decimals)) continue;   // under one dollar: not worth the gas yet
       await enqueueSweep({ derivationIndex: r.derivationIndex, asset: 'STABLE', tokenAddress: s.address },
         `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-${s.address.toLowerCase()}`, 0);
     }
-  }
+  });
   // Native ETH deposits too (TRACK_NATIVE_ETH): an ETH sweep deferred past
   // its retries -- a key rotation (TREASURY_SETTLE_ONLY) lasting hours, an
   // RPC outage -- used to wait for that fan's next ETH deposit. The floor
   // sits well above the 0.00005 ETH gas top-up an ERC-20 sweep leaves
-  // behind, so leftover top-up gas alone never queues a job.
+  // behind, so leftover top-up gas alone never queues a job. Credited ETH
+  // deposits only (sweep-gas.ts sweepCandidatePage).
   if (TRACK_NATIVE_ETH) {
-    // Credited ETH deposits only (workers/sweep-gas.ts ethSweepCandidates).
-    const ethRows = await ethSweepCandidates(CHAIN_ID);
-    for (const r of ethRows) {
+    await each('ETH', async (r) => {
       const bal = await publicClient.getBalance({ address: r.address as `0x${string}` });
-      if (bal < parseEther('0.0005')) continue;
+      if (bal < parseEther('0.0005')) return;
       await enqueueSweep({ derivationIndex: r.derivationIndex, asset: 'ETH' }, `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-eth`, 0);
-    }
+    });
   }
-  if (!INDEX_ONLYONE_DEPOSITS) return;
   // Same bar as ETH: a credited deposit, and none still price-pending (the
   // sweep moves the whole balance).
-  const tokenRows = await ethSweepCandidates(CHAIN_ID, 'ONLYONE');
-  for (const r of tokenRows) {
-    const bal = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'balanceOf', args: [r.address as `0x${string}`] });
-    if (bal === 0n) continue;
-    await enqueueSweep({ derivationIndex: r.derivationIndex, asset: 'ONLYONE', tokenAddress: TOKENS.ONLYONE.address },
-      `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-onlyone`, 0);
+  if (INDEX_ONLYONE_DEPOSITS) {
+    await each('ONLYONE', async (r) => {
+      const bal = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'balanceOf', args: [r.address as `0x${string}`] });
+      if (bal === 0n) return;
+      await enqueueSweep({ derivationIndex: r.derivationIndex, asset: 'ONLYONE', tokenAddress: TOKENS.ONLYONE.address },
+        `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-onlyone`, 0);
+    });
   }
+  if (failures) console.error(`indexer: sweep reconcile finished with ${failures} address failure(s); those are retried next pass`);
 }
 
 (async function repriceLoop() {

@@ -591,7 +591,10 @@ export const admin: FastifyPluginAsync = async (app) => {
     // User row -- passwordHash, login email, siteUid, kycRef -- to the admin
     // client and whatever logs its responses. An unknown id is a 404, the
     // same as /users/:id/status.
-    const r = await prisma.user.updateMany({ where: { id }, data: { kycStatus: status } });
+    // Stamped with now(): the Sumsub webhook applies only events not older
+    // than kycStatusAt (core/kyc-events.ts), so a delayed or retried review
+    // from before this decision can no longer overwrite it.
+    const r = await prisma.user.updateMany({ where: { id }, data: { kycStatus: status, kycStatusAt: new Date() } });
     if (r.count === 0) return reply.code(404).send({ error: 'not_found' });
     return prisma.user.findUniqueOrThrow({ where: { id }, select: { id: true, username: true, role: true, status: true, kycStatus: true } });
   });
@@ -670,6 +673,10 @@ export const admin: FastifyPluginAsync = async (app) => {
    * { ok: true, replayed: true } and posts nothing. 404 for an unknown user,
    * 400 system_account for the platform/burn accounts, 409
    * insufficient_balance for a debit past zero unless allowNegative: true.
+   * `earnings: true` adjusts WITHDRAWABLE (earned, payable) credits: a credit
+   * becomes payable, a debit claws back earnings and is refused 409
+   * insufficient_withdrawable past what is withdrawable. Default false: a
+   * credit is spendable-only, a debit spends non-withdrawable credits first.
    */
   app.post('/users/:id/adjust', async (req: any, reply) => {
     const id = z.string().uuid().parse(req.params.id);
@@ -678,6 +685,7 @@ export const admin: FastifyPluginAsync = async (app) => {
       amountCents: z.number().int().min(-100_000_000).max(100_000_000).refine((n) => n !== 0, 'amount_zero'),
       reason: z.string().trim().min(1).max(200),
       allowNegative: z.boolean().optional(),
+      earnings: z.boolean().optional(),
     }).parse(req.body);
     try {
       return await adminAdjust(req.user.id, id, b);

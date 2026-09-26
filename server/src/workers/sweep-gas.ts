@@ -141,21 +141,78 @@ export async function depositPricePendingFor(chainId: number, derivationIndex: n
 }
 
 /**
- * Deposit addresses the hourly reconciler may re-sweep native ETH (or, with
- * asset 'ONLYONE', $ONLYONE) from: only those with a CREDITED (priced,
- * non-zero) deposit of that asset, and with NO price-pending one. The sweep
- * moves the whole balance, so an address holding any unpriced deposit
- * (usdCents 0, nothing on the ledger: e.g. CHAINLINK_ETH_USD unset) is left
- * alone until it is priced -- the unpriced deposit stays at the fan's
- * address, as DEPLOY.md promises, even for a returning depositor.
+ * Upper bound on deposit addresses this key-holding process will load or
+ * walk (workers/deposit-indexer.ts addressMap and the hourly sweep
+ * reconciler). The table is writable by any .env holder, and the unit runs
+ * under a hard MemoryMax: a few million injected rows used to OOM-kill it.
+ * Callers COUNT first and refuse above this, loudly, without loading rows.
  */
-export async function ethSweepCandidates(chainId: number, asset: 'ETH' | 'ONLYONE' = 'ETH') {
-  return prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
-    SELECT DISTINCT a."derivationIndex", a."address"
-      FROM "DepositAddress" a JOIN "Deposit" d ON d."userId" = a."userId" AND d."chainId" = a."chainId"
-     WHERE a."chainId" = ${chainId} AND d."asset"::text = ${asset} AND d."pricePending" = false AND d."usdCents" > 0
+export const DEPOSIT_ADDRESS_MAX = envInt('DEPOSIT_ADDRESS_MAX', 250_000, 1);
+export const SWEEP_CANDIDATE_PAGE = 1_000;
+export class TooManyDepositAddresses extends Error {}
+
+type SweepAsset = 'STABLE' | 'ETH' | 'ONLYONE';
+type Candidate = { derivationIndex: number; address: string };
+
+/**
+ * One page of sweep candidates, keyset-paged on the address (unique per
+ * chain), so a pass never holds more than `limit` rows at once.
+ *
+ * STABLE: any address that has received a stablecoin deposit.
+ * ETH / ONLYONE: only those with a CREDITED (priced, non-zero) deposit of
+ * that asset, and with NO price-pending one. The sweep moves the whole
+ * balance, so an address holding any unpriced deposit (usdCents 0, nothing
+ * on the ledger: e.g. CHAINLINK_ETH_USD unset) is left alone until it is
+ * priced -- the unpriced deposit stays at the fan's address, as DEPLOY.md
+ * promises, even for a returning depositor.
+ */
+export async function sweepCandidatePage(chainId: number, asset: SweepAsset, after: string, limit = SWEEP_CANDIDATE_PAGE): Promise<Candidate[]> {
+  if (asset === 'STABLE') {
+    return prisma.$queryRaw<Candidate[]>`
+      SELECT a."derivationIndex", a."address" FROM "DepositAddress" a
+       WHERE a."chainId" = ${chainId} AND a."address" > ${after}
+         AND EXISTS (SELECT 1 FROM "Deposit" d WHERE d."userId" = a."userId" AND d."chainId" = a."chainId" AND d."asset" = 'STABLE')
+       ORDER BY a."address" LIMIT ${limit}`;
+  }
+  return prisma.$queryRaw<Candidate[]>`
+    SELECT a."derivationIndex", a."address" FROM "DepositAddress" a
+     WHERE a."chainId" = ${chainId} AND a."address" > ${after}
+       AND EXISTS (SELECT 1 FROM "Deposit" d WHERE d."userId" = a."userId" AND d."chainId" = a."chainId"
+                    AND d."asset"::text = ${asset} AND d."pricePending" = false AND d."usdCents" > 0)
        AND NOT EXISTS (SELECT 1 FROM "Deposit" p WHERE p."userId" = a."userId" AND p."chainId" = a."chainId"
-                        AND p."asset"::text = ${asset} AND p."pricePending" = true)`;
+                        AND p."asset"::text = ${asset} AND p."pricePending" = true)
+     ORDER BY a."address" LIMIT ${limit}`;
+}
+
+/**
+ * Every sweep candidate for `asset`, a page at a time -- bounded like the
+ * indexer's addressMap(): the DepositAddress table is counted first and the
+ * walk refuses (TooManyDepositAddresses) above DEPOSIT_ADDRESS_MAX, and
+ * again if paging ever passes it (rows inserted mid-walk).
+ */
+export async function* sweepCandidates(chainId: number, asset: SweepAsset, opts: { max?: number; page?: number } = {}): AsyncGenerator<Candidate> {
+  const max = opts.max ?? DEPOSIT_ADDRESS_MAX;
+  const page = opts.page ?? SWEEP_CANDIDATE_PAGE;
+  const n = await prisma.depositAddress.count({ where: { chainId } });
+  if (n > max) throw new TooManyDepositAddresses(`sweep reconcile: ${n} deposit addresses on chain ${chainId} exceeds DEPOSIT_ADDRESS_MAX=${max}; refusing to walk them (check the DepositAddress table for injected rows, or raise the limit deliberately)`);
+  let after = '';
+  let seen = 0;
+  for (;;) {
+    const rows = await sweepCandidatePage(chainId, asset, after, page);
+    for (const r of rows) {
+      if (++seen > max) throw new TooManyDepositAddresses(`sweep reconcile: more than DEPOSIT_ADDRESS_MAX=${max} candidates; refusing`);
+      yield r;
+    }
+    if (rows.length < page) return;
+    after = rows[rows.length - 1].address;
+  }
+}
+
+/** All ETH (or $ONLYONE) sweep candidates as an array; bounded as sweepCandidates(). */
+export async function ethSweepCandidates(chainId: number, asset: 'ETH' | 'ONLYONE' = 'ETH', opts: { max?: number; page?: number } = {}) {
+  const out: Candidate[] = [];
+  for await (const r of sweepCandidates(chainId, asset, opts)) out.push(r);
+  return out;
 }
 
 /**

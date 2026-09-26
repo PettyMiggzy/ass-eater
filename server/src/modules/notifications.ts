@@ -65,6 +65,8 @@ export const notifications: FastifyPluginAsync = async (app) => {
   // Opting OUT (notifyOnDm=false, clearing the address) is always allowed;
   // turning mail back ON or naming a new address still needs an operating
   // creator (creatorMayOperate) -- core/notify.ts does not mail anyone else.
+  // A SUSPENDED or BANNED account cannot reach this at all (app.auth, and its
+  // refresh tokens are revoked), so core/notify.ts never mails one either.
   app.patch('/settings', {
     preHandler: app.role('CREATOR', 'ADMIN'),
     config: { rateLimit: { max: 20, timeWindow: '10 minutes' } },

@@ -1,6 +1,7 @@
 import { getSessionUser } from '../../../lib/session';
 import { getWallPostById, wallPostIdsByAuthor } from '../../../lib/wall-store';
 import { setWallBlocked, DM_ERRORS } from '../../../lib/messages-store';
+import { AUTHOR_ACCOUNT_GONE } from '../../../lib/author-lock';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { refuseMalformedText } from '../../../lib/field-validation';
 
@@ -75,6 +76,8 @@ export default async function handler(req, res) {
     });
     return res.status(200).json({ ok: true, blocked, postIds });
   } catch (err) {
+    // The caller's own account was deleted while this was in flight.
+    if (err.code === AUTHOR_ACCOUNT_GONE) return res.status(401).json({ error: 'Your account no longer exists.' });
     if (err.code === DM_ERRORS.RECIPIENT_NOT_FOUND) {
       // An author whose account is gone.
       return res.status(blocked ? 404 : 200).json(blocked ? { error: 'That account no longer exists.' } : { ok: true, blocked: false });

@@ -3,6 +3,7 @@ import { formatCredits } from '../../lib/brand';
 import { getJson, postJson } from './media-upload';
 import { responseErrorMessage } from './helpers';
 import ReportModal, { postReport } from '../public/ReportModal';
+import LengthCounter from '../public/LengthCounter';
 
 // The other side's avatar, falling back to the plain placeholder circle when
 // there is none OR it fails to load: /api/media serves a creator's avatar to
@@ -18,8 +19,11 @@ function ThreadAvatar({ src }) {
 
 // Mirrors MAX_MESSAGE_LENGTH in lib/messages-store.js (not imported: that
 // module pulls in the Postgres driver, which must never reach a client
-// bundle). The server enforces the limit either way; this just stops the
-// box accepting a message the server will refuse.
+// bundle). The server enforces the limit on the TRIMMED text either way.
+// The box itself has no maxLength -- that silently cuts a paste and the fan
+// is then charged for the cut-down message -- so an over-limit message stays
+// whole on screen, the counter turns red, and Send is refused until it is
+// shortened (round-21 dashboard#0, the round-20 profile-composer fix).
 const MAX_MESSAGE_LENGTH = 2000;
 const PAGE_SIZE = 20;
 const POLL_MS = 60 * 1000;
@@ -291,10 +295,16 @@ export default function Inbox({ currentUserId, isCreator }) {
     }
   };
 
+  const trimmedLength = text.trim().length;
+  const overLimit = trimmedLength > MAX_MESSAGE_LENGTH;
+
   const send = async (e) => {
     e.preventDefault();
     const body = text.trim();
     if (!body || !open || sending) return;
+    // The same guards that disable the Send button (a submit can arrive
+    // without it, e.g. form.requestSubmit()).
+    if (open.canSend === false || open.blockedByMe || open.blockedByThem) return;
     if (body.length > MAX_MESSAGE_LENGTH) {
       setSendError(`That message is too long (${MAX_MESSAGE_LENGTH} characters maximum).`);
       return;
@@ -590,18 +600,16 @@ export default function Inbox({ currentUserId, isCreator }) {
                       setText(e.target.value);
                       pendingIdRef.current = null; // an edited message is a new message
                     }}
-                    maxLength={MAX_MESSAGE_LENGTH}
                     rows={2}
                     placeholder="Reply..."
+                    aria-invalid={overLimit}
                     className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm resize-none"
                   />
-                  <button type="submit" disabled={sending || !text.trim() || open.canSend === false || open.blockedByMe || open.blockedByThem} className="premium-button py-2 px-4 text-sm disabled:opacity-50">
+                  <button type="submit" disabled={sending || !text.trim() || overLimit || open.canSend === false || open.blockedByMe || open.blockedByThem} className="premium-button py-2 px-4 text-sm disabled:opacity-50">
                     {sending ? 'Sending…' : open.dmPriceCents > 0 ? `Send · $${(open.dmPriceCents / 100).toFixed(2)}` : 'Send'}
                   </button>
                 </form>
-                {text.length > MAX_MESSAGE_LENGTH - 200 && (
-                  <p className="text-[11px] text-gray-500 mt-1 text-right">{text.length}/{MAX_MESSAGE_LENGTH}</p>
-                )}
+                <LengthCounter length={trimmedLength} max={MAX_MESSAGE_LENGTH} className="mt-1" />
               </div>
             )}
           </div>

@@ -1,5 +1,5 @@
 import { refuseMalformedText } from '../../../lib/field-validation';
-import { getNciiReportsPage, getOpenNciiSummary, adminNciiReportView } from '../../../lib/ncii-reports-store';
+import { getNciiReportsPage, getOpenNciiSummary, adminNciiReportsView } from '../../../lib/ncii-reports-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 
 /**
@@ -39,8 +39,10 @@ export default async function handler(req, res) {
     ]);
     res.setHeader('Cache-Control', 'no-store');
     // A DM takedown's conversation id names both participants: dropped from
-    // every takedown entry (lib/ncii-reports-store.js adminNciiReportView).
-    return res.status(200).json({ ...page, reports: (page.reports || []).map(adminNciiReportView), summary });
+    // every takedown entry, and a copied participant whose account is gone
+    // reads as null (lib/ncii-reports-store.js adminNciiReportsView).
+    const reports = await adminNciiReportsView(page.reports || []);
+    return res.status(200).json({ ...page, reports, summary });
   } catch (err) {
     console.error('[admin/ncii-reports] unexpected error:', err);
     return res.status(500).json({ error: 'Could not load takedown requests.' });

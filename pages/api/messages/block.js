@@ -1,5 +1,6 @@
 import { getSessionUser } from '../../../lib/session';
 import { setConversationBlocked, unblockByHandle, DM_ERRORS } from '../../../lib/messages-store';
+import { AUTHOR_ACCOUNT_GONE } from '../../../lib/author-lock';
 import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
@@ -48,6 +49,8 @@ export default async function handler(req, res) {
     const conversation = await setConversationBlocked(user.id, String(userId), blocked);
     return res.status(200).json({ ok: true, conversation });
   } catch (err) {
+    // The caller's own account was deleted while this was in flight.
+    if (err.code === AUTHOR_ACCOUNT_GONE) return res.status(401).json({ error: 'Your account no longer exists.' });
     if (err.code === DM_ERRORS.CONVERSATION_NOT_FOUND) return res.status(404).json({ error: 'Conversation not found' });
     if (err.code === DM_ERRORS.RECIPIENT_NOT_FOUND) return res.status(404).json({ error: 'That account does not exist.' });
     if (err.code === DM_ERRORS.SELF) return res.status(400).json({ error: 'You cannot block yourself' });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { Lockup } from '../components/Brand';
@@ -9,6 +9,14 @@ import { safeRedirectPath } from '../lib/safe-redirect';
 // See lib/age-verification.js + pages/api/age-verify/confirm.js for why the
 // client-side "accepted" callback alone isn't trusted to unlock the gate.
 const API_KEY = process.env.NEXT_PUBLIC_AGECHECKER_KEY;
+const POPUP_SRC = 'https://cdn.agechecker.net/static/popup/v1/popup.js';
+
+// The minimum age the AgeChecker.Net account is configured to accept. It is
+// set to 21+ in the account dashboard (stricter than the site's 18+ rule
+// elsewhere -- see MEMORY.md, 2026-09-17), so an 18-20 year old is refused by
+// the check even where they are a legal adult. The page states the bar the
+// check actually applies. If the account setting changes, change this.
+const VERIFIED_MIN_AGE = 21;
 
 // Where to go once verified: back to the page the visitor was trying to open
 // (/blocked-region passes it as ?next=), through safeRedirectPath so only a
@@ -34,24 +42,33 @@ export default function VerifyAge() {
   const router = useRouter();
   const [status, setStatus] = useState('idle'); // idle | verifying | error
   const [error, setError] = useState('');
+  // The Pages Router hands out a NEW router object on re-renders (e.g. the
+  // query-hydration replace for /verify-age?next=...), so the widget setup
+  // must not depend on it: it would tear down and inject popup.js a second
+  // time (round-21 legal-journeys#0). The latest router lives in a ref, and
+  // the uuid of the verification in progress in another, so one setup per
+  // mount serves every render.
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const verificationUuid = useRef(null);
 
   useEffect(() => {
-    if (!API_KEY) return;
+    if (!API_KEY) return undefined;
 
-    let verificationUuid = null;
+    verificationUuid.current = null;
 
     window.AgeCheckerConfig = {
       element: '#verify-age-btn',
       key: API_KEY,
       oncreated: function (verification) {
-        verificationUuid = verification.uuid;
+        verificationUuid.current = verification?.uuid || null;
       },
       onclosed: function (done) {
         (async () => {
           // This fires on ANY close, including the visitor simply backing
           // out. With no verification started there is nothing to confirm,
           // and posting anyway showed them a red error for cancelling.
-          if (!verificationUuid) {
+          if (!verificationUuid.current) {
             setStatus('idle');
             setError('');
             if (typeof done === 'function') done();
@@ -63,22 +80,30 @@ export default function VerifyAge() {
             const res = await fetch('/api/age-verify/confirm', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ uuid: verificationUuid }),
+              body: JSON.stringify({ uuid: verificationUuid.current }),
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Verification could not be confirmed');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              const base = typeof data.error === 'string' && data.error ? data.error : 'Verification could not be confirmed.';
+              // A denial ("not accepted") is most often the age bar itself;
+              // say what it is. AgeChecker's own status/reason is never shown.
+              const denied = data.code === 'not_accepted' || base === 'Age verification was not accepted.';
+              throw new Error(denied
+                ? `${base} This check requires you to be ${VERIFIED_MIN_AGE} or older.`
+                : base);
+            }
             const destination = afterVerifyPath(window.location.search);
             // A host root is whatever proxy.js rewrites it to on THIS host
             // (the marketplace on the shop domains), so load it as a real
             // request rather than a client-side transition to the index page.
             if (destination.split(/[?#]/)[0] === '/') window.location.assign(destination);
-            else router.push(destination);
+            else routerRef.current.push(destination);
           } catch (err) {
             setStatus('error');
             setError(err.message);
             // Cleared so backing out of a retry isn't confirmed against the
             // same spent uuid.
-            verificationUuid = null;
+            verificationUuid.current = null;
           } finally {
             if (typeof done === 'function') done();
           }
@@ -86,8 +111,11 @@ export default function VerifyAge() {
       },
     };
 
+    // Never a second copy: popup.js binds to #verify-age-btn when it runs,
+    // and two copies would open two sessions for one click.
+    if (document.querySelector(`script[src="${POPUP_SRC}"]`)) return undefined;
     const script = document.createElement('script');
-    script.src = 'https://cdn.agechecker.net/static/popup/v1/popup.js';
+    script.src = POPUP_SRC;
     script.crossOrigin = 'anonymous';
     script.onerror = () => {
       window.location.href = 'https://agechecker.net/loaderror';
@@ -97,7 +125,7 @@ export default function VerifyAge() {
     return () => {
       script.remove();
     };
-  }, [router]);
+  }, []);
 
   return (
     <>
@@ -123,7 +151,8 @@ export default function VerifyAge() {
             <>
               <p className="text-gray-400 text-sm mb-6">
                 Where you are requires real age verification before you can enter. This takes a minute —
-                you'll be asked for your name, address, and date of birth so we can confirm you're 18+.
+                you'll be asked for your details (name, address and date of birth) or a photo ID. This check
+                confirms you're {VERIFIED_MIN_AGE} or older.
               </p>
               {status === 'error' && <p className="text-sm text-red-400 mb-4">{error}</p>}
               <button id="verify-age-btn" className="premium-button inline-block w-full" disabled={status === 'verifying'}>

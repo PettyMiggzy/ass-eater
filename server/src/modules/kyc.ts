@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { prisma } from '../lib/prisma.js';
+import { applyKycEvent } from '../core/kyc-events.js';
 
 const SS = { base: process.env.SUMSUB_BASE_URL!, token: process.env.SUMSUB_APP_TOKEN!, secret: process.env.SUMSUB_SECRET_KEY!, level: process.env.SUMSUB_LEVEL ?? 'creator-kyc', webhook: process.env.SUMSUB_WEBHOOK_SECRET! };
 
@@ -43,17 +44,19 @@ export const kyc: FastifyPluginAsync = async (app) => {
 
     const evt = JSON.parse(raw.toString());
     // Prisma reads an undefined filter as "no filter": an event that arrived
-    // without an externalUserId would make the updateMany calls below unscoped
-    // and rewrite kycStatus for every user on the platform. Event types we
-    // don't act on are still acked, so Sumsub doesn't retry them forever.
+    // without an externalUserId would make the update unscoped and rewrite
+    // kycStatus for every user on the platform. Event types we don't act on
+    // are still acked, so Sumsub doesn't retry them forever.
     const acted = evt.type === 'applicantReviewed' || evt.type === 'applicantWorkflowCompleted' || evt.type === 'applicantReset';
     if (acted && typeof evt.externalUserId !== 'string') return reply.code(400).send({ error: 'missing_external_user_id' });
-
-    if (evt.type === 'applicantReviewed' || evt.type === 'applicantWorkflowCompleted') {
-      const ok = evt.reviewResult?.reviewAnswer === 'GREEN';
-      await prisma.user.updateMany({ where: { id: evt.externalUserId }, data: { kycStatus: ok ? 'APPROVED' : 'REJECTED', kycRef: evt.applicantId } });
+    // Ordered by the event's own time and scoped to the stored applicant
+    // (core/kyc-events.ts): a delayed or retried older event is acked (200)
+    // but changes nothing, so it can't undo a newer review or an admin
+    // override.
+    if (acted) {
+      const r = await applyKycEvent(evt, req.log);
+      if (r === 'stale') req.log.info({ type: evt.type }, 'kyc webhook: stale or foreign-applicant event ignored');
     }
-    if (evt.type === 'applicantReset') await prisma.user.updateMany({ where: { id: evt.externalUserId }, data: { kycStatus: 'PENDING' } });
     return { ok: true };
   });
 };

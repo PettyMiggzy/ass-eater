@@ -3061,6 +3061,9 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
   const [dmCreatorId, setDmCreatorId] = useState(initialCreatorId ? String(initialCreatorId) : '');
   const [convos, setConvos] = useState(null); // { params, account, conversations, nextCursor }
   const [thread, setThread] = useState(null); // { id, participants, messages }
+  // The conversation-list id the open thread was opened from; the row
+  // highlight compares against this rather than the returned thread id.
+  const [openedId, setOpenedId] = useState(null);
   const [lookupBusy, setLookupBusy] = useState(false);
 
   const lookup = async (params) => {
@@ -3158,11 +3161,17 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
       if (!conv) { if (!older) setThread(null); return; }
       const page = Array.isArray(conv.messages) ? conv.messages : [];
       const next = { ...conv, messages: page, hasMore: !!conv.hasMore && conv.nextBefore != null, nextBefore: conv.nextBefore ?? null };
+      // Merge on the id this page was REQUESTED with, not the id the server
+      // returned: a thread with a deleted participant is identified by a
+      // sealed 'ref.' string, and the panel must never depend on the server
+      // echoing it byte-for-byte (round-21 admin-ui#0). The thread keeps the
+      // id it was opened with, so later pages and takedowns keep using it.
       setThread((t) => {
-        if (!older || !t || String(t.id) !== String(conv.id)) return next;
+        if (!older || !t || String(t.id) !== String(id)) return next;
         const seen = new Set(t.messages.map((m) => String(m.id)));
-        return { ...next, messages: [...page.filter((m) => !seen.has(String(m.id))), ...t.messages] };
+        return { ...next, id: t.id, messages: [...page.filter((m) => !seen.has(String(m.id))), ...t.messages] };
       });
+      if (!older) setOpenedId(String(id));
     } catch (err) {
       onError(err.message);
     } finally {
@@ -3413,7 +3422,7 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
                     key={c.id}
                     onClick={() => openThread(c.id)}
                     disabled={lookOff}
-                    className={`block w-full text-left px-2 py-1 rounded border ${thread?.id === c.id ? 'border-red-500/60 bg-red-900/20' : 'border-white/5 bg-black/30'} hover:border-white/20 disabled:opacity-50`}
+                    className={`block w-full text-left px-2 py-1 rounded border ${thread && openedId === String(c.id) ? 'border-red-500/60 bg-red-900/20' : 'border-white/5 bg-black/30'} hover:border-white/20 disabled:opacity-50`}
                   >
                     <span className="text-gray-200">with {lookupAccountLabel(c.other)}</span>
                     <span className="text-[10px] text-gray-500"> · {Number(c.messageCount) || 0} message(s){c.updatedAt ? ` · last ${new Date(c.updatedAt).toLocaleString()}` : ''}</span>

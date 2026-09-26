@@ -8,9 +8,10 @@ import { Icons } from './Brand';
 // open. The list holds every unread row (up to 200) plus the newest read
 // ones, and exactly the ids DISPLAYED are marked read -- never a range, which
 // could sweep in a row the user never saw, and never if the panel was closed
-// before the list arrived (round-19 public-pages#0). Once that mark
-// succeeds the shown rows render as read and the header count drops to what
-// is still unread beyond them. "Mark all as read" clears everything, so a
+// before the list arrived (round-19 public-pages#0). Only once that mark
+// succeeds do the shown rows render as read and the badge and header count
+// drop to what is still unread beyond them; a failed mark leaves both at the
+// server's count and shows an inline error (round-21 dashboard#1). "Mark all as read" clears everything, so a
 // stale badge can always be cleared; it is disabled while the list (and its
 // mark) is in flight, so a list fetched before the mark cannot land after it
 // and repaint rows the server already has as read. A failed mark-all shows
@@ -23,6 +24,8 @@ export default function NotificationBell() {
   const [error, setError] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
   const [markAllError, setMarkAllError] = useState(false);
+  // The mark of the displayed rows (made on open) failed.
+  const [markError, setMarkError] = useState(false);
   // True while the list GET and its ids POST are in flight.
   const [loading, setLoading] = useState(false);
   // Unread count shown in the panel header: the total when the list arrives,
@@ -60,6 +63,7 @@ export default function NotificationBell() {
         requestId.current += 1;
         setLoading(false);
         setMarkAllError(false);
+        setMarkError(false);
         setOpen(false);
       }
     };
@@ -71,6 +75,7 @@ export default function NotificationBell() {
     const next = !open;
     setOpen(next);
     setMarkAllError(false);
+    setMarkError(false);
     if (!next) {
       requestId.current += 1; // see onClickOutside above
       setLoading(false);
@@ -91,7 +96,10 @@ export default function NotificationBell() {
         .filter((n) => !n.read)
         .map((n) => Number(n.id))
         .filter((n) => Number.isSafeInteger(n) && n > 0);
-      setUnread(Math.max(0, (data.unreadCount || 0) - shownUnreadIds.length));
+      // The badge follows the server's count; it drops only once the mark
+      // below has succeeded (round-21 dashboard#1). Lowering it first left a
+      // silently undercounted badge whenever that POST failed.
+      setUnread(Math.max(0, Number(data.unreadCount) || 0));
       if (shownUnreadIds.length > 0) {
         // Only the unread rows that were displayed (at most 200 + 30 < 500).
         const r = await fetch('/api/notifications/read', {
@@ -107,6 +115,10 @@ export default function NotificationBell() {
           setItems((prev) => (Array.isArray(prev)
             ? prev.map((n) => (marked.has(Number(n.id)) ? { ...n, read: true } : n))
             : prev));
+        } else if (id === requestId.current) {
+          // Nothing was marked: the rows stay unread (and bold), the badge
+          // keeps the server's count, and the failure is said out loud.
+          setMarkError(true);
         }
       }
     } catch {
@@ -131,6 +143,7 @@ export default function NotificationBell() {
       const d = await r.json();
       setUnread(Number.isFinite(d.unreadCount) ? d.unreadCount : 0);
       setListUnread(0);
+      setMarkError(false);
       setItems((prev) => (Array.isArray(prev) ? prev.map((n) => ({ ...n, read: true })) : prev));
     } catch {
       setMarkAllError(true);
@@ -170,6 +183,9 @@ export default function NotificationBell() {
           </div>
           {markAllError && (
             <p role="alert" className="px-4 pt-2 text-[11px] text-red-400">Couldn't mark them read. Try again in a moment.</p>
+          )}
+          {markError && !markAllError && (
+            <p role="alert" className="px-4 pt-2 text-[11px] text-red-400">Couldn't mark these read. They'll stay unread — try again in a moment.</p>
           )}
           {error ? (
             <p className="px-4 py-6 text-sm text-gray-500">Couldn't load notifications. Try again in a moment.</p>

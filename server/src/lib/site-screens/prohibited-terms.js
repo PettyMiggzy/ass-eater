@@ -89,10 +89,14 @@ const PROHIBITED_TERMS = [
   { term: 'jailbait', compound: true, category: 'minor-suggestive' },
   { term: 'jail bait', category: 'minor-suggestive' },
   { term: 'barely legal', compound: true, category: 'minor-suggestive' },
+  // Round 21 (accounts#6): the obvious variants, a known minor-suggestive porn
+  // category phrase -- name-safe as "barely legal" is.
+  { term: 'almost legal', compound: true, category: 'minor-suggestive' },
+  { term: 'nearly legal', compound: true, category: 'minor-suggestive' },
   { term: 'schoolgirl', compound: true, category: 'minor-suggestive' },
-  { term: 'school girl', category: 'minor-suggestive' },
+  { term: 'school girl', freeGap: CHILD_PAIR_GAP, category: 'minor-suggestive' },
   { term: 'schoolboy', compound: true, category: 'minor-suggestive' },
-  { term: 'school boy', category: 'minor-suggestive' },
+  { term: 'school boy', freeGap: CHILD_PAIR_GAP, category: 'minor-suggestive' },
   // Round 19 (accounts#5): the one-word "highschool" (and middle school,
   // junior high) paired with a person or sexual word. "high school girl"
   // matched "school girl" but "highschool girl" matched nothing. Built below
@@ -104,6 +108,8 @@ const PROHIBITED_TERMS = [
   { term: 'lolicon', compound: true, category: 'minor-suggestive' },
   { term: 'shota', category: 'minor-suggestive' },
   { term: 'shotacon', compound: true, category: 'minor-suggestive' },
+  // Round 21 (accounts#8): the other "-con" form with no innocent reading.
+  { term: 'toddlercon', compound: true, category: 'minor-suggestive' },
   { term: 'age play', category: 'minor-suggestive' },
   { term: 'ageplay', compound: true, category: 'minor-suggestive' },
   { term: 'pedo', category: 'minor-suggestive' },
@@ -114,7 +120,11 @@ const PROHIBITED_TERMS = [
   { term: 'pedophilia', compound: true, category: 'minor-suggestive' },
   { term: 'paedophilia', compound: true, category: 'minor-suggestive' },
   { term: 'paedo', category: 'minor-suggestive' },
-  { term: 'child porn', compound: true, category: 'minor-suggestive' },
+  // `disclaimable: 'free'` (round-21 accounts#4): in FREE text only, skipped
+  // next to an anti-CSAM disclaimer ("Zero tolerance for child porn", "We
+  // report child porn to NCMEC") -- see CHILD_DISCLAIMER_BEFORE_RE. A tag or
+  // a name ("childporn") is refused whatever surrounds it.
+  { term: 'child porn', compound: true, disclaimable: 'free', category: 'minor-suggestive' },
   // "pre-teen hardcore", a CSAM search term with no other meaning.
   { term: 'pthc', category: 'minor-suggestive' },
   // Non-consent and the other categories card-network rules prohibit outright.
@@ -145,7 +155,10 @@ const PROHIBITED_TERMS = [
 // "sex" in a pair is never sex education, or the abuse / trafficking words a
 // survivor or an advocate writes ("child sex abuse survivor", "my high school
 // sex ed teacher").
-const SEX_EDUCATION_AFTER = '(?![^a-z0-9]{0,3}(?:ed|education|educator|abuse|abused|abuser|trafficking|offenders?|crimes?|predators?|assault|exploitation|survivors?)(?![a-z]))';
+// Round 21 (accounts#4): and the advocacy words -- "fighting child sex
+// slavery", "Stop child sex tourism", "child sex rings are real", "the child
+// sex trade", "child sex work(ers)".
+const SEX_EDUCATION_AFTER = '(?![^a-z0-9]{0,3}(?:ed|education|educator|abuse|abused|abuser|abusers|trafficking|traffickers?|trafficked|offenders?|crimes?|predators?|assault|exploitation|survivors?|slavery|slaves?|tourism|tourists?|rings?|trade|trades|work|workers?|abuse material|exploit\\w*)(?![a-z]))';
 // Round 20 (accounts#9): also the person nouns "high schooler(s)" / "middle
 // schooler(s)" and the abbreviation "jr high" ("high schooler slut", "jr high
 // girl"). A bare "high schooler" is not a term: in free text it is how an
@@ -176,6 +189,7 @@ for (const lead of SCHOOL_PAIR_LEADS) {
     words: SCHOOL_PAIR_WORDS,
     softWords: SCHOOL_SOFT_WORDS,
     wordNotAfter: { sex: SEX_EDUCATION_AFTER },
+    freeGap: CHILD_PAIR_GAP,
     compound: true,
     nameSafeCompound: true,
     openStart: true,
@@ -195,7 +209,9 @@ for (const lead of SCHOOL_PAIR_LEADS) {
 // survivor"). The join is CHILD_PAIR_GAP (top of the file) -- never a comma
 // ("no kids, sex positive") and never a sentence break.
 const NOT_STAR_AFTER = '(?![^a-z0-9]{0,3}stars?(?![a-z]))';
-const CHILD_LEADS = ['child', 'children', 'childs', 'kid', 'kids', 'kiddie', 'kiddy', 'kiddies', 'toddler', 'toddlers', 'infant', 'infants'];
+// Round 21 (accounts#8): and "schoolkid(s)" ("schoolkid nudes").
+const CHILD_LEADS = ['child', 'children', 'childs', 'kid', 'kids', 'kiddie', 'kiddy', 'kiddies', 'toddler', 'toddlers', 'infant', 'infants',
+  'schoolkid', 'schoolkids'];
 const PORN_WORDS = ['porn', 'porno', 'pornography'];
 // "xxx" reaches the rules as "xx" (foldStretched), which is also a sign-off
 // ("night night kids xx"), so it pairs with every lead except "kid"/"kids".
@@ -211,11 +227,16 @@ PROHIBITED_TERMS.push(
     term: lead, words: CHILD_XX_LEADS.has(lead) ? [...CHILD_CONTENT_WORDS, 'xx'] : CHILD_CONTENT_WORDS, gap: CHILD_PAIR_GAP,
     wordNotAfter: { sex: SEX_EDUCATION_AFTER },
     compoundWords: CHILD_CONTENT_WORDS.filter((w) => w !== 'sex'), compound: true, nameSafeCompound: true,
+    disclaimable: 'free',
     category: 'minor-suggestive',
   })),
-  ...['baby', 'babies'].map((lead) => ({ term: lead, words: PORN_WORDS, gap: CHILD_PAIR_GAP, notAfter: NOT_STAR_AFTER, category: 'minor-suggestive' })),
+  // Round 21 (accounts#7): never "sugar baby porn" -- sugar dating is an
+  // established adult category ("sugarbaby porn", glued, already passed).
+  ...['baby', 'babies'].map((lead) => ({
+    term: lead, words: PORN_WORDS, gap: CHILD_PAIR_GAP, notAfter: NOT_STAR_AFTER, notBefore: '(?<!sugar[\\s_-]{0,2})', category: 'minor-suggestive',
+  })),
   ...['minor', 'minors'].map((lead) => ({
-    term: lead, words: [...PORN_WORDS, 'nudes', 'nude', 'naked'], gap: CHILD_PAIR_GAP, notAfter: NOT_STAR_AFTER, category: 'minor-suggestive',
+    term: lead, words: [...PORN_WORDS, 'nudes', 'nude', 'naked'], gap: CHILD_PAIR_GAP, notAfter: NOT_STAR_AFTER, disclaimable: 'free', category: 'minor-suggestive',
   })),
 );
 // Round 20 fix-up: the two pairs the group above leaves out for free text
@@ -223,6 +244,14 @@ PROHIBITED_TERMS.push(
 // "nudes"/"naked", an endearment before a menu) have neither reading in a tag,
 // a handle or a username, which is only ever a label: refused there
 // (detectIn, strictAge only). Same join as the group.
+// Round 21 fix-up (accounts#5): in FREE text a school pair no longer joins
+// across " - " ("Graduated high school - girls trip to Cancun!"), but a dash
+// must not be a way round the rule either: a school lead, a spaced dash, a
+// person word, then a sexual word ("high school - girl nudes", "middle school
+// -- boys naked") is refused in free text.
+const SCHOOL_DASH_SEXUAL_RE = new RegExp(`(?<![a-z])(?:${SCHOOL_PAIR_LEADS.map((l) => l.replace(/ /g, '[\\s_-]{0,2}')).join('|')})`
+  + '\\s{0,2}[-\u2013\u2014]{1,2}\\s{0,2}(?:girls?|boys?|gfs?|bfs?|babes?|sis|daughters?|cheerleaders?|teens?|twinks?)'
+  + `${CHILD_PAIR_GAP}(?:nudes?|naked|porn\\w*|sex|sexy|slut\\w*|whores?|pussy|pussies|xx+|horny|cum\\w*|fuck\\w*|tits|boobs|dick|cock|onlyfans)(?![a-z])`);
 const CHILD_PAIR_STRICT_RE = new RegExp(`(?<![a-z])(?:kids?${CHILD_PAIR_GAP}xx+|bab(?:y|ies)${CHILD_PAIR_GAP}(?:nudes?|naked))(?![a-z])`);
 
 // Digit/symbol-for-letter spellings. Narrower than the payment filter's leet
@@ -249,18 +278,32 @@ function wordPattern(word) {
   return `(?:${letters.join('')}|${letters.join(LETTER_SEP)})`;
 }
 
-function buildRe({ term, words = null, wordNotAfter = {}, suffixes = '(?:s|es|ed|er|ers|ing)?', openStart = false, gap = WORD_GAP, notAfter = '' }, flags = '') {
+// `pairGap`: the join between a pair group's lead and its word (default: the
+// term's own gap). `notBefore`: a lookbehind the match may not follow.
+function buildRe({ term, words = null, wordNotAfter = {}, suffixes = '(?:s|es|ed|er|ers|ing)?', openStart = false, gap = WORD_GAP, pairGap = gap, notAfter = '', notBefore = '' }, flags = '') {
   const body = term.split(' ').map(wordPattern).join(gap);
+  const start = `${notBefore}${openStart ? '' : '(?<![a-z])'}`;
   // Plural/verb suffixes stay matched ("teens"); an adjacent LETTER breaks the
   // match so "eighteen", "canteen" and "grape" never do.
-  if (!words) return new RegExp(`${openStart ? '' : '(?<![a-z])'}${body}${suffixes}(?![a-z])${notAfter}`, flags);
+  if (!words) return new RegExp(`${start}${body}${suffixes}(?![a-z])${notAfter}`, flags);
   // A pair group: the lead, the gap, then ONE of its words (captured, so the
   // reason can name it), each with its own "never before" guard.
   const alts = words.map((w) => `${wordPattern(w)}${suffixes}(?![a-z])${wordNotAfter[w] || ''}`).join('|');
-  return new RegExp(`${openStart ? '' : '(?<![a-z])'}${body}${gap}(?<w>${alts})${notAfter}`, flags);
+  return new RegExp(`${start}${body}${pairGap}(?<w>${alts})${notAfter}`, flags);
 }
 
-const COMPILED = PROHIBITED_TERMS.map((t) => ({ ...t, re: buildRe(t, t.disclaimable || t.words ? 'g' : '') }));
+// `freeGap` (round-21 accounts#5): in FREE text (bio, title, description, DM,
+// wall) the school pairs and the spaced "school girl" / "school boy" terms join
+// only as CHILD_PAIR_GAP does -- spaces on one line, or one glued "_" "." "-"
+// -- never punctuation plus a space, never a line break: "In high school, boys
+// never noticed me", "Graduated high school - girls trip to Cancun!", "I
+// dropped out of high school: porn paid better" are two clauses. Tags and
+// names (strictAge) keep WORD_GAP: a label has no sentence in it.
+const COMPILED = PROHIBITED_TERMS.map((t) => ({
+  ...t,
+  re: buildRe(t, t.disclaimable || t.words ? 'g' : ''),
+  reFree: t.freeGap ? buildRe(t.words ? { ...t, pairGap: t.freeGap } : { ...t, gap: t.freeGap }, t.disclaimable || t.words ? 'g' : '') : null,
+}));
 
 // Which of a pair group's words a match ended on (for the reason and the
 // soft-word check): the captured text read back against each word's pattern.
@@ -408,6 +451,51 @@ const DISCLAIMER_AFTER_RE = new RegExp(
 function isDisclaimed(text, start, end) {
   return DISCLAIMER_BEFORE_RE.test(text.slice(Math.max(0, start - 30), start))
     || DISCLAIMER_AFTER_RE.test(text.slice(end, end + 40));
+}
+// Round 21 (accounts#4): the anti-CSAM disclaimer and advocacy wording in front
+// of a CHILD pair ("child porn", "kiddie porn", "kid naked", "minor nudes"),
+// FREE text only: "Zero tolerance for child pornography", "We report kiddie
+// porn accounts to NCMEC", "Anti child pornography activist", "I support the
+// fight against child pornography", "Never any kid porn here, reported
+// instantly". Promotional shapes ("new kids porn here") have none of these and
+// stay refused, as does every tag and name.
+// Round 21 fix-up: this is the most serious category, so the disclaimer has to
+// sit in the SAME clause, directly around the term, and the general
+// isDisclaimed (with its punctuation joins and arbitrary words before a ban
+// word) is never used for it. A seller adding one word must not get through:
+// "Stop, child porn for sale", "End. child porn vids $20", "lol no. child porn
+// here", "child porn, reported to be the best", "kid nudes, dm before
+// removed", "kids porn is banned elsewhere, dm me" are all refused.
+//   - BEFORE: a disclaimer lead, then only whitespace (optionally "any" /
+//     "all" / "of" / "the" / "forms of" between). Generic verbs ("stop",
+//     "end", "ban", "report") count only with an object ("stop all", "we
+//     report", "report all", "ban all") -- bare, they open ordinary sales text.
+//   - AFTER: whitespace, then "is/are/gets/will be (always) reported / banned /
+//     removed / not allowed", optionally "instantly" / "on sight" / "here",
+//     and then the END of the clause -- or "reported to NCMEC / the police".
+const CHILD_DISCLAIMER_BEFORE_RE = new RegExp(
+  "(?:^|[^a-z])(?:no|never|nothing|nobody|no ?one|none|zero tolerance(?: for| towards?)?|dni(?: if into)?"
+  + "|(?:don'?t|do not|we don'?t|we do not|never) (?:allow|want|accept|tolerate|post|share|sell)"
+  + "|we (?:report|ban|remove|block|fight)(?: all| any)?|(?:report|stop|end|ban) (?:all|any)|anti|against|fight(?:s|ing)? against|the fight against"
+  + "|combat(?:ing)?|prevent(?:ing)?|eradicate|eradicating|eliminate|eliminating|survivors? of|no tolerance for|absolutely no|strictly no|never any)"
+  + '(?:\\s{1,3}(?:any|all|of|the|forms? of))?\\s{1,3}$',
+);
+const CHILD_DISCLAIMER_AFTER_RE = new RegExp(
+  '^\\s{1,2}(?:(?:is|are|gets?|will be|will get)\\s+(?:always\\s+|instantly\\s+|immediately\\s+)?'
+  + '(?:(?:reported|banned|removed)(?:\\s+(?:instantly|immediately|on sight|here|permanently))?(?=\\s*(?:[.!;,]|$))'
+  + '|reported to (?:ncmec|the police|police|law enforcement|the authorities|authorities)(?![a-z]))'
+  // "Report child pornography to NCMEC", "I report kiddie porn accounts to NCMEC"
+  + '|(?:(?:accounts?|users?|content|material)\\s+)?(?:(?:are|is|get|gets|will be)\\s+)?(?:reported\\s+)?to (?:ncmec|the police|police|law enforcement|the authorities|authorities)(?![a-z])'
+  + '|(?:is |are )?(?:never |not )(?:allowed|permitted|tolerated)(?:\\s+here)?(?=\\s*(?:[.!;,]|$)))',
+);
+function isChildDisclaimed(text, start, end) {
+  return CHILD_DISCLAIMER_BEFORE_RE.test(text.slice(Math.max(0, start - 40), start))
+    || CHILD_DISCLAIMER_AFTER_RE.test(text.slice(end, end + 60));
+}
+// Which disclaimer test applies to `t` in this context, or null.
+function disclaimTest(t, strictAge) {
+  if (t.disclaimable === 'free') return strictAge ? null : isChildDisclaimed;
+  return t.disclaimable ? isDisclaimed : null;
 }
 
 // An explicit under-18 self-description. Numbers are not letters, so none of
@@ -636,7 +724,10 @@ const MINOR_AGE_RES = [
   // 16"), unless a unit or a counted thing follows ("babe 10 pics"). Round 19
   // (accounts#3): plurals and "sex toys" / "pornstars" are a price menu or a
   // count ("Used sex toys 15, lingerie 20", "Babes 12"), not an age.
-  new RegExp('(?<![a-z])' + SEXUAL_NOUN_SINGULAR + '[\\s,:-]{1,3}' + MINOR_AGE_DIGITS + NOT_A_COUNT),
+  // Round 21: not an adjective and a counted thing after it either ("Hey babe,
+  // 10 new pics today", "babe 12 hot clips") -- the greeting, then a count.
+  new RegExp('(?<![a-z])' + SEXUAL_NOUN_SINGULAR + '[\\s,:-]{1,3}' + MINOR_AGE_DIGITS + NOT_A_COUNT
+    + '(?![\\s-]{1,3}(?:new|more|hot|sexy|fresh|exclusive|free|bonus|extra|spicy|naughty|nude|naked|full|short|long|private|custom|unseen|daily)[\\s-]{1,3}' + COUNT_WORD + '(?![a-z]))'),
   // A bare digit age joined to a sexual word: "16 and horny", "Emma, 16,
   // horny" (the comma-separated profile shape). Round 19 (accounts#3): not a
   // rank, a height or a rating -- and every rule here runs on the text with
@@ -1187,8 +1278,14 @@ const PAIR_NAME_MASK_RE = /(?<![a-z])(?:(?:es|wes|sus|middle|uni)sex|thorny|(?:b
 // "size-16-and-sexy" as a #chip, srv-auth-core#0) apply -- a price tail or
 // any other word must never launder "model16horny", "set16girl" or
 // "Mia 16 wet pussy 25" into a handle or a #chip.
+// Round 21 (accounts#0): the SEQUENCE words too -- "Round 2 and horny", "Night 2
+// and horny", "Date 2 and naked", "Game 7 and horny", "Year 2 and horny",
+// "Video 2 and horny": a round, a night, a date, an hour, a game, a year, a
+// video, a take, a match or a month number is never a person's age. ("year
+// 9 girl", the UK/AU school year, is screened on the RAW text by
+// GRADE_PAIR_RE, which this neutralizing does not touch.)
 const NON_AGE_RANK = '(?:size|sz|top|num|number|vol|volume|ep|eps|episode|part|pt|chapter|chap|ch|day|week|wk|level|lvl|lv'
-  + '|season|series|set|scene)';
+  + '|season|series|set|scene|round|rd|night|date|hour|hr|game|year|yr|video|vid|take|match|month|mile|lap|stage|shift|trip)';
 const NON_AGE_RANK_STRICT_RE = new RegExp('(?<![a-z])((?:size|sz|vol|volume|ep|eps|episode|chapter|chap|season|part|level|lvl)[\\s._-]{1,3})'
   + '(?:[0-9]{1,4}(?![0-9])|(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)(?![a-z]))', 'g');
 const NON_AGE_NUMBER = '(?:[0-9]{1,4}(?![0-9])|(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)(?![a-z]))';
@@ -1199,6 +1296,83 @@ const NON_AGE_RANK_RE = new RegExp(`(?<![a-z])(${NON_AGE_RANK}[\\s.#:_-]{1,3}|no
 // "model" or "gen", which a minor describing themselves uses ("cam model 16
 // horny" stays refused). Tags and handles keep the strict rule.
 const NON_AGE_PRODUCT_RE = /(?<![a-z])((?:iphone|ipad|ipod|ios|windows|galaxy(?:[\s._-]{0,2}(?:s|note|a|z|tab))?|pixel|android|xbox|playstation|macbook|imac|airpods|kindle)[\s._-]{0,3})(?:[0-9]{1,4}(?![0-9])|(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)(?![a-z]))/g;
+// Round 21 (accounts#0/#1), FREE text only -- a parent writing about their
+// family, which the benign gate (lib/screen-benign.test.mjs) holds to passing:
+//   - a COUNT of children: "Mom of 2 and horny", "mother of 3 and naked on
+//     here", "Single mom of 2 and a slut for attention" (the commonest MILF
+//     bio there is) -- a number after "<parent word> of/to" counts children,
+//     whatever follows it;
+//   - a CHILD'S AGE after a possessive and a family noun, or a possessive and
+//     an age word before a child noun: "My daughter just turned 5!", "my son
+//     is 13 today", "my 3 year old boy is sick", "our 13 year old son loves
+//     this", "3 yo boy mom" -- ONLY when no sexual word follows in the same
+//     clause (FAMILY_CLAUSE_SEXUAL_RE): "my 13 year old girl is horny" is
+//     never neutralized;
+//   - a pronoun and a SINGLE digit ("She just turned 4.", "he's 2, my baby",
+//     "Just turned 5!"), with the same clause condition: the owner decision is
+//     that a single-digit age in free text counts only with an explicit age
+//     word or a first-person lead-in ("i'm 9", "aged 7"). Ages 10-17 after a
+//     bare pronoun keep being read as a self-description ("she's 15.").
+// Tags and names never get these (strictAge): a label has no sentence around
+// it.
+const FAMILY_PARENT_WORD = '(?:mom|moms|mother|mothers|mum|mums|mama|mamas|momma|mommy|mummy|mamma|dad|dads|father|fathers|daddy|papa|parent|parents|grandma|grandmother|granny|nana|grandpa|grandfather|stepmom|stepdad)';
+// Digits never continue with a digit, spelled numbers never with a letter ("3yo"
+// is a number with its age word glued on).
+const FAMILY_SINGLE = '(?:[1-9](?![0-9])|(?:one|two|three|four|five|six|seven|eight|nine)(?![a-z]))';
+const FAMILY_NUMBER = '(?:(?:1[0-7]|[1-9])(?![0-9])|(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|one|two|three|four|five|six|seven|eight|nine)(?![a-z]))';
+const FAMILY_COUNT_RE = new RegExp(`(?<![a-z])(${FAMILY_PARENT_WORD}[\\s-]{1,2}(?:of|to)[\\s-]{1,2}(?:(?:a|an|my)[\\s-]{1,2})?)(?<![0-9])${FAMILY_NUMBER}`, 'g');
+const FAMILY_POSSESSIVE = '(?<![a-z])(?:my|our|his|her|their)';
+// A family noun. Bare "girl"/"boy" are NOT family words ("my girl is 16" is how
+// someone describes a girlfriend): only with "baby"/"little"/"lil" in front,
+// or -- for a SINGLE digit only -- after an age word ("my 3 year old boy").
+const FAMILY_NOUN = '(?:daughters?|sons?|kids?|kiddos?|child|children|toddlers?|nieces?|nephews?|twins|grandsons?|granddaughters?|grandkids?|grandchild(?:ren)?|stepsons?|little one|youngest|oldest|eldest|baby[\\s-]{1,2}(?:boy|girl)s?|(?:little|lil)[\\s-]{1,2}(?:boy|girl)s?)';
+const FAMILY_VERB = "(?:just\\s+turned|turned|turns|is\\s+now|is|'s|will\\s+be|was|just\\s+hit)";
+const FAMILY_AGE_WORD = '[\\s-]{0,2}(?:yo|y\\.?o\\.?|y\\s?\\/\\s?o|years?[\\s-]{0,2}old|yrs?[\\s-]{0,2}old)(?![a-z])';
+const FAMILY_ADJ = '(?:(?:sweet|youngest|oldest|eldest|middle|twin|beautiful|precious|crazy|wild|sick|big)[\\s-]{1,2})';
+// "My daughter just turned 5", "our son is 13", "my baby boy just turned 1"
+const FAMILY_SUBJECT_AGE_RE = new RegExp(`(${FAMILY_POSSESSIVE}[\\s-]{1,2}${FAMILY_ADJ}{0,2}${FAMILY_NOUN}[\\s-]{1,2}${FAMILY_VERB}[\\s-]{1,2}(?:(?:only|just|now|already)[\\s-]{1,2})?)(?<![0-9])${FAMILY_NUMBER}`, 'g');
+// ...and, for a SINGLE digit only, a bare "baby" ("my baby just turned 1"; "my
+// baby is 16" is how someone describes a partner).
+const FAMILY_BABY_SINGLE_RE = new RegExp(`(${FAMILY_POSSESSIVE}[\\s-]{1,2}bab(?:y|ies)[\\s-]{1,2}${FAMILY_VERB}[\\s-]{1,2}(?:(?:only|just|now|already)[\\s-]{1,2})?)(?<![0-9])${FAMILY_SINGLE}`, 'g');
+// "our 13-year-old son", and for one digit "my 3 year old boy"
+const FAMILY_POSSESSIVE_LEAD = `(${FAMILY_POSSESSIVE}[\\s-]{1,2}(?:(?:sweet|youngest|oldest|twin|sick|crazy|wild)[\\s-]{1,2})?)(?<![0-9])`;
+const FAMILY_POSSESSIVE_AGE_RE = new RegExp(`${FAMILY_POSSESSIVE_LEAD}${FAMILY_NUMBER}(?=${FAMILY_AGE_WORD}[\\s-]{1,3}${FAMILY_ADJ}{0,2}(?:(?:little|lil|baby)[\\s-]{1,2})?${FAMILY_NOUN}(?![a-z]))`, 'g');
+const FAMILY_POSSESSIVE_SINGLE_RE = new RegExp(`${FAMILY_POSSESSIVE_LEAD}${FAMILY_SINGLE}(?=${FAMILY_AGE_WORD}[\\s-]{1,3}${FAMILY_ADJ}{0,2}(?:(?:little|lil|baby)[\\s-]{1,2})?(?:(?:boy|girl)s?|bab(?:y|ies))(?![a-z]))`, 'g');
+// "3 yo boy mom", "5 year old girl mama" -- one digit
+const FAMILY_BOY_MOM_RE = new RegExp(`(?<![0-9a-z])()${FAMILY_SINGLE}(?=${FAMILY_AGE_WORD}[\\s-]{1,3}(?:boy|girl)s?[\\s-]{1,2}(?:mom|mum|mama|momma|mommy|dad|daddy)(?![a-z]))`, 'g');
+// "She just turned 4", "he's 2", "Just turned 5!" -- one digit only.
+const FAMILY_PRONOUN_AGE_RE = new RegExp(`((?<![a-z])(?:(?:she|he)(?:'s|\\s+is|\\s+just\\s+turned|\\s+turned|\\s+turns)|(?<!(?:i|i'm|im|i am)[\\s,]{1,2})just\\s+turned)[\\s-]{1,2})(?<![0-9])[1-9](?![0-9])`, 'g');
+const FAMILY_CLAUSE_SEXUAL_RE = new RegExp(`(?<![a-z])(?:${SEXUAL_ADJ.slice(3, -1)}|slut\\w*|whores?|hoes?|bitch\\w*|cunts?|pussy|pussies|nudes?|porn\\w*|sex\\w*|cum\\w*|fuck\\w*|dick|cock|tits|boobs|virgins?|milf|onlyfans|twink|bimbo|nympho|tight|breed\\w*|naked)(?![a-z])`
+  // ...and "xxx" (folded to "xx") only with more words after it: at the end of
+  // the clause it is a sign-off ("my daughter just turned 15, feeling old xx").
+  + '|(?<![a-z])xx+(?![a-z])(?=[^a-z0-9]*[a-z0-9])');
+// Round 21 fix-up: ...and no SOLICITATION or commerce word either. "my 13 year
+// old daughter selling pics", "my 12 year old daughter pics available", "my
+// daughter just turned 13 wanna see her body" have no sexual word in them and
+// are exactly what the family exemption must never wave through. A parent's
+// ordinary line ("My daughter just turned 5!", "our son is 13 today") has none
+// of these.
+const FAMILY_CLAUSE_COMMERCE_RE = new RegExp('(?<![a-z])(?:pics?|pix|pictures?|photos?|vids?|videos?|clips?|content|sell\\w*|for sale|buy\\w*|price\\w*|rates?'
+  + '|dms?|inbox|message me|msg me|wanna see|want to see|see (?:her|him|them)|(?:her|his|their) body|bodies|in person|meet(?:up|s|ing)?|available|link in bio|subscribe|sub)(?![a-z])'
+  + '|[$\u00a3\u20ac]\\s?[0-9]');
+function familyClauseIsClean(text, offset) {
+  const clause = text.slice(offset).split(/[.!?;\n]/)[0];
+  return !FAMILY_CLAUSE_SEXUAL_RE.test(clause) && !FAMILY_CLAUSE_COMMERCE_RE.test(clause);
+}
+function neutralizeFamilyAges(text) {
+  let t = text.replace(FAMILY_COUNT_RE, (m, lead) => `${lead}0`);
+  // Every regex here has exactly one capture group: the text kept in front of
+  // the number.
+  for (const re of [FAMILY_SUBJECT_AGE_RE, FAMILY_BABY_SINGLE_RE, FAMILY_PRONOUN_AGE_RE, FAMILY_POSSESSIVE_AGE_RE, FAMILY_POSSESSIVE_SINGLE_RE, FAMILY_BOY_MOM_RE]) {
+    const before = t;
+    t = before.replace(re, (m, lead, offset) => (familyClauseIsClean(before, offset + m.length) ? `${lead}0` : m));
+  }
+  return t;
+}
+// Round 21: a clock time after "around" / "by" / "until" ("I'll be online
+// around 10 xx", "back by 11") -- free text only. Not "at": "slut at 16" is
+// the AT_AGE_LEAD rule's age.
+const NON_AGE_TIME_RE = /(?<![a-z])((?:around|by|until|till|til|'til)\s{1,2})(?:[0-9]{1,2})(?![0-9])(?!\s*(?:years?|yrs?|yo|y\.o)(?![a-z]))/g;
 const NON_AGE_HEIGHT_RE = /(?<![0-9])([1-9][\s-]?(?:['\u2019\u2032"]{1,2}|ft\.?|foot|feet|[-\u2013])[\s-]{0,2})(?:1[01]|[0-9])(?![0-9])/g;
 const NON_AGE_RATING_RE = /(?<![a-z0-9])(?:[0-9]{1,3}|ten|eleven|twelve)(\s?(?:\/|out\s+of|outta)\s?)(?:5|10|100|ten)(?![0-9a-z])/g;
 const NON_AGE_APERTURE_RE = /(?<=(?:at|on|shot|aperture|@)\s{0,2}f\s?\/\s?)[0-9]{1,2}(?![0-9])/g;
@@ -1258,7 +1432,8 @@ export function neutralizeNonAges(text, { strictAge = false } = {}) {
     .replace(NON_AGE_HEIGHT_RE, (m, lead) => `${lead}0`)
     .replace(NON_AGE_RATING_RE, (m, mid) => `0${mid}0`);
   if (strictAge) return t.replace(NON_AGE_RANK_STRICT_RE, (m, lead) => `${lead}0`);
-  t = t
+  t = neutralizeFamilyAges(t)
+    .replace(NON_AGE_TIME_RE, (m, lead) => `${lead}0`)
     .replace(NON_AGE_RANK_RE, (m, lead) => `${lead}0`)
     .replace(NON_AGE_PRODUCT_RE, (m, lead) => `${lead}0`)
     .replace(NON_AGE_APERTURE_RE, '0')
@@ -1307,6 +1482,7 @@ function pairTextOf(text) {
 const NAME_SAFE_COMPOUND_TERMS = new Set([
   'preteen', 'underage', 'jailbait', 'barely legal', 'schoolgirl', 'schoolboy', 'lolita', 'lolicon', 'shotacon',
   'pedophile', 'paedophile', 'pedophilia', 'paedophilia', 'child porn', 'nonconsent', 'nonconsensual',
+  'almost legal', 'nearly legal', 'toddlercon',
   'bestiality', 'beastiality', 'zoophilia', 'zoophile', 'necrophilia',
   // (and the school and child pair groups, flagged nameSafeCompound: no first
   // name or surname glues into "highschoolgirl" / "kidporn")
@@ -1382,8 +1558,10 @@ const NAME_DESCRIPTOR_RES = [
 //   - a bare digit and "and horny" / "and naked" / "and a virgin" ("9 and
 //     horny").
 // The family nouns (daughter, son, kid...) are NOT person words here: "my 5
-// year old daughter" is a parent. "girl"/"boy" are, plural too -- the
-// accepted cost is that "my 3 year old girls" has to say "daughters".
+// year old daughter" is a parent. "girl"/"boy" are, plural too -- but in FREE
+// text a possessive in front with no sexual word in the clause ("my 3 year old
+// boy is sick", "our 4 yo girls") is a parent and is neutralized first
+// (round 21, neutralizeFamilyAges).
 // In a tag or a name the bare "9yo" is refused as well (a label is only ever a
 // person's age), glued forms included ("jess9yo", "9yogirl").
 const SINGLE_AGE = '(?:(?<![0-9$\u00a3\u20ac.])(?<![0-9],)[1-9](?![0-9])|(?<![a-z])(?:one|two|three|four|five|six|seven|eight|nine)(?:(?![a-z])|(?=yo(?![a-z]))))';
@@ -1421,6 +1599,34 @@ const SINGLE_DIGIT_AGE_RE = new RegExp([
   `(?<![0-9$\u00a3\u20ac./a-z])[1-9](?![0-9])${SINGLE_AND}`,
   ...SINGLE_ADJ_ALTS,
 ].join('|'));
+// Round 21 (accounts#0/#1) -- DECIDED for FREE text (bio, title, description,
+// DM, wall): a single-digit age counts ONLY with an explicit age word (yo,
+// y.o., year(s) old, yrs old) beside a person or sexual word, or after a
+// FIRST-PERSON lead-in (i'm / i am / im / aged / i (just) turned). The
+// round-20 version above -- still the rule for tags and names -- also read a
+// third-person lead ("she just turned", "he's", a bare "just turned") and ANY
+// digit before "and horny", so "Mom of 2 and horny", "Round 2 and horny",
+// "My daughter just turned 5!" and "she's 2, my baby" were refused and logged
+// under the most serious category. In free text now:
+//   - a third-person lead counts only with a strongly sexual continuation
+//     ("she's 7 and horny" -- never "she's 2 and naked in the bath"), and a
+//     parent's "She just turned 4." is neutralized before any rule reads it
+//     (neutralizeFamilyAges);
+//   - the bare "9 and horny" counts only where the digit OPENS the text or a
+//     sentence (as STRICT_AND already requires in labels) -- never after a
+//     word and a space ("mom of 2", "round 2", "night 2");
+//   - "my 3 year old boy is sick" is neutralized (possessive + age word +
+//     child, no sexual word in the clause) before the age-word rule reads it.
+const SINGLE_FIRST_LEAD = "(?<![a-z])(?:i'?m|i am|aged|i(?:\\s+just)?\\s+turned)(?:\\s+" + SELF_ADVERB + "){0,2}[\\s:,-]{1,3}";
+const SINGLE_AND_STRONG = '(?=\\s*(?:and|&|n)\\s+(?:(?:so|very|super|always|really)\\s+)?(?:horny|slutty|kinky|naked|nude|a\\s+(?:slut|whore|hoe|bitch))(?![a-z]))';
+const SINGLE_DIGIT_AGE_FREE_RE = new RegExp([
+  `${SINGLE_AGE}${SINGLE_AGE_WORD}[\\s_.,:-]{0,3}(?:${AGE_NOUN_ADJ}[\\s_.-]{1,3})?${SINGLE_AGE_PERSON}(?![a-z])`,
+  `(?<![a-z])${SINGLE_AGE_PERSON}[\\s_.,:-]{1,3}${SINGLE_AGE}${SINGLE_AGE_WORD}`,
+  `${SINGLE_FIRST_LEAD}${SINGLE_AGE}(?:${SINGLE_AGE_WORD})?(?:(?=\\s*(?:$|[.!?;,)]))|${SINGLE_AND})`,
+  `${SELF_LEAD}${SINGLE_AGE}(?:${SINGLE_AGE_WORD})?${SINGLE_AND_STRONG}`,
+  `(?:^|[.!?;:\\n]\\s*)(?<![0-9$\u00a3\u20ac./a-z])[1-9](?![0-9])${SINGLE_AND}`,
+  ...SINGLE_ADJ_ALTS,
+].join('|'));
 const SINGLE_DIGIT_AGE_STRICT_RE = /(?<![0-9a-z])[1-9]\s?(?:yo|y\.?o\.?|y\s?\/\s?o)(?![a-z])/;
 // The glued (tag / name) form of the same person, sexual and adjective words.
 const SINGLE_SQUASHED_WORDS = `girl|boy|babe|teen|virgin|slut|whore|pussy|porn|nudes?|naked|sex|cum|fuck|${SINGLE_AGE_ADJ_WORDS.join('|')}`;
@@ -1445,7 +1651,8 @@ function minorAgeHit(ageText, { strictAge, squashWhole }) {
   const glued = ageText.replace(/(?<=[a-z0-9])[_.]+(?=[a-z0-9])/g, '');
   if (MINOR_AGE_RES.some((re) => re.test(ageText) || re.test(spaced)) || GLUED_AGE_RE.test(glued)) return true;
   // Round 20 (accounts#2): ages under ten (SINGLE_DIGIT_AGE_RE).
-  if (SINGLE_DIGIT_AGE_RE.test(spaced) || SINGLE_DIGIT_AGE_RE.test(pairTextOf(spaced))) return true;
+  const singleRe = strictAge ? SINGLE_DIGIT_AGE_RE : SINGLE_DIGIT_AGE_FREE_RE;
+  if (singleRe.test(spaced) || singleRe.test(pairTextOf(spaced))) return true;
   if (strictAge && (SINGLE_DIGIT_AGE_STRICT_RE.test(spaced) || SINGLE_DIGIT_LABEL_STRICT_RE.test(spaced)
     || squashedForms(ageText, !squashWhole).some((f) => SINGLE_DIGIT_AGE_SQUASHED_RE.test(f)))) return true;
   // A minor age next to a sexual word, in EVERY mode (round-15 accounts#0):
@@ -1474,20 +1681,23 @@ function minorAgeHit(ageText, { strictAge, squashWhole }) {
 function detectIn(normalized, add, { compound = true, strictAge = !compound, squashWhole = !compound } = {}) {
   if (!normalized) return;
   for (const t of COMPILED) {
-    const { term, category, re, disclaimable } = t;
+    const { term, category } = t;
+    const re = !strictAge && t.reFree ? t.reFree : t.re;
+    const disclaimed = disclaimTest(t, strictAge);
     if (t.words) {
       for (const m of normalized.matchAll(re)) {
         if (!/[a-z]/.test(m[0])) continue;
         const word = pairWordOf(t, m.groups.w);
         if (!strictAge && t.softWords?.has(word) && isSchoolReminiscence(normalized, m.index, m[0], m.groups.w)) continue;
+        if (disclaimed && disclaimed(normalized, m.index, m.index + m[0].length)) continue;
         add(`${term} ${word}`, category);
         break;
       }
       continue;
     }
-    if (disclaimable) {
+    if (t.disclaimable) {
       for (const m of normalized.matchAll(re)) {
-        if (/[a-z]/.test(m[0]) && !isDisclaimed(normalized, m.index, m.index + m[0].length)) {
+        if (/[a-z]/.test(m[0]) && !(disclaimed && disclaimed(normalized, m.index, m.index + m[0].length))) {
           add(term, category);
           break;
         }
@@ -1501,7 +1711,13 @@ function detectIn(normalized, add, { compound = true, strictAge = !compound, squ
   if (GRADE_PAIR_RE.test(normalized) || (strictAge && GRADE_BARE_STRICT_RE.test(normalized))) {
     add('school grade', 'minor-suggestive');
   }
+  for (const m of normalized.matchAll(UNDER18_PAIR_RE)) {
+    if (!strictAge && isChildDisclaimed(normalized, m.index, m.index + m[0].length)) continue;
+    add('under 18 content', 'minor-suggestive');
+    break;
+  }
   if (strictAge && CHILD_PAIR_STRICT_RE.test(normalized)) add('child content label', 'minor-suggestive');
+  if (!strictAge && SCHOOL_DASH_SEXUAL_RE.test(normalized)) add('school pair', 'minor-suggestive');
   // Curly apostrophes (the iOS default) read as straight ones for the
   // self-description lead-ins.
   const ageBase = normalized.replace(/[\u2018\u2019\u02bc]/g, "'");
@@ -1544,9 +1760,10 @@ function detectIn(normalized, add, { compound = true, strictAge = !compound, squ
     for (const { term, category, re } of NAME_DESCRIPTOR_RES) if (re.test(nameMasked)) add(term, category);
   }
   for (const t of compound ? COMPILED_COMPOUND : NAME_SAFE_COMPOUND) {
-    const { term, category, re, disclaimable } = t;
+    const { term, category, re } = t;
+    const disclaimed = disclaimTest(t, strictAge);
     for (const m of masked.matchAll(re)) {
-      if (disclaimable && isDisclaimed(masked, m.index, m.index + m[0].length)) continue;
+      if (disclaimed && disclaimed(masked, m.index, m.index + m[0].length)) continue;
       if (/[a-z]/.test(m[0])) {
         add(t.words ? `${term} ${pairWordOf(t, m.groups.w)}` : term, category);
         break;
@@ -1563,10 +1780,36 @@ function detectIn(normalized, add, { compound = true, strictAge = !compound, squ
 // grader with no such word.
 const GRADE = '(?:(?<![0-9])(?:[6-9]|1[0-2])(?:st|nd|rd|th)[\\s_.-]{0,2}grade(?:rs?)?|(?<![a-z])grade[\\s_.-]{0,2}(?:[6-9]|1[0-2])(?![0-9]))';
 const GRADE_WORD = `(?:girl|boy|babe|teen|virgin|gf|bf|twink|daughter|slut|whore|bitch|hoe|cunt|nudes?|porn|pussy|horny|cum|naked|fuck|sex${SEX_EDUCATION_AFTER})`;
+// Round 21 (accounts#8): the UK/AU secondary school YEAR ("year 7".."year
+// 11"), forward order only and only with GRADE_WORD -- "year 9 girl", "year
+// 10 nudes", "year9girl"; never "year 9 teacher", "year 10 exams", "Year 11
+// sex ed", and never the reverse ("my girl, year 7 starts tomorrow" is a
+// parent). Also a school-class noun beside a sexual word: "freshman girl
+// nudes", "high school freshman nudes", "sophomore slut".
+const SCHOOL_YEAR = '(?<![a-z])year[\\s_.-]{0,2}(?:[7-9]|1[01])(?![0-9])';
+const SCHOOL_CLASS = '(?<![a-z])(?:freshman|freshmen|sophomores?)';
+const SCHOOL_CLASS_WORD = `(?:nudes?|porn\\w*|naked|sex(?![a-z])${SEX_EDUCATION_AFTER}|pussy|sluts?|whores?|cum|fuck\\w*|horny|xx+)`;
 const GRADE_PAIR_RE = new RegExp(`${GRADE}(?![a-z])[^a-z0-9]{0,3}(?:${AGE_NOUN_ADJ}[^a-z0-9]{1,3})?${GRADE_WORD}(?![a-z])`
   + `|(?<![a-z])${GRADE_WORD}[^a-z0-9]{1,3}(?:${AGE_NOUN_ADJ}[^a-z0-9]{1,3})?${GRADE}(?![a-z])`
   // glued in a label: "9thgradegirl", "9thgraderslut"
-  + `|${GRADE}(?:and|n)?${GRADE_WORD}(?![a-z])`);
+  + `|${GRADE}(?:and|n)?${GRADE_WORD}(?![a-z])`
+  + `|${SCHOOL_YEAR}[^a-z0-9]{0,3}(?:${AGE_NOUN_ADJ}[^a-z0-9]{1,3})?${GRADE_WORD}(?![a-z])`
+  + `|${SCHOOL_CLASS}[\\s_.-]{0,2}(?:(?:girls?|boys?|${AGE_NOUN_ADJ})[\\s_.-]{0,2})?${SCHOOL_CLASS_WORD}(?![a-z])`
+  + `|(?<![a-z])${SCHOOL_CLASS_WORD}[\\s_.-]{0,2}${SCHOOL_CLASS.slice('(?<![a-z])'.length)}(?![a-z])`);
+
+// Round 21 (accounts#6): "under 18" is not screened on its own (it is the
+// exclusion disclaimer), but paired DIRECTLY with a porn / nudes / sexual word
+// it has no disclaimer reading: "under 18 porn", "u18 nudes", "under18porn",
+// "just under 18 slut", "almost 18 and horny", "not 18 yet and horny". Every
+// context; the join is CHILD_PAIR_GAP (spaces on one line, or one glued "_"
+// "." "-", or nothing) -- never a comma or a sentence break, so "if you're
+// under 18, leave" and "minors (under 18) not allowed" pass. In free text an
+// anti-CSAM disclaimer in front ("zero tolerance for under 18 porn") is
+// honoured like the child pairs.
+const UNDER18_LEAD = '(?:(?<![a-z])(?:just[\\s_-]{1,2})?under[\\s_-]?18|(?<![a-z0-9])u[\\s_/-]?18|(?<![a-z])almost[\\s_-]?18|(?<![a-z])not[\\s_-]?18[\\s_-]?yet)(?![0-9])';
+const UNDER18_WORD = `(?:porn\\w*|nudes?|naked|sex(?![a-z])${SEX_EDUCATION_AFTER}|sluts?|pussy|xx+|horny|cum|whores?|fuck\\w*|onlyfans)`;
+const UNDER18_PAIR_RE = new RegExp(`${UNDER18_LEAD}(?:s)?${CHILD_PAIR_GAP}${UNDER18_WORD}(?![a-z])`
+  + `|${UNDER18_LEAD}\\s{1,3}(?:and|&|n)\\s{1,3}(?:(?:so|very|super|always|really)\\s+)?(?:${SEXUAL_ADJ}|a\\s+(?:virgin|slut|whore))(?![a-z])`, 'g');
 // ...and in a TAG or a NAME a grade-level person noun on its own ("8th
 // grader", "8thgrader") or "high/middle schooler" -- as a label it can only
 // describe the person.

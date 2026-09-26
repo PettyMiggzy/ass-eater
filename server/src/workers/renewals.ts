@@ -45,7 +45,13 @@ registerWorker(new Worker('renewals', async () => {
     // and the FAN must be ACTIVE, since a suspended/banned fan cannot reach
     // DELETE /subscriptions to stop renewing). The fan keeps the access they
     // already paid for until the period they paid for ended.
-    const due = await prisma.subscription.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: CREATOR_STANDING_SELECT }, fan: { select: { status: true } } } });
+    // Oldest period end first (round 21): the tick drains at most 500 rows,
+    // and with no order a burst of due rows could leave an owed renewal
+    // unpicked for several ticks -- past core/access.ts's live grace, which
+    // is sized to a renewal landing within one tick. Every due row is past its
+    // end, so oldest-first means nothing waits longer than the backlog ahead
+    // of it.
+    const due = await prisma.subscription.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, orderBy: [{ currentPeriodEnd: 'asc' }, { id: 'asc' }], take: 500, include: { creator: { select: CREATOR_STANDING_SELECT }, fan: { select: { status: true } } } });
     for (const s of due) {
       if (renewalShouldExpire(s)) {
         // Expire against the same snapshot the decision was made from, not by id
@@ -85,7 +91,7 @@ registerWorker(new Worker('renewals', async () => {
     }
 
     // Token-lock perks renew the same way -- see modules/stake.ts
-    const dueLocks = await prisma.tokenLock.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, take: 500, include: { creator: { select: { ...CREATOR_STANDING_SELECT, creator: { select: { stakePerkEnabled: true } } } }, fan: { select: { status: true } } } });
+    const dueLocks = await prisma.tokenLock.findMany({ where: { currentPeriodEnd: { lt: new Date() }, status: { in: ['ACTIVE', 'CANCELLED'] } }, orderBy: [{ currentPeriodEnd: 'asc' }, { id: 'asc' }], take: 500, include: { creator: { select: { ...CREATOR_STANDING_SELECT, creator: { select: { stakePerkEnabled: true } } } }, fan: { select: { status: true } } } });
     for (const l of dueLocks) {
       if (renewalShouldExpire({ ...l, perkEnabled: !!l.creator.creator?.stakePerkEnabled })) {
         // Snapshot-guarded for the same reason the subscription loop above is.

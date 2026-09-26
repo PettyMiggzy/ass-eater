@@ -1,6 +1,7 @@
 import { getVerifiedSessionUserId } from '../../../lib/session';
 import { toggleFavorite } from '../../../lib/favorites-store';
 import { refuseMalformedText } from '../../../lib/field-validation';
+import { AUTHOR_ACCOUNT_GONE } from '../../../lib/author-lock';
 
 export default async function handler(req, res) {
   // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
@@ -20,8 +21,9 @@ export default async function handler(req, res) {
     const result = await toggleFavorite(uid, creatorId);
     return res.status(200).json({ ok: true, ...result });
   } catch (err) {
-    // toggleFavorite throws nothing of its own -- anything caught here is
-    // an unexpected DB failure.
+    // The account was deleted while this request was in flight.
+    if (err.code === AUTHOR_ACCOUNT_GONE) return res.status(401).json({ error: 'Your account no longer exists.' });
+    // Anything else is an unexpected DB failure.
     console.error('[favorites/toggle] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

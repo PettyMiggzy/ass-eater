@@ -25,9 +25,16 @@ export default function CashOutPanel({ creator, effectiveStatus, accountRestrict
   const [history, setHistory] = useState(null);
   const [showActivity, setShowActivity] = useState(false);
 
+  // Sequence guard (round-21 money#0): the balance is reloaded whenever the
+  // saved wallet changes, and a slow load sent for the PREVIOUS wallet must
+  // not land after a newer one and put back that wallet's payoutWallet
+  // verdict. Only the latest load (or a later cash-out) may set the balance.
+  const balanceRequestId = useRef(0);
   const loadBalance = async () => {
+    const id = ++balanceRequestId.current;
     try {
       const { res, data } = await getJson('/api/credits/balance');
+      if (id !== balanceRequestId.current) return;
       if (!res.ok) {
         setBalance({ error: responseErrorMessage(res.status, data, 'Could not load your balance.') });
         return;
@@ -38,6 +45,7 @@ export default function CashOutPanel({ creator, effectiveStatus, accountRestrict
         payoutWallet: data?.payoutWallet && typeof data.payoutWallet === 'object' ? data.payoutWallet : null,
       });
     } catch {
+      if (id !== balanceRequestId.current) return;
       setBalance({ error: 'Could not load your balance. Check your connection.' });
     }
   };
@@ -109,6 +117,10 @@ export default function CashOutPanel({ creator, effectiveStatus, accountRestrict
         if (res.status === 402) loadBalance();
         return;
       }
+      // Supersedes any balance load still in flight: it was read before this
+      // cash-out reserved credits. prev.payoutWallet is from the latest
+      // accepted load, i.e. about the wallet on screen.
+      ++balanceRequestId.current;
       setBalance((prev) => ({
         balanceCents: Number(data?.balanceCents) || 0,
         withdrawableCents: Number(data?.withdrawableCents) || 0,

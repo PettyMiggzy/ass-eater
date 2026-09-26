@@ -22,6 +22,7 @@ import PremiumBadge from '../../components/public/PremiumBadge';
 import ListingPreview from '../../components/public/ListingPreview';
 import ReportModal, { postReport, takedownFormHref } from '../../components/public/ReportModal';
 import MediaLightbox from '../../components/public/MediaLightbox';
+import LengthCounter from '../../components/public/LengthCounter';
 import TokenUnlockPanel from '../../components/public/TokenUnlockPanel';
 import { isDemoCreator, isDemoListing, DEMO_LABEL, marketplaceHrefFor } from '../../components/public/cards';
 
@@ -979,19 +980,6 @@ async function readJson(res) {
   }
 }
 
-// Live "used/limit" line under a composer. The limit counts the TRIMMED
-// text, as the servers do, and over the limit nothing is cut: the send is
-// refused until the text is shortened.
-function LengthCounter({ length, max }) {
-  const over = length > max;
-  return (
-    <p className={`text-[11px] text-right ${over ? 'text-red-400 font-bold' : 'text-gray-500'}`}>
-      {length}/{max}
-      {over && ' — too long; shorten it (nothing has been cut)'}
-    </p>
-  );
-}
-
 function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, feeWaived, maxLength: MAX_DM_LENGTH = 2000, onClose }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
@@ -1016,6 +1004,12 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
   const [reportingMessage, setReportingMessage] = useState(null);
   // Reused across retries of the SAME text, replaced once a send lands.
   const attemptId = useRef(null);
+  // Set when a send came back 409 dm_price_changed: the new price is only
+  // accepted by a deliberate press of the Send button (which shows it), never
+  // by Enter -- an auto-repeated or stray Return must not confirm a price the
+  // fan has not read (round-21 public-pages#1). Cleared by editing the text
+  // or by a button send.
+  const priceJustChanged = useRef(false);
 
   const applyConversation = (conversation) => {
     if (!conversation || typeof conversation !== 'object') return;
@@ -1112,11 +1106,17 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
 
   const dmTrimmedLength = text.trim().length;
   const dmOverLimit = dmTrimmedLength > MAX_DM_LENGTH;
+  // Every condition that enables the Send button. send() re-checks it too:
+  // form.requestSubmit() fires submit even while the button is disabled.
+  const sendAllowed = !sending && !loading && canSend && !blockedByMe && !blockedByThem && !!text.trim() && !dmOverLimit;
 
   const send = async (e) => {
     e.preventDefault();
     const body = text.trim();
-    if (!body || sending) return;
+    if (!body || !sendAllowed) return;
+    // Only the Send button reaches this while a price change is pending
+    // (Enter is refused below), so pressing it is the confirmation.
+    priceJustChanged.current = false;
     if (body.length > MAX_DM_LENGTH) {
       setError(`That message is too long (${MAX_DM_LENGTH} characters maximum).`);
       return;
@@ -1141,7 +1141,9 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
       });
       const data = await readJson(res);
       if (res.status === 409 && data.code === 'dm_price_changed' && Number.isInteger(data.currentPriceCents)) {
-        // Nothing was charged. Show the new price; the next Send confirms it.
+        // Nothing was charged. Show the new price; the next press of the
+        // Send button (not Enter) confirms it.
+        priceJustChanged.current = true;
         setPriceCents(data.currentPriceCents);
         setNotice(
           data.currentPriceCents > 0
@@ -1269,7 +1271,11 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
         {/* A textarea with no maxLength (round-20 public-pages#0): a pasted
             message stays whole and visible before it is paid for, and one over
             the limit is refused below instead of being cut and charged.
-            Enter sends; Shift+Enter adds a new line. */}
+            With a mouse/trackpad (fine pointer), Enter sends and Shift+Enter
+            adds a new line; on touch devices Return is always a new line and
+            only the button sends. Enter never sends on key auto-repeat, during
+            IME composition, while the button would be disabled, or right
+            after a price change (round-21 public-pages#1). */}
         <form onSubmit={send} className="p-3 border-t border-white/10">
           <div className="flex gap-2 items-end">
             <textarea
@@ -1277,19 +1283,25 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
               onChange={(e) => {
                 setText(e.target.value);
                 attemptId.current = null; // different text = a new attempt
+                priceJustChanged.current = false;
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  e.currentTarget.form?.requestSubmit();
-                }
+                if (e.key !== 'Enter' || e.shiftKey) return;
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return; // IME (Safari reports 229)
+                const finePointer = typeof window !== 'undefined'
+                  && typeof window.matchMedia === 'function'
+                  && window.matchMedia('(pointer: fine)').matches;
+                if (!finePointer) return; // touch keyboards: Return is a new line
+                e.preventDefault();
+                if (e.repeat || priceJustChanged.current || !sendAllowed) return;
+                e.currentTarget.form?.requestSubmit();
               }}
               rows={2}
               placeholder="Type a message..."
               aria-invalid={dmOverLimit}
               className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm resize-none"
             />
-            <button type="submit" disabled={sending || loading || !canSend || blockedByMe || blockedByThem || !text.trim() || dmOverLimit} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
+            <button type="submit" disabled={!sendAllowed} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
               {sending ? 'Sending…' : priceCents > 0 ? `Send · $${(priceCents / 100).toFixed(2)}` : 'Send'}
             </button>
           </div>

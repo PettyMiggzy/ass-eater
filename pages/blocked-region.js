@@ -64,15 +64,17 @@ export default function BlockedRegion() {
           </a>
 
           {/* Without this, a visitor from one of the 27 blocked states hits a
-              wall and is gone. Their state is recorded with the signup (read
-              server-side off Vercel's edge headers, not from the form), so
-              when a state comes off BLOCKED_STATE_CODES in proxy.js the
-              people it kept out are exactly who can be told first. */}
+              wall and is gone. Their US state is recorded with the signup
+              (read server-side off Vercel's edge headers, not from the form),
+              so when a state comes off BLOCKED_STATE_CODES in proxy.js the
+              people it kept out are exactly who can be told first. No country
+              is ever recorded, so the blurb promises location news to US
+              visitors only (round-21 legal-journeys#3). */}
           <div className="mt-6 pt-6 border-t border-white/10 flex justify-center">
             <WaitlistForm
               source="blocked-region"
               title="NOT READY TO VERIFY?"
-              blurb="Leave your email and we’ll keep you posted — including if the rules where you are change."
+              blurb="Leave your email and we’ll let you know when we launch. If you’re in a US state we currently gate, we’ll also tell you when that state opens."
             />
           </div>
         </div>
