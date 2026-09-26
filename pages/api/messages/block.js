@@ -1,5 +1,6 @@
 import { getSessionUser } from '../../../lib/session';
 import { setConversationBlocked, unblockByHandle, DM_ERRORS } from '../../../lib/messages-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/messages/block { userId, blocked: boolean }
@@ -18,6 +19,9 @@ import { setConversationBlocked, unblockByHandle, DM_ERRORS } from '../../../lib
  * the conversation id is derived from the caller's own id.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const user = await getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });

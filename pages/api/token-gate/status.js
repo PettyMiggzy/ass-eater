@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../lib/field-validation';
 import { getCreatorById } from '../../../lib/creators-store';
 import { isPubliclyVisible } from '../../../lib/creator-status';
 import { gateTokensOf, tokenGateLive } from '../../../lib/token-gate';
@@ -25,6 +26,8 @@ import {
  * visible answers as if it does not exist (creator: null).
  */
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
     return res.status(405).json({ error: 'Method not allowed' });

@@ -15,6 +15,7 @@ import { ageVerificationSecret } from '../../../lib/age-verification';
 import { readWalletNonce, depositProofMessage, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
 import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * The ONLY place a fan ever needs a wallet: converting a real on-chain USDG
@@ -37,6 +38,9 @@ const MAX_PER_USER = 20;
 const MAX_PER_IP = 40;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

@@ -1,5 +1,6 @@
 import { getVerifiedSessionUserId } from '../../../lib/session';
 import { markReadUpTo } from '../../../lib/notifications-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST { fromId, upToId } -- marks read every unread notification with
@@ -7,6 +8,9 @@ import { markReadUpTo } from '../../../lib/notifications-store';
  * (or older than the displayed page) stays unread. fromId is optional.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

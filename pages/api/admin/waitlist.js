@@ -1,5 +1,6 @@
 import { getWaitlist, getWaitlistCounts, removeFromWaitlist, csvSafeCell } from '../../../lib/waitlist-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 function toCsv(entries) {
   const header = ['email', 'roles', 'source', 'state', 'country', 'signed_up'];
@@ -24,6 +25,9 @@ function toCsv(entries) {
 }
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (!requireAdminKey(req, res)) return;
 
   if (req.method === 'GET') {

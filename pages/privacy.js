@@ -268,7 +268,9 @@ export default function Privacy() {
                 unavailable to you once it is deleted. A creator account is deleted together with its profile
                 and uploaded content, the comments and messages it sent, its favorites and its notifications,
                 and its listings are taken down (a file a buyer already paid for stays available to that
-                buyer). Anything of yours that has been reported to us is copied into the moderation record
+                buyer). Notifications your account caused in other people&apos;s accounts (&ldquo;New message
+                from …&rdquo;, &ldquo;… commented on your wall&rdquo;) stay in their history but are changed to
+                read &ldquo;Someone&rdquo; instead of your name. Anything of yours that has been reported to us is copied into the moderation record
                 before it is deleted, so a deletion does not erase a report&apos;s evidence. Any credit balance
                 left on a deleted account is forfeited — credits are never refunded (Terms of Service) — so
                 spend it, or confirm you want to go ahead anyway. Some limits on that:

@@ -5,7 +5,7 @@ import { PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumventio
 import { screenPublicText, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { sanitizeTags, LISTING_LIMITS } from '../../../lib/creator-status';
-import { validateTextFields } from '../../../lib/field-validation';
+import { validateTextFields, refuseMalformedText } from '../../../lib/field-validation';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
 // Same budget as create.js. Edits had no limit at all.
@@ -57,6 +57,9 @@ function screenListingText(fields) {
 }
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

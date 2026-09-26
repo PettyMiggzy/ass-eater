@@ -3,6 +3,7 @@ import { addGalleryItem, GALLERY_CAP_EXCEEDED } from '../../../lib/creators-stor
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { galleryLimitFor, mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
 import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/me/upload -- finalize a gallery upload.
@@ -22,6 +23,9 @@ import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib
  * write against the fresh record -- never against anything the client sends.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

@@ -616,7 +616,7 @@ export default function CreatorProfile({
                         <Icons.check className="h-4 w-4 mt-0.5 shrink-0 text-brand-pink" />
                         <span>
                           {dmPriceCents > 0
-                            ? `Send a message — ${dmPriceLabel} each, paid to them.`
+                            ? `Send a message — ${dmPriceLabel} each (goes to the creator, less OnlyOne's platform fee).`
                             : 'Send a message — free for you as a creator.'}
                         </span>
                       </li>
@@ -1188,7 +1188,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
         )}
         {canSend && priceCents > 0 && (
           <p className="text-[11px] text-gray-400 px-4 pt-2">
-            Each message costs {formatCredits(priceCents)}, paid to {otherName}.
+            Each message costs {formatCredits(priceCents)} (goes to {otherName}, less OnlyOne&apos;s platform fee).
           </p>
         )}
         {notice && <p className="text-yellow-300 text-xs px-4 pt-1">{notice}</p>}

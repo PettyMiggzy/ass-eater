@@ -1,6 +1,7 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { sweepOrphanedMedia, blobConfigured, pendingDeletionCounts } from '../../../lib/media';
 import { movePreservedToEvidence } from '../../../lib/media-preservation';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/admin/media-sweep -- reap orphaned media files now.
@@ -22,6 +23,9 @@ import { movePreservedToEvidence } from '../../../lib/media-preservation';
  * to delete shows up there rather than only in a log.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST' && req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   if (!requireAdminKey(req, res)) return;
 

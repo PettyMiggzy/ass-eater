@@ -5,7 +5,7 @@ import { money, post, PLATFORM_ID, FEES } from '../core/ledger.js';
 import { deleteObject, deletePrefix, purgeCdnPrefix, cdnSignedUrl } from '../lib/s3.js';
 import { wmPrefix } from '../lib/watermark.js';
 import { recordManualBurn } from '../core/vip.js';
-import { applyUserStatus } from '../core/moderation.js';
+import { applyUserStatus, restoreBanTakedowns } from '../core/moderation.js';
 import { refundPayout, markPayoutSent, holdForManualSettlement } from '../core/payouts.js';
 import { payoutJobOptions, payoutJobId, jobInFlight } from '../core/payout-queue.js';
 import { payoutQueue } from '../lib/redis.js';
@@ -432,11 +432,16 @@ export const admin: FastifyPluginAsync = async (app) => {
           // is also what a creator's own unlist writes, so one PATCH
           // {status:'ACTIVE'} used to undo the takedown; the marketplace
           // PATCH refuses a moderated listing (modules/marketplace.ts).
+          // The reason is REPORT whatever was there before -- one the
+          // seller's ban had already stamped included: the item itself has
+          // now been judged, so it stays hidden from past buyers and an
+          // admin's ban restore cannot clear it (core/moderation.ts).
           const moderatedAt = new Date();
           await money(prisma, async (tx) => {
             if (l.saleType === 'AUCTION' && l.status === 'ACTIVE') await cancelAuction(tx, r.targetId, 'removed_by_admin');
             else await tx.listing.updateMany({ where: { id: r.targetId, status: 'ACTIVE' }, data: { status: 'REMOVED' } });
             await tx.listing.updateMany({ where: { id: r.targetId, moderatedAt: null }, data: { moderatedAt } });
+            await tx.listing.updateMany({ where: { id: r.targetId }, data: { moderatedReason: 'REPORT' } });
           });
           settledTargetIds = [r.targetId];
           const media = await prisma.media.findMany({ where: { listingId: r.targetId }, select: { id: true } });
@@ -494,9 +499,33 @@ export const admin: FastifyPluginAsync = async (app) => {
   // back 'active' cannot lift it.
   const setStatus = (userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'BANNED') =>
     applyUserStatus(userId, status, { log: app.log });
-  app.post('/users/:id/status', async (req: any) => {
-    const { status } = z.object({ status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']) }).parse(req.body);
-    await setStatus(req.params.id, status); return { ok: true };
+  //
+  // A ban takes the creator's listings down with a BAN stamp
+  // (core/moderation.ts); reactivating does not clear it by itself. Pass
+  // restoreListings: true with status ACTIVE (reversing a mistaken ban, an
+  // appeal) to clear every BAN stamp of that creator in the same call, or
+  // restore one listing with POST /admin/listings/:id/restore. Either way
+  // the listings stay REMOVED until the creator relists them, and a REPORT
+  // takedown is never restored.
+  app.post('/users/:id/status', async (req: any, reply) => {
+    const { status, restoreListings } = z.object({
+      status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']), restoreListings: z.boolean().optional(),
+    }).parse(req.body);
+    if (restoreListings && status !== 'ACTIVE') return reply.code(400).send({ error: 'restore_needs_active' });
+    await setStatus(req.params.id, status);
+    if (!restoreListings) return { ok: true };
+    return { ok: true, restoredListings: await restoreBanTakedowns({ creatorId: String(req.params.id) }) };
+  });
+
+  app.post('/listings/:id/restore', async (req: any, reply) => {
+    const id = String(req.params.id ?? '');
+    const l = await prisma.listing.findUnique({ where: { id }, select: { moderatedReason: true, creator: { select: { user: { select: { status: true } } } } } });
+    if (!l) return reply.code(404).send({ error: 'not_found' });
+    if (l.moderatedReason === 'REPORT') return reply.code(409).send({ error: 'report_takedown' });
+    if (l.moderatedReason !== 'BAN') return reply.code(409).send({ error: 'not_moderated' });
+    if (l.creator.user.status !== 'ACTIVE') return reply.code(409).send({ error: 'seller_not_active' });
+    if (!(await restoreBanTakedowns({ listingId: id }))) return reply.code(409).send({ error: 'not_restorable' });
+    return { ok: true };
   });
 
   app.post('/users/:id/kyc', async (req: any) => {

@@ -330,10 +330,13 @@ export default function AdminPanel() {
       const becomingBanned = built.fields.status === 'banned' && effectiveCreatorStatus(current) !== 'banned';
       if (becomingBanned && !confirm(
         `Ban ${current.name || 'this creator'} permanently?\n\n`
-        + '- Every listing nobody has paid for is taken down and its photos/videos are DELETED for good.\n'
-        + (isFoundingCreator(current) ? '- Their Founding Creator slot is revoked and will not come back if the ban is lifted.\n' : '')
-        + '- Their credit balance and pending payouts are frozen.\n\n'
-        + 'Setting them back to Active later does not restore any of this.',
+        + '- Every listing that has not sold comes off sale for good and can never be relisted -- including ones buyers have already paid for.\n'
+        + '- Photos/videos are DELETED for good, except on listings buyers hold paid digital orders for (those buyers keep access). '
+        + 'Sold physical listings lose their photos too.\n'
+        + (isFoundingCreator(current) ? '- Their Founding Creator slot is revoked.\n' : '')
+        + '- Their credit balance and pending payouts are frozen while the ban stands.\n\n'
+        + 'Setting them back to Active later lifts the credit/payout freeze, but the listings, the deleted files'
+        + (isFoundingCreator(current) ? ' and the Founding slot' : '') + ' do not come back.',
       )) { setStatus('Nothing was saved.'); return; }
       // Unticking Founding is also permanent (foundingRevokedAt stops any
       // later auto-grant), so it gets the same prompt when it isn't already
@@ -1274,8 +1277,10 @@ export default function AdminPanel() {
                   )}
                   {draft.status === 'banned' && selectedStatus !== 'banned' && (
                     <p className="text-xs text-red-400">
-                      Banning takes down every unsold listing, deletes its media and freezes their credit balance and any
-                      pending payouts.
+                      Banning takes every listing that has not sold off sale for good (paid-for ones included; none can be
+                      relisted) and deletes listing photos and videos, except on listings buyers hold paid digital orders
+                      for. Sold physical listings lose their photos too. Their credit balance and pending payouts are frozen
+                      while the ban stands; setting them back to Active lifts that freeze, but not the listings or files.
                     </p>
                   )}
                   {draft.status === 'active' && selectedStatus && selectedStatus !== 'active' && (
@@ -3528,6 +3533,16 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  // { id, url } for an ID document whose new tab could not be opened (a popup
+  // blocker): shown as a plain link so the admin can still open or save it.
+  const [docLink, setDocLink] = useState(null);
+  const docLinkRef = useRef(null);
+  useEffect(() => () => { if (docLinkRef.current) URL.revokeObjectURL(docLinkRef.current.url); }, []);
+  const showDocLink = (next) => {
+    if (docLinkRef.current) URL.revokeObjectURL(docLinkRef.current.url);
+    docLinkRef.current = next;
+    setDocLink(next);
+  };
   // Per-record edit: { id, creatorId, aliases, contentUrls, notes } while open.
   const [editing, setEditing] = useState(null);
   // Ids the server matched for a URL search (see urlSearch below).
@@ -3715,6 +3730,21 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   };
 
   const openDocument = async (id) => {
+    // The tab is opened HERE, synchronously inside the click, before any
+    // await: by the time a multi-MB ID has downloaded the click's user
+    // activation is gone and Safari (and others, on a slow download) block
+    // the popup. It was also opened with 'noopener', which makes
+    // window.open return null whether or not it worked, so a blocked popup
+    // failed silently. Now a null window is detected and the document is
+    // offered as a link instead.
+    let win = null;
+    try { win = window.open('', '_blank'); } catch { win = null; }
+    if (win) {
+      try {
+        win.opener = null;
+        win.document.title = 'Loading ID document…';
+      } catch { /* cross-origin or already navigated: harmless */ }
+    }
     setBusyId(id);
     setError('');
     try {
@@ -3724,11 +3754,18 @@ function PerformerRecordsPanel({ adminKey, creators }) {
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      window.open(url, '_blank', 'noopener');
-      // Revoked after the new tab has had a moment to read it, so the
-      // object URL doesn't linger in this page for the rest of the session.
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      if (win && !win.closed) {
+        win.location.href = url;
+        // Revoked after the new tab has had a moment to read it, so the
+        // object URL doesn't linger in this page for the rest of the session.
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } else {
+        // Blocked, or the admin closed the blank tab: the link below stays
+        // until another document replaces it or the panel unmounts.
+        showDocLink({ id, url });
+      }
     } catch (err) {
+      if (win && !win.closed) win.close();
       setError(err.message);
     } finally {
       setBusyId(null);
@@ -3922,6 +3959,15 @@ function PerformerRecordsPanel({ adminKey, creators }) {
             in the list, far below the form's own message line. */}
         {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
         {notice && <p className="text-sm text-green-400 mb-3">{notice}</p>}
+        {docLink && (
+          <p className="text-sm text-yellow-300 mb-3">
+            Your browser blocked the new tab for record #{docLink.id}&apos;s ID document.{' '}
+            <a href={docLink.url} target="_blank" rel="noopener noreferrer" className="underline text-brand-pink">Open it</a>
+            {' or '}
+            <a href={docLink.url} download={`performer-record-${docLink.id}-id`} className="underline text-brand-pink">save it</a>.{' '}
+            <button type="button" onClick={() => showDocLink(null)} className="underline text-gray-400">Dismiss</button>
+          </p>
+        )}
 
         {loading ? (
           <p className="text-gray-500 text-sm">Loading…</p>
@@ -4510,6 +4556,25 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fixedCreatorId, fixedBuyerId, statusFilter]);
+
+  // The unpinned panel only loads on "Find orders", so changing what it is
+  // looking for (seller, search mode, the typed id, the status filter) must
+  // drop the list on screen: it answered the OLD question, and left in place
+  // it showed one seller's waiting orders, with live "Close order" buttons,
+  // under another seller's or another status's label. The load counter is
+  // bumped too so a request already in flight for the old question can't
+  // repopulate the list after it was cleared.
+  useEffect(() => {
+    if (fixed) return;
+    loadSeq.current += 1;
+    setLoading(false);
+    setOrders(null);
+    setClosing(null);
+    setNeedsForce(null);
+    setReason('');
+    setEraseAddress(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [by, creatorId, who, statusFilter]);
 
   const startClose = (o) => {
     setClosing(o);

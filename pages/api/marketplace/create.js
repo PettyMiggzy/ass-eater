@@ -2,7 +2,7 @@ import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { screenPublicText, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
-import { validateTextFields } from '../../../lib/field-validation';
+import { validateTextFields, refuseMalformedText } from '../../../lib/field-validation';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { LISTING_LIMITS, sanitizeTags } from '../../../lib/creator-status';
 import { createListing, findCircumventionInTags } from '../../../lib/listings-store';
@@ -48,6 +48,9 @@ function screenListingText(fields) {
 }
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

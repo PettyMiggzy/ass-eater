@@ -33,6 +33,7 @@ import { getVerifiedSessionUserId } from '../../../lib/session';
 import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 import { getMarketplacePaymentConfig, marketplacePaymentsLive, safetyCheckAvailable } from '../../../lib/marketplace-payment-config';
 import { centsToTokenUnits } from '../../../lib/wallet';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 const TRANSFER_ABI = [
   {
@@ -48,6 +49,9 @@ const MAX_PER_USER = 30;
 const MAX_PER_IP = 60;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

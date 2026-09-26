@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../lib/field-validation';
 import { getListings } from '../../../lib/listings-store';
 import { getCreators } from '../../../lib/creators-store';
 import { isPubliclyVisible, toPublicListing, isDemoListing, listingHasDeliverable } from '../../../lib/creator-status';
@@ -17,6 +18,8 @@ import { categoriesOf, categoryFromQuery, creatorInCategory } from '../../../lib
  * file URLs to anyone, with a CSS blur as the only "lock".
  */
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

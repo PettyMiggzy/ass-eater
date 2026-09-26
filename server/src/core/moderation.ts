@@ -110,7 +110,11 @@ export async function applyUserStatus(
   // Every listing a ban takes down is stamped moderatedAt: REMOVED alone is
   // also what the creator's own unlist writes, and an account an admin later
   // un-bans must not be able to relist what the ban removed with one PATCH
-  // (modules/marketplace.ts refuses a moderated listing).
+  // (modules/marketplace.ts refuses a moderated listing). The stamp says it
+  // was the BAN (moderatedReason BAN): the item itself was never judged, so
+  // past buyers see it again once the seller is ACTIVE, and an admin can
+  // clear it (restoreBanTakedowns) -- a reactivation alone never relists.
+  // Nothing here overwrites a REPORT stamp.
   if (status === 'BANNED') {
     const moderatedAt = new Date();
     const auctions = await prisma.listing.findMany({ where: { creatorId: userId, saleType: 'AUCTION', status: 'ACTIVE' }, select: { id: true } });
@@ -123,14 +127,36 @@ export async function applyUserStatus(
           const r = await cancelAuction(tx, a.id, 'seller_banned');
           // Stamped only when THIS cancel took it down: cancelAuction no-ops
           // on an auction the sweep already closed (sold, or ended unsold).
-          await tx.listing.updateMany({ where: { id: a.id, status: 'REMOVED', moderatedAt: null }, data: { moderatedAt } });
+          await tx.listing.updateMany({ where: { id: a.id, status: 'REMOVED', moderatedAt: null }, data: { moderatedAt, moderatedReason: 'BAN' } });
           return r;
         });
       } catch (err) {
         log.error({ err, listingId: a.id, userId }, 'ban: failed to cancel auction');
       }
     }
-    await prisma.listing.updateMany({ where: { creatorId: userId, saleType: 'FIXED', status: 'ACTIVE' }, data: { status: 'REMOVED', moderatedAt } });
+    await prisma.listing.updateMany({ where: { creatorId: userId, saleType: 'FIXED', status: 'ACTIVE' }, data: { status: 'REMOVED', moderatedAt, moderatedReason: 'BAN' } });
   }
   return true;
+}
+
+/**
+ * Clears a BAN takedown stamp so the creator can relist (their own PATCH
+ * /marketplace/listings/:id), for one listing or every listing of one
+ * creator. The listings stay REMOVED -- relisting is the creator's step --
+ * and a REPORT takedown is never touched. An admin action only
+ * (modules/admin.ts): a site-driven reactivation never calls this. Refuses
+ * while the creator is not ACTIVE, where the listing could not be sold
+ * anyway and the ban it came from still stands. Returns how many were
+ * cleared.
+ */
+export async function restoreBanTakedowns(where: { listingId: string } | { creatorId: string }): Promise<number> {
+  const r = await prisma.listing.updateMany({
+    where: {
+      ...('listingId' in where ? { id: where.listingId } : { creatorId: where.creatorId }),
+      moderatedReason: 'BAN',
+      creator: { user: { status: 'ACTIVE' } },
+    },
+    data: { moderatedAt: null, moderatedReason: null },
+  });
+  return r.count;
 }

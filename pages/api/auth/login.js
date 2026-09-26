@@ -5,46 +5,56 @@ import {
   clearLoginCounters, consumeLoginAttempts, markLoginFailure, pruneLoginAttempts, readLoginCounters, releaseLoginAttempts,
 } from '../../../lib/login-guard';
 import { effectiveUserStatus } from '../../../lib/user-moderation';
-import { EMAIL_IDENTIFIER_MAX, PASSWORD_MAX } from '../../../lib/field-validation';
+import { EMAIL_IDENTIFIER_MAX, PASSWORD_MAX, refuseMalformedText } from '../../../lib/field-validation';
 
-// Two brakes, and both of them are aimed at the host doing the guessing
-// rather than at the account being guessed at:
+// The login brakes -- ONE design, settled in round 11. Every counter is a
+// shared Postgres row (lib/login-guard.js) with a fixed 15-minute window, so
+// every serverless instance sees the same budget:
 //
-// - Per IP, across every account: stops one host spraying many accounts.
-// - Per account, across every host: stops many hosts grinding one account.
-//   This one only blocks callers that have themselves failed a login
-//   against that account recently. A plain per-account block is a lockout
-//   weapon, not just a speed bump: anyone who knows your username can fail
-//   logins at it on purpose, the 429 comes back before the password is
-//   even looked at (so a correct password can't clear it), and there is no
-//   password-reset route anywhere on this site to escape through -- the
-//   real owner is simply shut out of their own dashboard for as long as
-//   the attacker keeps knocking. Requiring the caller to be "dirty" for
-//   that account keeps the defence (saturating the bucket takes failures,
-//   and failing is exactly what marks you) while never catching the owner,
-//   who shows up with the right password and a clean record. Past
-//   saturation a fresh host gets one sequential guess at this account
-//   instead of a full budget -- though a host firing in parallel still
-//   gets its per-IP budget, since the mark only lands once a compare has
-//   come back. The per-IP brake is what bounds that case.
+// - Per /64 (IPv4: per address), across every account: 10 attempts. Counted
+//   BEFORE the compare; a successful login gives its own slot back, so in
+//   effect it counts failures (plus attempts in flight).
+// - Per /48 (IPv6 only), across every account: 100, counted the same way.
+//   A saturated /48 refuses EVERY caller in it before the compare, clean
+//   /64s included. That is the only way the /48 bounds anything: round 10
+//   let a clean /64 through a saturated /48, and a routed /48 is 65,536
+//   clean /64s, i.e. ~65k password-spray guesses per window (round-11
+//   gates-token#0). The accepted trade-off: someone failing 100 logins from
+//   a mobile carrier's shared /48 blocks that /48's other subscribers from
+//   logging in until the window ends.
+// - Per account, across every host: 10. This one refuses only a caller that
+//   has itself failed against this account ACCOUNT_OWN_FAILURE_ALLOWANCE
+//   times inside the window (per /64), or whose /48 has had
+//   NET_DIRTY_DISTINCT_64S different /64s fail against it. A plain
+//   per-account block is a lockout weapon -- anyone who knows your username
+//   can fail logins at it, and there is no password-reset route to escape
+//   through -- so the owner, arriving with the right password and at most a
+//   typo or two behind them, always gets a compare (round-11 gates-token#1).
+//   The accepted trade-off: an owner who mistypes three times while someone
+//   else keeps the account saturated waits out the rest of their own 15-minute
+//   marker window, never longer (the marker expires on its own; it is not
+//   renewed by the attacker).
 //
-// The counters are shared Postgres rows (lib/login-guard.js), so every
-// serverless instance sees the same budget.
+// Order matters for cost (round-11 gates-token#3): the /64 and /48 are
+// counted first, in one statement; a caller already over either is refused
+// right there, and the account row is never created for it.
 const MAX_ATTEMPTS_PER_IP = 10;
-// Per IPv6 /48 (IPv4: the same address, so this only adds anything for
-// IPv6). Counts FAILED logins only and only brakes callers that are already
-// dirty (see below), because a mobile carrier puts many subscribers in one
-// /48; it exists to stop a free /48 from being 65,536 separate /64 budgets.
 const MAX_ATTEMPTS_PER_NETWORK = 100;
 const MAX_ATTEMPTS_PER_ACCOUNT = 10;
+// How many failures one /64 may itself have against an account before a
+// saturated account counter refuses it. More than one, so the owner's own
+// typo does not lock them out behind an attacker's saturation.
+const ACCOUNT_OWN_FAILURE_ALLOWANCE = 3;
 // How many DIFFERENT /64s of one /48 must have failed against an account
 // before the whole /48 counts as dirty for it. One is not enough: a carrier
 // puts many subscribers in one /48, and a single neighbour failing once must
-// not lock everyone else in it out of their own account. Three still caps a
-// party holding the whole /48 at a handful of guesses per saturated account.
+// not lock everyone else in it out of their own account.
 const NET_DIRTY_DISTINCT_64S = 3;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res, { skip: ['password'] })) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -75,88 +85,70 @@ export default async function handler(req, res) {
   // Bucketed per NETWORK (an IPv6 /64, an IPv4 address as is), not per exact
   // address: one IPv6 customer can source requests from any of 2^64
   // addresses, so a per-/128 key gave every request a fresh per-IP budget
-  // AND a clean "dirty" marker below -- unlimited sequential guesses at one
-  // account (round-8 gates-token#0). See lib/rate-limit.js clientNetwork.
-  //
-  // A /64 is not the smallest unit one party controls either (a free routed
-  // /48 is 65,536 of them), so the "dirty" marker is also written and checked
-  // at the /48, and the /48 gets a generous per-network budget of its own
-  // (round-9 gates-token#0): rotating /64s inside one allocation neither
-  // resets the marker nor multiplies the budget. The /48 marker needs
-  // NET_DIRTY_DISTINCT_64S different failing /64s, not one, so a neighbour on
-  // a shared carrier /48 cannot lock others out alone. For IPv4 both keys are
-  // the same address.
+  // AND a clean "dirty" marker below (round-8 gates-token#0). See
+  // lib/rate-limit.js clientNetwork. The /48 is counted too (see the top of
+  // this file). For IPv4 both are the same address and only one is counted.
   const ip = clientNetwork(req);
   const net = clientNetworkCoarse(req);
   const hasNet = net !== ip;
   const ipKey = `login:ip:${ip}`;
   const netKey = hasNet ? `login:net:${net}` : null;
   const accountKey = `login:account:${email.toLowerCase()}`;
-  // Marker, not a counter: "this host has failed a login against this
-  // account inside the window." Written on a wrong password below.
+  // Markers, not budgets: how many times this /64 has failed a login against
+  // this account inside the window (written on a wrong password below), and
+  // how many DISTINCT /64s of this /48 have.
   const accountFromIpKey = `${accountKey}:from:${ip}`;
-  // At the /48 it counts DISTINCT failing /64s (see NET_DIRTY_DISTINCT_64S).
   const accountFromNetKey = hasNet ? `${accountKey}:fromnet:${net}` : null;
 
   // Now and then, drop long-expired counter rows. Best-effort, never blocks.
   if (Math.random() < 0.01) pruneLoginAttempts();
 
-  // Every brake is COUNTED here, before the bcrypt compare below, in one
-  // atomic statement -- not recorded after it. Checking up here and counting
-  // failures only down there is a check-then-act race: every request in a
-  // parallel burst reads a count of zero while the others are still awaiting
-  // bcrypt, so one Promise.all of a few hundred requests would get a few
-  // hundred free guesses against a limit of 10.
-  //
-  // The counters live in Postgres (lib/login-guard.js), shared by every
-  // serverless instance, rather than in lib/rate-limit.js's per-instance map,
-  // which a flood of cheap requests elsewhere could evict (round-10
-  // gates-token#1).
-  let counts;
-  let markers;
-  try {
-    const entries = [
-      { name: 'ip', key: ipKey, limit: MAX_ATTEMPTS_PER_IP },
-      { name: 'account', key: accountKey, limit: MAX_ATTEMPTS_PER_ACCOUNT },
-    ];
-    if (hasNet) entries.push({ name: 'net', key: netKey, limit: MAX_ATTEMPTS_PER_NETWORK });
-    counts = await consumeLoginAttempts(entries);
-    markers = await readLoginCounters([accountFromIpKey, accountFromNetKey]);
-  } catch (err) {
-    console.error('[auth/login] rate-limit counters unavailable:', err);
-    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
-  }
-
-  const dirtyForAccount = markers[accountFromIpKey] >= 1
-    || (hasNet && markers[accountFromNetKey] >= NET_DIRTY_DISTINCT_64S);
   const refuse = async (retryAfterSeconds, giveBack) => {
     try { await releaseLoginAttempts(giveBack); } catch (err) { console.error('[auth/login] release failed:', err); }
     res.setHeader('Retry-After', String(retryAfterSeconds));
     return res.status(429).json({ error: 'Too many login attempts. Please wait a few minutes and try again.' });
   };
 
-  // Per /64 (IPv4: per address), across every account. A refused request was
-  // never let through, so nothing it touched stays counted.
-  if (counts.ip.limited) return refuse(counts.ip.retryAfterSeconds, [ipKey, netKey, accountKey]);
+  // Every brake is COUNTED before the bcrypt compare, atomically -- not
+  // recorded after it. Checking up here and counting failures only down
+  // there is a check-then-act race: every request in a parallel burst reads
+  // a count of zero while the others are still awaiting bcrypt.
+  //
+  // Step 1: the host's own budgets (/64 and /48), in one statement. A refused
+  // request was never let through, so both are given back -- and the account
+  // row is never touched for it, so a refused host looping over random
+  // identifiers creates no rows (round-11 gates-token#3).
+  let hostCounts;
+  try {
+    const hostEntries = [{ name: 'ip', key: ipKey, limit: MAX_ATTEMPTS_PER_IP }];
+    if (hasNet) hostEntries.push({ name: 'net', key: netKey, limit: MAX_ATTEMPTS_PER_NETWORK });
+    hostCounts = await consumeLoginAttempts(hostEntries);
+  } catch (err) {
+    console.error('[auth/login] rate-limit counters unavailable:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+  if (hostCounts.ip.limited) return refuse(hostCounts.ip.retryAfterSeconds, [ipKey, netKey]);
+  if (hasNet && hostCounts.net.limited) return refuse(hostCounts.net.retryAfterSeconds, [ipKey, netKey]);
 
-  // Per /48. It counts FAILED logins only (a success gives its slot back
-  // below), and its saturation refuses only a caller that is already dirty:
-  // one whose own /64 has failed a login inside the window, or that is marked
-  // for this account. A clean /64 arriving with a password always gets its
-  // compare -- otherwise one party failing 100 times from ten /64s of a
-  // carrier /48 locked every other subscriber in it out, the right password
-  // included (round-10 gates-token#0). It still stops /64 rotation inside a
-  // routed /48 from multiplying the budget: past saturation each fresh /64
-  // gets one guess, and that guess makes it dirty.
-  if (hasNet && counts.net.limited && (counts.ip.prior > 0 || dirtyForAccount)) {
-    return refuse(counts.net.retryAfterSeconds, [ipKey, netKey, accountKey]);
+  // Step 2: the account budget, and this host's own failure markers for it.
+  let accountCount;
+  let markers;
+  try {
+    accountCount = (await consumeLoginAttempts([{ name: 'account', key: accountKey, limit: MAX_ATTEMPTS_PER_ACCOUNT }])).account;
+    markers = await readLoginCounters([accountFromIpKey, accountFromNetKey]);
+  } catch (err) {
+    console.error('[auth/login] rate-limit counters unavailable:', err);
+    try { await releaseLoginAttempts([ipKey, netKey]); } catch { /* logged above */ }
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 
   // Per account, across every host, but only for a caller that has itself
-  // failed against this account (see the comment at the top). Its knock still
-  // costs it its /64 and /48 slots.
-  if (counts.account.limited && dirtyForAccount) {
-    return refuse(counts.account.retryAfterSeconds, [accountKey]);
+  // failed against this account often enough (see the top of this file). Its
+  // knock still costs it its /64 and /48 slots.
+  const dirtyForAccount = markers[accountFromIpKey] >= ACCOUNT_OWN_FAILURE_ALLOWANCE
+    || (hasNet && markers[accountFromNetKey] >= NET_DIRTY_DISTINCT_64S);
+  if (accountCount.limited && dirtyForAccount) {
+    return refuse(accountCount.retryAfterSeconds, [accountKey]);
   }
 
   try {
@@ -168,8 +160,9 @@ export default async function handler(req, res) {
     // lib/users-store.js's verifyPassword).
     const passwordOk = await verifyPassword(user, password);
     if (!user || !passwordOk) {
-      // Marks this host dirty for this account, which is what makes the
-      // per-account brake above apply to it.
+      // Counts this failure against this host for this account, which is
+      // what (past ACCOUNT_OWN_FAILURE_ALLOWANCE) makes the per-account brake
+      // above apply to it.
       // The /48 marker counts this /64 only the first time it fails in the
       // window, so one neighbour cannot make its whole /48 dirty alone. "First"
       // is what the atomic write of the /64 marker returns, not the snapshot

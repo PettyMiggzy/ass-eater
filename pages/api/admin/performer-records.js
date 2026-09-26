@@ -9,6 +9,7 @@ import {
   RecordsNotConfigured,
   UnderagePerformerRecord,
 } from '../../../lib/performer-records-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 // The exact, complete set of plain-Error messages
 // lib/performer-records-store.js's create/update/archive paths throw --
@@ -28,6 +29,9 @@ const SAFE_MESSAGES = new Set([
 // 18 U.S.C. §2257 performer records. Admin-key only, and there is
 // deliberately no public or creator-facing read of this data anywhere.
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (!requireAdminKey(req, res)) return;
 
   try {

@@ -20,6 +20,8 @@ import {
   RECIPIENT_UNAVAILABLE,
 } from '../../../../lib/credits-store';
 import { sliceText } from '../../../../lib/unicode-text';
+import { consumeAttempt, consumeNetworkAttempt } from '../../../../lib/rate-limit';
+import { refuseMalformedText } from '../../../../lib/field-validation';
 
 // Bounds how long a checkout request can run. pages/cart.js relies on this:
 // an uncertain attempt whose key is still unclaimed after its
@@ -32,6 +34,10 @@ export const config = { maxDuration: 60 };
 const REQUIRED_ADDRESS_FIELDS = ['fullName', 'line1', 'city', 'region', 'postalCode', 'country'];
 const MAX_CART_ITEMS = 50;
 const MAX_ADDRESS_FIELD = 200;
+const CHECKOUT_WINDOW_MS = 60 * 1000;
+const CHECKOUT_PER_USER = 20;
+const CHECKOUT_PER_IP = 40;
+const CHECKOUT_PER_NETWORK = 200;
 
 function isIntOrNull(v) {
   return v === null || (Number.isInteger(v) && v >= 0);
@@ -50,7 +56,10 @@ function isIntOrNull(v) {
  * fan the new price silently. A missing expected value counts as a
  * mismatch. On any mismatch: 409 { code: 'PRICE_CHANGED', items: [{
  * listingId, title, priceCents, shippingCents, kind }] } and nothing is
- * charged; the cart updates itself and asks the fan to confirm again.
+ * charged; the cart updates itself and asks the fan to confirm again. (The
+ * same shape comes back when the price changes between this precheck and the
+ * row-locked re-check, plus `listingId`.) Too many attempts: 429 with
+ * Retry-After, nothing charged.
  * A digital listing the fan already bought: 409 { code: 'ALREADY_OWNED',
  * listingId, error } and nothing is charged.
  *
@@ -63,6 +72,9 @@ function isIntOrNull(v) {
  * signed in now.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -82,6 +94,24 @@ export default async function handler(req, res) {
       error: 'You signed in or out in another tab. Reload the page to see the cart for the account you are signed in as now.',
     });
   }
+  // Every call below reads every listing and creator and runs a few queries
+  // per cart item before it can even refuse for a short balance, so it is
+  // throttled per account and per network like the other money routes
+  // (round-11 money#0). A legitimate retry reuses its idempotency key and
+  // stays far under these limits.
+  const perUser = consumeAttempt(`checkout:user:${uid}`, { limit: CHECKOUT_PER_USER, windowMs: CHECKOUT_WINDOW_MS });
+  if (perUser.limited) {
+    res.setHeader('Retry-After', String(perUser.retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many checkout attempts. Please wait a minute and try again.' });
+  }
+  const perNet = consumeNetworkAttempt(req, 'checkout', {
+    limit: CHECKOUT_PER_IP, networkLimit: CHECKOUT_PER_NETWORK, windowMs: CHECKOUT_WINDOW_MS,
+  });
+  if (perNet.limited) {
+    res.setHeader('Retry-After', String(perNet.retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many checkout attempts. Please wait a minute and try again.' });
+  }
+
   // A retry of a checkout that already committed is answered as such before
   // any precheck can refuse it for a reason the first attempt itself caused.
   if (await isCheckoutKeyClaimed(idempotencyKey, uid)) {
@@ -267,7 +297,16 @@ export default async function handler(req, res) {
   } catch (err) {
     if (err.code === INSUFFICIENT_BALANCE) return res.status(402).json({ error: 'Not enough credits' });
     if (err.code === 'LISTING_UNAVAILABLE') return res.status(409).json({ error: err.message, listingId: err.listingId != null ? String(err.listingId) : undefined });
-    if (err.code === 'PRICE_CHANGED') return res.status(409).json({ code: 'PRICE_CHANGED', error: err.message, listingId: String(err.listingId) });
+    // Same shape as the precheck's PRICE_CHANGED (with `items`), so the cart
+    // updates its prices whichever of the two refusal sites answered.
+    if (err.code === 'PRICE_CHANGED') {
+      return res.status(409).json({
+        code: 'PRICE_CHANGED',
+        error: err.message,
+        listingId: String(err.listingId),
+        items: err.item ? [err.item] : [],
+      });
+    }
     // The fan already owns this digital item: nothing was charged. `code` and
     // `listingId` let the cart drop it.
     if (err.code === ALREADY_OWNED) return res.status(409).json({ code: ALREADY_OWNED, error: err.message, listingId: String(err.listingId) });

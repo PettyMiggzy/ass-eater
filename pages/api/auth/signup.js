@@ -17,6 +17,7 @@ import {
   PHONE_NAME_MESSAGE,
   isReservedName,
   RESERVED_NAME_MESSAGE,
+  refuseMalformedText,
 } from '../../../lib/field-validation';
 import { screenPublicText, publicProfileTextEntries } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
@@ -44,6 +45,9 @@ const MAX_SIGNUPS_PER_NETWORK = 25;
 const CREATOR_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@.]{2,}$/;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -168,7 +172,7 @@ export default async function handler(req, res) {
     ? publicProfileTextEntries({ name: displayName, handle, bio: bio || '' })
     : isEmailIdentifier(email) ? [] : [['username', email]];
   for (const [context, value] of publicText) {
-    const hit = screenPublicText(value);
+    const hit = screenPublicText(value, { context });
     if (hit) {
       await addViolation({ userId: `signup:ip:${clientIp(req)}`, context, reasons: hit.reasons, snippet: value });
       return res.status(400).json({ error: hit.message });

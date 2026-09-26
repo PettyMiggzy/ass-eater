@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../lib/field-validation';
 import { getWallPageForCreator, toPublicWallPost, wallBlockFlagsFor } from '../../../lib/wall-store';
 import { getCreatorById } from '../../../lib/creators-store';
 import { isPubliclyVisible, effectiveCreatorStatus } from '../../../lib/creator-status';
@@ -26,6 +27,8 @@ import { getSessionUser } from '../../../lib/session';
 // { posts, hasMore, nextBefore }; pass nextBefore back as `before` for the
 // next (older) page. It used to return the whole wall in one response.
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

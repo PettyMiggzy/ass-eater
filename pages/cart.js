@@ -197,6 +197,10 @@ export default function CartPage({ sessionUser }) {
   // in /orders, so the message links there.
   const [payErrorOwned, setPayErrorOwned] = useState(false);
   const [paidOrders, setPaidOrders] = useState(null);
+  // How many items were still in the cart after a successful checkout took
+  // out what it paid for (added in another tab while the request ran). They
+  // were NOT bought; the confirmation says so and links back to them.
+  const [unpaidLeft, setUnpaidLeft] = useState(0);
   // Set when the server says this exact checkout already went through (the
   // first response was lost): the fan has paid, so show that, not an error.
   const [alreadyProcessed, setAlreadyProcessed] = useState(false);
@@ -406,6 +410,10 @@ export default function CartPage({ sessionUser }) {
       writeAttempt(uid, attempt);
       setMemAttempt(attempt);
       const idempotencyKey = attempt.key;
+      // Exactly what this request is for. On success only these leave the
+      // cart: anything added meanwhile (another tab, via lib/cart.js's
+      // storage listener) was not in the request and was not bought.
+      const sentIds = cart.items.map((it) => String(it.id));
       // A definitive refusal of THIS request with nothing earlier unaccounted
       // for: the key stays (reusing an unclaimed key is harmless) but the
       // attempt is no longer in doubt.
@@ -512,6 +520,16 @@ export default function CartPage({ sessionUser }) {
             : 'You already own one of these items, so it was taken out of your cart. Nothing was charged.'
         );
       }
+      if (res.status === 429) {
+        // Rate-limited before anything was claimed or charged. The wait comes
+        // from Retry-After when the server sent one.
+        if (!priorUncertain) markSettled();
+        const secs = Number(res.headers.get('Retry-After'));
+        const wait = Number.isFinite(secs) && secs > 0
+          ? ` Try again in ${secs < 60 ? `${Math.ceil(secs)} seconds` : `about ${Math.ceil(secs / 60)} minute${Math.ceil(secs / 60) === 1 ? '' : 's'}`}.`
+          : ' Try again in a moment.';
+        throw new Error('Too many checkout attempts.' + wait + (priorUncertain ? UNCERTAIN_NOTE : ' Nothing was charged.'));
+      }
       if ((res.status === 404 || res.status === 409) && data.listingId) {
         // That listing is gone (sold, removed, or its creator can't sell
         // right now). Nothing was charged; take it out of the cart.
@@ -541,10 +559,19 @@ export default function CartPage({ sessionUser }) {
         throw new Error((data.error || 'Payment could not be confirmed') + (priorUncertain || res.status >= 500 ? UNCERTAIN_NOTE : ''));
       }
       endAttempt();
-      setPaidOrders(Array.isArray(data.orders) ? data.orders : []);
+      const placed = Array.isArray(data.orders) ? data.orders : [];
+      // A 200 is all-or-nothing: every listing sent was bought. Take out only
+      // those (plus any the server names), never the whole cart as it is now.
+      const paid = new Set(sentIds);
+      for (const o of placed) if (o && o.listingId != null) paid.add(String(o.listingId));
+      const live = cartItemsRef.current;
+      const remaining = live.filter((it) => !paid.has(String(it.id)));
+      if (remaining.length === 0) cart.clear();
+      else for (const it of live) if (paid.has(String(it.id))) cart.remove(it.id);
+      setUnpaidLeft(remaining.length);
+      setPaidOrders(placed);
       if (Number.isFinite(data.balanceCents)) setBalanceCents(data.balanceCents);
       else refreshBalance();
-      cart.clear();
     } catch (err) {
       setPayError(err.message || 'Payment failed');
     } finally {
@@ -582,6 +609,20 @@ export default function CartPage({ sessionUser }) {
             {paidOrders.length} {paidOrders.length === 1 ? 'order has' : 'orders have'} been placed. Find your digital
             items in your order history; physical items ship once the creator confirms your address.
           </p>
+          {unpaidLeft > 0 && (
+            <p className="text-xs text-gray-300 mb-8 px-4 py-3 rounded-xl border border-brand-pink/25 bg-brand-pink/5">
+              {unpaidLeft === 1 ? '1 item' : `${unpaidLeft} items`} you added while this payment was going through{' '}
+              {unpaidLeft === 1 ? 'is' : 'are'} still in your cart and {unpaidLeft === 1 ? 'was' : 'were'} not
+              purchased.{' '}
+              <button
+                type="button"
+                onClick={() => { setPaidOrders(null); setUnpaidLeft(0); }}
+                className="text-brand-pink underline font-bold"
+              >
+                Back to your cart
+              </button>
+            </p>
+          )}
           <div className="flex items-center justify-center gap-3">
             <a href="/marketplace" className="inline-block px-6 py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition">
               Keep browsing

@@ -1,6 +1,7 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { deleteFanAccount, ACCOUNT_IS_CREATOR, ACCOUNT_HAS_OBLIGATIONS } from '../../../lib/users-store';
 import { deliverFor, reportPushFailure } from '../../../lib/server-api';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/admin/delete-user { userId, force? }   Header x-admin-key.
@@ -19,6 +20,9 @@ import { deliverFor, reportPushFailure } from '../../../lib/server-api';
  * deleteFanAccount). The server/ account is told 'banned'.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!requireAdminKey(req, res)) return;
   const { userId, force } = req.body && typeof req.body === 'object' ? req.body : {};

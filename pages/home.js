@@ -41,7 +41,7 @@ function AiArtLabel({ className = '' }) {
 
 const PROMISES = [
   { Icon: Icons.shield, title: 'Safe & Secure', sub: 'Your privacy matters' },
-  { Icon: Icons.bolt, title: 'Fast Payouts', sub: 'Creators first' },
+  { Icon: Icons.bolt, title: 'USDG Payouts', sub: 'Paid on request' },
   { Icon: Icons.people, title: 'Real Connections', sub: 'More than just content' },
   { Icon: Icons.coin, title: '$ONLYONE', sub: 'Our own token', href: '/token' },
 ];

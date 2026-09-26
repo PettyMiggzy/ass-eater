@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { getCreators } from '../lib/creators-store';
-import { effectiveCreatorStatus, isPubliclyVisible, LISTING_LIMITS } from '../lib/creator-status';
+import { effectiveCreatorStatus, isPubliclyVisible, LISTING_LIMITS, MAX_LOCATION_LENGTH } from '../lib/creator-status';
 import { getListings } from '../lib/listings-store';
 import { holderVerificationLive } from '../lib/holder-access';
 import { signupsOpen } from '../lib/signups';
@@ -817,7 +817,7 @@ export default function Dashboard({
                     data-profile-field="location"
                     aria-invalid={errorField === 'location'}
                     value={draft.location}
-                    maxLength={80}
+                    maxLength={MAX_LOCATION_LENGTH}
                     onChange={(e) => setDraft({ ...draft, location: e.target.value })}
                     placeholder="e.g. Los Angeles, CA"
                     className={`w-full px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('location')} text-white text-sm`}

@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../../lib/field-validation';
 import { getVerifiedSessionUserId } from '../../../../lib/session';
 import { isCheckoutKeyClaimed } from '../../../../lib/orders-store';
 import { consumeAttempt } from '../../../../lib/rate-limit';
@@ -17,6 +18,8 @@ const MAX_PER_USER = 30;
  * Scoped to the caller's own account: another buyer's key always reads false.
  */
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
     return res.status(405).json({ error: 'Method not allowed' });

@@ -2,11 +2,15 @@ import { getSessionUser } from '../../../../lib/session';
 import { getCreatorById, effectiveCreatorStatus } from '../../../../lib/creators-store';
 import { markOrderShipped, ORDER_CLOSED } from '../../../../lib/orders-store';
 import { sliceText } from '../../../../lib/unicode-text';
+import { refuseMalformedText } from '../../../../lib/field-validation';
 
 // Own auth rather than requireCreatorOwner, for the same reason as
 // orders/creator.js: a suspended creator must still be able to ship orders
 // fans already paid for. Only a banned account is refused.
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

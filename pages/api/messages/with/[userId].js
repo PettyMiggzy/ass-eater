@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../../lib/field-validation';
 import { getVerifiedSessionUserId } from '../../../../lib/session';
 import { getConversationBetween, projectConversation, markConversationRead, quoteDmPrice, isBlockOnlyFor } from '../../../../lib/messages-store';
 import { findUserById, inboxNameFor } from '../../../../lib/users-store';
@@ -23,6 +24,8 @@ import { getCreatorById } from '../../../../lib/creators-store';
  * storage: reload from the newest page instead of prepending.
  */
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

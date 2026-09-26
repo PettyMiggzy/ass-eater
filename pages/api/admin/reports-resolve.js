@@ -19,6 +19,7 @@ import { preserveMedia, movePreservedToEvidence, reportRef, heldPathsForReport }
 import { mediaSrc } from '../../../lib/media';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { query, withTransaction } from '../../../lib/db';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/admin/reports-resolve   Header x-admin-key.
@@ -94,6 +95,9 @@ async function snapshot(reportId, content, client = null) {
 class AlreadyResolved extends Error {}
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

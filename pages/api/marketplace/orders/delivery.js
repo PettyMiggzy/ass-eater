@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../../lib/field-validation';
 import { getSessionUser } from '../../../../lib/session';
 import { query, rowToRecord } from '../../../../lib/db';
 import { getListingById } from '../../../../lib/listings-store';
@@ -55,6 +56,8 @@ function toItem(m, listing) {
 const isOurs = (m) => m && typeof m.src === 'string' && m.src.startsWith('/api/media/');
 
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   res.setHeader('Cache-Control', 'private, no-store');
 
@@ -98,7 +101,10 @@ export default async function handler(req, res) {
       const served = all.filter((m) => !preserved.has(blobPathnameFromSrc(m.src)));
       withheld = all.length - served.length;
       items = served.map((m) => toItem(m, listing));
-      if (withheld && !items.length) removedReason = 'moderation';
+      // Every file held for review is NOT a removal: nothing was deleted and
+      // the review may release them, so this stays removed:false with
+      // `withheld` > 0 and the orders page says the files are held back.
+      // 'moderation' is only for a listing whose media was actually deleted.
     }
     return res.status(200).json({
       orderId: order.id,

@@ -4,6 +4,7 @@ import { findConversationMessage } from '../../../lib/messages-store';
 import { addReport, validateReportInput, snapshotMessage, reporterView } from '../../../lib/reports-store';
 import { sendReportAlert } from '../../../lib/alerts';
 import { consumeAttempt } from '../../../lib/rate-limit';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 const MAX_REPORTS = 20;
 const WINDOW_MS = 60 * 1000;
@@ -23,6 +24,9 @@ const WINDOW_MS = 60 * 1000;
  * Blocking the sender is separate: /api/messages/block.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const user = await getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Log in to report a message' });

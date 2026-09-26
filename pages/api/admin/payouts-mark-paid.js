@@ -9,6 +9,7 @@ import {
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { verifyUsdcPayment, assertTokenDecimals } from '../../../lib/chain-verify';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
@@ -54,6 +55,9 @@ function payoutSenderAddress() {
  *    (banned/suspended/...) is frozen: 409 unless `override: true`.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

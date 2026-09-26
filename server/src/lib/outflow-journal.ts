@@ -156,14 +156,23 @@ export class OutflowJournal {
   /** Throws unless the journal can be used (loaded and, for a file, writable). */
   assertUsable() { this.load(); }
 
-  /** `kind` outflow (in that kind's unit, see OutflowEntry) signed in the rolling window ending now. */
-  sumSince(kind: OutflowKind, windowMs = DAY_MS): number {
+  /**
+   * `kind` outflow (in that kind's unit, see OutflowEntry) signed in the
+   * rolling window ending now -- only entries recorded under `ref` when one
+   * is given (a per-deposit-address gas limit, workers/sweep-gas.ts).
+   */
+  sumSince(kind: OutflowKind, windowMs = DAY_MS, ref?: string): number {
     const entries = this.load();
     // The clock can also step BACK while this process runs, after entries
-    // were recorded (loaded ones were clamped at load); same treatment.
-    this.clampFuture(entries);
+    // were recorded (loaded ones were clamped at load); same treatment --
+    // and persisted, as load() does. Clamped only in memory, the file kept
+    // the future stamps, so the next restart (a routine redeploy) clamped
+    // them again to the RESTART time and a correction held payouts for up
+    // to ~48h instead of the one 24h window the runbook promises. A failed
+    // rewrite throws OutflowJournalUnavailable: callers refuse to sign.
+    if (this.clampFuture(entries) && this.mode.kind === 'file') this.rewrite(entries);
     const since = this.now() - windowMs;
-    return entries.filter((e) => e.kind === kind && e.at >= since).reduce((a, e) => a + e.cents, 0);
+    return entries.filter((e) => e.kind === kind && e.at >= since && (ref === undefined || e.ref === ref)).reduce((a, e) => a + e.cents, 0);
   }
 
   /**

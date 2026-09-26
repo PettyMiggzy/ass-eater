@@ -6,6 +6,7 @@ import { createDepositWalletToken, DEPOSIT_WALLET_COOKIE_NAME, DEPOSIT_WALLET_TT
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { accountStanding, isFrozenStanding, FROZEN_BUY_MESSAGE } from '../../../lib/credits-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * Step two of buying credits, BEFORE any money moves: prove the connected
@@ -27,6 +28,9 @@ const WINDOW_MS = 15 * 60 * 1000;
 const MAX_PER_USER = 30;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const config = getMarketplaceVerificationConfig();

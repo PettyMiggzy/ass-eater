@@ -13,6 +13,7 @@ import {
   WALLET_NONCE_COOKIE_NAME,
 } from '../../../lib/wallet-auth';
 import { checkRateLimit, clearFailures, clientNetwork, recordFailure } from '../../../lib/rate-limit';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * Step two of the wallet owner login: check the signature.
@@ -39,6 +40,9 @@ const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES_PER_IP = 10;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const owner = ownerWalletAddress();

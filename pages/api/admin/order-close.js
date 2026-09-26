@@ -1,5 +1,6 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { closeUnfulfilledOrder, ORDER_NOT_FOUND, ORDER_NOT_CLOSABLE, ORDER_SELLER_ACTIVE, MAX_CLOSE_REASON } from '../../../lib/orders-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/admin/order-close { orderId, reason, eraseAddress?, force? }   (admin key)
@@ -22,6 +23,9 @@ import { closeUnfulfilledOrder, ORDER_NOT_FOUND, ORDER_NOT_CLOSABLE, ORDER_SELLE
  * the buyer's nor the seller's order API returns it.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!requireAdminKey(req, res)) return;
 

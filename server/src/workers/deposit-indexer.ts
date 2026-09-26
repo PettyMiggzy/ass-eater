@@ -1,13 +1,13 @@
 import { Worker } from 'bullmq';
-import { formatUnits, parseEther, parseGwei } from 'viem';
+import { formatUnits, parseEther, parseGwei, keccak256 } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, treasuryAccount, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
+import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, treasuryAccount, treasuryAddress, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
 import { getUsdPrice, rawToUsdCents } from '../lib/price.js';
 import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
 import { registerWorker } from './process-guards.js';
 import { chunk } from './indexer-chunks.js';
-import { claimGasTopUp, depositCreditedFor, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
+import { claimGasTopUp, depositCreditedFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
 
@@ -292,12 +292,16 @@ async function scan() {
     }
 
     // Native ETH: scan block txs (only catches direct transfers, not internal calls — document this to users)
+    // Never from the platform itself: the treasury's gas top-up to a deposit
+    // address (the sweep worker below) is not a fan's deposit, nor is ETH
+    // moved between two deposit addresses (workers/sweep-gas.ts isPlatformSender).
     if (TRACK_NATIVE_ETH) {
+      const treasury = treasuryAddress();
       for (let b = from; b <= to; b++) {
         const block = await publicClient.getBlock({ blockNumber: b, includeTransactions: true });
         for (const t of block.transactions) {
           const row = t.to && addrs.get(t.to.toLowerCase());
-          if (row && t.value > 0n) await creditIsolated({ userId: row.userId, txHash: t.hash, logIndex: -1, asset: 'ETH', raw: t.value, derivationIndex: row.derivationIndex });
+          if (row && t.value > 0n && !isPlatformSender(t.from, treasury, addrs)) await creditIsolated({ userId: row.userId, txHash: t.hash, logIndex: -1, asset: 'ETH', raw: t.value, derivationIndex: row.derivationIndex });
         }
       }
     }
@@ -438,6 +442,15 @@ registerWorker(new Worker('sweep', async (job) => {
   if (bal === 0n) return;
   const gasBal = await publicClient.getBalance({ address: me });
   if (gasBal < parseEther('0.00002')) {
+    // Under a dollar, a sweep is not worth a treasury-funded top-up: every
+    // credited deposit queues its own sweep, and a stream of 1-cent deposits
+    // (credited in full) used to buy one top-up each until the platform-wide
+    // cap refused every sweep for everyone. Done without failing: the balance
+    // waits at the address, and the next deposit's sweep (or, once it
+    // reaches a dollar, the hourly reconciler) moves all of it.
+    let px = 1;
+    if (asset === 'ONLYONE') { try { px = await getUsdPrice('ONLYONE'); } catch { px = 0; } }
+    if (!sweepWorthTopUp(bal, tok.decimals, px)) return;
     // The gas top-up is treasury money leaving on the strength of a Redis job
     // and a DB row, so it is bounded like every other automatic outflow
     // (workers/sweep-gas.ts): only for an address with a credited deposit of
@@ -449,9 +462,21 @@ registerWorker(new Worker('sweep', async (job) => {
     // A treasury send, so it queues behind payouts, the hedge and the burn
     // rather than racing them for a nonce; the cap check and the journal
     // write happen under the same lock, so two top-ups cannot both fit.
+    //
+    // Journaled only once the top-up is SIGNED (then broadcast), the
+    // sendTreasuryTx pattern: preparing it -- nonce, fees, gas estimate --
+    // throws for a treasury with no ETH or an RPC error, and a record made
+    // before that let failed retries fill the daily cap with nothing sent.
+    const ref = gasTopUpRef(CHAIN_ID, derivationIndex);
     const h = await withTreasuryLock(async () => {
-      claimGasTopUp(treasuryOutflow, `sweep-${CHAIN_ID}-${derivationIndex}`);
-      return treasuryWallet().sendTransaction({ to: me, value: parseGwei(String(SWEEP_GAS_TOPUP_GWEI)) });
+      const why = gasTopUpRefusal(treasuryOutflow, undefined, undefined, ref);
+      if (why) throw new SweepGasDeferred(`sweep gas top-up deferred: ${why}`);
+      const wallet = treasuryWallet();
+      const request = await wallet.prepareTransactionRequest({ to: me, value: parseGwei(String(SWEEP_GAS_TOPUP_GWEI)) } as any);
+      const serialized = await wallet.signTransaction(request as any);
+      claimGasTopUp(treasuryOutflow, ref);
+      await wallet.sendRawTransaction({ serializedTransaction: serialized });
+      return keccak256(serialized);
     });
     await publicClient.waitForTransactionReceipt({ hash: h });
   }

@@ -247,7 +247,8 @@ export async function lockBalance(tx: Tx, userId: string, balance: Balance = 'CR
  * the part of the balance a payout may take. Deposited credits are
  * spendable here and never withdrawn. Every CREDITS debit then clamps
  * withdrawableCents to the new balance, which is what makes a spend consume
- * the non-withdrawable part first and keeps 0 <= withdrawable <= balance.
+ * the non-withdrawable part first and keeps 0 <= withdrawable <= balance
+ * (a credit that raises withdrawable is clamped the same way).
  * A payout reserves withdrawable credits explicitly (reserveWithdrawable)
  * before debiting.
  *
@@ -282,7 +283,12 @@ export async function post(
     create: { userId, [field]: amt, ...(w > 0n ? { withdrawableCents: w } : {}) },
     update: { [field]: { increment: amt }, ...(w > 0n ? { withdrawableCents: { increment: w } } : {}) },
   });
-  if (balance === 'CREDITS' && amt < 0n) {
+  // Clamped after a debit, and after any credit that raised withdrawable
+  // too: an earning landing on a NEGATIVE balance (an admin correction can
+  // leave one) used to add its full amount to withdrawable while the balance
+  // rose only to the credit minus the deficit -- withdrawable 900 against a
+  // balance of 400.
+  if (balance === 'CREDITS' && (amt < 0n || w > 0n)) {
     await tx.$executeRaw`
       UPDATE "Account" SET "withdrawableCents" = GREATEST(0, LEAST("withdrawableCents", "balanceCents"))
       WHERE "userId" = ${userId} AND "withdrawableCents" > GREATEST(0, "balanceCents")`;

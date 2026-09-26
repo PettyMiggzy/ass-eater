@@ -3,6 +3,7 @@ import { requireAdminKey } from '../../../lib/admin-auth';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { PREMIUM_GALLERY_SLOTS, mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
 import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/admin/upload -- admin finalize of a gallery upload for a creator.
@@ -19,6 +20,9 @@ import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib
  * finalize (pages/api/me/upload.js); the admin ceiling is the premium one.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

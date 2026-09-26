@@ -11,6 +11,7 @@ import {
 } from '../../../lib/ncii-reports-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { deliverFor, reportPushFailure } from '../../../lib/server-api';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 const POSITIVE_INT = /^[1-9]\d{0,17}$/;
 
@@ -34,6 +35,9 @@ const POSITIVE_INT = /^[1-9]\d{0,17}$/;
  */
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

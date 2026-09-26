@@ -3,6 +3,7 @@ import { setCreatorAvatar } from '../../../lib/creators-store';
 import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUpload, MediaRejected } from '../../../lib/media';
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/me/avatar -- finalize an avatar upload.
@@ -22,6 +23,9 @@ import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib
  * once the change commits (setCreatorAvatar).
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

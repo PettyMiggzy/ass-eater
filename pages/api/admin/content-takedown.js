@@ -1,6 +1,7 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { parseTakedownTarget, takeDownContent, listModerationActions } from '../../../lib/content-takedown';
 import { NCII_REPORT_NOT_FOUND } from '../../../lib/ncii-reports-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * Admin takedown of one specific item (lib/content-takedown.js). Header x-admin-key.
@@ -19,6 +20,9 @@ import { NCII_REPORT_NOT_FOUND } from '../../../lib/ncii-reports-store';
  * GET ?nciiReportId=12 -> 200 { ok, actions: [...] }   the audit trail (newest first)
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (!requireAdminKey(req, res)) return;
   res.setHeader('Cache-Control', 'private, no-store');
 

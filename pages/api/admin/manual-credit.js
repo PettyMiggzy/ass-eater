@@ -3,6 +3,7 @@ import { creditDepositFromChain, findPriorDepositCredit, TX_ALREADY_USED, BELOW_
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import { findUserById } from '../../../lib/users-store';
 import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * Support fallback for a fan whose payment landed on-chain but the browser
@@ -27,6 +28,9 @@ import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
  *   is not user `userId`'s -- both before anything is credited.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

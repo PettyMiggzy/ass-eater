@@ -11,6 +11,7 @@ import { RECIPIENT_UNAVAILABLE, ACCOUNT_FROZEN } from '../../../lib/credits-stor
 import { screenPublicText } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 // Per sender, not per IP: the abuse this bounds is one account writing
 // conversation rows (and, when a send trips the circumvention filter,
@@ -22,6 +23,7 @@ const MESSAGE_WINDOW_MS = 60 * 1000;
 const STATUS_FOR = {
   [DM_ERRORS.EMPTY]: 400,
   [DM_ERRORS.TOO_LONG]: 400,
+  [DM_ERRORS.MALFORMED]: 400,
   [DM_ERRORS.SELF]: 400,
   [DM_ERRORS.RECIPIENT_NOT_FOUND]: 404,
   [DM_ERRORS.RECIPIENT_UNAVAILABLE]: 409,
@@ -61,6 +63,9 @@ const MESSAGE_FOR = {
  * stored history.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

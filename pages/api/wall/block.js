@@ -2,6 +2,7 @@ import { getSessionUser } from '../../../lib/session';
 import { getWallPostById, wallPostIdsByAuthor } from '../../../lib/wall-store';
 import { setWallBlocked, DM_ERRORS } from '../../../lib/messages-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/wall/block { postId, blocked?: boolean (default true) }
@@ -32,6 +33,9 @@ const MAX_BLOCKS = 30;
 const WINDOW_MS = 60 * 1000;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const user = await getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });

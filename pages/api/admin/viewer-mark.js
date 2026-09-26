@@ -2,6 +2,7 @@ import { requireAdminKey } from '../../../lib/admin-auth';
 import { query } from '../../../lib/db';
 import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 import { normalizeViewerMark, viewerMarkMatches } from '../../../lib/viewer-mark';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 const PAGE_SIZE = 1000;
 const MAX_LOOKUPS = 20;
@@ -23,6 +24,9 @@ const LOOKUP_WINDOW_MS = 10 * 60 * 1000;
  * use, not a developer script against production. Rate-limited and logged.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!requireAdminKey(req, res)) return;
 

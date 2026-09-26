@@ -1,6 +1,6 @@
 import { createCreator } from '../../../lib/creators-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { validateTextFields, normalizeHandle, isAllowedAvatarSrc } from '../../../lib/field-validation';
+import { validateTextFields, normalizeHandle, isAllowedAvatarSrc, refuseMalformedText } from '../../../lib/field-validation';
 import { screenPublicText, publicProfileTextEntries } from '../../../lib/prohibited-terms';
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
 import { parseCategoriesInput } from '../../../lib/categories';
@@ -15,6 +15,9 @@ import { parseCategoriesInput } from '../../../lib/categories';
 const CREATE_FIELDS = ['name', 'handle', 'bio', 'price', 'img'];
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -63,7 +66,7 @@ export default async function handler(req, res) {
   }
 
   for (const [context, value] of publicProfileTextEntries(profile)) {
-    const hit = screenPublicText(value);
+    const hit = screenPublicText(value, { context });
     if (hit) {
       return res.status(400).json({ error: `Nothing was created -- the ${context} field was refused (flagged: ${hit.reasons.join(', ')}).` });
     }

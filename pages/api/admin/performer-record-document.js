@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../lib/field-validation';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import {
   attachPerformerDocument,
@@ -56,6 +57,8 @@ function declaredTooLarge(req) {
  * alongside the photos and video, which is world-readable by design.
  */
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (!requireAdminKey(req, res)) return;
 
   const id = req.query.id || req.headers['x-record-id'];

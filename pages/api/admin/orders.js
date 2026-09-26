@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../lib/field-validation';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { getOrderSummariesForAdmin } from '../../../lib/orders-store';
 
@@ -27,6 +28,8 @@ const USER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const STATUSES = new Set(['pending_shipment', 'shipped', 'fulfilled', 'delivered', 'closed_unfulfilled']);
 
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   if (!requireAdminKey(req, res)) return;
 

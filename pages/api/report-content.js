@@ -1,6 +1,7 @@
 import { addNciiReport, NCII_FIELD_LIMITS, NCII_CATEGORIES } from '../../lib/ncii-reports-store';
 import { consumeNetworkAttempt } from '../../lib/rate-limit';
 import { sendNciiAlert } from '../../lib/alerts';
+import { refuseMalformedText } from '../../lib/field-validation';
 
 // Deliberately generous. This queue is sorted oldest-first and carries a
 // federal 48-hour clock, so burying it under junk filings is a real way to
@@ -20,6 +21,9 @@ const REPORT_WINDOW_MS = 60 * 60 * 1000;
 // non-consensual content, whether or not they have (or want) an account
 // here. Do not add a login requirement to this endpoint.
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

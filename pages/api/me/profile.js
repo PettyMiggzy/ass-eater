@@ -12,6 +12,7 @@ import {
   PHONE_NAME_MESSAGE,
   isReservedName,
   RESERVED_NAME_MESSAGE,
+  refuseMalformedText,
 } from '../../../lib/field-validation';
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
 import { findCircumventionInTags } from '../../../lib/listings-store';
@@ -50,6 +51,9 @@ function sameTags(next, stored) {
 }
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -166,8 +170,15 @@ export default async function handler(req, res) {
   // Refused past the stored limit rather than silently cut (and a location
   // with half an emoji in it is refused, not a 500) -- round-10 accounts#0.
   if (fields && 'location' in fields) {
-    const badLocation = validateTextFields({ location: fields.location }, ['location']);
-    if (badLocation) return res.status(400).json({ error: badLocation });
+    // Measured as it will be stored (runs of whitespace collapsed, ends
+    // trimmed -- sanitizeLocation), so padding alone never causes a refusal,
+    // and returned with `field` so the editor outlines the Location box.
+    const raw = fields.location;
+    const asStored = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : raw;
+    const badLocation = validateTextFields({ location: asStored }, ['location']);
+    if (badLocation) {
+      return res.status(400).json({ error: `Location${badLocation.slice('location'.length)}`, field: 'location' });
+    }
   }
   if (fields && 'location' in fields) safeFields.location = sanitizeLocation(fields.location);
   if (fields && 'age' in fields) {
@@ -209,7 +220,7 @@ export default async function handler(req, res) {
   if (fields && 'tags' in fields && !tagsUnchanged) for (const raw of rawTagItems(fields.tags)) entries.push(['tag', raw]);
   entries = entries.filter(([context, value]) => !unchanged(context, value));
   for (const [context, value] of entries) {
-    const hit = screenPublicText(value);
+    const hit = screenPublicText(value, { context });
     if (hit) {
       await addViolation({ userId: ctx.user.id, context, reasons: hit.reasons, snippet: value });
       return res.status(400).json({ error: `${fieldLabel(context)}: ${hit.message}`, field: context });

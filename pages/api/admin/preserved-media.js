@@ -1,6 +1,7 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { listPreservedMedia, sendPreservedMedia } from '../../../lib/media-preservation';
 import { preserveMediaForReport, preserveCreatorMediaForReport, NCII_REPORT_NOT_FOUND, NCII_CREATOR_NOT_FOUND } from '../../../lib/ncii-reports-store';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * Preserved evidence (lib/media-preservation.js). Admin key header ONLY --
@@ -25,6 +26,9 @@ import { preserveMediaForReport, preserveCreatorMediaForReport, NCII_REPORT_NOT_
 const MAX_SRCS = 500;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (!requireAdminKey(req, res)) return;
   res.setHeader('Cache-Control', 'private, no-store');
 

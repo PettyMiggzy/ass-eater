@@ -4,6 +4,7 @@ import { addReport, normalizeTargetId, validateReportInput, snapshotWallPost, re
 import { sendReportAlert } from '../../../lib/alerts';
 import { query } from '../../../lib/db';
 import { consumeAttempt } from '../../../lib/rate-limit';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 // Every other write-heavy endpoint in this codebase throttles per-user
 // (wall/post.js, messages/send.js) -- this one didn't, so a single free
@@ -13,6 +14,9 @@ const MAX_REPORTS = 20;
 const WINDOW_MS = 60 * 1000;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

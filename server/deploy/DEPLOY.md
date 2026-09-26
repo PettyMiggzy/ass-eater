@@ -280,7 +280,10 @@ hedge's token-side caps `TREASURY_HEDGE_BATCH_MAX_TOKENS` /
 `TREASURY_HEDGE_DAILY_MAX_TOKENS` (whole $ONLYONE sold), and the deposit
 sweep's gas top-ups `SWEEP_GAS_DAILY_MAX_GWEI` (default 5,000,000 gwei =
 0.005 ETH, 100 top-ups of 0.00005 ETH; a sweep over it fails and retries,
-and the hourly reconciler re-queues leftover stablecoin) -- are
+and the hourly reconciler re-queues leftover stablecoin) plus at most
+`SWEEP_GAS_PER_ADDRESS_DAILY` (default 3) top-ups per deposit address, only
+for a balance worth a dollar or more, and journaled only once the top-up is
+signed -- are
 counted from it, so a restart or redeploy no longer reopens the 24h window
 and nothing that can only write the database can shrink the count. If the
 journal is missing, unreadable or corrupt, payouts are HELD (`treasury
@@ -310,7 +313,9 @@ damage anywhere else is refused on purpose. To repair it by hand:
 clock ran AHEAD and was then corrected, entries written meanwhile are dated
 in the future; the journal pulls them back to "now" at load (the log says
 `OUTFLOW JOURNAL: … in the FUTURE`) so they still count, but only for one
-full 24h window. Automatic payouts, burns and hedges may therefore stay
+full 24h window. The clamped times are written back to the file (also when
+the clock steps back while the workers are running), so a restart or
+redeploy inside that window does not start it over. Automatic payouts, burns and hedges may therefore stay
 HELD/deferred for up to 24h after a clock correction -- expected, not a
 fault. Keep NTP (`timedatectl`) enabled on the droplet. Do NOT `release` a
 payout held by `daily payout limit reached` during that window: the worker

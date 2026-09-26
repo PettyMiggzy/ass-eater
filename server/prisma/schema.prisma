@@ -329,6 +329,11 @@ model TokenLock {
 // A listing a creator has put behind VIP first-look shows only to VIP members
 // (and its creator) until vipEarlyUntil passes. Bites hardest on one-of-a-kind
 // items, where missing the window means missing it for good.
+enum ListingModerationReason {
+  BAN
+  REPORT
+}
+
 model Listing {
   id                String         @id @default(uuid())
   creatorId         String
@@ -352,6 +357,14 @@ model Listing {
   // relist it (modules/marketplace.ts PATCH /listings/:id), and the report
   // queue counts its content as down (core/reports.ts).
   moderatedAt       DateTime?
+  // WHY it was taken down, set with moderatedAt. A ban judges the SELLER,
+  // not the item (its media is not rejected): once the seller is ACTIVE
+  // again past buyers see the listing, and an admin can clear the stamp
+  // (POST /admin/listings/:id/restore, or restoreListings on a reactivation)
+  // so the creator can relist it. A report takedown judged the item itself:
+  // it stays hidden from buyers and cannot be restored that way. Null only
+  // when moderatedAt is null.
+  moderatedReason   ListingModerationReason?
   createdAt         DateTime       @default(now())
   orders            ListingOrder[]
 

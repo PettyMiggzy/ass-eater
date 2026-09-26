@@ -5,6 +5,7 @@ import {
   MEDIA_ITEM_GONE,
 } from '../../../lib/listings-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 const WINDOW_MS = 60 * 60 * 1000;
 const MAX_PER_CREATOR = 120;
@@ -29,6 +30,9 @@ const MAX_PER_CREATOR = 120;
  * file stayed in storage either way.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const ctx = await requireCreatorOwner(req, res);

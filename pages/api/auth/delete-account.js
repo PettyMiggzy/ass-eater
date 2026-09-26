@@ -5,6 +5,7 @@ import { getBalanceCents } from '../../../lib/credits-store';
 import { deliverFor, reportPushFailure } from '../../../lib/server-api';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { formatCredits } from '../../../lib/brand';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/auth/delete-account { password, acknowledgeForfeit?, expectedForfeitCents?, expectedDigitalPurchases? }
@@ -54,6 +55,9 @@ const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 15 * 60 * 1000;
 
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res, { skip: ['password'] })) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const user = await getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });

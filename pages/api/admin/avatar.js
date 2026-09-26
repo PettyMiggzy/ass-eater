@@ -5,6 +5,7 @@ import { resolvePerformerAttestation } from '../../../lib/performer-attestation'
 import { preserveMediaForReportTx, recordNciiTakedown, nciiReportExists, normalizeNciiCategory, NCII_REPORT_NOT_FOUND } from '../../../lib/ncii-reports-store';
 import { movePreservedToEvidence } from '../../../lib/media-preservation';
 import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 const AVATAR_PLACEHOLDER = '/images/avatar-placeholder.png';
 
@@ -38,6 +39,9 @@ const AVATAR_PLACEHOLDER = '/images/avatar-placeholder.png';
  * it replaced after the change commits.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

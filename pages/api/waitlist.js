@@ -1,5 +1,6 @@
 import { addToWaitlist, isValidWaitlistEmail, normalizeWaitlistRole } from '../../lib/waitlist-store';
 import { consumeNetworkAttempt } from '../../lib/rate-limit';
+import { refuseMalformedText } from '../../lib/field-validation';
 
 // Enough that a household or an office behind one address can all sign up,
 // low enough that scripting thousands of junk addresses into the list costs
@@ -24,6 +25,9 @@ const SIGNUP_WINDOW_MS = 60 * 60 * 1000;
  * interested in.
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

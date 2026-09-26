@@ -40,6 +40,17 @@ const SYSTEM_IDS = new Set([PLATFORM_ID, BURNED_ID]);
 export const passwordLoginAllowed = (u: { id: string; role: string; siteUid: string | null }) =>
   !u.siteUid && !SYSTEM_IDS.has(u.id) && (directAuthEnabled() || u.role === 'ADMIN');
 
+/**
+ * A throwaway argon2id hash, made once (same parameters create-admin.ts
+ * uses), that /login verifies against whenever the real verify is skipped --
+ * no such row, or a row that may not log in by password. Without it an
+ * operator ADMIN's email cost one argon2 verify (tens of ms) and every other
+ * identifier answered in a few ms, so response timing alone confirmed which
+ * address is the admin login. The result is always discarded.
+ */
+let dummyHash: Promise<string> | null = null;
+const timingDummy = () => (dummyHash ??= argon2.hash(randomBytes(32).toString('base64url'), { type: argon2.argon2id }));
+
 export const auth: FastifyPluginAsync = async (app) => {
   const issue = async (user: { id: string; role: any }) => {
     const access = app.jwt.sign({ id: user.id, role: user.role });
@@ -78,10 +89,14 @@ export const auth: FastifyPluginAsync = async (app) => {
     // passwordLoginAllowed). Bridged/system hashes are deliberately not valid
     // argon2 encodings, on which argon2.verify throws -- caught here as a
     // plain mismatch rather than surfacing as a 500 that would also reveal
-    // which identifiers exist.
+    // which identifiers exist. Every path costs one argon2 verify (against
+    // timingDummy() when the real one is skipped), so response time does not
+    // tell an admin's email apart from any other identifier either.
     let good = false;
     if (user && passwordLoginAllowed(user)) {
       try { good = await argon2.verify(user.passwordHash, password); } catch { good = false; }
+    } else {
+      try { await argon2.verify(await timingDummy(), password); } catch { /* discarded */ }
     }
     if (!user || !good) return reply.code(401).send({ error: 'bad_credentials' });
     if (user.status !== 'ACTIVE') return reply.code(403).send({ error: user.status === 'BANNED' ? 'banned' : 'account_' + user.status.toLowerCase() });

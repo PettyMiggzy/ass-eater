@@ -85,13 +85,26 @@ const deliverable = deliverableWhere;
 
 /**
  * A listing a moderator took down (moderatedAt: a report takedown or the
- * seller's ban) is not served to anyone but its creator -- not by id, not to
- * past buyers (its media is REJECTED anyway; the reported title and
- * description are what would still show), and not in its bid history.
+ * seller's ban) is not served to anyone but its creator -- not by id, not in
+ * its bid history, and not to past buyers when it was a REPORT takedown (its
+ * media is REJECTED anyway; the reported title and description are what
+ * would still show). A BAN takedown stays visible to past buyers while the
+ * seller is ACTIVE (buyerMayView).
  * Browse already lists only ACTIVE listings, and a moderated one can never
  * be made ACTIVE again by its creator (PATCH /listings/:id).
  */
 const notModerated = { moderatedAt: null };
+
+/**
+ * What a PAST BUYER may still open: anything but a REPORT takedown. A ban
+ * judges the seller, not the item (its media is never rejected), and the
+ * buyer branch below already requires the seller to be ACTIVE -- so while
+ * the ban stands the page is hidden anyway, and once an admin reverses it
+ * buyers get back what they paid for. Requiring notModerated there left
+ * every buyer of a reinstated creator on a permanent 404, the listing page
+ * being the only place a product's media ids are returned.
+ */
+const buyerMayView = { OR: [notModerated, { moderatedReason: 'BAN' as const }] };
 
 /**
  * `images` are free public preview photos, served to signed-out browsers by
@@ -332,7 +345,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
           ? { OR: [
             { creatorId: viewerId },
             { AND: [notModerated, vip, activeSeller, deliverable] },
-            { AND: [notModerated, { creator: { user: { status: 'ACTIVE' as const } } }, { orders: { some: { buyerId: viewerId } } }] },
+            { AND: [buyerMayView, { creator: { user: { status: 'ACTIVE' as const } } }, { orders: { some: { buyerId: viewerId } } }] },
           ] }
           : { AND: [notModerated, vip, activeSeller, deliverable] }),
       },

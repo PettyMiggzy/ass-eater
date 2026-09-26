@@ -2,6 +2,7 @@ import { removeGalleryItem, GALLERY_ITEM_GONE } from '../../../lib/creators-stor
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { preserveMediaForReportTx, recordNciiTakedown, nciiReportExists, normalizeNciiCategory, NCII_REPORT_NOT_FOUND } from '../../../lib/ncii-reports-store';
 import { movePreservedToEvidence } from '../../../lib/media-preservation';
+import { refuseMalformedText } from '../../../lib/field-validation';
 
 /**
  * POST /api/admin/gallery-delete
@@ -29,6 +30,9 @@ import { movePreservedToEvidence } from '../../../lib/media-preservation';
  * from storage, not just the reference (removeGalleryItem does both).
  */
 export default async function handler(req, res) {
+  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
+  // database (lib/field-validation.js refuseMalformedText).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

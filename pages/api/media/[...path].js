@@ -1,3 +1,4 @@
+import { refuseMalformedText } from '../../../lib/field-validation';
 import { getSessionUser } from '../../../lib/session';
 import { getCreatorById, isPubliclyVisible } from '../../../lib/creators-store';
 import { getListingById } from '../../../lib/listings-store';
@@ -51,6 +52,8 @@ function notFound(res) {
 }
 
 export default async function handler(req, res) {
+  // NUL / half an emoji in a query value is a 400, never a 500 from pg (round-11 fix-up).
+  if (refuseMalformedText(req, res)) return;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.setHeader('Allow', 'GET, HEAD');
     return res.status(405).json({ error: 'Method not allowed' });
