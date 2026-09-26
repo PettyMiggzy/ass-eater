@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { formatUnits, parseEther, parseGwei, keccak256 } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, INDEX_ONLYONE_DEPOSITS, treasuryAccount, treasuryAddress, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
+import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, INDEX_ONLYONE_DEPOSITS, treasuryAccount, treasuryAddress, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError, treasurySigningPaused } from '../lib/chain.js';
 import { getUsdPrice, rawToUsdCents } from '../lib/price.js';
 import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
@@ -508,6 +508,10 @@ registerWorker(new Worker('sweep', async (job) => {
     // throws for a treasury with no ETH or an RPC error, and a record made
     // before that let failed retries fill the daily cap with nothing sent.
     const ref = gasTopUpRef(CHAIN_ID, derivationIndex);
+    // Key rotation: no top-up is signed with the treasury key; the sweep
+    // retries later like any other deferred top-up.
+    const paused = treasurySigningPaused();
+    if (paused) throw new SweepGasDeferred(`sweep gas top-up deferred: treasury signing paused (${paused})`);
     const h = await withTreasuryLock(async () => {
       const why = gasTopUpRefusal(treasuryOutflow, undefined, undefined, ref);
       if (why) throw new SweepGasDeferred(`sweep gas top-up deferred: ${why}`);

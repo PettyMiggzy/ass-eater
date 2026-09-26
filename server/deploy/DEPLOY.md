@@ -163,7 +163,11 @@ job broadcasts its own transfer, and the reconciler can refund a FAILED
 payout whose nonce your transfer consumed. A payout held out of FAILED
 still carries the worker's signed transaction, which may yet land: it can
 only be closed with `mark_sent` or `refund` (check the explorer first),
-never `release`d back to the queue.
+never `release`d back to the queue. If that signed transaction landed,
+`mark_sent` with the payout's OWN `txHash` accepts the transfer from the key
+recorded as having signed it (`signerAddress`) -- so it still closes after a
+treasury key rotation. A transfer you send by hand must come from the
+current `TREASURY_ADDRESS`.
 
 ## 5. TLS
 
@@ -265,30 +269,58 @@ Check the printed `Deployed commit`, then, once everything is verified,
 `TREASURY_PRIVATE_KEY` sat in the internet-facing API's environment and in
 files the API's user owned; treat it as exposed.
 
-Settle everything the old key signed FIRST. A signed transaction stays valid
-for the old wallet's nonce until something consumes it, and after the switch
-the workers can no longer judge it (they record which key signed each payout,
-burn and hedge, and never refund or re-buy one signed by another key -- it
-just sits FAILED/in flight for you), so:
+Settle everything the old key signed FIRST, and let the old key sign
+NOTHING new while you do. A signed transaction stays valid for the old
+wallet's nonce until something consumes it, and after the switch the workers
+can no longer judge it (they record which key signed each payout, burn and
+hedge, and never refund or re-buy one signed by another key -- it just sits
+FAILED/in flight for you). A plain restart of the workers does not only
+settle: the payout worker signs queued payouts, and the burn and hedge loops
+sign a new swap in the same pass that settles the old one -- all with the old
+key, rebuilding what this procedure drains. So:
 
-1. `systemctl stop onlyone-workers`.
+1. Add `TREASURY_SETTLE_ONLY=true` to `.env.workers`, then
+   `systemctl restart onlyone-workers`. In this mode the workers only
+   settle: they read receipts and close what is in flight, and sign nothing
+   -- no payout (PENDING ones stay PENDING and are re-queued later), no
+   swap, no approval, no nonce-cancel, no sweep gas top-up. **Keep it set
+   until step 5 is finished.**
 2. Every payout in PROCESSING or FAILED: look its `txHash` up on the explorer
    and settle it with `POST /admin/payouts/:id/resolve` (mark it sent if it
-   landed, otherwise hold it and settle by hand). None may be left
-   PROCESSING/FAILED with a hash nobody has checked.
+   landed -- a transfer the recorded `signerAddress` sent is accepted for the
+   payout's own `txHash`, before and after the switch -- otherwise hold it
+   and settle by hand). None may be left PROCESSING/FAILED with a hash
+   nobody has checked.
 3. No `TokenBurn` with `pendingTxHash` set and no `TreasuryHedgeBatch` in
-   `PENDING`: wait for each to have a receipt (start the workers again and
-   let them settle, then stop them), or confirm on the explorer.
-4. Move ALL of the old wallet's USDG **and** ETH to the new wallet, and keep
-   it empty. With no ETH for gas and no tokens, no old-signed transaction can
-   ever land -- whoever else holds the exposed key included.
+   `PENDING`: the settle-only workers close each one that gets a receipt.
+   One that never resolves (its signer is not the current key, or none was
+   recorded) is closed with `POST /admin/treasury-tx/burn/<pendingTxHash>/resolve`
+   or `POST /admin/treasury-tx/hedge/<batchId>/resolve`: it is judged
+   against the signer's own nonce, and still undecided it needs
+   `{"acknowledgeNeverLands": true}` after you have checked the explorer (a
+   released burn is bought again; if its old swap lands later, that is a
+   second purchase).
+4. `systemctl stop onlyone-workers` (leave `TREASURY_SETTLE_ONLY=true` in
+   place) and re-check steps 2 and 3: nothing the old key signed may be
+   left unsettled.
+5. Move EVERY asset out of the old wallet to the new one: all of its
+   $ONLYONE (the founder's bag and every swept token deposit -- the
+   treasury is both), all USDG, any other ERC-20 or NFT it holds. Revoke
+   every router / Permit2 allowance the old key granted (the burn and hedge
+   approve `UNISWAP_V3_ROUTER_ADDRESS`; revoke.cash or the token's
+   `approve(router, 0)`). Move the ETH **last** -- every other transfer
+   needs it for gas -- and leave at most dust. Only an old wallet holding
+   no tokens, no allowances and no gas is safe from whoever else holds the
+   exposed key: a few cents of ETH sent to it is all they need to move
+   anything left behind.
 
-Then create the new treasury wallet (if not done in step 4), put the new key
+Then create the new treasury wallet (if not done before step 5), put the new key
 in `.env.workers`, set
 `TREASURY_ADDRESS` in `.env` to the new wallet's PUBLIC address (the API and
 the workers both read it: the API to accept `mark_sent` transfers and burns
 from the treasury, the workers to recognise their own gas top-ups), and
-restart BOTH `onlyone-api` and `onlyone-workers`. Left on the old address,
+remove `TREASURY_SETTLE_ONLY` from `.env.workers`, and restart BOTH
+`onlyone-api` and `onlyone-workers`. Left on the old address,
 the API keeps trusting the exposed wallet and refuses the new one; the
 workers refuse to start while `TREASURY_ADDRESS` disagrees with the key
 they sign with.

@@ -2340,6 +2340,77 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
 
   useEffect(() => { load(statusFilter); }, [statusFilter]);
 
+  // After a takedown, resolve or reopen, only the affected request changes.
+  // Reloading page 1 (what every action used to do) dropped any request the
+  // admin had reached with "Load more" -- and unmounted its "Take down
+  // content" control, losing the opened thread -- mid-work, with the 48-hour
+  // clock running (round-14 admin-ui#1). These keep the loaded depth instead.
+  const reportsRef = useRef(reports);
+  reportsRef.current = reports;
+  const refreshSummary = async () => {
+    try {
+      const { res, data } = await adminGet(adminKey, '/api/admin/ncii-summary');
+      if (res.ok && data?.summary) {
+        setSummary(data.summary);
+        if (onSummary) onSummary(data.summary);
+      }
+    } catch { /* the badge's own poll catches up */ }
+  };
+  // Re-read the queue from the top down to at least as many rows as are on
+  // screen now, without the Loading state (which would unmount every row's
+  // takedown control). Rows keep their keys, so their controls stay mounted.
+  const refreshKeepingDepth = async () => {
+    const seq = ++loadSeq.current;
+    const status = statusFilter;
+    const want = Math.max(reportsRef.current.length, 1);
+    setLoadingMore(false);
+    try {
+      const rows = [];
+      const seen = new Set();
+      let cursor = null;
+      let more = false;
+      let summaryOut = null;
+      for (let i = 0; i < 40; i += 1) {
+        const { res, data } = await adminGet(
+          adminKey,
+          `/api/admin/ncii-reports?status=${encodeURIComponent(status)}&limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+        );
+        if (seq !== loadSeq.current) return;
+        if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to refresh takedown requests'));
+        for (const r of Array.isArray(data.reports) ? data.reports : []) {
+          if (!seen.has(String(r.id))) { seen.add(String(r.id)); rows.push(r); }
+        }
+        if (data.summary) summaryOut = data.summary;
+        more = !!data.hasMore && typeof data.nextCursor === 'string';
+        cursor = more ? data.nextCursor : null;
+        if (!more || rows.length >= want) break;
+      }
+      setReports(rows);
+      setHasMore(more);
+      setNextCursor(cursor);
+      if (summaryOut) {
+        setSummary(summaryOut);
+        if (onSummary) onSummary(summaryOut);
+      }
+    } catch (err) {
+      if (seq === loadSeq.current) setError(err.message);
+    }
+  };
+  // Patch one request in place from the server's copy (the resolve/reopen
+  // response): kept if it still matches the filter, dropped if it no longer
+  // does. Any list load still in flight is voided so it cannot overwrite this.
+  const patchReport = async (fresh) => {
+    if (!fresh || fresh.id === undefined || fresh.id === null) { await refreshKeepingDepth(); return; }
+    loadSeq.current += 1;
+    setLoading(false);
+    setLoadingMore(false);
+    const keep = statusFilter === 'all' || fresh.status === statusFilter;
+    setReports((prev) => (keep
+      ? prev.map((x) => (String(x.id) === String(fresh.id) ? { ...x, ...fresh } : x))
+      : prev.filter((x) => String(x.id) !== String(fresh.id))));
+    await refreshSummary();
+  };
+
   // action 'removed_ban' (possible-minor reports) is sent as 'removed'. The
   // server reads the report's stored category and, for a POSSIBLE MINOR
   // report attributed to a creator, bans them outright in the resolve's own
@@ -2420,7 +2491,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       if (res.status === 409) {
         // Someone else resolved it first -- re-read rather than keep a stale row.
         setNotice(errorFrom(res, data, 'That report was already resolved.'));
-        await load(statusFilter);
+        await refreshKeepingDepth();
         return;
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
@@ -2444,7 +2515,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       // the resolve's own transaction (lib/ncii-reports-store.js
       // resolveNciiReport); a failure rolls the whole resolve back and the
       // report stays open to retry. There is no after-commit takedown warning.
-      await load(statusFilter);
+      await patchReport(data.report);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -2465,7 +2536,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       const { res, data } = await adminPost(adminKey, '/api/admin/ncii-reports-resolve', { id: r.id, action: 'reopen', reason: reason.trim() });
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not reopen that request'));
       setNotice(`Report #${r.id} reopened and back in the open queue.`);
-      await load(statusFilter);
+      await patchReport(data.report);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -2585,7 +2656,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
                       creators={creators}
                       report={r}
                       disabled={busyId === r.id}
-                      onDone={async (msg) => { setError(''); setNotice(msg); await load(statusFilter); }}
+                      onDone={async (msg) => { setError(''); setNotice(msg); await refreshKeepingDepth(); }}
                       onError={(msg) => { setNotice(''); setError(msg); }}
                     />
                     <div className="mb-2">
@@ -2780,7 +2851,7 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
   const [dmBy, setDmBy] = useState('login');
   const [dmWho, setDmWho] = useState('');
   const [dmCreatorId, setDmCreatorId] = useState(initialCreatorId ? String(initialCreatorId) : '');
-  const [convos, setConvos] = useState(null); // { account, conversations, nextOffset }
+  const [convos, setConvos] = useState(null); // { params, account, conversations, nextCursor }
   const [thread, setThread] = useState(null); // { id, participants, messages }
   const [lookupBusy, setLookupBusy] = useState(false);
 
@@ -2828,9 +2899,20 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
     if (!params) { onError(dmBy === 'creator' ? 'Pick the creator.' : 'Enter the email / username or user id of one side of the conversation.'); return; }
     setLookupBusy(true);
     try {
-      const data = await lookup({ kind: 'conversations', ...params, ...(more && convos?.nextOffset ? { offset: String(convos.nextOffset) } : {}) });
+      // Keyset-paged (round-14 social#1): OFFSET paging over updated_at
+      // repeated a row and skipped the conversation that just got a new
+      // message whenever someone wrote while the admin paged. Appends are
+      // de-duplicated by id as well. A conversation that moved to the top
+      // after page 1 loaded still needs "Find conversations" again, which
+      // the list says.
+      const data = await lookup({ kind: 'conversations', ...params, ...(more && convos?.nextCursor ? { cursor: String(convos.nextCursor) } : {}) });
       const list = Array.isArray(data.conversations) ? data.conversations : [];
-      setConvos({ params, account: data.account || null, conversations: more ? [...(convos?.conversations || []), ...list] : list, nextOffset: data.nextOffset ?? null });
+      const merged = more ? [...(convos?.conversations || [])] : [];
+      const seen = new Set(merged.map((c) => String(c.id)));
+      for (const c of list) {
+        if (!seen.has(String(c.id))) { seen.add(String(c.id)); merged.push(c); }
+      }
+      setConvos({ params, account: data.account || null, conversations: merged, nextCursor: typeof data.nextCursor === 'string' && data.nextCursor ? data.nextCursor : null });
       if (!more) setThread(null);
     } catch (err) {
       onError(err.message);
@@ -2846,11 +2928,24 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
     if (older && !thread?.nextBefore) return;
     setLookupBusy(true);
     try {
-      const data = await lookup({
+      const qs = new URLSearchParams({
         kind: 'messages',
         conversationId: String(id),
         ...(older ? { before: String(thread.nextBefore) } : {}),
-      });
+      }).toString();
+      let { res, data } = await adminGet(adminKey, `/api/admin/content-lookup?${qs}`);
+      if (older && res.status === 409 && data?.code === 'stale_cursor') {
+        // The oldest message on screen (the paging anchor) is gone -- taken
+        // down, or aged out of the stored window. An empty "nothing older"
+        // page here used to hide the button for good while older messages
+        // still existed (round-14 admin-ui#0). Reload from the newest page.
+        ({ res, data } = await adminGet(adminKey, `/api/admin/content-lookup?${new URLSearchParams({ kind: 'messages', conversationId: String(id) }).toString()}`));
+        if (!res.ok) throw new Error(errorFrom(res, data, 'Lookup failed'));
+        onError('The thread changed while you were paging, so it was reloaded from the newest messages. Use "Show older messages" to page back again.');
+        older = false;
+      } else if (!res.ok) {
+        throw new Error(errorFrom(res, data, 'Lookup failed'));
+      }
       const conv = data.conversation || null;
       if (!conv) { if (!older) setThread(null); return; }
       const page = Array.isArray(conv.messages) ? conv.messages : [];
@@ -2923,7 +3018,14 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
           const messages = t.messages.filter((x) => String(x.id) !== String(target.messageId));
           const removed = t.messages.length - messages.length;
           const count = Number(t.messageCount);
-          return { ...t, messages, ...(Number.isFinite(count) ? { messageCount: Math.max(0, count - removed) } : {}) };
+          // nextBefore is the id of the oldest message on screen. If that one
+          // was just taken down, page from the new oldest instead: the removed
+          // id no longer exists and would page nowhere (round-14 admin-ui#0).
+          // With nothing left on screen the old anchor stays; the server then
+          // answers stale_cursor and openThread reloads from the newest page.
+          const anchorGone = t.nextBefore != null && String(t.nextBefore) === String(target.messageId);
+          const nextBefore = anchorGone && messages.length ? String(messages[0].id) : t.nextBefore;
+          return { ...t, messages, nextBefore, ...(Number.isFinite(count) ? { messageCount: Math.max(0, count - removed) } : {}) };
         });
       }
     } catch (err) {
@@ -3094,10 +3196,14 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
                     {c.lastMessage?.text ? <span className="block text-[10px] text-gray-500 truncate">"{String(c.lastMessage.text)}"</span> : null}
                   </button>
                 ))}
-                {convos.nextOffset != null && (
+                {convos.nextCursor && (
                   <button onClick={() => loadConvos(true)} disabled={lookOff} className={linkBtn}>More conversations</button>
                 )}
               </div>
+              <p className="text-[10px] text-gray-600">
+                Newest activity first. A conversation that gets a new message after this list loaded moves to the top
+                and is not added by "More conversations" -- press "Find conversations" again to see it.
+              </p>
             </div>
           )}
           {thread && (
@@ -4967,6 +5073,23 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
                         {' · '}{o.hasAddress ? 'address stored' : o.addressErasedAt ? 'address erased' : 'no address'}
                       </p>
                       {o.closeReason && <p className="text-gray-500 break-words">Close reason: {String(o.closeReason)}</p>}
+                      {(typeof o.trackingNumber === 'string' && o.trackingNumber) && (
+                        <p className="text-gray-500 break-words">
+                          Tracking: {String(o.carrier || '')} {String(o.trackingNumber)}
+                          {o.trackingUpdatedAt ? ` · set ${new Date(o.trackingUpdatedAt).toLocaleString()}` : ''}
+                        </p>
+                      )}
+                      {/* Earlier tracking the seller replaced (never shown to buyer or seller). */}
+                      {Array.isArray(o.trackingHistory) && o.trackingHistory.length > 0 && (
+                        <ul className="text-[11px] text-gray-600 break-words">
+                          {o.trackingHistory.map((h, i) => (
+                            <li key={i}>
+                              Replaced: {String(h?.carrier || '')} {String(h?.trackingNumber || '')}
+                              {h?.replacedAt ? ` · ${new Date(h.replacedAt).toLocaleString()}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                     <div className="flex gap-2 shrink-0">
                       {closable && !open && (
@@ -5158,8 +5281,11 @@ function standingState(data) {
  * server/. Ordinary failures retry by themselves; "Retry now" delivers every
  * one at once. A needsServerAdmin row is a reinstatement server/ refused
  * because a server/ admin applied the ban or suspension: no retry clears it
- * until an operator ADMIN runs POST /admin/users/:id/status on server/, so
- * the panel flags it and says exactly that.
+ * until an operator ADMIN resolves the site uid to its server/ id with
+ * GET /admin/users/by-site-uid/:siteUid and then runs
+ * POST /admin/users/:id/status on server/, so the panel flags it and says
+ * exactly that (round-14 srv-auth-core#0: nothing used to map one id to the
+ * other, and pasting the site uid got a silent {ok:true}; it is a 404 now).
  */
 function StandingPushesPanel({ adminKey }) {
   const [state, setState] = useState(null);
@@ -5229,10 +5355,13 @@ function StandingPushesPanel({ adminKey }) {
             after a ban, subscribers cut off and listings down). Retrying from here will not change that.
           </p>
           <p>
-            To fix: find the server/ account for the site user id shown (its <span className="font-mono">siteUid</span> equals
-            that id), then, logged in to server/ as an operator ADMIN, call{' '}
-            <span className="font-mono">POST /admin/users/&lt;server id&gt;/status {'{"status":"ACTIVE"}'}</span>. After that, press
-            Retry now (or wait for the next retry) and the row clears.
+            To fix, logged in to server/ as an operator ADMIN: first call{' '}
+            <span className="font-mono">GET /admin/users/by-site-uid/&lt;site user id shown&gt;</span>, which returns that
+            account's server/ <span className="font-mono">id</span> (the site user id is NOT the server/ id -- using it
+            answers 404 not_found and changes nothing). Then call{' '}
+            <span className="font-mono">POST /admin/users/&lt;that id&gt;/status {'{"status":"ACTIVE"}'}</span>; it answers{' '}
+            <span className="font-mono">{'{"ok":true}'}</span> only when the change was applied. After that, press Retry now
+            (or wait for the next retry) and the row clears.
           </p>
         </div>
       )}
@@ -5263,8 +5392,9 @@ function StandingPushesPanel({ adminKey }) {
                 <span className="basis-full text-red-200">
                   {String(p.lastError) === 'suspension_needs_server_admin' ? 'Suspended' : 'Banned'} by a server/ admin -- still
                   restricted there. Retries will not clear this: an operator ADMIN must run{' '}
-                  <span className="font-mono">POST /admin/users/&lt;server id of site user {String(p.uid)}&gt;/status {'{"status":"ACTIVE"}'}</span>{' '}
-                  on server/, then Retry now.
+                  <span className="font-mono">GET /admin/users/by-site-uid/{String(p.uid)}</span> on server/ to get its server/ id,
+                  then <span className="font-mono">POST /admin/users/&lt;that id&gt;/status {'{"status":"ACTIVE"}'}</span>, then
+                  Retry now.
                 </span>
               )}
             </div>

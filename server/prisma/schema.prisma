@@ -415,6 +415,12 @@ model Bid {
   // the order; null on bids placed before the bid route required them.
   ageConfirmedAt DateTime?
   tosVersion     String?
+  // Set when the bid's run ended without it winning: a no-sale close, a
+  // cancel/takedown, a banned leader's lead dropped (the auction restarts
+  // from the starting price), or a relist. A voided bid holds no money and
+  // cannot win, so the public bid history leaves it out. An OUTBID bid in
+  // the live run is not voided -- it stays visible history.
+  voidedAt       DateTime?
   createdAt   DateTime @default(now())
 
   @@index([listingId, amountCents])

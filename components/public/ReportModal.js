@@ -61,6 +61,8 @@ export default function ReportModal({ title, subject = 'this', onSubmit, onClose
   };
 
   const serious = category === 'minor' || category === 'non_consensual';
+  const trimmedLength = reason.trim().length;
+  const overLimit = trimmedLength > REPORT_REASON_MAX;
 
   // Rendered into document.body through a portal: an ancestor with a
   // backdrop-filter/transform/filter (e.g. .premium-card) becomes the
@@ -92,13 +94,21 @@ export default function ReportModal({ title, subject = 'this', onSubmit, onClose
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          maxLength={REPORT_REASON_MAX}
           rows={3}
           required
           placeholder="What's wrong?"
           className="w-full px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm resize-none"
         />
-        <p className="text-[11px] text-gray-500 text-right mb-2">{reason.length}/{REPORT_REASON_MAX}</p>
+        {/* A counter, not a maxLength attribute: a browser silently cuts a
+            paste at maxLength, dropping the end of a report (a URL, a
+            timestamp) without a word -- the truncation the API stopped doing.
+            Over the limit is shown here and refused before sending instead,
+            matching /report-content. The limit counts the trimmed text, as
+            the server does. */}
+        <p className={`text-[11px] text-right mb-2 ${overLimit ? 'text-red-400 font-bold' : 'text-gray-500'}`}>
+          {trimmedLength}/{REPORT_REASON_MAX}
+          {overLimit && ' — too long; shorten it (nothing has been cut)'}
+        </p>
         {/* Suspected underage content can be reported by anyone, not only the
             person shown, so that choice gets third-party wording and a link
             straight to the takedown form's under-18 category. */}
@@ -123,7 +133,7 @@ export default function ReportModal({ title, subject = 'this', onSubmit, onClose
           <button type="button" onClick={onClose} disabled={sending} className="flex-1 text-sm px-4 py-2 rounded-md border border-white/10 text-gray-300 hover:bg-white/5 transition disabled:opacity-50">
             Cancel
           </button>
-          <button type="submit" disabled={sending || !reason.trim()} className="flex-1 px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition text-sm disabled:opacity-50">
+          <button type="submit" disabled={sending || !reason.trim() || overLimit} className="flex-1 px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition text-sm disabled:opacity-50">
             {sending ? 'Sending…' : 'Report'}
           </button>
         </div>

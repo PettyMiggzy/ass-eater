@@ -12,6 +12,21 @@ const ADDRESS_LOCK_NS = 84120;
 // issuedBlock is a BigInt, which JSON.stringify refuses; returned as a string.
 const publicAddr = <T extends { issuedBlock: bigint | null }>(a: T) => ({ ...a, issuedBlock: a.issuedBlock?.toString() ?? null });
 
+/**
+ * Ledger meta as the account holder may see it. Auction rows once carried
+ * the id of the bidder who outbid this fan (`outbidBy`); the release now
+ * records only {reason:'outbid'} (core/auctions.ts) and the migration
+ * stripped old rows, but no other bidder's identity is ever returned from
+ * an auction row whatever is stored, so the bid history's anonymity cannot
+ * be undone through the fan's own wallet.
+ */
+export function fanSafeMeta(type: string, meta: unknown): unknown {
+  if (!type.startsWith('AUCTION_BID_') || !meta || typeof meta !== 'object' || Array.isArray(meta)) return meta;
+  const { outbidBy, bidderId, winnerId, ...rest } = meta as Record<string, unknown>;
+  void outbidBy; void bidderId; void winnerId;
+  return 'outbidBy' in (meta as object) && !('reason' in rest) ? { ...rest, reason: 'outbid' } : rest;
+}
+
 export const wallet: FastifyPluginAsync = async (app) => {
   app.get('/balance', { preHandler: app.auth }, async (req) => {
     const a = await prisma.account.findUnique({ where: { userId: req.user.id } });
@@ -27,7 +42,7 @@ export const wallet: FastifyPluginAsync = async (app) => {
 
   app.get('/history', { preHandler: app.auth }, async (req: any) => {
     const rows = await prisma.ledgerEntry.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' }, take: 100, skip: page(req.query).offset });
-    return rows.map(r => ({ ...r, amountCents: Number(r.amountCents) }));
+    return rows.map(r => ({ ...r, meta: fanSafeMeta(r.type, r.meta), amountCents: Number(r.amountCents) }));
   });
 
   /** One address per user per chain, derived deterministically. Accepts any allowlisted dollar stablecoin, ETH and $ONLYONE on that address. */

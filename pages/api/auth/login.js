@@ -6,6 +6,7 @@ import {
 } from '../../../lib/login-guard';
 import { effectiveUserStatus } from '../../../lib/user-moderation';
 import { EMAIL_IDENTIFIER_MAX, PASSWORD_MAX, refuseMalformedText } from '../../../lib/field-validation';
+import { refuseCrossSite } from '../../../lib/same-origin';
 
 // The login brakes -- ONE design, settled in round 11. Every counter is a
 // shared Postgres row (lib/login-guard.js) with a fixed 15-minute window, so
@@ -58,6 +59,9 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+  // Login CSRF (round-14 gates-token#0): a cross-site form must not be able
+  // to sign a visitor into someone else's account (lib/same-origin.js).
+  if (refuseCrossSite(req, res)) return;
 
   // Trimmed the same way signup trims it. Signup stores the trimmed value,
   // so an identifier a phone keyboard or a paste put a stray space on was

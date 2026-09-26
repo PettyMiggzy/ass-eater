@@ -97,6 +97,25 @@ export function treasuryWallet(): WalletClient<Transport, Chain, PrivateKeyAccou
   return _treasuryClient;
 }
 
+/** Thrown instead of signing while treasury signing is paused (TREASURY_SETTLE_ONLY). */
+export class TreasurySigningPausedError extends Error {
+  constructor(reason: string) { super(`treasury signing paused: ${reason}`); this.name = 'TreasurySigningPausedError'; }
+}
+
+/**
+ * Why the treasury key may not sign anything NEW right now, or null.
+ * TREASURY_SETTLE_ONLY=true is the key-rotation switch (deploy/DEPLOY.md
+ * "Rotate the treasury key"): the workers run only to settle what is
+ * already in flight -- payout receipts, a hedge or burn swap's receipt --
+ * and never sign a payout, a swap, an approval, a nonce-cancel or a sweep
+ * gas top-up. Restarting the workers to "let them settle" used to sign
+ * fresh old-key transactions in the same pass, rebuilding exactly the
+ * state the rotation had to drain first.
+ */
+export function treasurySigningPaused(): string | null {
+  return process.env.TREASURY_SETTLE_ONLY === 'true' ? 'TREASURY_SETTLE_ONLY=true' : null;
+}
+
 /**
  * Every transaction the treasury key signs goes through here, one at a time.
  *
@@ -109,7 +128,16 @@ export function treasuryWallet(): WalletClient<Transport, Chain, PrivateKeyAccou
  */
 let treasuryQueue: Promise<unknown> = Promise.resolve();
 export function withTreasuryLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = treasuryQueue.then(fn, fn);
+  // TREASURY_SETTLE_ONLY (key rotation, deploy/DEPLOY.md): nothing new is
+  // signed with the treasury key. Checked when the queued call actually
+  // runs, so a send queued before the flag took effect is refused too. The
+  // loops check it themselves first (treasurySigningPaused) so they defer
+  // cleanly; this is the backstop for every other signer.
+  const guarded = () => {
+    const why = treasurySigningPaused();
+    return why ? Promise.reject(new TreasurySigningPausedError(why)) : fn();
+  };
+  const run = treasuryQueue.then(guarded, guarded);
   treasuryQueue = run.catch(() => undefined);
   return run;
 }

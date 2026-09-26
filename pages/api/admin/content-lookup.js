@@ -14,14 +14,20 @@ import {
  *
  * GET ?kind=wall&creatorId=12[&before=<comment id>]
  *   -> 200 { ok, posts: [{ id, text, createdAt, authorName, author }], hasMore, nextBefore }
- * GET ?kind=conversations&(userId=<id> | login=<email or username> | creatorId=<id>)[&offset=N]
- *   -> 200 { ok, account, conversations: [{ id, other, messageCount, lastMessage, updatedAt }], hasMore, nextOffset }
+ * GET ?kind=conversations&(userId=<id> | login=<email or username> | creatorId=<id>)[&cursor=<nextCursor>]
+ *   -> 200 { ok, account, conversations: [{ id, other, messageCount, lastMessage, updatedAt }], hasMore, nextCursor, nextOffset }
+ *   Keyset-paged: pass the previous page's nextCursor. (`offset` still works
+ *   for an old client, but can skip a conversation that gets a new message
+ *   while paging -- lib/content-takedown.js lookupConversationsFor.)
  *   -> 404 no such account
  * GET ?kind=messages&(conversationId=<id> | userA=<id>&userB=<id>)[&before=<message id>][&limit=N]
  *   -> 200 { ok, conversation: { id, participants: [account], messageCount,
  *            messages: [{ id, senderId, text, createdAt, priceCents? }], hasMore, nextBefore } }
  *   Paged: the newest 100 (limit, at most 100) messages older than `before`,
  *   oldest first within the page; page back with before=nextBefore.
+ *   -> 409 { error, code: 'stale_cursor' } when `before` names a message that
+ *      is no longer in the thread (taken down, or aged out): reload from the
+ *      newest page (no `before`).
  *   -> 404 no such conversation
  * GET ?kind=listings&creatorId=12
  *   -> 200 { ok, listings: [{ id, title, status, kind, priceCents, createdAt, mediaCount }] }
@@ -56,7 +62,7 @@ export default async function handler(req, res) {
       if (!who.userId && !who.login && !who.creatorId) return res.status(400).json({ error: 'Enter a user id, email / username or creator' });
       const account = await resolveLookupAccount(who);
       if (!account) return res.status(404).json({ error: 'No such account' });
-      const out = await lookupConversationsFor(account.userId, { offset: str(q.offset) || 0 });
+      const out = await lookupConversationsFor(account.userId, { offset: str(q.offset) || 0, cursor: str(q.cursor) || null });
       return res.status(200).json({ ok: true, account, ...out });
     }
     if (kind === 'messages') {
@@ -68,6 +74,13 @@ export default async function handler(req, res) {
         limit: str(q.limit) || undefined,
       });
       if (!conversation) return res.status(404).json({ error: 'No such conversation' });
+      if (conversation.stale) {
+        return res.status(409).json({
+          error: 'That message is no longer in this conversation (it was taken down or aged out). Reload the conversation from the newest messages.',
+          code: 'stale_cursor',
+          messageCount: conversation.messageCount,
+        });
+      }
       return res.status(200).json({ ok: true, conversation });
     }
     if (kind === 'listings') {

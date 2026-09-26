@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { encodeFunctionData, keccak256, parseUnits, TransactionNotFoundError, TransactionReceiptNotFoundError } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
+import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, TokenDecimalsMismatchError, treasurySigningPaused } from '../lib/chain.js';
 import { getUsdPrice } from '../lib/price.js';
 import { money } from '../core/ledger.js';
 import { refundPayout, markPayoutSent, isOwnNonceCancel } from '../core/payouts.js';
@@ -235,6 +235,13 @@ async function processPayoutJob(job: { data: { payoutId: string } }) {
     if (e instanceof TokenDecimalsMismatchError) console.error('payout: REFUSING to pay -- stablecoin decimals do not match the chain. Payouts stay PENDING until the configuration is fixed and the workers restarted.', e.message);
     throw e;
   }
+  // Key rotation (TREASURY_SETTLE_ONLY, deploy/DEPLOY.md): nothing new is
+  // signed. Thrown BEFORE the claim, like the decimals check above, so the
+  // payout stays PENDING and the reconciler re-queues it once signing is
+  // back on -- claimed and then refused inside the treasury lock, it would
+  // have been refunded instead.
+  const paused = treasurySigningPaused();
+  if (paused) throw new Error(`payout deferred: treasury signing paused (${paused})`);
   const p = await claimPayout(job.data.payoutId);
   if (!p) return;
 

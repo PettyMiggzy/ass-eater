@@ -50,6 +50,20 @@ function heldWithdrawableNow(listing: { currentHoldWithdrawableCents: number | n
   return listing.currentHoldWithdrawableCents ?? 0;
 }
 
+/**
+ * Ends the current run's bids without a sale: every not-yet-voided bid on
+ * the listing is stamped voidedAt, in the caller's transaction. Called
+ * wherever a lead is released without a sale (cancelAuction, dropLead, a
+ * no-sale closeAuction) and on relist. Without it GET
+ * /marketplace/listings/:id/bids kept presenting a released $90 bid as the
+ * top bid of a relisted auction starting at $10 -- a phantom new fans bid
+ * over with non-refundable credits -- and told its bidder isYou on a bid
+ * that held nothing and could not win.
+ */
+async function voidBids(tx: Tx, listingId: string, at: Date = new Date()) {
+  await tx.bid.updateMany({ where: { listingId, voidedAt: null }, data: { voidedAt: at } });
+}
+
 async function withdrawableOf(tx: Tx, userId: string) {
   const a = await tx.account.findUnique({ where: { userId }, select: { withdrawableCents: true } });
   return a?.withdrawableCents ?? 0n;
@@ -111,7 +125,7 @@ export async function placeBid(
   // re-bidding the same amount would have been refused anyway -- it is
   // below the floor -- so this changes nothing but the answer.)
   if (listing.currentBidderId === bidderId && listing.currentBidCents === amountCents) {
-    const standing = await tx.bid.findFirst({ where: { listingId, bidderId, amountCents }, orderBy: { createdAt: 'desc' } });
+    const standing = await tx.bid.findFirst({ where: { listingId, bidderId, amountCents, voidedAt: null }, orderBy: { createdAt: 'desc' } });
     if (standing) return Object.assign(standing, { already: true as const });
   }
   if (!listing.auctionEndsAt || listing.auctionEndsAt <= new Date()) throw statusCode('auction_ended', 400);
@@ -145,7 +159,11 @@ export async function placeBid(
   // took; otherwise a creator bidding with money they earned would have it
   // turned into credits they can never pay out.
   if (listing.currentBidderId && heldNow(listing) > 0) {
-    await post(tx, listing.currentBidderId, heldNow(listing), 'AUCTION_BID_RELEASE', listingId, { outbidBy: bidderId }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
+    // {reason:'outbid'}, never WHO outbid them: the fan reads this row's
+    // meta back through GET /wallet/history, and naming the other bidder's
+    // user id there undid the bid history's anonymity (the Bid table keeps
+    // the order of bids for any audit).
+    await post(tx, listing.currentBidderId, heldNow(listing), 'AUCTION_BID_RELEASE', listingId, { reason: 'outbid' }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
   }
   // Measure how much withdrawable this hold consumes (post() clamps
   // withdrawable down to the new balance), under the row lock taken above.
@@ -188,6 +206,7 @@ export async function cancelAuction(tx: Tx, listingId: string, reason: string) {
     where: { id: listingId },
     data: { status: 'REMOVED', currentBidderId: null, currentBidCents: null, currentHoldCents: null, currentHoldWithdrawableCents: null },
   });
+  await voidBids(tx, listingId);
   return { released: listing.currentBidderId ? held : 0 };
 }
 
@@ -213,6 +232,10 @@ export async function dropLead(tx: Tx, listingId: string, bidderId: string, reas
     where: { id: listingId },
     data: { currentBidderId: null, currentBidCents: null, currentHoldCents: null, currentHoldWithdrawableCents: null },
   });
+  // The auction restarts from the starting price, so every bid so far --
+  // the dropped lead and everything below it -- belongs to a run that is
+  // over. Left in place, they read as live top bids.
+  await voidBids(tx, listingId);
   return { released: held };
 }
 
@@ -256,6 +279,7 @@ export async function closeAuction(tx: Tx, listingId: string, now: Date = new Da
       where: { id: listingId },
       data: { status: 'REMOVED', currentBidderId: null, currentBidCents: null, currentHoldCents: null, currentHoldWithdrawableCents: null },
     });
+    await voidBids(tx, listingId);
     return { sold: false as const };
   }
 
@@ -275,7 +299,7 @@ export async function closeAuction(tx: Tx, listingId: string, now: Date = new Da
   // route required it has none, and the order says so (null) rather than
   // claiming a confirmation that never happened.
   const winning = await tx.bid.findFirst({
-    where: { listingId, bidderId: listing.currentBidderId, amountCents: chargeCents },
+    where: { listingId, bidderId: listing.currentBidderId, amountCents: chargeCents, voidedAt: null },
     orderBy: { createdAt: 'desc' },
     select: { ageConfirmedAt: true, tosVersion: true },
   });
@@ -360,5 +384,9 @@ export async function relistAuction(
     data,
   });
   if (!r.count) throw statusCode('not_relistable', 409);
+  // Every path that ends a run without a sale already voided its bids; this
+  // also covers bids from before voidedAt existed, so a relisted auction's
+  // history always starts empty.
+  await voidBids(tx, listingId, now);
   return tx.listing.findUniqueOrThrow({ where: { id: listingId } });
 }

@@ -507,8 +507,12 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       select: { creatorId: true },
     });
     if (!l) return reply.code(404).send({ error: 'not_found' });
+    // Only the current run's bids: a voided bid (core/auctions.ts voidBids --
+    // a no-sale close, a cancel, a dropped banned lead, a relist) holds no
+    // money and cannot win, and shown here it read as the live top bid.
+    // Labels are numbered over the live run only, too.
     const all = await prisma.bid.findMany({
-      where: { listingId: req.params.id }, orderBy: { createdAt: 'asc' },
+      where: { listingId: req.params.id, voidedAt: null }, orderBy: { createdAt: 'asc' },
       select: { id: true, bidderId: true, amountCents: true, createdAt: true, bidder: { select: { username: true } } },
     });
     const label = new Map<string, number>();

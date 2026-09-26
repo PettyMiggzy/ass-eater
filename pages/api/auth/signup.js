@@ -23,6 +23,7 @@ import { screenPublicText, publicProfileTextEntries } from '../../../lib/prohibi
 import { addViolation } from '../../../lib/violations-store';
 import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store';
 import { CURRENT_TOS_VERSION } from '../../../lib/orders-store';
+import { refuseCrossSite } from '../../../lib/same-origin';
 
 // Signup unavoidably tells the caller whether an identifier is already
 // taken: there is no email-confirmation channel on this site (nothing here
@@ -51,6 +52,9 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+  // Login CSRF (round-14 gates-token#0): a cross-site form must not be able
+  // to sign a visitor into someone else's account (lib/same-origin.js).
+  if (refuseCrossSite(req, res)) return;
 
   // Checked here, before anything else, because this is the actual gate --
   // the /signup page hiding its form is a courtesy, not a control. A stale

@@ -155,8 +155,9 @@ export default async function handler(req, res) {
   }
 
   if (fields && 'socials' in fields) {
-    // A handle outside the platforms' own username charset is refused with a
-    // message (sanitizeSocials would silently drop it). An unchanged echo of
+    // A handle outside the platforms' own username charset, or a website that
+    // is not an https link, is refused with a message (sanitizeSocials would
+    // silently drop it). An unchanged echo of
     // a stored legacy value is left alone and kept as stored
     // (sanitizeSocialsKeepingLegacy), like the handle and wallet above.
     const stored = ctx.creator.socials && typeof ctx.creator.socials === 'object' ? ctx.creator.socials : {};

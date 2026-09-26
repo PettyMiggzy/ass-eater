@@ -6,7 +6,7 @@ import { deleteObject, deletePrefix, purgeCdnPrefix, cdnSignedUrl } from '../lib
 import { wmPrefix } from '../lib/watermark.js';
 import { recordManualBurn } from '../core/vip.js';
 import { applyUserStatus, restoreBanTakedowns } from '../core/moderation.js';
-import { refundPayout, markPayoutSent, holdForManualSettlement } from '../core/payouts.js';
+import { refundPayout, markPayoutSent, holdForManualSettlement, payoutTransferSenders } from '../core/payouts.js';
 import { payoutJobOptions, payoutJobId, jobInFlight } from '../core/payout-queue.js';
 import { payoutQueue } from '../lib/redis.js';
 import { publicClient, HEDGE_STABLE, TRANSFER_EVENT, treasuryAddress, TOKENS, DECIMALS, onlyOneBurnedIn, burnSenders } from '../lib/chain.js';
@@ -14,6 +14,7 @@ import { decodeEventLog, formatUnits, parseUnits, TransactionReceiptNotFoundErro
 import { Prisma } from '@prisma/client';
 import { storageKeyOf } from '../core/media-key.js';
 import { cancelAuction } from '../core/auctions.js';
+import { adminResolveInFlight } from '../core/treasury-inflight.js';
 import { CREATOR_STANDING_SELECT, creatorMayBePaid } from '../core/creator-standing.js';
 import { REPORT_TARGETS, messageAndBroadcastSiblings, listReports } from '../core/reports.js';
 
@@ -277,6 +278,8 @@ export const admin: FastifyPluginAsync = async (app) => {
       return { id: m.id, mime: m.mime, status: m.status, type, url, expiresIn: url ? MEDIA_TTL : null };
     };
     const MEDIA_SELECT = { id: true, key: true, mime: true, status: true, hlsKey: true, previewKey: true } as const;
+    // siteUid too: the site's standing-sync panel names accounts by it.
+    const OWNER_SELECT = { id: true, siteUid: true, username: true, role: true, status: true } as const;
 
     let target: unknown = null;
     if (r.targetType === 'post') {
@@ -285,13 +288,13 @@ export const admin: FastifyPluginAsync = async (app) => {
         // Who owns it, and their standing: the queue lists a banned creator's
         // other reports as live content, and the admin deciding one needs to
         // see the ban before choosing suspend_user.
-        const owner = await prisma.user.findUnique({ where: { id: p.creatorId }, select: { id: true, username: true, role: true, status: true } });
+        const owner = await prisma.user.findUnique({ where: { id: p.creatorId }, select: OWNER_SELECT });
         target = { id: p.id, creatorId: p.creatorId, owner, text: p.text, visibility: p.visibility, priceCents: p.priceCents, removed: p.removed, createdAt: p.createdAt, media: p.media.map(mediaView) };
       }
     } else if (r.targetType === 'message') {
       const m = await prisma.message.findUnique({ where: { id: r.targetId }, include: { media: { select: MEDIA_SELECT } } });
       if (m) {
-        const sender = await prisma.user.findUnique({ where: { id: m.senderId }, select: { id: true, username: true, role: true, status: true } });
+        const sender = await prisma.user.findUnique({ where: { id: m.senderId }, select: OWNER_SELECT });
         const copies = m.broadcastId ? await prisma.message.count({ where: { senderId: m.senderId, broadcastId: m.broadcastId } }) : 1;
         target = { id: m.id, text: m.text, priceCents: m.priceCents, sender, broadcastId: m.broadcastId, broadcastCopies: copies, createdAt: m.createdAt, media: m.media.map(mediaView) };
       }
@@ -301,13 +304,13 @@ export const admin: FastifyPluginAsync = async (app) => {
         const keys = l.images.filter((k) => k.startsWith('raw/'));
         const images = keys.length ? await prisma.media.findMany({ where: { key: { in: keys } }, select: MEDIA_SELECT }) : [];
         const { media: product, ...fields } = l;
-        const owner = await prisma.user.findUnique({ where: { id: l.creatorId }, select: { id: true, username: true, role: true, status: true } });
+        const owner = await prisma.user.findUnique({ where: { id: l.creatorId }, select: OWNER_SELECT });
         target = { ...fields, owner, media: product.map(mediaView), images: images.map(mediaView) };
       }
     } else if (r.targetType === 'user') {
       const u = await prisma.user.findUnique({
         where: { id: r.targetId },
-        select: { id: true, username: true, role: true, status: true, statusBySite: true, kycStatus: true, createdAt: true, creator: { select: { displayName: true, bio: true, avatarKey: true, bannerKey: true, tags: true } } },
+        select: { id: true, siteUid: true, username: true, role: true, status: true, statusBySite: true, kycStatus: true, createdAt: true, creator: { select: { displayName: true, bio: true, avatarKey: true, bannerKey: true, tags: true } } },
       });
       if (u) {
         const imgKeys = [u.creator?.avatarKey, u.creator?.bannerKey].filter((k): k is string => !!k && k.startsWith('raw/'));
@@ -509,14 +512,52 @@ export const admin: FastifyPluginAsync = async (app) => {
   // takedown is never restored. Reactivating a BANNED account also gives
   // its subscribers back what is left of the period they paid for (the ban
   // cancelled those subscriptions), without auto-renew.
+  //
+  // The id is the server/ user id, NOT the site's user id: an unknown id is
+  // a 404 (it used to answer {ok:true} with nothing changed, so an operator
+  // who pasted the site uid the standing-sync panel shows believed the fan
+  // reinstated while server/ kept them SUSPENDED), and a change a guard
+  // refused is a 409 not_applied. Resolve a site uid with
+  // GET /admin/users/by-site-uid/:siteUid first.
   app.post('/users/:id/status', async (req: any, reply) => {
     const { status, restoreListings } = z.object({
       status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']), restoreListings: z.boolean().optional(),
     }).parse(req.body);
     if (restoreListings && status !== 'ACTIVE') return reply.code(400).send({ error: 'restore_needs_active' });
-    await setStatus(req.params.id, status);
+    const id = String(req.params.id ?? '');
+    const exists = await prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) return reply.code(404).send({ error: 'not_found' });
+    // An admin's change has no guard here (setStatus passes neither bySite
+    // nor noDowngrade), so for an existing row it always matches -- ACTIVE
+    // over ACTIVE included. false therefore means the row vanished or a
+    // guard refused; either way nothing was changed, and saying ok hid it.
+    if (!(await setStatus(id, status))) {
+      const now = await prisma.user.findUnique({ where: { id }, select: { status: true } });
+      if (!now) return reply.code(404).send({ error: 'not_found' });
+      return reply.code(409).send({ error: 'not_applied', status: now.status });
+    }
     if (!restoreListings) return { ok: true };
-    return { ok: true, restoredListings: await restoreBanTakedowns({ creatorId: String(req.params.id) }) };
+    return { ok: true, restoredListings: await restoreBanTakedowns({ creatorId: id }) };
+  });
+
+  /**
+   * The server/ account a SITE user id is bridged to. The site's
+   * standing-sync panel shows the site uid of a status push server/ refused
+   * (409 suspension_needs_server_admin); resolving it to this server id is
+   * the step before POST /admin/users/:id/status. Nothing else maps one to
+   * the other: a refused FAN reinstatement never appears in
+   * /creators/frozen (a fan has no CreatorProfile). ADMIN-only, like every
+   * route in this plugin.
+   */
+  app.get('/users/by-site-uid/:siteUid', async (req: any, reply) => {
+    const siteUid = String(req.params.siteUid ?? '').trim();
+    if (!siteUid || siteUid.length > 200) return reply.code(404).send({ error: 'not_found' });
+    const u = await prisma.user.findUnique({
+      where: { siteUid },
+      select: { id: true, username: true, role: true, status: true, statusBySite: true, siteCreatorStatus: true, siteAccountStatus: true },
+    });
+    if (!u) return reply.code(404).send({ error: 'not_found' });
+    return u;
   });
 
   app.post('/listings/:id/restore', async (req: any, reply) => {
@@ -554,7 +595,7 @@ export const admin: FastifyPluginAsync = async (app) => {
       select: {
         userId: true, displayName: true,
         user: { select: {
-          username: true, status: true, statusBySite: true, siteCreatorStatus: true, siteAccountStatus: true,
+          username: true, siteUid: true, status: true, statusBySite: true, siteCreatorStatus: true, siteAccountStatus: true,
           siteSuspendedUntil: true, siteAccountSuspendedUntil: true, siteStatusAt: true, siteAccountStatusAt: true,
           account: { select: { balanceCents: true, withdrawableCents: true } },
         } },
@@ -637,7 +678,8 @@ export const admin: FastifyPluginAsync = async (app) => {
    *    signed txHash (the worker's transfer that landed). Never from
    *    PENDING -- hold it first. Only against a SUCCESSFUL on-chain
    *    transaction containing a USDG Transfer FROM the treasury
-   *    (TREASURY_ADDRESS) TO this payout's address for the payout's amount
+   *    (TREASURY_ADDRESS; for the payout's own txHash, also the recorded
+   *    signerAddress, i.e. a pre-rotation key) TO this payout's address for the payout's amount
    *    (its recorded assetAmount when the worker got that far, else at
    *    least the net amount at $1), and only a hash no other payout already
    *    records (also a unique index). Refused while the payout's worker job
@@ -701,8 +743,18 @@ export const admin: FastifyPluginAsync = async (app) => {
         const own = await publicClient.getTransactionReceipt({ hash: p.txHash as `0x${string}` }).catch(() => null);
         if (own?.status === 'success') return reply.code(409).send({ error: 'own_tx_succeeded', txHash: p.txHash });
       }
+      // Who may have sent the transfer. A hand-sent settlement must come from
+      // the CURRENT treasury. The payout's OWN transaction may also come from
+      // the key recorded as having signed it (signerAddress): after a
+      // treasury key rotation, an old-key payout the reconciler left FAILED
+      // (or an admin HELD) whose transfer then landed came from the OLD
+      // wallet, and requiring the new TREASURY_ADDRESS left it with no way
+      // to close -- refund and release both (rightly) refuse a signed
+      // transfer that succeeded. Never widened for a hash the payout did not
+      // record: that one must be the treasury's.
       const treasury = treasuryAddress();
-      if (!treasury) return reply.code(409).send({ error: 'treasury_address_not_configured' });
+      const senders = payoutTransferSenders({ ownTx, signerAddress: p.signerAddress }, treasury);
+      if (!senders.length) return reply.code(409).send({ error: 'treasury_address_not_configured' });
       const expectedRaw = p.assetAmount != null
         ? BigInt(p.assetAmount)
         : parseUnits((Number(p.amountCents) / 100).toFixed(HEDGE_STABLE.decimals), HEDGE_STABLE.decimals);
@@ -713,7 +765,7 @@ export const admin: FastifyPluginAsync = async (app) => {
         if (l.address.toLowerCase() !== HEDGE_STABLE.address.toLowerCase()) return false;
         try {
           const ev = decodeEventLog({ abi: [TRANSFER_EVENT], data: l.data, topics: l.topics });
-          if (String(ev.args.from).toLowerCase() !== treasury.toLowerCase()) return false;
+          if (!senders.includes(String(ev.args.from).toLowerCase())) return false;
           if (String(ev.args.to).toLowerCase() !== p.address.toLowerCase()) return false;
           const v = ev.args.value as bigint;
           return exact ? v === expectedRaw : v >= expectedRaw;
@@ -798,6 +850,28 @@ export const admin: FastifyPluginAsync = async (app) => {
       lifetimeUsdcReceivedRaw: usdcRaw.toString(),
       batches,
     };
+  });
+
+  /**
+   * Close an in-flight automatic burn swap or hedge batch the workers
+   * cannot: one signed by a rotated-out treasury key (or with no recorded
+   * signer) stays 'unknown' to them forever, and the burn / hedge loop then
+   * refuses to start another -- permanently. :kind is 'burn' (the id is the
+   * swap's pendingTxHash, from GET /admin/token-burns) or 'hedge' (the
+   * batch id, from GET /admin/treasury-hedge). Judged against the SIGNER's
+   * own nonce and receipt (core/treasury-inflight.ts); still undecided, it
+   * needs {acknowledgeNeverLands: true} after checking the explorer. A
+   * released burn's obligations are owed again; a released hedge batch is
+   * FAILED.
+   */
+  app.post('/treasury-tx/:kind/:id/resolve', async (req: any, reply) => {
+    const kind = z.enum(['burn', 'hedge']).safeParse(req.params.kind);
+    if (!kind.success) return reply.code(404).send({ error: 'not_found' });
+    const { acknowledgeNeverLands } = z.object({ acknowledgeNeverLands: z.boolean().optional() }).parse(req.body ?? {});
+    const r = await adminResolveInFlight(kind.data, String(req.params.id ?? ''), { acknowledgeNeverLands });
+    if (!r.ok) return reply.code(r.status).send({ error: r.error, state: r.state, signer: r.signer });
+    req.log.info({ audit: 'admin_resolved_treasury_tx', adminId: req.user.id, kind: r.kind, id: req.params.id, outcome: r.outcome, state: r.state, rows: r.rows }, 'admin resolved in-flight treasury tx');
+    return r;
   });
 
   app.get('/stats', async () => {

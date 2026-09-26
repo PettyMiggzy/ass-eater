@@ -84,3 +84,22 @@ export function isOwnNonceCancel(
   const me = treasury.toLowerCase();
   return tx.from.toLowerCase() === me && (tx.to ?? '').toLowerCase() === me && tx.value === 0n && tx.nonce === nonce;
 }
+
+/**
+ * The addresses (lowercased) a USDG transfer settling a payout by admin
+ * mark_sent may come FROM: always the current treasury, and -- only when
+ * the hash is the payout's OWN signed transaction -- the key recorded as
+ * having signed it. After a treasury key rotation the payout's own transfer
+ * came from the old wallet, which is no longer TREASURY_ADDRESS; without
+ * this such a payout, once its transfer landed, could never be closed. A
+ * hash the payout did not record is never matched against signerAddress.
+ */
+export function payoutTransferSenders(
+  p: { ownTx: boolean; signerAddress: string | null },
+  treasury: string | null | undefined,
+): string[] {
+  const out = new Set<string>();
+  if (treasury) out.add(treasury.toLowerCase());
+  if (p.ownTx && p.signerAddress && /^0x[0-9a-fA-F]{40}$/.test(p.signerAddress)) out.add(p.signerAddress.toLowerCase());
+  return [...out];
+}

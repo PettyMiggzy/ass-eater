@@ -1,7 +1,9 @@
 import { encodeFunctionData, parseAbi, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, sendTreasuryTx, resolveTreasuryTx } from '../lib/chain.js';
-import { impactBpsOf, allocateHedge, hedgeRemaining } from './treasury-hedge-math.js';
+import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, sendTreasuryTx, resolveTreasuryTx, treasurySigningPaused } from '../lib/chain.js';
+import { impactBpsOf, hedgeRemaining } from './treasury-hedge-math.js';
+import { applyHedge, failHedge, HEDGE_BPS } from '../core/treasury-inflight.js';
+import { isStopping } from './process-guards.js';
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 
 // Fans can deposit $ONLYONE to burn for VIP (core/vip.ts). That balance is
@@ -15,7 +17,9 @@ import { treasuryOutflow } from '../lib/outflow-journal.js';
 // No-ops entirely until UNISWAP_V3_ROUTER_ADDRESS / UNISWAP_V3_QUOTER_ADDRESS /
 // ONLYONE_POOL are set -- i.e. until $ONLYONE actually has a live market.
 
-const HEDGE_BPS = envInt('TREASURY_HEDGE_BPS', 7500, 0, 10_000); // % of new $ONLYONE converted to stablecoin; rest stays as treasury exposure
+// HEDGE_BPS (TREASURY_HEDGE_BPS): % of new $ONLYONE converted to stablecoin;
+// the rest stays as treasury exposure. Defined in core/treasury-inflight.ts,
+// which also settles a batch for the admin route.
 const MAX_IMPACT_BPS = envInt('TREASURY_HEDGE_MAX_IMPACT_BPS', 300, 0, 10_000); // max acceptable price impact per swap
 const INTERVAL_MS = envInt('TREASURY_HEDGE_INTERVAL_MS', 300_000, 10_000);
 const POOL_FEE = envInt('ONLYONE_POOL_FEE', 3000, 1, 1_000_000); // Uniswap V3 fee tier (hundredths of a bip)
@@ -89,30 +93,6 @@ async function sizeSwap(desiredRaw: bigint, spot: number): Promise<{ amountIn: b
 }
 
 /**
- * Applies a mined swap to the deposits it hedged: the oldest unhedged
- * deposits absorb `amountIn`, same allocation as always.
- *
- * Exactly once per batch. The PENDING -> DONE flip is a guarded update that
- * runs FIRST, in the same transaction as the allocation, so a second
- * settlement of the same success (a second worker process, a retry after a
- * partial failure) matches nothing and allocates nothing -- it used to
- * advance every deposit's hedgedRaw a second time for tokens sold once.
- */
-async function applyHedge(batchId: string, amountIn: bigint) {
-  await prisma.$transaction(async (tx) => {
-    const now = new Date();
-    const claimed = await tx.treasuryHedgeBatch.updateMany({ where: { id: batchId, status: 'PENDING' }, data: { status: 'DONE', resolvedAt: now } });
-    if (claimed.count !== 1) return;
-    const pending = await tx.deposit.findMany({ where: { asset: 'ONLYONE', hedgedAt: null }, orderBy: { createdAt: 'asc' } });
-    const alloc = allocateHedge(pending, amountIn, HEDGE_BPS);
-    for (const a of alloc) {
-      await tx.deposit.update({ where: { id: a.id }, data: { hedgedRaw: a.hedgedRaw.toString(), ...(a.done ? { hedgedAt: now } : {}) } });
-    }
-    await tx.treasuryHedgeBatch.update({ where: { id: batchId }, data: { depositCount: alloc.filter((a) => a.done).length } });
-  });
-}
-
-/**
  * Settles a swap a previous cycle left PENDING (signed, persisted, maybe
  * broadcast). True when nothing is in flight any more. A receipt wait that
  * timed out used to leave nothing recorded at all, so the next cycle sold
@@ -125,11 +105,13 @@ export async function settleInFlightHedge(client = publicClient as any): Promise
   const r = await resolveTreasuryTx(b.txHash as `0x${string}`, b.nonce, client, undefined, b.signerAddress);
   if (r.state === 'success') { await applyHedge(b.id, BigInt(b.onlyOneRawIn)); return true; }
   if (r.state === 'reverted' || r.state === 'dropped') {
-    await prisma.treasuryHedgeBatch.updateMany({ where: { id: b.id, status: 'PENDING' }, data: { status: 'FAILED', resolvedAt: new Date() } });
+    await failHedge(b.id);
     console.error(`treasury-hedge: swap ${b.txHash} ${r.state}; nothing sold`);
     return true;
   }
-  console.warn(`treasury-hedge: swap ${b.txHash} still unsettled; not starting another`);
+  // A rotated-out (or unrecorded) signer never resolves here; an admin
+  // closes it after checking the explorer (POST /admin/treasury-tx/hedge/<id>/resolve).
+  console.warn(`treasury-hedge: swap ${b.txHash} still unsettled; not starting another (admin: POST /admin/treasury-tx/hedge/${b.id}/resolve if it was signed by a rotated-out key)`);
   return false;
 }
 
@@ -138,6 +120,8 @@ async function sweep() {
   // The stablecoin side of every quote and impact figure uses HEDGE_STABLE.decimals.
   await assertStableDecimals();
   if (!(await settleInFlightHedge())) return;
+  // Settle only while stopping or during a key rotation (see token-burn.ts).
+  if (isStopping() || treasurySigningPaused()) return;
 
   const pending = await prisma.deposit.findMany({ where: { asset: 'ONLYONE', hedgedAt: null }, orderBy: { createdAt: 'asc' } });
   if (!pending.length) return;
@@ -181,6 +165,7 @@ async function sweep() {
     if (!sized || outCents(sized.amountOut) > roomCents) { console.warn('treasury-hedge: could not size a swap under the outflow cap; retrying later'); return; }
   }
 
+  if (isStopping() || treasurySigningPaused()) return;
   const allowance = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'allowance', args: [treasuryAccount().address, ROUTER] });
   if (allowance < sized.amountIn) {
     const h = await withTreasuryLock(() => treasuryWallet().writeContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'approve', args: [ROUTER, sized.amountIn * 10n] }));
@@ -195,6 +180,7 @@ async function sweep() {
   // The batch row exists (PENDING, with the hash) before the swap is
   // broadcast, so a timeout or restart leaves something to settle instead
   // of a swap the next cycle cannot see.
+  if (isStopping() || treasurySigningPaused()) return;
   const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce, signer) => {
     // Counted before anything is persisted or broadcast (see above).
     treasuryOutflow.record('hedge', outCents(sized!.amountOut), h);

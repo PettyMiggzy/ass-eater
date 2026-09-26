@@ -779,6 +779,12 @@ export default function Dashboard({
                   placeholder="Website (https://...)"
                   className={`w-full mt-3 px-4 py-3 rounded-md bg-black/40 border ${fieldBorder('social_website')} text-white text-sm`}
                 />
+                {/* The server refuses (400, field 'social_website') a website
+                    that is not a full https:// link rather than dropping it
+                    on save; say the rule up front and in red when refused. */}
+                <p className={`text-[11px] mt-1 ${errorField === 'social_website' ? 'text-red-400' : 'text-gray-500'}`}>
+                  Full link starting with https:// (for example https://example.com).
+                </p>
               </div>
 
               {/* Token gating. Hold, never spend -- a fan who unlocks this way

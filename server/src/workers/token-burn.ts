@@ -1,6 +1,8 @@
 import { encodeFunctionData, parseAbi, parseUnits, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, sendTreasuryTx, resolveTreasuryTx, onlyOneBurnedIn, DEAD_ADDRESS } from '../lib/chain.js';
+import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, sendTreasuryTx, resolveTreasuryTx, onlyOneBurnedIn, DEAD_ADDRESS, treasurySigningPaused } from '../lib/chain.js';
+import { markBurnExecuted, releaseBurn } from '../core/treasury-inflight.js';
+import { isStopping } from './process-guards.js';
 import { getFreshUsdPrice } from '../lib/price.js';
 import { treasuryOutflow, type OutflowJournal } from '../lib/outflow-journal.js';
 
@@ -93,21 +95,20 @@ export async function settleInFlightBurn(client = publicClient as any): Promise<
   // flight for an admin), or its obligations would be bought again.
   const r = await resolveTreasuryTx(hash, inFlight.pendingNonce, client, undefined, inFlight.pendingSigner);
   if (r.state === 'success') {
-    const burned = onlyOneBurnedIn(r.receipt.logs);
-    const done = await prisma.tokenBurn.updateMany({
-      where: { executedAt: null, pendingTxHash: hash },
-      data: { executedAt: new Date(), txHash: hash.toLowerCase(), tokensBurned: burned.toString(), pendingTxHash: null, pendingNonce: null, pendingSince: null, pendingSigner: null },
-    });
-    console.log(`token-burn: settled in-flight swap ${hash} (${done.count} obligations)`);
+    const n = await markBurnExecuted(hash, r.receipt.logs);
+    console.log(`token-burn: settled in-flight swap ${hash} (${n} obligations)`);
     return true;
   }
   if (r.state === 'reverted' || r.state === 'dropped') {
     // Nothing was bought: the obligations are owed again, as they were.
-    await prisma.tokenBurn.updateMany({ where: { executedAt: null, pendingTxHash: hash }, data: { pendingTxHash: null, pendingNonce: null, pendingSince: null, pendingSigner: null } });
+    await releaseBurn(hash);
     console.error(`token-burn: in-flight swap ${hash} ${r.state}; obligations back to pending`);
     return true;
   }
-  console.warn(`token-burn: swap ${hash} still unsettled; not starting another`);
+  // A swap signed by a rotated-out (or unrecorded) key never resolves here;
+  // an admin closes it after checking the explorer:
+  // POST /admin/treasury-tx/burn/<pendingTxHash>/resolve.
+  console.warn(`token-burn: swap ${hash} still unsettled; not starting another (admin: POST /admin/treasury-tx/burn/${hash}/resolve if it was signed by a rotated-out key)`);
   return false;
 }
 
@@ -116,6 +117,10 @@ export async function runBurnBatch() {
   // amountIn below is scaled with HEDGE_STABLE.decimals; never on an unchecked scale.
   await assertStableDecimals();
   if (!(await settleInFlightBurn())) return;
+  // Settle only, never sign anything new, while the workers are stopping
+  // (a swap signed now would be persisted but never settled by this
+  // process) or during a treasury key rotation (TREASURY_SETTLE_ONLY).
+  if (isStopping() || treasurySigningPaused()) return;
 
   const candidates = await prisma.tokenBurn.findMany({ where: { executedAt: null, pendingTxHash: null }, orderBy: { createdAt: 'asc' }, take: 500 });
   if (!candidates.length) return;
@@ -152,6 +157,8 @@ export async function runBurnBatch() {
     return;
   }
 
+  // Re-checked right before the first signature: the reads above take time.
+  if (isStopping() || treasurySigningPaused()) return;
   const allowance = await publicClient.readContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'allowance', args: [treasuryAccount().address, ROUTER] });
   if (allowance < amountIn) {
     const approval = await withTreasuryLock(() => treasuryWallet().writeContract({ address: HEDGE_STABLE.address, abi: erc20Abi, functionName: 'approve', args: [ROUTER, amountIn * 10n] }));
@@ -176,6 +183,7 @@ export async function runBurnBatch() {
     }],
   });
   // Persist the hash on exactly these rows BEFORE broadcasting (see header).
+  if (isStopping() || treasurySigningPaused()) return;
   const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce, signer) => {
     // Counted before the hash is persisted or anything is broadcast; a
     // failure here aborts the send (sendTreasuryTx broadcasts only after

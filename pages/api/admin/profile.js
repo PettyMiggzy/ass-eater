@@ -162,11 +162,12 @@ export default async function handler(req, res) {
   if (safeFields.walletAddress) safeFields.walletAddress = getAddress(safeFields.walletAddress);
 
   if ('socials' in fields) {
-    // Same username charset rule as the creator's own editor; an unchanged
-    // echo of a stored legacy value is left alone and kept as stored.
+    // Same username charset and https-website rule as the creator's own
+    // editor; an unchanged echo of a stored legacy value is left alone and
+    // kept as stored.
     const stored = existing.socials && typeof existing.socials === 'object' ? existing.socials : {};
     const bad = invalidSocialHandles(fields.socials).find(({ key }) => String(fields.socials[key]) !== String(stored[key] ?? ''));
-    if (bad) return res.status(400).json({ error: `Nothing was saved -- ${bad.message}` });
+    if (bad) return res.status(400).json({ error: `Nothing was saved -- ${bad.message}`, field: `social_${bad.key}` });
     safeFields.socials = sanitizeSocialsKeepingLegacy(fields.socials, stored);
   }
   if ('tags' in fields) safeFields.tags = sanitizeTags(fields.tags);

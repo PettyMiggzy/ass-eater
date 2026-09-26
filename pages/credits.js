@@ -62,14 +62,30 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
   // tick that they've read it.
   const [finalityAck, setFinalityAck] = useState(false);
 
+  // Only a real balance is ever shown (round 14 money#0, mirroring /cart's
+  // refreshBalance). A failed request -- a 5xx during a database blip, a
+  // non-JSON error page -- keeps whatever was known before: it must never
+  // read as "0 credits" (a deposit that looks lost) and never clear a
+  // latched frozen state (a suspended account offered Pay again). A 401
+  // means this tab's session ended, so send them to log in again.
+  const [balanceError, setBalanceError] = useState(false);
   const loadBalance = () => {
-    fetch('/api/credits/balance')
-      .then((r) => r.json())
-      .then((d) => {
-        setBalanceCents(d.balanceCents ?? 0);
-        setFrozen(d.frozen === true);
+    fetch('/api/credits/balance', { cache: 'no-store' })
+      .then(async (r) => {
+        if (r.status === 401) {
+          window.location.href = '/login?next=/credits';
+          return;
+        }
+        const d = r.ok ? await r.json().catch(() => null) : null;
+        if (!d || !Number.isFinite(d.balanceCents)) {
+          setBalanceError(true);
+          return;
+        }
+        setBalanceError(false);
+        setBalanceCents(d.balanceCents);
+        if (typeof d.frozen === 'boolean') setFrozen(d.frozen);
       })
-      .catch(() => {});
+      .catch(() => setBalanceError(true));
   };
 
   // Every credits endpoint answers a frozen account with 403 code
@@ -256,8 +272,16 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
 
           <div className="rounded-xl bg-white/5 border border-white/5 p-4 mb-6 flex items-center justify-between">
             <span className="text-sm text-gray-400">Your balance</span>
-            <span className="font-bold">{balanceCents === null ? '…' : formatCredits(balanceCents)}</span>
+            <span className="font-bold">
+              {balanceCents === null ? (balanceError ? 'Unavailable' : '…') : formatCredits(balanceCents)}
+            </span>
           </div>
+          {balanceError && (
+            <p className="-mt-4 mb-6 text-xs text-red-400">
+              Couldn&apos;t load your balance just now{balanceCents === null ? '' : ' — showing the last one we had'}.{' '}
+              <button type="button" onClick={loadBalance} className="underline text-gray-300">Try again</button>
+            </p>
+          )}
 
           {frozen && (
             <div className="mb-6 px-4 py-3 rounded-xl border border-red-500/30 bg-red-500/10 text-xs text-red-300">
