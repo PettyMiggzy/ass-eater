@@ -1,6 +1,6 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
+import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 import { getCreatorById } from '../../../lib/creators-store';
 import { getListingById } from '../../../lib/listings-store';
 import { LISTING_LIMITS } from '../../../lib/creator-status';
@@ -70,7 +70,7 @@ export default async function handler(req, res) {
     }
     creator = await getCreatorById(String(cid));
     if (!creator) return res.status(404).json({ error: 'Creator not found' });
-    rateKey = `media-token:admin-ip:${clientIp(req)}`;
+    rateKey = `media-token:admin-ip:${clientNetwork(req)}`;
     rateLimit = MAX_PER_ADMIN_IP;
   } else {
     const ctx = await requireCreatorOwner(req, res);

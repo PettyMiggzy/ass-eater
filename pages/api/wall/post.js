@@ -10,11 +10,18 @@ import { screenPublicText } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { userWriteRestriction } from '../../../lib/user-moderation';
+import { ageVerificationSecret } from '../../../lib/age-verification';
 
 // Per author. A wall is public, so this is the surface where flooding is
 // most visible to everyone else.
 const MAX_POSTS = 20;
 const POST_WINDOW_MS = 60 * 1000;
+
+// Per (wall, author), keyed by a secret derived for this purpose only.
+function wallAuthorDigest(creatorId, uid) {
+  const key = crypto.createHmac('sha256', String(ageVerificationSecret())).update('oa:wall-author:v1').digest();
+  return crypto.createHmac('sha256', key).update(`${creatorId}:${uid}`).digest('hex').slice(0, 24);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -106,11 +113,16 @@ export default async function handler(req, res) {
             // Coalesced per (wall, AUTHOR), not per wall: the text names one
             // person, and folding everyone's comments into the first unread
             // row told the creator "Alice commented" when Bob (possibly a
-            // harasser) did. The author is keyed by a digest rather than the
-            // raw account id, which the wall deliberately never exposes.
+            // harasser) did. The author is keyed by an HMAC under a server
+            // secret, over (wall, author): an unkeyed sha256 of the account id
+            // let a creator hash every id they already know (their DM list,
+            // other creators' public ids) and name the commenter, and tied
+            // the same commenter across walls (round-8 social#1). The key is
+            // also stripped from GET /api/notifications -- it is only needed
+            // here, server-side, for the coalescing.
             meta: {
               creatorId: String(wallCreator.id),
-              wallAuthorKey: `${wallCreator.id}:${crypto.createHash('sha256').update(`wall-author:${uid}`).digest('hex').slice(0, 24)}`,
+              wallAuthorKey: `${wallCreator.id}:${wallAuthorDigest(wallCreator.id, uid)}`,
             },
             coalesceKey: 'wallAuthorKey',
           });

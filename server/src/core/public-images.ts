@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { cdnPreviewUrlOrNull } from '../lib/s3.js';
 import type { Tx } from './ledger.js';
 
@@ -25,9 +26,17 @@ import type { Tx } from './ledger.js';
  * assertNotPublicImages refuses to make an avatar, banner or any listing's
  * preview photo into a post's, a DM's, a broadcast's or a listing product's
  * content. Public images are served unwatermarked to anyone, so an item that
- * is one cannot also be sold as paid or exclusive. (Both checks run in the
- * writing transaction; two concurrent requests racing the two directions on
- * the same upload are not serialized against each other.)
+ * is one cannot also be sold as paid or exclusive.
+ *
+ * Serialized against mass DMs through the media rows themselves:
+ * assertOwnPublicImages (and marketplace.ts assertNotDistributed) lock the
+ * rows FOR UPDATE before counting broadcast copies, and every per-fan copy
+ * the broadcast worker writes first locks-and-touches its source rows
+ * (workers/broadcast.ts claimSourcesForCopy) and then re-checks
+ * assertNotPublicImages. Whichever commits second sees the other: a
+ * read-committed check waits for the copy and its next statement counts it;
+ * a serializable one (money()) gets a serialization failure and retries; and
+ * a copy transaction that waited on the lock re-checks after it.
  */
 
 const KEY_RE = /^raw\/[0-9a-zA-Z-]{1,64}\/[A-Za-z0-9_-]{1,64}$/;
@@ -64,10 +73,13 @@ export class BadPublicImages extends Error {
  * content (a new listing's product): none of them may double as a free
  * preview. Duplicates are refused.
  */
-export async function assertOwnPublicImages(db: Pick<Tx, 'media'>, ownerId: string, keys: string[], reservedMediaIds: string[] = []) {
+export async function assertOwnPublicImages(db: Pick<Tx, 'media' | '$queryRaw'>, ownerId: string, keys: string[], reservedMediaIds: string[] = []) {
   if (!keys.length) return;
   if (new Set(keys).size !== keys.length) throw new BadPublicImages();
   if (keys.some((k) => typeof k !== 'string' || !KEY_RE.test(k) || !k.startsWith(`raw/${ownerId}/`))) throw new BadPublicImages();
+  // Lock first, count after (see the header): must run inside the
+  // transaction that then publishes the image.
+  await lockMedia(db, ownerId, [], keys);
   const found = await db.media.findMany({
     where: {
       key: { in: keys }, ownerId, status: 'READY', mime: { startsWith: 'image/' },
@@ -97,4 +109,25 @@ export async function assertNotPublicImages(db: Pick<Tx, 'media' | 'listing' | '
   if (!keys.length) return;
   if (await db.listing.count({ where: { images: { hasSome: keys } } })) throw new MediaIsPublicImage();
   if (await db.creatorProfile.count({ where: { OR: [{ avatarKey: { in: keys } }, { bannerKey: { in: keys } }] } })) throw new MediaIsPublicImage();
+}
+
+/**
+ * Locks `ownerId`'s media rows FOR UPDATE, in id order (one statement, so two
+ * lockers never take the same rows in opposite orders). Called before a
+ * check that counts broadcast copies of those rows, so it cannot run while a
+ * copy of them is being written (workers/broadcast.ts holds them until the
+ * copy commits). Only meaningful inside a transaction.
+ *
+ * Only the caller's OWN rows: the ids and keys are client-supplied and are
+ * locked before they are validated, so without the owner predicate a creator
+ * could name another creator's media (a live mass DM's source rows included)
+ * and stall that creator's copy transactions on every request. Someone
+ * else's media fails validation anyway, so leaving it unlocked costs nothing.
+ */
+export async function lockMedia(db: Pick<Tx, '$queryRaw'>, ownerId: string, ids: string[], keys: string[] = []) {
+  const conds: Prisma.Sql[] = [];
+  if (ids.length) conds.push(Prisma.sql`id IN (${Prisma.join(ids)})`);
+  if (keys.length) conds.push(Prisma.sql`"key" IN (${Prisma.join(keys)})`);
+  if (!conds.length) return;
+  await db.$queryRaw`SELECT id FROM "Media" WHERE "ownerId" = ${ownerId} AND (${Prisma.join(conds, ' OR ')}) ORDER BY id FOR UPDATE`;
 }

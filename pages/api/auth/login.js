@@ -1,6 +1,6 @@
 import { findUserByEmail, verifyPassword } from '../../../lib/users-store';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
-import { checkRateLimit, clearFailures, clientIp, consumeAttempt, recordFailure, refundAttempt } from '../../../lib/rate-limit';
+import { checkRateLimit, clearFailures, clientNetwork, consumeAttempt, recordFailure, refundAttempt } from '../../../lib/rate-limit';
 import { effectiveUserStatus } from '../../../lib/user-moderation';
 import { EMAIL_IDENTIFIER_MAX, PASSWORD_MAX } from '../../../lib/field-validation';
 
@@ -59,7 +59,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid email or password' });
   }
 
-  const ip = clientIp(req);
+  // Bucketed per NETWORK (an IPv6 /64, an IPv4 address as is), not per exact
+  // address: one IPv6 customer can source requests from any of 2^64
+  // addresses, so a per-/128 key gave every request a fresh per-IP budget
+  // AND a clean "dirty" marker below -- unlimited sequential guesses at one
+  // account (round-8 gates-token#0). See lib/rate-limit.js clientNetwork.
+  const ip = clientNetwork(req);
   const ipKey = `login:ip:${ip}`;
   const accountKey = `login:account:${email.toLowerCase()}`;
   // Marker, not a counter: "this host has failed a login against this

@@ -47,6 +47,15 @@ PrivateTmp=true
 # the key-holding workers. Nothing here writes under /opt/onlyone; scratch
 # files go to the private /tmp.
 ReadOnlyPaths=/opt/onlyone
+# The treasury outflow journal (src/lib/outflow-journal.ts): what this key has
+# signed in the last 24h, appended before every broadcast. It lives here --
+# /var/lib/onlyone-workers, owned by onlyone-workers, mode 0700 -- because the
+# payout/burn/hedge caps must not be computable from the database (writable
+# by every .env holder) or from memory (emptied by every restart). systemd
+# creates it and exports its path as $STATE_DIRECTORY; without it the
+# workers refuse to sign anything automatically.
+StateDirectory=onlyone-workers
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

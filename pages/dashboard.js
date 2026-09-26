@@ -33,6 +33,7 @@ import {
   payoutWalletError,
   dollarsToCents,
   responseErrorMessage,
+  retryAfterHint,
 } from '../components/dashboard/helpers';
 import { TAG_GROUPS, LISTING_TAG_GROUPS } from '../lib/tag-taxonomy';
 import { CATEGORIES, MAX_CATEGORIES } from '../lib/categories';
@@ -185,6 +186,13 @@ export default function Dashboard({
       // No `img` here: the avatar is set only by the avatar upload, and the
       // server ignores one posted with the profile.
       const { res, data } = await postJson('/api/me/profile', { fields: built.fields });
+      if (res.status === 429) {
+        // Rate-limited (60 saves per 15 minutes): nothing was saved. The
+        // draft is left as typed, and the wait comes from Retry-After.
+        throw new Error(
+          'Too many saves in a short time -- nothing was saved; your edits are still here.' + retryAfterHint(res),
+        );
+      }
       if (!res.ok || !data?.creator) {
         // The message already starts with the field's label; also outline
         // the field itself and move focus to it.

@@ -1,11 +1,15 @@
 import { getSessionUser } from '../../../lib/session';
-import { getWallPostById } from '../../../lib/wall-store';
+import { getWallPostById, wallPostIdsByAuthor } from '../../../lib/wall-store';
 import { setConversationBlocked, DM_ERRORS } from '../../../lib/messages-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
 /**
  * POST /api/wall/block { postId, blocked?: boolean (default true) }
- *   -> 200 { ok: true, blocked }
+ *   -> 200 { ok: true, blocked, postIds: string[] }
+ *      postIds: every comment by the same author on this wall (newest
+ *      first, capped) -- a block is per author, so the wall flips all of
+ *      them at once. Comment ids only; the author's account id never
+ *      leaves the server.
  *   -> 403 not the owner of the wall this comment is on
  *   -> 404 no such comment (or its author's account is gone)
  *
@@ -48,7 +52,13 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'You cannot block yourself.' });
     }
     await setConversationBlocked(user.id, String(post.authorId), blocked);
-    return res.status(200).json({ ok: true, blocked });
+    // The block itself is done; failing to list the author's other comments
+    // only means the page flips this one, so it never fails the request.
+    const postIds = await wallPostIdsByAuthor(post.creatorId, post.authorId).catch((err) => {
+      console.error('[wall/block] listing the author\'s comments failed:', err);
+      return [String(post.id)];
+    });
+    return res.status(200).json({ ok: true, blocked, postIds });
   } catch (err) {
     if (err.code === DM_ERRORS.RECIPIENT_NOT_FOUND || err.code === DM_ERRORS.CONVERSATION_NOT_FOUND) {
       // Unblocking someone never blocked, or an author whose account is gone.

@@ -1,4 +1,4 @@
-import { getWallPageForCreator, toPublicWallPost } from '../../../lib/wall-store';
+import { getWallPageForCreator, toPublicWallPost, wallBlockFlagsFor } from '../../../lib/wall-store';
 import { getCreatorById } from '../../../lib/creators-store';
 import { isPubliclyVisible, effectiveCreatorStatus } from '../../../lib/creator-status';
 import { getSessionUser } from '../../../lib/session';
@@ -17,7 +17,9 @@ import { getSessionUser } from '../../../lib/session';
 // on their own wall made the whole wall appear to vanish.
 //
 // Posts come back as toPublicWallPost(): no commenter account ids, and a
-// `mine` flag for the viewer's own comments.
+// `mine` flag for the viewer's own comments. For the wall's owner only, each
+// post also carries `authorBlocked` (whether the owner has blocked its
+// author -- lib/wall-store.js wallBlockFlagsFor).
 //
 // GET ?creatorId=<id>&before=<postId>&limit=<n> -- one page, newest first
 // (see lib/wall-store.js getWallPageForCreator). Answers
@@ -44,8 +46,12 @@ export default async function handler(req, res) {
       before: typeof before === 'string' ? before : null,
       limit: typeof limit === 'string' ? limit : undefined,
     });
+    // The wall's owner also learns, per comment, whether they have blocked
+    // its author (authorBlocked) -- so the wall can offer Unblock after a
+    // reload. Nobody else gets the flag, and nobody gets the author's id.
+    const flags = isOwner ? await wallBlockFlagsFor(viewer.id, page.posts) : null;
     return res.status(200).json({
-      posts: page.posts.map((p) => toPublicWallPost(p, viewer?.id ?? null)),
+      posts: page.posts.map((p) => toPublicWallPost(p, viewer?.id ?? null, flags ? { authorBlocked: flags.get(String(p.id)) === true } : {})),
       hasMore: page.hasMore,
       nextBefore: page.nextBefore,
     });

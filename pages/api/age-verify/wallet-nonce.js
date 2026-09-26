@@ -6,7 +6,7 @@ import {
   walletSignInMessage,
   WALLET_NONCE_COOKIE_NAME,
 } from '../../../lib/wallet-auth';
-import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
+import { clientNetwork, consumeAttempt } from '../../../lib/rate-limit';
 
 // Step one of the wallet owner login: hand out a challenge.
 //
@@ -24,7 +24,7 @@ export default async function handler(req, res) {
   // endpoint must not advertise that a bypass is a thing here.
   if (!ownerWalletAddress()) return res.status(404).json({ error: 'Not found' });
 
-  const { limited } = consumeAttempt(`wallet-nonce:ip:${clientIp(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
+  const { limited } = consumeAttempt(`wallet-nonce:ip:${clientNetwork(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
   if (limited) return res.status(404).json({ error: 'Not found' });
 
   const { nonce, token } = await createWalletNonce(ageVerificationSecret());

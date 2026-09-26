@@ -6,7 +6,7 @@ import { money, lockBalance, post, InsufficientFunds, postPlatformRevenue, getTo
 import { isSubscribed, creatorMayOperate } from '../core/access.js';
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
-import { withProfileImageUrls, assertOwnPublicImages } from '../core/public-images.js';
+import { withProfileImageUrls, assertOwnPublicImages, lockMedia } from '../core/public-images.js';
 
 // What anyone may see of a creator's profile. userId and user.kycStatus are
 // also needed by the visibility check in GET /:username below.
@@ -102,8 +102,15 @@ export const creators: FastifyPluginAsync = async (app) => {
       inboundDmPriceCents: z.number().int().min(0).max(50_000).nullable().optional(),
     }).parse(req.body);
     const images = [b.avatarKey, b.bannerKey].filter((k): k is string => typeof k === 'string');
-    for (const k of images) await assertOwnPublicImages(prisma, req.user.id, [k]);
-    return withProfileImageUrls(await prisma.creatorProfile.update({ where: { userId: req.user.id }, data: b }));
+    // Check and publish in ONE transaction: assertOwnPublicImages locks the
+    // image rows before counting mass-DM copies of them, which only
+    // serializes against a copy being written if the lock is still held
+    // when the profile row changes (core/public-images.ts).
+    return withProfileImageUrls(await prisma.$transaction(async (tx) => {
+      await lockMedia(tx, req.user.id, [], images);   // both at once, in id order: no lock-order deadlock with a copy
+      for (const k of images) await assertOwnPublicImages(tx, req.user.id, [k]);
+      return tx.creatorProfile.update({ where: { userId: req.user.id }, data: b });
+    }));
   });
 
   app.post('/me/tiers', { preHandler: app.creatorOk }, async (req) => {

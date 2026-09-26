@@ -123,6 +123,19 @@ lock_parents() {
 }
 lock_parents
 
+echo "==> locking down any pre-migration copy"
+# DEPLOY.md "Migrating an existing box" moves the old real directory aside
+# as /opt/onlyone/server.old. Its .env held TREASURY_PRIVATE_KEY, and the
+# older runbook chown'd it to the API's user -- ReadOnlyPaths blocks writes,
+# not reads, so the internet-facing API could still read the key there.
+# Root-only until an operator deletes it.
+for old in "$(dirname "$APP_DIR")"/server.old*; do
+  [[ -e "$old" && ! -L "$old" ]] || continue
+  chown -R root:root "$old"
+  chmod -R go-rwx "$old"
+  echo "WARNING: $old still exists (root-only now). It may contain the treasury key: delete it once the migration is verified, and rotate the key." >&2
+done
+
 echo "==> locking down env files"
 # .env is read by systemd (as root) for every unit, and by prisma during
 # this deploy (as DEPLOY_USER, via the group). No runtime user may WRITE it:

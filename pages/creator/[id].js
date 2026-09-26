@@ -7,7 +7,7 @@ import { toPublicCreator, toPublicListing, isPubliclyVisible, effectiveCreatorSt
 import { getSessionUser } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
-import { getWallPageForCreator, toPublicWallPost } from '../../lib/wall-store';
+import { getWallPageForCreator, toPublicWallPost, wallBlockFlagsFor } from '../../lib/wall-store';
 import { isFavorite } from '../../lib/favorites-store';
 import { viewerMarkFor } from '../../lib/viewer-mark';
 import { holderGateState } from '../../lib/holder-access';
@@ -67,7 +67,16 @@ export async function getServerSideProps({ req, params }) {
   const wallPage = creator
     ? await getWallPageForCreator(creator.id)
     : { posts: [], hasMore: false, nextBefore: null };
-  const wallPosts = wallPage.posts.map((p) => toPublicWallPost(p, viewerId));
+  // The wall's owner also gets `authorBlocked` per comment (whether they have
+  // blocked its author), so Block/Unblock is right after a reload. Same rule
+  // as /api/wall/list: the owner only, and never the author's id.
+  const viewerOwnsWall = !!creator && !!viewerId && !!creatorUser && String(viewerId) === String(creatorUser.id);
+  const wallBlockFlags = viewerOwnsWall ? await wallBlockFlagsFor(viewerId, wallPage.posts) : null;
+  const wallPosts = wallPage.posts.map((p) => toPublicWallPost(
+    p,
+    viewerId,
+    wallBlockFlags ? { authorBlocked: wallBlockFlags.get(String(p.id)) === true } : {},
+  ));
   const initialFavorited = creator && viewerId ? await isFavorite(viewerId, creator.id) : false;
   // Computed server-side: the mark is an HMAC and the key never leaves the
   // server. See lib/viewer-mark.js. '' for a signed-out visitor -- the page
@@ -774,7 +783,7 @@ export default function CreatorProfile({
                         <h2 className="font-bold">Fan Messages</h2>
                         <button onClick={() => setActiveTab('about')} className="text-xs text-brand-pink hover:underline">About</button>
                       </div>
-                      <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} initialNextBefore={wallNextBefore} isWallOwner={isOwner} />
+                      <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} initialNextBefore={wallNextBefore} isWallOwner={isOwner} profileLocation={profileLocation} />
                     </div>
 
                     <div className="rounded-xl border border-white/10 bg-brand-card p-4">
@@ -1223,7 +1232,7 @@ function mergeWallPosts(...lists) {
   return [...byId.values()].sort((a, b) => Number(b.id) - Number(a.id));
 }
 
-function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwner }) {
+function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwner, profileLocation }) {
   const router = useRouter();
   const [posts, setPosts] = useState(initialPosts);
   // Cursor for the next OLDER page (null = nothing older). Only the newest
@@ -1237,9 +1246,16 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
   const [reportNotice, setReportNotice] = useState('');
   // Wall owner only: block the author of a comment (POST /api/wall/block,
   // by comment id -- the public wall never carries the author's account id).
-  // Keyed by comment id; the list endpoint does not report block state, so
-  // this only knows about blocks made on this page view.
+  // The server reports each comment's current state to the owner
+  // (`authorBlocked` on the post); this map holds changes made on this page
+  // view, keyed by comment id, and wins over the post's own flag. A block is
+  // per author, so a toggle updates every comment id the server says that
+  // author has on this wall (`postIds`), not just the one clicked.
   const [blockedPosts, setBlockedPosts] = useState({});
+  const isAuthorBlocked = (p) => {
+    const local = blockedPosts[String(p.id)];
+    return typeof local === 'boolean' ? local : p.authorBlocked === true;
+  };
   const [blockBusyId, setBlockBusyId] = useState(null);
 
   const submitReport = async ({ reason, category }) => {
@@ -1310,7 +1326,7 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
   const toggleBlockAuthor = async (post) => {
     if (blockBusyId != null) return;
     const key = String(post.id);
-    const next = !blockedPosts[key];
+    const next = !isAuthorBlocked(post);
     if (next && typeof window !== 'undefined'
       && !window.confirm(`Block ${post.authorName || 'this person'}? They won't be able to comment on your wall or message you until you unblock them.`)) return;
     setBlockBusyId(key);
@@ -1323,7 +1339,14 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
       });
       const data = await readJson(res);
       if (!res.ok) throw new Error(data.error || 'Could not update the block.');
-      setBlockedPosts((prev) => ({ ...prev, [key]: data.blocked === true }));
+      const nowBlocked = data.blocked === true;
+      const ids = Array.isArray(data.postIds) && data.postIds.length ? data.postIds.map(String) : [key];
+      if (!ids.includes(key)) ids.push(key);
+      setBlockedPosts((prev) => {
+        const out = { ...prev };
+        for (const id of ids) out[id] = nowBlocked;
+        return out;
+      });
       setReportNotice(data.blocked ? `${post.authorName || 'That person'} is blocked.` : `${post.authorName || 'That person'} is unblocked.`);
     } catch (err) {
       setError(err.message || 'Could not update the block.');
@@ -1392,14 +1415,28 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
                       <Icons.flag className="h-4 w-4" />
                     </button>
                   )}
+                  {/* Signed out: in-product reports need an account (and
+                      signups may be closed), so the flag goes to the
+                      no-account takedown form, prefilled with this comment --
+                      the same fallback gallery tiles and listings use. */}
+                  {!viewerId && !p.mine && (
+                    <a
+                      href={takedownFormHref({ content: `Wall comment #${p.id} on ${profileLocation || `/creator/${creatorId}`}` })}
+                      className="text-xs text-gray-600 hover:text-brand-pink transition"
+                      title="Report this comment (no account needed)"
+                      aria-label="Report this comment"
+                    >
+                      <Icons.flag className="h-4 w-4" />
+                    </a>
+                  )}
                   {isWallOwner && !p.mine && (
                     <button
                       onClick={() => toggleBlockAuthor(p)}
                       disabled={blockBusyId != null}
                       className="text-[11px] px-2 py-0.5 rounded-full border border-white/10 text-gray-500 hover:text-white hover:border-white/30 transition disabled:opacity-50"
-                      title={blockedPosts[String(p.id)] ? 'Unblock this commenter' : 'Block this commenter'}
+                      title={isAuthorBlocked(p) ? 'Unblock this commenter' : 'Block this commenter'}
                     >
-                      {blockedPosts[String(p.id)] ? 'Unblock' : 'Block'}
+                      {isAuthorBlocked(p) ? 'Unblock' : 'Block'}
                     </button>
                   )}
                   {(isWallOwner || p.mine) && (

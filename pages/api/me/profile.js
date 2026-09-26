@@ -18,6 +18,14 @@ import { findCircumventionInTags } from '../../../lib/listings-store';
 import { PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { getAddress } from 'viem';
 import { parseCategoriesInput } from '../../../lib/categories';
+import { consumeAttempt } from '../../../lib/rate-limit';
+
+// Every save screens each changed field and the tag list (several regex
+// passes each), and the dashboard saves on a button press, not per keystroke:
+// 60 in 15 minutes is far above any real editing session and still stops a
+// loop of saves from pinning a function (round-8 accounts#3).
+const SAVES_PER_WINDOW = 60;
+const SAVE_WINDOW_MS = 15 * 60 * 1000;
 
 const FIELD_LABELS = {
   name: 'Display name',
@@ -48,6 +56,15 @@ export default async function handler(req, res) {
 
   const ctx = await requireCreatorOwner(req, res);
   if (!ctx) return;
+
+  const { limited, retryAfterSeconds } = consumeAttempt(`me-profile:creator:${ctx.creator.id}`, {
+    limit: SAVES_PER_WINDOW,
+    windowMs: SAVE_WINDOW_MS,
+  });
+  if (limited) {
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({ error: 'Too many profile saves in a short time. Please wait a few minutes and try again.' });
+  }
 
   const { fields } = req.body || {};
   // `key in fields` throws a TypeError on a string or number, which surfaced

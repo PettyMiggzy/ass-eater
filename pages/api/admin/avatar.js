@@ -4,6 +4,7 @@ import { mediaSrc, parseMediaPathname, verifyUploadedBlob, deleteUnfinalizedUplo
 import { resolvePerformerAttestation } from '../../../lib/performer-attestation';
 import { preserveMediaForReportTx, recordNciiTakedown, nciiReportExists, normalizeNciiCategory, NCII_REPORT_NOT_FOUND } from '../../../lib/ncii-reports-store';
 import { movePreservedToEvidence } from '../../../lib/media-preservation';
+import { MEDIA_UPLOAD_EXPIRED, MEDIA_UPLOAD_EXPIRED_MESSAGE } from '../../../lib/media-refs';
 
 const AVATAR_PLACEHOLDER = '/images/avatar-placeholder.png';
 
@@ -125,6 +126,10 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, creator });
   } catch (err) {
     if (err instanceof MediaRejected) return res.status(err.status).json({ error: err.message });
+    // The upload was already deleted (reaped by the sweep, or refused and
+    // tombstoned earlier): same 409 as every other finalize route, so the
+    // admin is told to upload again instead of retrying a dead pathname.
+    if (err.code === MEDIA_UPLOAD_EXPIRED) return res.status(409).json({ error: MEDIA_UPLOAD_EXPIRED_MESSAGE });
     console.error('[admin/avatar] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

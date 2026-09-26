@@ -110,8 +110,19 @@ function validAttempt(rec, uid) {
 function readAttempt(uid) {
   if (!uid) return null;
   try {
-    const rec = validAttempt(JSON.parse(localStorage.getItem(ATTEMPT_STORAGE_PREFIX + uid) || 'null'), uid);
+    const storageKey = ATTEMPT_STORAGE_PREFIX + uid;
+    const raw = localStorage.getItem(storageKey);
+    let stored = null;
+    try { stored = JSON.parse(raw || 'null'); } catch { stored = null; }
+    const rec = validAttempt(stored, uid);
     if (rec) return rec;
+    // A record validAttempt rejects -- a settled attempt past
+    // ATTEMPT_MAX_AGE_MS, or one that is malformed -- is deleted, not just
+    // ignored: Privacy section 5 says a refused checkout's record is kept
+    // for up to 24 hours, and ignoring it left it on the device (keyed by
+    // this account's id) indefinitely. An uncertain record never gets here
+    // on age alone (validAttempt keeps it until the server has answered).
+    if (raw !== null) localStorage.removeItem(storageKey);
     // An attempt stored before attempts were per-account has no owner. Adopt
     // it for whoever is signed in now: the server only ever answers about the
     // caller's own keys, so the worst case is it reads "not claimed" and ages

@@ -2,7 +2,7 @@ import { ageVerificationSecret } from '../../../lib/age-verification';
 import { createWalletNonce, NONCE_TTL_SECONDS } from '../../../lib/wallet-auth';
 import { holderProofMessage, HOLDER_NONCE_COOKIE_NAME } from '../../../lib/token-gate';
 import { holderVerificationLive } from '../../../lib/holder-access';
-import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
+import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 
 /**
  * GET /api/token-gate/nonce -- step one of proving a $ONLYONE holding.
@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     return res.status(501).json({ error: 'Token-gate verification is not available yet.' });
   }
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`token-gate-nonce:ip:${clientIp(req)}`, {
+  const { limited, retryAfterSeconds } = consumeAttempt(`token-gate-nonce:ip:${clientNetwork(req)}`, {
     limit: MAX_PER_IP,
     windowMs: WINDOW_MS,
   });

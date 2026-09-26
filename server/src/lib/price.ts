@@ -81,6 +81,21 @@ export async function getUsdPrice(asset: 'STABLE' | 'ETH' | 'ONLYONE'): Promise<
 }
 
 /**
+ * The price read straight from the oracle/pool, never from the shared Redis
+ * cache. For anything that SIGNS with it (the automatic token burn's slippage
+ * floor): Redis is reachable by every process on the box with no auth, so a
+ * compromised media worker could SET `px:ONLYONE` to an absurd price and
+ * drive a swap's minimum-out to ~0 for a sandwich. Display and deposit
+ * pricing keep the cached getUsdPrice above.
+ */
+export async function getFreshUsdPrice(asset: 'STABLE' | 'ETH' | 'ONLYONE'): Promise<number> {
+  if (asset === 'STABLE') return 1;
+  const px = asset === 'ETH' ? await ethUsd() : await assUsd();
+  if (!Number.isFinite(px) || px <= 0) throw new Error('bad_price');
+  return px;
+}
+
+/**
  * Token units -> whole cents, floored, in integer arithmetic. The float
  * version (Number(raw) / 10**d * px * 100) landed just under the integer for
  * ~6% of exact-cent stablecoin amounts -- 1.15 USDG became 114 cents -- so

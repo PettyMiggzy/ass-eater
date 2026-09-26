@@ -1,5 +1,5 @@
 import { addToWaitlist, isValidWaitlistEmail, normalizeWaitlistRole } from '../../lib/waitlist-store';
-import { consumeAttempt, clientIp } from '../../lib/rate-limit';
+import { consumeAttempt, clientNetwork } from '../../lib/rate-limit';
 
 // Enough that a household or an office behind one address can all sign up,
 // low enough that scripting thousands of junk addresses into the list costs
@@ -31,7 +31,7 @@ export default async function handler(req, res) {
   // teaches whoever wrote it to stop filling that field in.
   if (website) return res.status(200).json({ ok: true });
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`waitlist:ip:${clientIp(req)}`, {
+  const { limited, retryAfterSeconds } = consumeAttempt(`waitlist:ip:${clientNetwork(req)}`, {
     limit: MAX_SIGNUPS_PER_IP,
     windowMs: SIGNUP_WINDOW_MS,
   });

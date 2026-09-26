@@ -1,6 +1,6 @@
 import { getSessionUser } from '../../../../lib/session';
 import { getCreatorById, effectiveCreatorStatus } from '../../../../lib/creators-store';
-import { markOrderShipped } from '../../../../lib/orders-store';
+import { markOrderShipped, ORDER_CLOSED } from '../../../../lib/orders-store';
 
 // Own auth rather than requireCreatorOwner, for the same reason as
 // orders/creator.js: a suspended creator must still be able to ship orders
@@ -31,6 +31,7 @@ export default async function handler(req, res) {
     const order = await markOrderShipped(orderId, creator.id, { carrier: carrier.trim().slice(0, 100), trackingNumber: trackingNumber.trim().slice(0, 100) });
     return res.status(200).json({ ok: true, order });
   } catch (err) {
+    if (err.code === ORDER_CLOSED) return res.status(409).json({ error: err.message, code: err.code });
     if (err.code === 'ADDRESS_UNREADABLE') return res.status(409).json({ error: err.message, code: err.code });
     if (err.message === 'Order not found') return res.status(404).json({ error: err.message });
     if (err.message === 'Only physical orders can be marked shipped') return res.status(400).json({ error: err.message });

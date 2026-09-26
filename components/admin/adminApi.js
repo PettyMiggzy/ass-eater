@@ -33,18 +33,30 @@ export function errorFrom(res, data, fallback) {
   return fallback;
 }
 
+/**
+ * The admin key exactly as it is sent. String.prototype.trim() also strips
+ * NBSP (U+00A0) and BOM (U+FEFF), which fetch leaves on a header value (it only
+ * strips spaces and tabs) -- a key pasted from a doc or chat with one of those
+ * attached would otherwise pass the unlock check (which trims) and then be
+ * refused on every later request, each refusal counting toward the per-IP
+ * lockout in lib/admin-auth.js. Every header this panel sends goes through here.
+ */
+export function adminKeyHeader(adminKey) {
+  return String(adminKey ?? '').trim();
+}
+
 /** POST JSON to an admin route. Returns { res, data } and never throws on a bad body. */
 export async function adminPost(adminKey, url, body) {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+    headers: { 'x-admin-key': adminKeyHeader(adminKey), 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
   });
   return { res, data: await readJson(res) };
 }
 
 export async function adminGet(adminKey, url) {
-  const res = await fetch(url, { headers: { 'x-admin-key': adminKey } });
+  const res = await fetch(url, { headers: { 'x-admin-key': adminKeyHeader(adminKey) } });
   return { res, data: await readJson(res) };
 }
 

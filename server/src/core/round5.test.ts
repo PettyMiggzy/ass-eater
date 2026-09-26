@@ -154,8 +154,8 @@ describe('digital listings', () => {
     const clean = await media(creator, 'READY');
     const m = await conversationMessage(creator, fan, { text: '', priceCents: 0 });
     await prisma.media.create({ data: { ownerId: creator, key: `${src.key}#${m.id}`, sourceMediaId: src.id, mime: 'image/jpeg', status: 'READY', messageId: m.id } });
-    await expect(assertNotDistributed(prisma as any, [src.id])).rejects.toMatchObject({ message: 'media_already_distributed', statusCode: 400 });
-    await expect(assertNotDistributed(prisma as any, [clean.id])).resolves.toBeUndefined();
+    await expect(assertNotDistributed(prisma as any, creator, [src.id])).rejects.toMatchObject({ message: 'media_already_distributed', statusCode: 400 });
+    await expect(assertNotDistributed(prisma as any, creator, [clean.id])).resolves.toBeUndefined();
   });
 });
 

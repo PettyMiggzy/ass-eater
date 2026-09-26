@@ -1,6 +1,6 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { query } from '../../../lib/db';
-import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
+import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 import { normalizeViewerMark, viewerMarkMatches } from '../../../lib/viewer-mark';
 
 const PAGE_SIZE = 1000;
@@ -26,7 +26,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!requireAdminKey(req, res)) return;
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`viewer-mark:ip:${clientIp(req)}`, {
+  const { limited, retryAfterSeconds } = consumeAttempt(`viewer-mark:ip:${clientNetwork(req)}`, {
     limit: MAX_LOOKUPS,
     windowMs: LOOKUP_WINDOW_MS,
   });

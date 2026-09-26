@@ -201,7 +201,12 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
       if (!/^0x[0-9a-fA-F]{64}$/.test(recoverHash.trim())) {
         throw new Error('That doesn’t look like a transaction hash (should start with 0x, 66 characters total)');
       }
-      await proveWallet();
+      // A frozen account can't prove a wallet (the nonce is refused), and
+      // doesn't need to: /api/credits/buy answers a frozen account BEFORE the
+      // sender proof, crediting nothing -- it only reports a hash that was
+      // already credited to this account (alreadyCredited + frozen), so the
+      // fan isn't sent chasing a refund for money already in their balance.
+      if (!frozen) await proveWallet();
       const data = await submitPayment(recoverHash.trim());
       // alreadyCredited: this hash was credited to this account before (a
       // retry after a lost response). That is a success -- show it as one
@@ -262,13 +267,22 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                   This payment was added to your account earlier, so nothing more was added now. Your balance has been refreshed.
                 </p>
               )}
+              {result.frozen && (
+                <p className="text-xs text-red-300 mb-2">
+                  {typeof result.note === 'string' && result.note
+                    ? result.note
+                    : 'Your balance is frozen while the account is suspended or banned.'}
+                </p>
+              )}
               <p className="text-xs text-gray-500 mb-2">(${((Number(result.feeCents) || 0) / 100).toFixed(2)} kept as the {FEES.DEPOSIT_BPS / 100}% deposit fee)</p>
               <p className="text-xs text-gray-500 mb-6">
                 Credits are final: they don&apos;t expire, and they can&apos;t be refunded or cashed out.
               </p>
-              <a href="/marketplace" className="inline-block px-6 py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition">
-                Start spending
-              </a>
+              {!result.frozen && (
+                <a href="/marketplace" className="inline-block px-6 py-3 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition">
+                  Start spending
+                </a>
+              )}
             </div>
           ) : (
             <>
@@ -404,6 +418,11 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                     <p className="text-xs text-gray-400 mb-2">
                       If USDG already left your wallet but the page closed before it confirmed, paste that transaction's hash below and we'll check the chain again — nothing is charged twice.
                     </p>
+                    {frozen && (
+                      <p className="text-xs text-gray-400 mb-2">
+                        While this account is frozen nothing new can be credited; this only checks whether a payment was already added to your balance.
+                      </p>
+                    )}
                     <input
                       value={recoverHash}
                       onChange={(e) => setRecoverHash(e.target.value)}
@@ -413,7 +432,7 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                     {recoverError && <p className="text-xs text-red-400 mb-2">{recoverError}</p>}
                     <button
                       onClick={recover}
-                      disabled={recovering || frozen || !recoverHash.trim() || !paymentsLive}
+                      disabled={recovering || !recoverHash.trim() || !paymentsLive}
                       className="w-full py-2.5 rounded-full border border-white/15 text-gray-300 hover:bg-white/5 text-xs font-semibold transition disabled:opacity-50"
                     >
                       {recovering ? 'Checking…' : 'Verify this transaction'}

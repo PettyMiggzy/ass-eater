@@ -9,10 +9,11 @@ import {
   ACCOUNT_GONE,
   ACCOUNT_FROZEN,
   BELOW_MINIMUM,
+  findPriorDepositCredit,
 } from '../../../lib/deposit';
 import { ageVerificationSecret } from '../../../lib/age-verification';
 import { readWalletNonce, depositProofMessage, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
-import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
+import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
 
 /**
@@ -57,7 +58,7 @@ export default async function handler(req, res) {
     res.setHeader('Retry-After', String(perUser.retryAfterSeconds));
     return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
   }
-  const perIp = consumeAttempt(`credits-buy:ip:${clientIp(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
+  const perIp = consumeAttempt(`credits-buy:ip:${clientNetwork(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
   if (perIp.limited) {
     res.setHeader('Retry-After', String(perIp.retryAfterSeconds));
     return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
@@ -78,10 +79,33 @@ export default async function handler(req, res) {
   // frozen account unless explicitly overridden). There is NO tool that
   // sends USDG back: a refund is a manual on-chain transfer from the payout
   // wallet, done by the owner outside this app.
+  //
+  // A hash ALREADY credited to this account (the credit committed, the
+  // response was lost, and then the account was suspended) is answered as
+  // that credit, not refused: telling the fan it "has not been used" sent
+  // them and support chasing a refund for money already in their (frozen)
+  // balance (round-8 money#1).
   if (isFrozenStanding(await accountStanding(uid))) {
+    let prior = null;
+    try {
+      prior = await findPriorDepositCredit(uid, txHash);
+    } catch (err) {
+      console.error('[credits/buy] prior-credit lookup failed:', err);
+    }
+    if (prior) {
+      return res.status(200).json({
+        ok: true,
+        alreadyCredited: true,
+        frozen: true,
+        creditedCents: prior.creditedCents,
+        feeCents: prior.feeCents,
+        balanceCents: prior.balanceCents,
+        note: 'This payment was already credited to your account. Your balance is frozen while the account is suspended or banned.',
+      });
+    }
     return res.status(403).json({
       code: 'ACCOUNT_FROZEN',
-      error: 'This account is suspended or banned, so credits can’t be added to it. If you already sent USDG, contact support with this transaction hash -- it has not been used.',
+      error: 'This account is suspended or banned, so credits can’t be added to it. If you already sent USDG, contact support with this transaction hash -- it has not been credited to this account.',
     });
   }
 
@@ -131,7 +155,7 @@ export default async function handler(req, res) {
     if (err.code === ACCOUNT_FROZEN) {
       return res.status(403).json({
         code: 'ACCOUNT_FROZEN',
-        error: 'This account is suspended or banned, so credits can’t be added to it. If you already sent USDG, contact support with this transaction hash -- it has not been used.',
+        error: 'This account is suspended or banned, so credits can’t be added to it. If you already sent USDG, contact support with this transaction hash -- it has not been credited to this account.',
       });
     }
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });

@@ -12,7 +12,7 @@ import {
   walletSignInMessage,
   WALLET_NONCE_COOKIE_NAME,
 } from '../../../lib/wallet-auth';
-import { checkRateLimit, clearFailures, clientIp, recordFailure } from '../../../lib/rate-limit';
+import { checkRateLimit, clearFailures, clientNetwork, recordFailure } from '../../../lib/rate-limit';
 
 /**
  * Step two of the wallet owner login: check the signature.
@@ -44,7 +44,7 @@ export default async function handler(req, res) {
   const owner = ownerWalletAddress();
   if (!owner) return res.status(404).json({ error: 'Not found' });
 
-  const bucket = `wallet-access:ip:${clientIp(req)}`;
+  const bucket = `wallet-access:ip:${clientNetwork(req)}`;
   if (checkRateLimit(bucket, { limit: MAX_FAILURES_PER_IP, windowMs: WINDOW_MS }).limited) {
     return res.status(404).json({ error: 'Not found' });
   }

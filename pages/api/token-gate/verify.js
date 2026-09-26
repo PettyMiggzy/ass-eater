@@ -11,7 +11,7 @@ import {
   holderCookieHeader,
   HOLDER_TTL_SECONDS,
 } from '../../../lib/holder-access';
-import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
+import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 
 /**
  * POST /api/token-gate/verify { address, signature }
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
     return res.status(501).json({ error: 'Token-gate verification is not available yet.' });
   }
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`token-gate-verify:ip:${clientIp(req)}`, {
+  const { limited, retryAfterSeconds } = consumeAttempt(`token-gate-verify:ip:${clientNetwork(req)}`, {
     limit: MAX_PER_IP,
     windowMs: WINDOW_MS,
   });

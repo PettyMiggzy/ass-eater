@@ -80,9 +80,42 @@ async function postDeposit(tx: Tx, userId: string, asset: Asset, cents: bigint, 
   await tx.deposit.update({ where: { id: depId }, data: { feeCents } });
 }
 
+/**
+ * Every deposit address on this chain, keyed by lower-cased address. The
+ * log query filters on them, so all of them are needed -- but this process
+ * holds the treasury key and a hard MemoryMax, and the rows come from a
+ * table any .env holder can write: a few million inserted DepositAddress
+ * rows used to OOM-kill the unit on its next 6s scan, over and over. So the
+ * table is COUNTED first and the scan refuses (loudly, without loading
+ * anything) above DEPOSIT_ADDRESS_MAX, and only the three columns used are
+ * read, a page at a time.
+ */
+const DEPOSIT_ADDRESS_MAX = envInt('DEPOSIT_ADDRESS_MAX', 250_000, 1);
+const ADDRESS_PAGE = 10_000;
+export class TooManyDepositAddresses extends Error {}
+type AddrRow = { address: string; userId: string; derivationIndex: number };
 async function addressMap() {
-  const rows = await prisma.depositAddress.findMany({ where: { chainId: CHAIN_ID } });
-  return new Map(rows.map(r => [r.address.toLowerCase(), r]));
+  const n = await prisma.depositAddress.count({ where: { chainId: CHAIN_ID } });
+  if (n > DEPOSIT_ADDRESS_MAX) {
+    throw new TooManyDepositAddresses(`indexer: ${n} deposit addresses on chain ${CHAIN_ID} exceeds DEPOSIT_ADDRESS_MAX=${DEPOSIT_ADDRESS_MAX}; refusing to load them (check the DepositAddress table for injected rows, or raise the limit deliberately)`);
+  }
+  const map = new Map<string, AddrRow>();
+  let cursor: string | undefined;
+  for (;;) {
+    const rows: (AddrRow & { id: string })[] = await prisma.depositAddress.findMany({
+      where: { chainId: CHAIN_ID }, orderBy: { id: 'asc' }, take: ADDRESS_PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: { id: true, address: true, userId: true, derivationIndex: true },
+    });
+    for (const r of rows) {
+      map.set(r.address.toLowerCase(), { address: r.address, userId: r.userId, derivationIndex: r.derivationIndex });
+      // Rows inserted while paging are not a reason to exceed the cap either.
+      if (map.size > DEPOSIT_ADDRESS_MAX) throw new TooManyDepositAddresses(`indexer: more than DEPOSIT_ADDRESS_MAX=${DEPOSIT_ADDRESS_MAX} deposit addresses; refusing`);
+    }
+    if (rows.length < ADDRESS_PAGE) break;
+    cursor = rows[rows.length - 1].id;
+  }
+  return map;
 }
 
 /** A token deposit that could not be priced. Never blocks the indexer; see credit(). */

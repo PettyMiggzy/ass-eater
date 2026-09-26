@@ -129,6 +129,9 @@ const STATUS_LABEL = {
   fulfilled: 'Delivered',
   pending_shipment: 'Preparing to ship',
   shipped: 'Shipped',
+  // An admin closed a paid physical order that can never ship (the seller
+  // was banned or removed first) -- lib/orders-store.js closeUnfulfilledOrder.
+  closed_unfulfilled: 'Closed — not fulfilled',
 };
 
 // The fan-facing half of order history -- the API this calls
@@ -192,6 +195,15 @@ export default function OrdersPage({ sessionUser, viewerMark }) {
                   </div>
                   {o.kind !== 'physical' && DELIVERABLE.has(o.status) && (
                     <DigitalDelivery orderId={o.id} mark={viewerMark} />
+                  )}
+                  {o.kind === 'physical' && o.status === 'closed_unfulfilled' && (
+                    <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-white/10">
+                      {/* closeReason is the admin's internal note (the admin
+                          panel says only that it is "kept on the order"), so
+                          it is not shown here. */}
+                      The seller couldn&apos;t fulfil this order, so it was closed and won&apos;t ship.{' '}
+                      Questions? Email <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> with order #{String(o.id)}.
+                    </p>
                   )}
                   {o.kind === 'physical' && o.status === 'shipped' && (o.carrier || o.trackingNumber) && (
                     <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-white/10">

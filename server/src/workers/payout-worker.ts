@@ -9,6 +9,7 @@ import { CREATOR_STANDING_SELECT, creatorMayBePaid } from '../core/creator-stand
 import { payoutJobId, payoutJobOptions, jobInFlight } from '../core/payout-queue.js';
 import { publish, connection, payoutQueue } from '../lib/redis.js';
 import { registerWorker, onStop, isStopping } from './process-guards.js';
+import { treasuryOutflow, type OutflowJournal } from '../lib/outflow-journal.js';
 
 // How long to wait before concluding that a transaction whose broadcast
 // errored never reached the chain. Long enough for a slow sequencer to have
@@ -131,30 +132,32 @@ async function provablyNeverSent(p: { id: string; txHash: string; nonce: number;
  *    settled by hand (hold + mark_sent, POST /admin/payouts/:id/resolve);
  *  - PAYOUT_DAILY_MAX_CENTS (default $20,000): rolling 24h outflow. A payout
  *    that would cross it is HELD; release it once the window has room.
- * The 24h total is the larger of what this process itself signed (kept in
- * memory, which a database writer cannot rewrite) and what the Payout table
- * records as signed; an attacker can only make the DB figure smaller, and
- * the in-memory figure still counts. A restart resets the in-memory figure,
- * so the per-payout cap is the bound that always holds.
+ * The 24h total is the larger of what this key has signed according to the
+ * outflow journal (lib/outflow-journal.ts: a file in the workers unit's own
+ * 0700 state directory, appended and fsync'd before every broadcast, which a
+ * database writer cannot touch and which survives restarts) and what the
+ * Payout table records as signed. An attacker can only make the DB figure
+ * smaller; the journal figure still counts, across any number of restarts.
+ * It used to be an in-memory list, so every redeploy -- or a crash loop an
+ * attacker could force from the database -- reopened the whole daily window.
+ * If the journal cannot be read, nothing is signed automatically.
  */
 const MAX_PAYOUT_CENTS = envInt('PAYOUT_MAX_CENTS', 500_000, 100);
 const DAILY_MAX_CENTS = envInt('PAYOUT_DAILY_MAX_CENTS', 2_000_000, 100);
 const DAY_MS = 24 * 60 * 60_000;
-const signedHere: { at: number; cents: number }[] = [];
-
-/** Records an outflow this process has signed (called before broadcasting). */
-function noteSigned(cents: number) {
-  const cutoff = Date.now() - DAY_MS;
-  while (signedHere.length && signedHere[0].at < cutoff) signedHere.shift();
-  signedHere.push({ at: Date.now(), cents });
-}
 
 /** Why this payout may not be signed automatically, or null. Exported for tests. */
-export async function outflowLimitReason(payoutId: string, amountCents: number): Promise<string | null> {
+export async function outflowLimitReason(payoutId: string, amountCents: number, journal: OutflowJournal = treasuryOutflow): Promise<string | null> {
   if (!Number.isFinite(amountCents) || amountCents <= 0) return 'held: invalid amount';
   if (amountCents > MAX_PAYOUT_CENTS) return `held: over the per-payout limit (PAYOUT_MAX_CENTS) -- settle by hand`;
+  let here: number;
+  try {
+    here = journal.sumSince('payout', DAY_MS);
+  } catch (e) {
+    console.error('payout: outflow journal unavailable -- holding payouts', (e as Error).message);
+    return 'held: treasury outflow journal unavailable -- fix the workers state directory, then release';
+  }
   const since = Date.now() - DAY_MS;
-  const here = signedHere.filter((e) => e.at >= since).reduce((a, e) => a + e.cents, 0);
   const agg = await prisma.payout.aggregate({
     _sum: { amountCents: true },
     where: { id: { not: payoutId }, signedAt: { gte: new Date(since) }, status: { in: ['PROCESSING', 'SENT', 'FAILED', 'HELD'] } },
@@ -235,12 +238,16 @@ async function processPayoutJob(job: { data: { payoutId: string } }) {
     // Sign, persist the hash, then broadcast -- all under the treasury lock so
     // no other sender (sweep gas top-ups, hedge, burn) takes the same nonce.
     await withTreasuryLock(async () => {
+      // Counted in the outflow journal BEFORE anything is signed: if the
+      // write fails nothing is signed or broadcast (hash stays unset, so the
+      // payout is refunded below -- no money moved), and a crash after it
+      // over-counts, never under-counts.
+      treasuryOutflow.record('payout', Number(p.amountCents), p.id);
       const wallet = treasuryWallet();
       const request = await wallet.prepareTransactionRequest({ to: token.address, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [to, raw] }) });
       const serialized = await wallet.signTransaction(request as any);
       hash = keccak256(serialized);
       nonce = request.nonce;
-      noteSigned(Number(p.amountCents));
       await prisma.payout.update({ where: { id: p.id }, data: { txHash: hash, nonce, signedAt: new Date(), assetAmount: raw.toString(), priceUsed: px } });
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
     });

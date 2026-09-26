@@ -369,6 +369,11 @@ export default function Inbox({ currentUserId, isCreator }) {
       setOpen((prev) => (prev && prev.conversationId === target
         ? { ...prev, blockedByMe: !!data?.conversation?.blockedByMe, blockedByThem: !!data?.conversation?.blockedByThem }
         : prev));
+      // The list row too: its "Blocked" label (a block-only row has no last
+      // message to show instead) must not outlive the block.
+      setConversations((list) => list.map((c) => (c.id === target
+        ? { ...c, blockedByMe: !!data?.conversation?.blockedByMe, blockedByThem: !!data?.conversation?.blockedByThem }
+        : c)));
       if (openRef.current?.conversationId === target) setSendNote(next ? `${name} is blocked.` : `${name} is unblocked.`);
       // canSend, cannotSendReason and the price were quoted while the old
       // block state applied (a blocked thread quotes { allowed: false,
@@ -417,7 +422,13 @@ export default function Inbox({ currentUserId, isCreator }) {
                 <ThreadAvatar src={c.other?.img} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-white truncate">{c.other?.name || 'Unknown'}</p>
-                  <p className="text-xs text-gray-500 truncate">{c.lastMessage?.text || ''}</p>
+                  {/* A block-only row (a wall commenter blocked from the
+                      wall, who never messaged) has no messages; it is
+                      listed only to whoever made the block, so they can
+                      lift it here. */}
+                  <p className="text-xs text-gray-500 truncate">
+                    {c.lastMessage?.text || (c.blockedByMe ? 'Blocked' : '')}
+                  </p>
                 </div>
                 {c.unreadCount > 0 && (
                   <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-brand-pink text-white text-[10px] font-bold flex items-center justify-center">
@@ -467,6 +478,9 @@ export default function Inbox({ currentUserId, isCreator }) {
                     >
                       {threadLoading ? 'Loading…' : 'Load earlier messages'}
                     </button>
+                  )}
+                  {!open.messages.length && !threadLoading && (
+                    <p className="text-xs text-gray-500">No messages in this conversation yet.</p>
                   )}
                   {open.messages.map((m) => {
                     const mine = String(m.senderId) === String(currentUserId);

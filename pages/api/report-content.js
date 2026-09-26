@@ -1,5 +1,5 @@
 import { addNciiReport, NCII_FIELD_LIMITS, NCII_CATEGORIES } from '../../lib/ncii-reports-store';
-import { consumeAttempt, clientIp } from '../../lib/rate-limit';
+import { consumeAttempt, clientNetwork } from '../../lib/rate-limit';
 import { sendNciiAlert } from '../../lib/alerts';
 
 // Deliberately generous. This queue is sorted oldest-first and carries a
@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`ncii-report:ip:${clientIp(req)}`, {
+  const { limited, retryAfterSeconds } = consumeAttempt(`ncii-report:ip:${clientNetwork(req)}`, {
     limit: MAX_REPORTS_PER_IP,
     windowMs: REPORT_WINDOW_MS,
   });

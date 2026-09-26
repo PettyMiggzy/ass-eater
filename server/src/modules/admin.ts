@@ -15,7 +15,7 @@ import { Prisma } from '@prisma/client';
 import { storageKeyOf } from '../core/media-key.js';
 import { cancelAuction } from '../core/auctions.js';
 import { CREATOR_STANDING_SELECT, creatorMayBePaid } from '../core/creator-standing.js';
-import { REPORT_TARGETS, messageAndBroadcastSiblings } from '../core/reports.js';
+import { REPORT_TARGETS, messageAndBroadcastSiblings, listReports } from '../core/reports.js';
 
 export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));
@@ -140,8 +140,9 @@ export const admin: FastifyPluginAsync = async (app) => {
     const REJECT = { status: 'REJECTED' as const, hlsKey: null, previewKey: null };
     // The root first, in its own statement, THEN every copy in a second one.
     // A mass DM still delivering writes each new copy in a transaction that
-    // holds the source row FOR SHARE and refuses a source that is no longer
-    // READY (workers/broadcast.ts). So either that copy committed before the
+    // holds the source row locked (FOR UPDATE + a no-op touch, see
+    // workers/broadcast.ts claimSourcesForCopy) and refuses a source that is
+    // no longer READY. So either that copy committed before the
     // root's update could take its row lock -- and the second statement,
     // started after, sees it -- or the worker sees the root REJECTED and
     // stops. One combined statement could miss a copy committed while it
@@ -222,8 +223,27 @@ export const admin: FastifyPluginAsync = async (app) => {
     return out;
   };
 
-  app.get('/reports', async (req: any) =>
-    prisma.report.findMany({ where: { status: (req.query.status ?? 'OPEN') as any }, orderBy: { createdAt: 'asc' }, take: 100 }));
+  // The moderation queue, PAGED (core/reports.ts listReports). It used to be
+  // the 100 oldest rows and nothing else: a widely reported drop (one OPEN
+  // report per fan's copy) filled that window and hid every newer report --
+  // an NCII report on someone else included. Now `limit`/`offset` walk the
+  // whole queue, `total` says how deep it is, reports on content that is
+  // still up come first, and each row says whether its content is already
+  // down (`contentRemoved`, also a filter). `targetType` narrows it.
+  app.get('/reports', async (req: any) => {
+    const q = z.object({
+      status: z.enum(['OPEN', 'ACTIONED', 'DISMISSED']).default('OPEN'),
+      targetType: z.enum(['post', 'message', 'listing', 'user']).optional(),
+      contentRemoved: z.enum(['true', 'false']).optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(100),
+      offset: z.coerce.number().int().min(0).default(0),
+    }).parse(req.query ?? {});
+    const { reports, total } = await listReports({
+      status: q.status, targetType: q.targetType, limit: q.limit, offset: q.offset,
+      contentRemoved: q.contentRemoved === undefined ? undefined : q.contentRemoved === 'true',
+    });
+    return { reports, total, limit: q.limit, offset: q.offset };
+  });
 
   /**
    * What was reported, for the admin deciding on it. Moderation used to be
@@ -323,6 +343,19 @@ export const admin: FastifyPluginAsync = async (app) => {
     }
 
     const takedowns: Awaited<ReturnType<typeof takedownMedia>>[] = [];
+    // The same content's OTHER open reports (by other reporters; for a mass
+    // DM, on ANY subscriber's copy). They are NOT closed by this decision --
+    // the admin chose on this one report and never read theirs, and one of
+    // them may say more than this one did (a possible minor, NCII), which
+    // needs a suspension, a ban or a legal report rather than a takedown
+    // alone. They stay OPEN and are returned below with their reasons;
+    // GET /reports sorts them after live content (contentRemoved) so they
+    // do not bury newer reports. Only a BAN -- the maximum action there is
+    // on this account -- settles them, and then every settled report is
+    // returned with its reason so nothing is closed unseen.
+    let settledTargetIds: string[] = [];
+    type Related = { id: string; reporterId: string; targetId: string; reason: string; createdAt: Date };
+    let settledReports: Related[] = [], openRelatedReports: Related[] = [];
     try {
       if (action !== 'dismiss') {
         // Content comes down for every action but dismiss -- a suspension or
@@ -333,6 +366,7 @@ export const admin: FastifyPluginAsync = async (app) => {
           // edge, and GET /media/:id/url handed out the preview URL to anyone
           // holding the id. Taken down like the message and listing branches.
           await prisma.post.update({ where: { id: r.targetId }, data: { removed: true } });
+          settledTargetIds = [r.targetId];
           const media = await prisma.media.findMany({ where: { postId: r.targetId }, select: { id: true } });
           takedowns.push(...(await takedownRoots(media.map((m) => m.id), req.log)));
         } else if (r.targetType === 'message') {
@@ -366,6 +400,7 @@ export const admin: FastifyPluginAsync = async (app) => {
           ]);
           const media = await prisma.media.findMany({ where: { messageId: { in: ids } }, select: { id: true } });
           takedowns.push(...(await takedownRoots(media.map((m) => m.id), req.log)));
+          settledTargetIds = ids;
         } else if (r.targetType === 'listing') {
           const l = await prisma.listing.findUniqueOrThrow({ where: { id: r.targetId }, select: { saleType: true, status: true } });
           // A live auction is cancelled with the leader's hold returned; a
@@ -373,6 +408,7 @@ export const admin: FastifyPluginAsync = async (app) => {
           // it stops being served to past buyers as well.
           if (l.saleType === 'AUCTION' && l.status === 'ACTIVE') await money(prisma, (tx) => cancelAuction(tx, r.targetId, 'removed_by_admin'));
           else await prisma.listing.updateMany({ where: { id: r.targetId, status: 'ACTIVE' }, data: { status: 'REMOVED' } });
+          settledTargetIds = [r.targetId];
           const media = await prisma.media.findMany({ where: { listingId: r.targetId }, select: { id: true } });
           takedowns.push(...(await takedownRoots(media.map((m) => m.id), req.log)));
           // Its free preview photos too: past buyers can still open the
@@ -392,6 +428,21 @@ export const admin: FastifyPluginAsync = async (app) => {
           }
         }
         if (action !== 'remove_content') await setStatus(owner!, action === 'ban_user' ? 'BANNED' : 'SUSPENDED');
+        // Last, so a failure above reopens this report with the others
+        // still OPEN, and the retry settles them all.
+        if (settledTargetIds.length) {
+          const others = await prisma.report.findMany({
+            where: { targetType: r.targetType, targetId: { in: settledTargetIds }, status: 'OPEN', id: { not: r.id } },
+            select: { id: true, reporterId: true, targetId: true, reason: true, createdAt: true },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          });
+          if (action === 'ban_user' && others.length) {
+            await prisma.report.updateMany({ where: { id: { in: others.map((o) => o.id) }, status: 'OPEN' }, data: { status: 'ACTIONED', resolvedBy: req.user.id } });
+            settledReports = others;
+          } else {
+            openRelatedReports = others;
+          }
+        }
       }
     } catch (err) {
       // Every step above is safe to repeat (takedowns re-reject, status
@@ -400,7 +451,7 @@ export const admin: FastifyPluginAsync = async (app) => {
       throw err;
     }
     const updated = await prisma.report.findUniqueOrThrow({ where: { id: r.id } });
-    return { ...updated, takedowns, takedownOk: takedowns.every((t) => t.ok) };
+    return { ...updated, takedowns, takedownOk: takedowns.every((t) => t.ok), settledReports, openRelatedReports };
   });
 
   // Suspend/ban/reactivate, with everything that implies (payout freeze,

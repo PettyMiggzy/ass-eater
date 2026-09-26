@@ -12,7 +12,7 @@ import {
   PROFILE_MEDIA_TARGETS,
 } from '../../../lib/reports-store';
 import { removeGalleryItem, setCreatorAvatar, GALLERY_ITEM_GONE } from '../../../lib/creators-store';
-import { markListingRemoved, getListingById } from '../../../lib/listings-store';
+import { takeDownListing } from '../../../lib/listings-store';
 import { deleteWallPost } from '../../../lib/wall-store';
 import { removeConversationMessage } from '../../../lib/messages-store';
 import { preserveMedia, movePreservedToEvidence, reportRef, heldPathsForReport } from '../../../lib/media-preservation';
@@ -161,30 +161,31 @@ export default async function handler(req, res) {
           }
         } else if (report.targetType === 'listing') {
           const targetId = normalizeTargetId(report.targetId);
-          if (targetId && report.category === 'minor') {
+          // Preservation and takedown in ONE transaction, with the listing
+          // read under its file and row locks (lib/listings-store.js
+          // takeDownListing): a file the seller finalized after an unlocked
+          // read used to be missed by the quarantine and then deleted by the
+          // takedown (round-8 media#1).
+          const minor = report.category === 'minor';
+          const held = minor ? (await heldPathsForReport(reportRef('report', report.id))).map(mediaSrc) : [];
+          const out = await takeDownListing(targetId, {
             // Every file the report has held since it was filed (the seller
             // may have removed some from the listing meanwhile) plus what the
-            // listing carries now.
-            const listing = await getListingById(targetId);
-            const held = (await heldPathsForReport(reportRef('report', report.id))).map(mediaSrc);
-            const files = [
-              ...held,
-              ...(Array.isArray(report.reportedContent?.media) ? report.reportedContent.media : []),
-              ...(Array.isArray(listing?.media) ? listing.media : []),
-              ...(Array.isArray(listing?.retainedMedia) ? listing.retainedMedia : []),
-            ];
-            preserved = (await withTransaction(async (c) => {
-              const out = await preserveMedia(files, { reportId: reportRef('report', report.id), reason: `possible minor report (in-product) #${report.id}: listing ${targetId}`, client: c });
-              // The preservation supersedes the hold.
-              await releaseReportHolds(report.id, c);
-              return out;
-            })).length;
-          }
-          if (targetId && await markListingRemoved(targetId)) {
-            contentNote = 'removed';
-          } else {
-            contentNote = 'already_gone';
-          }
+            // listing carries now (added by takeDownListing from the locked row).
+            extraItems: minor
+              ? [...held, ...(Array.isArray(report.reportedContent?.media) ? report.reportedContent.media : [])]
+              : [],
+            preserve: minor
+              ? async (c, items) => {
+                const kept = await preserveMedia(items, { reportId: reportRef('report', report.id), reason: `possible minor report (in-product) #${report.id}: listing ${targetId}`, client: c });
+                // The preservation supersedes the hold.
+                await releaseReportHolds(report.id, c);
+                return kept;
+              }
+              : null,
+          });
+          preserved = out.preserved.length;
+          contentNote = out.removed ? 'removed' : 'already_gone';
         } else if (PROFILE_MEDIA_TARGETS.includes(report.targetType)) {
           const creatorId = normalizeTargetId(report.targetId);
           const src = typeof report.src === 'string' ? report.src : null;

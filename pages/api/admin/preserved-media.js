@@ -1,8 +1,6 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { listPreservedMedia, sendPreservedMedia } from '../../../lib/media-preservation';
-import { preserveMediaForReport, NCII_REPORT_NOT_FOUND } from '../../../lib/ncii-reports-store';
-import { getCreatorById } from '../../../lib/creators-store';
-import { query } from '../../../lib/db';
+import { preserveMediaForReport, preserveCreatorMediaForReport, NCII_REPORT_NOT_FOUND, NCII_CREATOR_NOT_FOUND } from '../../../lib/ncii-reports-store';
 
 /**
  * Preserved evidence (lib/media-preservation.js). Admin key header ONLY --
@@ -60,21 +58,22 @@ export default async function handler(req, res) {
   }
 
   try {
-    const items = [...srcs];
     if (creatorId !== undefined && creatorId !== null && creatorId !== '') {
-      const creator = await getCreatorById(String(creatorId));
-      if (!creator) return res.status(404).json({ error: 'Creator not found' });
-      items.push(creator.img, creator.video, ...(Array.isArray(creator.gallery) ? creator.gallery : []));
-      const { rows } = await query(`select data from listings where data->>'creatorId' = $1`, [String(creator.id)]);
-      for (const r of rows) {
-        items.push(...(Array.isArray(r.data?.media) ? r.data.media : []), ...(Array.isArray(r.data?.retainedMedia) ? r.data.retainedMedia : []));
-      }
+      // The creator's avatar, video, gallery and every listing file are read
+      // INSIDE the preservation's transaction, under their locks
+      // (lib/ncii-reports-store.js preserveCreatorMediaForReport): an unlocked
+      // read here used to miss a file finalized a moment later, which the
+      // removal that follows then deleted (round-8 media#1).
+      if (!/^[1-9][0-9]{0,17}$/.test(String(creatorId))) return res.status(404).json({ error: 'Creator not found' });
+      const out = await preserveCreatorMediaForReport(reportId, String(creatorId), srcs);
+      return res.status(200).json({ ok: true, ...out });
     }
-    if (!items.length) return res.status(400).json({ error: 'Nothing to preserve' });
-    const out = await preserveMediaForReport(reportId, items);
+    if (!srcs.length) return res.status(400).json({ error: 'Nothing to preserve' });
+    const out = await preserveMediaForReport(reportId, srcs);
     return res.status(200).json({ ok: true, ...out });
   } catch (err) {
     if (err.code === NCII_REPORT_NOT_FOUND) return res.status(404).json({ error: 'Report not found' });
+    if (err.code === NCII_CREATOR_NOT_FOUND) return res.status(404).json({ error: 'Creator not found' });
     console.error('[admin/preserved-media] preserve failed:', err);
     return res.status(500).json({ error: 'Something went wrong. Nothing was removed -- please try again.' });
   }

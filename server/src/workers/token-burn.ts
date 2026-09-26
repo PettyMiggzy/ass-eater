@@ -1,7 +1,8 @@
 import { encodeFunctionData, parseAbi, parseUnits, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
 import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, sendTreasuryTx, resolveTreasuryTx, onlyOneBurnedIn, DEAD_ADDRESS } from '../lib/chain.js';
-import { getUsdPrice } from '../lib/price.js';
+import { getFreshUsdPrice } from '../lib/price.js';
+import { treasuryOutflow, type OutflowJournal } from '../lib/outflow-journal.js';
 
 /**
  * Buys $ONLYONE on the open market with VIP revenue and destroys it.
@@ -52,6 +53,16 @@ const INTERVAL_MS = envInt('TOKEN_BURN_INTERVAL_MS', 15 * 60_000, 60_000);
 const MIN_BATCH_CENTS = BigInt(envInt('TOKEN_BURN_MIN_CENTS', 5000, 0));
 // Accepting any amount out would hand a sandwich bot the whole batch.
 const MAX_SLIPPAGE_BPS = BigInt(envInt('TOKEN_BURN_MAX_SLIPPAGE_BPS', 300, 0, 10_000));
+// Outflow caps, from this process's environment and never from the database
+// (same reasoning as the payout worker's -- workers/payout-worker.ts
+// outflowLimitReason): the obligations this loop spends on are TokenBurn rows
+// any .env holder can INSERT. One swap never spends more than the batch cap,
+// and the rolling 24h total -- counted in the restart-proof outflow journal
+// (lib/outflow-journal.ts) -- never more than the daily cap. An obligation
+// bigger than the batch cap is never bought automatically: burn it by hand
+// (POST /admin/token-burns/record).
+const BATCH_MAX_CENTS = envInt('TOKEN_BURN_BATCH_MAX_CENTS', 200_000, 1);
+const DAILY_MAX_CENTS = envInt('TOKEN_BURN_DAILY_MAX_CENTS', 500_000, 1);
 
 // Not address(0): many ERC-20s reject transfers to it, which would revert the
 // burn rather than perform it. 0x…dEaD is the conventional sink and is
@@ -103,9 +114,16 @@ export async function runBurnBatch() {
   await assertStableDecimals();
   if (!(await settleInFlightBurn())) return;
 
-  const pending = await prisma.tokenBurn.findMany({ where: { executedAt: null, pendingTxHash: null }, orderBy: { createdAt: 'asc' }, take: 500 });
-  if (!pending.length) return;
+  const candidates = await prisma.tokenBurn.findMany({ where: { executedAt: null, pendingTxHash: null }, orderBy: { createdAt: 'asc' }, take: 500 });
+  if (!candidates.length) return;
 
+  const room = burnRoomCents();
+  if (room <= 0n) return;
+  const pending = selectBurnBatch(candidates, room);
+  if (pending.length < candidates.length) {
+    console.warn(`token-burn: ${candidates.length - pending.length} obligation(s) left for a later batch or a manual burn (TOKEN_BURN_BATCH_MAX_CENTS / TOKEN_BURN_DAILY_MAX_CENTS)`);
+  }
+  if (!pending.length) return;
   const totalCents = pending.reduce((sum, r) => sum + r.usdCents, 0n);
   if (totalCents < MIN_BATCH_CENTS) return;
 
@@ -156,6 +174,10 @@ export async function runBurnBatch() {
   });
   // Persist the hash on exactly these rows BEFORE broadcasting (see header).
   const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce) => {
+    // Counted before the hash is persisted or anything is broadcast; a
+    // failure here aborts the send (sendTreasuryTx broadcasts only after
+    // this callback returns).
+    treasuryOutflow.record('burn', Number(totalCents), h);
     const claimed = await prisma.tokenBurn.updateMany({
       where: { id: { in: ids }, executedAt: null, pendingTxHash: null },
       data: { pendingTxHash: h, pendingNonce: nonce, pendingSince: new Date() },
@@ -176,6 +198,38 @@ export async function runBurnBatch() {
   console.log(`token-burn: swap ${hash} for ${totalCents} cents' worth across ${pending.length} obligations`);
 }
 
+/**
+ * Cents the automatic burn may still spend right now: the batch cap, less
+ * whatever the rolling 24h window has already used. Zero (defer) when the
+ * outflow journal is unavailable -- never swap uncounted.
+ */
+export function burnRoomCents(journal: OutflowJournal = treasuryOutflow, batchMax = BATCH_MAX_CENTS, dailyMax = DAILY_MAX_CENTS): bigint {
+  let used: number;
+  try { used = journal.sumSince('burn'); } catch (e) {
+    console.error('token-burn: outflow journal unavailable, deferring', (e as Error).message);
+    return 0n;
+  }
+  const room = Math.min(batchMax, dailyMax - used);
+  return room > 0 ? BigInt(room) : 0n;
+}
+
+/**
+ * The oldest obligations that fit in `roomCents`, in order. An obligation
+ * that alone exceeds the room is skipped (not the ones after it), so one
+ * oversized -- possibly injected -- row cannot block every real one; it stays
+ * pending for a manual burn.
+ */
+export function selectBurnBatch<T extends { usdCents: bigint }>(rows: T[], roomCents: bigint): T[] {
+  const out: T[] = [];
+  let sum = 0n;
+  for (const r of rows) {
+    if (r.usdCents <= 0n) continue;
+    if (sum + r.usdCents > roomCents) continue;
+    out.push(r); sum += r.usdCents;
+  }
+  return out;
+}
+
 /** Sum of $ONLYONE Transfer amounts to the dead address in a receipt's logs (lib/chain.ts onlyOneBurnedIn). */
 export function tokensSentToDead(logs: { address: string; topics: readonly `0x${string}`[] | `0x${string}`[]; data: `0x${string}` }[]): bigint {
   return onlyOneBurnedIn(logs);
@@ -189,20 +243,22 @@ export function tokensSentToDead(logs: { address: string; topics: readonly `0x${
  * Deliberately conservative rather than clever: no quote is taken, so this is
  * only a sanity floor derived from the configured slippage cap.
  *
- * Uses the real price oracle (getUsdPrice, lib/price.ts) rather than reading
+ * Uses the real price oracle (getFreshUsdPrice, lib/price.ts) rather than reading
  * ONLYONE_PRICE_OVERRIDE directly -- that env var is documented as pre-launch
- * only, and getUsdPrice already falls back to it before reading the live pool
+ * only, and the oracle already falls back to it before reading the live pool
  * once it's unset. Reading the raw env var here meant this function silently
  * went back to computing spot=0 the moment the override was removed for a
  * real launch, at which point runBurnBatch (below) would have sent the swap
  * with amountOutMinimum: 0 -- zero slippage protection on a real batch, the
- * exact sandwich risk this function exists to prevent. getUsdPrice throwing
+ * exact sandwich risk this function exists to prevent. The price throwing
  * (a stale oracle, no pool configured, an RPC hiccup) now propagates up to
  * runBurnBatch, which must defer the whole batch rather than treat "no price"
  * as "assume zero minimum and swap anyway".
  */
 async function minimumOut(amountIn: bigint): Promise<bigint> {
-  const spot = await getUsdPrice('ONLYONE');
+  // Fresh from the pool, never the shared Redis cache (lib/price.ts
+  // getFreshUsdPrice): an inflated cached price would drive this floor to ~0.
+  const spot = await getFreshUsdPrice('ONLYONE');
   const dollars = Number(amountIn) / 10 ** HEDGE_STABLE.decimals;
   const expected = parseUnits((dollars / spot).toFixed(TOKENS.ONLYONE.decimals), TOKENS.ONLYONE.decimals);
   return (expected * (10_000n - MAX_SLIPPAGE_BPS)) / 10_000n;

@@ -16,6 +16,14 @@ export const REPORT_TARGETS: ReportTarget[] = ['post', 'message', 'listing', 'us
  * has looked) must not bury the queue in copies of one complaint.
  */
 export async function fileReport(reporterId: string, targetType: ReportTarget, targetId: string, reason: string) {
+  // A report on content that is ALREADY taken down (a blanked mass-DM copy, a
+  // removed post) is still filed and kept OPEN: taking the content down is
+  // not the end of moderation -- a later report can carry what the first did
+  // not (a possible minor, NCII), which needs a suspension, a ban or a legal
+  // report. It used to be dropped here with no row at all. The queue stays
+  // usable instead through listReports: reports on already-removed content
+  // sort after live ones and carry contentRemoved, so they cannot bury a
+  // report on something still up.
   const open = () => prisma.report.findFirst({ where: { reporterId, targetType, targetId, status: 'OPEN' } });
   const existing = await open();
   if (existing) return { ...existing, already: true };
@@ -92,4 +100,52 @@ export async function blankBroadcast(senderId: string, broadcastId: string) {
     prisma.message.updateMany({ where: { id: { in: ids } }, data: { text: '', priceCents: 0 } }),
     prisma.media.updateMany({ where: { messageId: { in: ids } }, data: { status: 'REJECTED', hlsKey: null, previewKey: null } }),
   ]);
+}
+
+export type ReportListQuery = {
+  status: 'OPEN' | 'ACTIONED' | 'DISMISSED';
+  targetType?: ReportTarget;
+  /** true: only reports whose content is already down; false: only live ones; undefined: both. */
+  contentRemoved?: boolean;
+  limit: number;
+  offset: number;
+};
+
+/**
+ * The moderation queue, paged, each report marked `contentRemoved` when what
+ * it points at is already down: a removed post, a REMOVED listing, a BANNED
+ * user, or a message whose content was taken down (for a mass DM, ANY copy's
+ * report ACTIONED or any copy's media REJECTED -- broadcastTakenDown; for a
+ * single DM, an ACTIONED report on it).
+ *
+ * Ordered live-first, then oldest-first: one widely reported drop (a report
+ * per subscriber's copy, left OPEN so every reason is still read) cannot
+ * push a report on content that is still up behind it. Nothing is hidden
+ * or auto-closed -- `contentRemoved=false` narrows to what still needs a
+ * takedown, `true` to what needs only a decision on the reporter's reason.
+ */
+export async function listReports(q: ReportListQuery) {
+  const removed = Prisma.sql`CASE r."targetType"
+      WHEN 'post' THEN EXISTS (SELECT 1 FROM "Post" p WHERE p.id = r."targetId" AND p.removed)
+      WHEN 'listing' THEN EXISTS (SELECT 1 FROM "Listing" l WHERE l.id = r."targetId" AND l.status = 'REMOVED')
+      WHEN 'user' THEN EXISTS (SELECT 1 FROM "User" u WHERE u.id = r."targetId" AND u.status = 'BANNED')
+      WHEN 'message' THEN EXISTS (
+        SELECT 1 FROM "Message" m JOIN "Message" s
+          ON s.id = m.id OR (m."broadcastId" IS NOT NULL AND s."senderId" = m."senderId" AND s."broadcastId" = m."broadcastId")
+        WHERE m.id = r."targetId" AND (
+          EXISTS (SELECT 1 FROM "Report" r2 WHERE r2."targetType" = 'message' AND r2."targetId" = s.id AND r2.status = 'ACTIONED')
+          OR (m."broadcastId" IS NOT NULL AND EXISTS (SELECT 1 FROM "Media" md WHERE md."messageId" = s.id AND md.status = 'REJECTED'))))
+      ELSE false END`;
+  const conds: Prisma.Sql[] = [Prisma.sql`r.status = ${q.status}::"ReportStatus"`];
+  if (q.targetType) conds.push(Prisma.sql`r."targetType" = ${q.targetType}`);
+  const base = Prisma.sql`SELECT r.*, (${removed}) AS "contentRemoved" FROM "Report" r WHERE ${Prisma.join(conds, ' AND ')}`;
+  const filter = q.contentRemoved === undefined ? Prisma.empty : Prisma.sql`WHERE q."contentRemoved" = ${q.contentRemoved}`;
+  const [reports, count] = await Promise.all([
+    prisma.$queryRaw<Array<Record<string, unknown> & { contentRemoved: boolean }>>`
+      SELECT * FROM (${base}) q ${filter}
+      ORDER BY q."contentRemoved" ASC, q."createdAt" ASC, q.id ASC
+      LIMIT ${q.limit} OFFSET ${q.offset}`,
+    prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM (${base}) q ${filter}`,
+  ]);
+  return { reports, total: Number(count[0]?.n ?? 0) };
 }

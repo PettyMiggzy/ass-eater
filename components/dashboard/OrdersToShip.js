@@ -61,6 +61,14 @@ export default function OrdersToShip() {
         carrier: carrier.trim(),
         trackingNumber: trackingNumber.trim(),
       });
+      if (res.status === 409 && data?.code === 'ORDER_CLOSED') {
+        // An admin closed it (the order can never be fulfilled) while it was
+        // on screen: show the refusal and re-read the queue, so it moves out
+        // of "waiting to ship" instead of staying there with a live button.
+        setError(responseErrorMessage(res.status, data, 'This order was closed and can no longer be shipped.'));
+        await load();
+        return;
+      }
       if (!res.ok || !data?.order) throw new Error(responseErrorMessage(res.status, data, 'Failed to mark shipped'));
       setOrders((list) => list.map((o) => (o.id === orderId ? data.order : o)));
     } catch (err) {
@@ -72,6 +80,11 @@ export default function OrdersToShip() {
 
   const pending = orders.filter((o) => o.status === 'pending_shipment');
   const shipped = orders.filter((o) => o.status === 'shipped');
+  // Closed by an admin as never fulfillable (lib/orders-store.js
+  // closeUnfulfilledOrder -- e.g. the seller was banned before shipping).
+  // Nothing to ship, and the address is no longer shared (toCreatorOrder
+  // decrypts it only while pending_shipment).
+  const closed = orders.filter((o) => o.status === 'closed_unfulfilled');
 
   return (
     <div>
@@ -157,6 +170,19 @@ export default function OrdersToShip() {
               <div className="mt-2 space-y-1">
                 {shipped.map((o) => (
                   <p key={o.id}>Order #{o.id} — <OrderItem o={o} /> — {o.carrier} {o.trackingNumber}</p>
+                ))}
+              </div>
+            </details>
+          )}
+          {closed.length > 0 && (
+            <details className="text-xs text-gray-500">
+              <summary className="cursor-pointer">Closed — not fulfilled ({closed.length})</summary>
+              <div className="mt-2 space-y-1">
+                {closed.map((o) => (
+                  <p key={o.id}>
+                    {/* The admin's closeReason is an internal note, not shown. */}
+                    Order #{o.id} — <OrderItem o={o} /> — closed by OnlyOne; don&apos;t ship it.
+                  </p>
                 ))}
               </div>
             </details>

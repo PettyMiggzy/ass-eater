@@ -10,6 +10,7 @@ import {
   errorFrom,
   adminPost,
   adminGet,
+  adminKeyHeader,
   adminUploadMedia,
   dollars,
   describeObligation,
@@ -105,7 +106,7 @@ export default function AdminPanel() {
   // uploaded avatar and gallery item in this panel is a broken image.
   const startMediaSession = async (key) => {
     try {
-      const res = await fetch('/api/admin/media-session', { method: 'POST', headers: { 'x-admin-key': key } });
+      const res = await fetch('/api/admin/media-session', { method: 'POST', headers: { 'x-admin-key': adminKeyHeader(key) } });
       setMediaSessionOk(res.ok);
       return res.ok;
     } catch {
@@ -142,6 +143,10 @@ export default function AdminPanel() {
     await startMediaSession(key);
     loadNciiSummary(key);
     loadAlertsStatus(key);
+    // Keep the key that passed the check: every later request (saves, the
+    // tab panels, the media-session refresh, the takedown poll) reads
+    // `adminKey`, and the untrimmed value would be refused by the server.
+    setAdminKey(key);
     setStatus('');
     setUnlocked(true);
   };
@@ -2825,7 +2830,7 @@ function WaitlistPanel({ adminKey }) {
   const exportCsv = async () => {
     setError('');
     try {
-      const res = await fetch('/api/admin/waitlist?format=csv', { headers: { 'x-admin-key': adminKey } });
+      const res = await fetch('/api/admin/waitlist?format=csv', { headers: { 'x-admin-key': adminKeyHeader(adminKey) } });
       if (!res.ok) throw new Error(errorFrom(res, await readJson(res), 'Export failed'));
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -2848,7 +2853,7 @@ function WaitlistPanel({ adminKey }) {
     try {
       const res = await fetch(`/api/admin/waitlist?id=${encodeURIComponent(id)}`, {
         method: 'DELETE',
-        headers: { 'x-admin-key': adminKey },
+        headers: { 'x-admin-key': adminKeyHeader(adminKey) },
       });
       const data = await readJson(res);
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to remove'));
@@ -3353,6 +3358,10 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   const [showArchived, setShowArchived] = useState(false);
   const [form, setForm] = useState(BLANK_RECORD);
   const [file, setFile] = useState(null);
+  // Bumped whenever the form clears, and used as the file input's key so the
+  // browser forgets the previous selection too. Clearing only `file` left the
+  // input still showing the last ID's name while the next save sent nothing.
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
   // Per-record edit: { id, creatorId, aliases, contentUrls, notes } while open.
@@ -3400,7 +3409,7 @@ function PerformerRecordsPanel({ adminKey, creators }) {
     if (replace) params.set('replace', '1');
     const res = await fetch(`/api/admin/performer-record-document?${params.toString()}`, {
       method: 'POST',
-      headers: { 'x-admin-key': adminKey, 'Content-Type': docFile.type || 'application/octet-stream' },
+      headers: { 'x-admin-key': adminKeyHeader(adminKey), 'Content-Type': docFile.type || 'application/octet-stream' },
       body: docFile,
     });
     return { res, data: await readJson(res) };
@@ -3523,6 +3532,7 @@ function PerformerRecordsPanel({ adminKey, creators }) {
       setForm(BLANK_RECORD);
       const docFile = file;
       setFile(null);
+      setFileInputKey((k) => k + 1);
       if (docFile) {
         const up = await uploadDocument(data.record.id, docFile);
         if (!up.res.ok) {
@@ -3544,7 +3554,7 @@ function PerformerRecordsPanel({ adminKey, creators }) {
     setBusyId(id);
     setError('');
     try {
-      const res = await fetch(`/api/admin/performer-record-document?id=${encodeURIComponent(id)}`, { headers: { 'x-admin-key': adminKey } });
+      const res = await fetch(`/api/admin/performer-record-document?id=${encodeURIComponent(id)}`, { headers: { 'x-admin-key': adminKeyHeader(adminKey) } });
       if (!res.ok) {
         throw new Error(errorFrom(res, await readJson(res), 'Could not open that document'));
       }
@@ -3698,7 +3708,7 @@ function PerformerRecordsPanel({ adminKey, creators }) {
           <span className="block text-xs text-gray-400 mb-1">
             Photo ID — JPEG, PNG, WebP, HEIC or PDF, under 4MB. Encrypted; never served publicly.
           </span>
-          <input type="file" accept="image/*,application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)}
+          <input key={fileInputKey} type="file" accept="image/*,application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)}
             className="w-full text-sm text-gray-300 file:mr-3 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-brand-pink file:text-white file:text-sm file:font-semibold" />
         </label>
 
@@ -4196,9 +4206,102 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
         )}
       </div>
 
+      <OrderClosePanel adminKey={adminKey} />
+
       <OrderAddressErasePanel adminKey={adminKey} />
 
       <StandingPushesPanel adminKey={adminKey} />
+    </div>
+  );
+}
+
+/**
+ * A paid physical order whose seller was banned or deleted can never ship,
+ * and while it sits in 'pending_shipment' its shipping address can't be erased
+ * and its buyer can't delete their account. POST /api/admin/order-close
+ * { orderId, reason, eraseAddress? } moves it to 'closed_unfulfilled' (only
+ * from pending_shipment; 409 otherwise), keeps the reason on the order and
+ * notifies the buyer. No credits move: re-crediting the buyer is a separate,
+ * explicit owner decision, not part of this action.
+ */
+const MAX_CLOSE_REASON_CHARS = 500;
+
+function OrderClosePanel({ adminKey }) {
+  const [orderId, setOrderId] = useState('');
+  const [reason, setReason] = useState('');
+  const [eraseAddress, setEraseAddress] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const close = async () => {
+    const id = orderId.trim();
+    const why = reason.trim();
+    setError('');
+    setNotice('');
+    if (!/^[1-9][0-9]{0,17}$/.test(id)) { setError('Enter the order number, a plain number like 42.'); return; }
+    if (!why) { setError('Give a reason for closing the order. It is kept on the order.'); return; }
+    if (reason.length > MAX_CLOSE_REASON_CHARS) { setError(`Keep the reason under ${MAX_CLOSE_REASON_CHARS} characters.`); return; }
+    if (!confirm(
+      `Close order #${id} as not fulfilled? The buyer is notified and the seller can no longer ship it. `
+      + 'No credits are returned by this action.'
+      + (eraseAddress ? ' The shipping name and address are also erased, permanently.' : ''),
+    )) return;
+    setBusy(true);
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/order-close', { orderId: id, reason: why, eraseAddress });
+      if (res.status === 404) throw new Error(`There is no order #${id}.`);
+      if (res.status === 409) throw new Error(errorFrom(res, data, `Order #${id} is not a physical order waiting to ship, so it was not closed.`));
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not close the order'));
+      const at = data.closedAt ? ` (${new Date(data.closedAt).toLocaleString()})` : '';
+      setNotice(`Order #${id} closed as not fulfilled${at}.${data.erased ? ' Its shipping address was erased.' : ''}`);
+      setOrderId('');
+      setReason('');
+      setEraseAddress(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="premium-card p-5">
+      <p className="font-bold text-white mb-1">Close an order that can&apos;t be fulfilled</p>
+      <p className="text-xs text-gray-500 mb-3">
+        For a paid physical order whose seller was banned or deleted. Works only on an order still waiting to ship.
+        The buyer gets a notice; no credits are returned by this action.
+      </p>
+      <div className="space-y-2">
+        <input
+          value={orderId}
+          onChange={(e) => setOrderId(e.target.value)}
+          inputMode="numeric"
+          placeholder="Order number"
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm w-40"
+        />
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={MAX_CLOSE_REASON_CHARS}
+          rows={2}
+          placeholder="Reason (kept on the order)"
+          className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+        />
+        <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+          <input type="checkbox" checked={eraseAddress} onChange={(e) => setEraseAddress(e.target.checked)} />
+          Also erase the shipping name and address (permanent)
+        </label>
+        <button
+          onClick={close}
+          disabled={busy || !orderId.trim() || !reason.trim()}
+          className="text-xs px-3 py-2 rounded-md border border-red-500/60 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50"
+        >
+          {busy ? 'Closing…' : 'Close order…'}
+        </button>
+      </div>
+      {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
+      {notice && <p className="text-sm text-green-400 mt-2">{notice}</p>}
     </div>
   );
 }
@@ -4208,9 +4311,11 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
  * ask for its shipping name and address to be deleted
  * (POST /api/admin/order-address-erase { orderId }). The order record stays;
  * only the address goes, and it cannot be undone. The server refuses (409) an
- * order still waiting to ship -- the creator needs the address to send it --
- * and answers erased:false when there is nothing left to erase. A fan who
- * deletes their own account has this done for every shipped order already.
+ * order still waiting to ship -- the creator needs the address to send it
+ * (close it first with OrderClosePanel if it never will) -- and answers
+ * erased:false when there is nothing left to erase. A closed order counts as
+ * settled. A fan who deletes their own account has this done for every
+ * shipped or closed order already.
  */
 function OrderAddressErasePanel({ adminKey }) {
   const [orderId, setOrderId] = useState('');
@@ -4231,7 +4336,7 @@ function OrderAddressErasePanel({ adminKey }) {
     try {
       const { res, data } = await adminPost(adminKey, '/api/admin/order-address-erase', { orderId: id });
       if (res.status === 404) throw new Error(`There is no order #${id}.`);
-      if (res.status === 409) throw new Error(`Order #${id} has not shipped yet, so its address is still needed and was not erased.`);
+      if (res.status === 409) throw new Error(`Order #${id} is still waiting to ship, so its address is still needed and was not erased. If it can never ship, close it first.`);
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not erase the address'));
       const at = data.addressErasedAt ? ` (erased ${new Date(data.addressErasedAt).toLocaleString()})` : '';
       setNotice(data.erased
@@ -4249,8 +4354,8 @@ function OrderAddressErasePanel({ adminKey }) {
     <div className="premium-card p-5">
       <p className="font-bold text-white mb-1">Erase a shipped order&apos;s shipping address</p>
       <p className="text-xs text-gray-500 mb-3">
-        For a buyer&apos;s request under Privacy Policy section 7. Works only on an order that has already shipped; the
-        order itself is kept. Permanent.
+        For a buyer&apos;s request under Privacy Policy section 7. Works only on an order that has already shipped or
+        was closed as not fulfilled; the order itself is kept. Permanent.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -4405,7 +4510,7 @@ function EvidencePanel({ adminKey }) {
     setError('');
     try {
       const res = await fetch(`/api/admin/preserved-media?pathname=${encodeURIComponent(item.pathname)}&download=1`, {
-        headers: { 'x-admin-key': adminKey },
+        headers: { 'x-admin-key': adminKeyHeader(adminKey) },
       });
       if (!res.ok) throw new Error(errorFrom(res, await readJson(res), 'Could not download that file'));
       const blob = await res.blob();

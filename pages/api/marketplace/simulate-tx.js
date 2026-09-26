@@ -30,7 +30,7 @@
  */
 import { encodeFunctionData, getAddress, isAddress } from 'viem';
 import { getVerifiedSessionUserId } from '../../../lib/session';
-import { consumeAttempt, clientIp } from '../../../lib/rate-limit';
+import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 import { getMarketplacePaymentConfig, marketplacePaymentsLive, safetyCheckAvailable } from '../../../lib/marketplace-payment-config';
 import { centsToTokenUnits } from '../../../lib/wallet';
 
@@ -63,7 +63,7 @@ export default async function handler(req, res) {
     res.setHeader('Retry-After', String(perUser.retryAfterSeconds));
     return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
   }
-  const perIp = consumeAttempt(`marketplace-simulate-tx:ip:${clientIp(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
+  const perIp = consumeAttempt(`marketplace-simulate-tx:ip:${clientNetwork(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
   if (perIp.limited) {
     res.setHeader('Retry-After', String(perIp.retryAfterSeconds));
     return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });

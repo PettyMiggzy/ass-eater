@@ -5,7 +5,7 @@ import {
   createAgeVerificationToken,
 } from '../../../lib/age-verification';
 import { claimAgeVerificationUuid } from '../../../lib/age-verification-uses';
-import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
+import { clientNetwork, consumeAttempt } from '../../../lib/rate-limit';
 
 // The client-side AgeChecker popup (pages/verify-age.js) reports "accepted"
 // via a JS callback, but that alone is bypassable -- anyone can fake the
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
   }
 
   // Before the outbound call, or it limits nothing.
-  const { limited, retryAfterSeconds } = consumeAttempt(`age-confirm:ip:${clientIp(req)}`, {
+  const { limited, retryAfterSeconds } = consumeAttempt(`age-confirm:ip:${clientNetwork(req)}`, {
     limit: MAX_PER_IP,
     windowMs: WINDOW_MS,
   });

@@ -8,7 +8,7 @@ import type { Tx } from '../core/ledger.js';
 import { OPERATING_CREATOR_USER_WHERE, creatorMayBePaidById } from '../core/creator-standing.js';
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
-import { assertOwnPublicImages, assertNotPublicImages, publicImageUrls, withProfileImageUrls } from '../core/public-images.js';
+import { assertOwnPublicImages, assertNotPublicImages, publicImageUrls, withProfileImageUrls, lockMedia } from '../core/public-images.js';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 // Physical orders pay the creator at purchase time, same as digital -- no
@@ -93,7 +93,7 @@ const deliverable = deliverableWhere;
  * READY, unattached images, validated here and signed per response
  * (core/public-images.ts).
  */
-export const validListingImages = (tx: Pick<Tx, 'media'>, images: string[], creatorId: string, productMediaIds: string[] = []) =>
+export const validListingImages = (tx: Pick<Tx, 'media' | '$queryRaw'>, images: string[], creatorId: string, productMediaIds: string[] = []) =>
   assertOwnPublicImages(tx, creatorId, images, productMediaIds);
 
 /** The public shape of a listing's stored image keys and its creator's avatar key: signed URLs. */
@@ -113,8 +113,16 @@ function withImageUrls<T extends { images: string[]; creator?: { avatarKey: stri
  * listing's product (auctions included): the buyer would pay for exclusivity
  * the platform had already broken.
  */
-export async function assertNotDistributed(tx: Tx, mediaIds: string[]) {
+export async function assertNotDistributed(tx: Tx, ownerId: string, mediaIds: string[]) {
   if (!mediaIds.length) return;
+  // Locked BEFORE counting: a broadcast copy being written right now holds
+  // these rows (workers/broadcast.ts claimSourcesForCopy), so this waits for
+  // it and the count below then sees it -- or, under money()'s serializable
+  // isolation, fails with a serialization error and is retried. Counting
+  // first let a listing created in the gap before the first copy committed
+  // pass with 0 copies, after which every subscriber got the "exclusive"
+  // item.
+  await lockMedia(tx, ownerId, mediaIds);
   const copies = await tx.media.count({ where: { sourceMediaId: { in: mediaIds } } });
   if (copies > 0) throw statusCode('media_already_distributed', 400);
   // Nor what is already free to everyone: an avatar, banner or listing
@@ -169,12 +177,18 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     if (fields.kind === 'DIGITAL' && !mediaIds.length) throw Object.assign(new Error('digital_listing_needs_media'), { statusCode: 400 });
     if (new Set(mediaIds).size !== mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });
     return prisma.$transaction(async (tx) => {
+      // Every row this listing touches, preview photos and product alike,
+      // locked in ONE ordered statement before any check (the checks below
+      // lock subsets again, which is a no-op): racing a mass DM's copy
+      // transaction, which locks its sources the same way, must not
+      // deadlock or slip between check and attach (core/public-images.ts).
+      await lockMedia(tx, req.user.id, mediaIds, fields.images.filter((k) => typeof k === 'string'));
       // The free preview photos can never be the paid product itself (either
       // way round: an image key that is one of mediaIds, or a mediaId that is
       // already some public image).
       await validListingImages(tx, fields.images, req.user.id, mediaIds);
       await assertNotPublicImages(tx, mediaIds);
-      if (fields.kind === 'DIGITAL' && !fields.unlimited) await assertNotDistributed(tx, mediaIds);
+      if (fields.kind === 'DIGITAL' && !fields.unlimited) await assertNotDistributed(tx, req.user.id, mediaIds);
       const l = await tx.listing.create({ data: { creatorId: req.user.id, ...fields } });
       if (mediaIds.length) {
         // Unattached originals that can still become viewable (still
@@ -217,7 +231,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       if (nextKind === 'DIGITAL' && !nextUnlimited && (l.unlimited || l.kind !== 'DIGITAL')) {
         if ((await tx.listingOrder.count({ where: { listingId: l.id } })) > 0) throw statusCode('listing_has_orders', 409);
         const media = await tx.media.findMany({ where: { listingId: l.id }, select: { id: true } });
-        await assertNotDistributed(tx, media.map((m) => m.id));
+        await assertNotDistributed(tx, req.user.id, media.map((m) => m.id));
       }
       if (l.saleType === 'AUCTION') {
         // The money terms of an auction are fixed once anyone has bid: the

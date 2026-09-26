@@ -209,9 +209,13 @@ export default function Privacy() {
                 and, while a Marketplace checkout is in progress, a record of that checkout attempt. The
                 checkout record holds your account ID, a one-time checkout key and a fingerprint of the cart,
                 and it is what stops a retried or interrupted checkout from charging you twice. It is removed
-                once the checkout settles; if the connection dropped before we could confirm whether a payment
-                went through, it stays (including after you sign out) until the site can check that for you, so
-                it may remain on a shared device until you sign back in there or clear the site&apos;s data.
+                when a checkout goes through. If a checkout is refused (for example, not enough credits), the
+                record is kept for up to 24 hours so that retrying reuses the same key; after that it is no
+                longer used, and it is deleted from the device the next time you open your cart there while
+                signed in, or when a checkout completes. If the connection dropped before we could confirm
+                whether a payment went through, it stays (including after you sign out) until the site can
+                check that for you, so it may remain on a shared device until you sign back in there or clear
+                the site&apos;s data.
               </p>
               <p className="mt-3">
                 We don&apos;t run third-party advertising trackers or analytics cookies on the Platform.
@@ -280,11 +284,12 @@ export default function Privacy() {
                 </li>
                 <li>
                   A physical order&apos;s shipping name and address stay with the order record so the creator
-                  can fulfil it. Once the order has shipped you can ask us to delete them (email
-                  team@onlyone1.fun with the order), unless we need them for a dispute or legal claim already in
-                  progress; the order record itself stays, without them. Deleting your account from the Settings
-                  page deletes the shipping name and address from every one of your orders that has already
-                  shipped, at the same time.
+                  can fulfil it. Once the order has shipped — or has been closed because the seller could not
+                  fulfil it — you can ask us to delete them (email team@onlyone1.fun with the order), unless we
+                  need them for a dispute or legal claim already in progress; the order record itself stays,
+                  without them. Deleting your account from the Settings page deletes the shipping name and
+                  address from every one of your orders that has already shipped or been closed, at the same
+                  time.
                 </li>
                 <li>We may retain limited data where necessary to investigate fraud, abuse, or a legal claim already in progress.</li>
               </ul>

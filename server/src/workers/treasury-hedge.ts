@@ -2,6 +2,7 @@ import { encodeFunctionData, parseAbi, type Address } from 'viem';
 import { prisma } from '../lib/prisma.js';
 import { publicClient, treasuryAccount, treasuryWallet, withTreasuryLock, TOKENS, DECIMALS, HEDGE_STABLE, erc20Abi, envInt, assertStableDecimals, sendTreasuryTx, resolveTreasuryTx } from '../lib/chain.js';
 import { impactBpsOf, allocateHedge, hedgeRemaining } from './treasury-hedge-math.js';
+import { treasuryOutflow } from '../lib/outflow-journal.js';
 
 // Fans can deposit $ONLYONE to burn for VIP (core/vip.ts). That balance is
 // booked in fixed USD cents at the price on the day it arrived, but the tokens
@@ -20,6 +21,40 @@ const INTERVAL_MS = envInt('TREASURY_HEDGE_INTERVAL_MS', 300_000, 10_000);
 const POOL_FEE = envInt('ONLYONE_POOL_FEE', 3000, 1, 1_000_000); // Uniswap V3 fee tier (hundredths of a bip)
 const ROUTER = process.env.UNISWAP_V3_ROUTER_ADDRESS as Address | undefined;
 const QUOTER = process.env.UNISWAP_V3_QUOTER_ADDRESS as Address | undefined;
+// Outflow caps, env-sourced like the payout worker's (workers/payout-worker.ts
+// outflowLimitReason). What this loop sells is sized from Deposit rows, which
+// any .env holder can INSERT, and the treasury wallet is also the founder's
+// own token bag -- so one swap never sells more than TREASURY_HEDGE_BATCH_MAX_CENTS
+// worth (by the quote's stablecoin out), and the rolling 24h total, counted
+// in the restart-proof outflow journal (lib/outflow-journal.ts), never more
+// than TREASURY_HEDGE_DAILY_MAX_CENTS. No journal, no swap.
+//
+// The dollar cap alone does not bound what the treasury LOSES, which is
+// tokens: its dollar figure comes from the quote of the pool being sold
+// into, so with that pool's price depressed (or pushed down on purpose, which
+// also moves the spot the impact check compares against) a huge number of
+// tokens fits under it. The tokens going IN are capped as well, in whole
+// $ONLYONE, per swap and per rolling 24h, in the same journal.
+const BATCH_MAX_CENTS = envInt('TREASURY_HEDGE_BATCH_MAX_CENTS', 200_000, 1);
+const DAILY_MAX_CENTS = envInt('TREASURY_HEDGE_DAILY_MAX_CENTS', 1_000_000, 1);
+const BATCH_MAX_TOKENS = envInt('TREASURY_HEDGE_BATCH_MAX_TOKENS', 5_000_000, 1);    // 0.5% of a 1B supply
+const DAILY_MAX_TOKENS = envInt('TREASURY_HEDGE_DAILY_MAX_TOKENS', 20_000_000, 1);   // 2% of a 1B supply
+
+/** Whole tokens (rounded UP, so a sale is never under-counted) in `raw` units of a `decimals` token. */
+export function wholeTokensUp(raw: bigint, decimals: number): number {
+  const unit = 10n ** BigInt(decimals);
+  return Number((raw + unit - 1n) / unit);
+}
+
+/**
+ * Raw token units a hedge may still sell right now: the smaller of the
+ * per-swap cap and what is left of the rolling 24h cap. Throws if the
+ * journal is unavailable (the caller then sells nothing).
+ */
+export function hedgeTokenRoomRaw(journal: { sumSince(kind: 'hedge_tokens'): number }, decimals: number, batchMax = BATCH_MAX_TOKENS, dailyMax = DAILY_MAX_TOKENS): bigint {
+  const whole = Math.min(batchMax, dailyMax - journal.sumSince('hedge_tokens'));
+  return whole > 0 ? BigInt(whole) * 10n ** BigInt(decimals) : 0n;
+}
 
 const quoterAbi = parseAbi([
   'function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)',
@@ -121,9 +156,29 @@ async function sweep() {
   if (held < desiredRaw) desiredRaw = held;
   if (desiredRaw <= 0n) return;
 
+  let used: number, tokenRoom: bigint;
+  try { used = treasuryOutflow.sumSince('hedge'); tokenRoom = hedgeTokenRoomRaw(treasuryOutflow, DECIMALS.ONLYONE); } catch (e) {
+    console.error('treasury-hedge: outflow journal unavailable, not selling', (e as Error).message);
+    return;
+  }
+  const roomCents = Math.min(BATCH_MAX_CENTS, DAILY_MAX_CENTS - used);
+  if (roomCents <= 0) { console.warn('treasury-hedge: outflow cap reached (TREASURY_HEDGE_*_MAX_CENTS); retrying later'); return; }
+  if (tokenRoom <= 0n) { console.warn('treasury-hedge: token outflow cap reached (TREASURY_HEDGE_*_MAX_TOKENS); retrying later'); return; }
+  // Tokens in first: every later step (sizing for impact, scaling to the
+  // dollar room) only ever shrinks amountIn, so this bound holds for the swap.
+  if (desiredRaw > tokenRoom) desiredRaw = tokenRoom;
+
   const spot = await spotPrice();
-  const sized = await sizeSwap(desiredRaw, spot);
+  let sized = await sizeSwap(desiredRaw, spot);
   if (!sized) { console.warn('treasury-hedge: pool too thin for even a small slice, retrying next cycle'); return; }
+  // Over the room left: shrink in proportion to the quote and re-quote (a
+  // smaller trade gets a slightly better price, so it stays under).
+  const outCents = (raw: bigint) => Number((raw * 100n) / 10n ** BigInt(HEDGE_STABLE.decimals));
+  if (outCents(sized.amountOut) > roomCents) {
+    const scaled = (sized.amountIn * BigInt(roomCents)) / BigInt(Math.max(1, outCents(sized.amountOut)));
+    sized = scaled > 0n ? await sizeSwap(scaled, spot) : null;
+    if (!sized || outCents(sized.amountOut) > roomCents) { console.warn('treasury-hedge: could not size a swap under the outflow cap; retrying later'); return; }
+  }
 
   const allowance = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'allowance', args: [treasuryAccount().address, ROUTER] });
   if (allowance < sized.amountIn) {
@@ -140,8 +195,11 @@ async function sweep() {
   // broadcast, so a timeout or restart leaves something to settle instead
   // of a swap the next cycle cannot see.
   const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce) => {
+    // Counted before anything is persisted or broadcast (see above).
+    treasuryOutflow.record('hedge', outCents(sized!.amountOut), h);
+    treasuryOutflow.record('hedge_tokens', wholeTokensUp(sized!.amountIn, DECIMALS.ONLYONE), h);
     await prisma.treasuryHedgeBatch.create({ data: {
-      depositCount: 0, onlyOneRawIn: sized.amountIn.toString(), usdcRawOut: sized.amountOut.toString(), priceImpactBps: Math.round(sized.impactBps), txHash: h, nonce, status: 'PENDING',
+      depositCount: 0, onlyOneRawIn: sized!.amountIn.toString(), usdcRawOut: sized!.amountOut.toString(), priceImpactBps: Math.round(sized!.impactBps), txHash: h, nonce, status: 'PENDING',
     } });
   });
   await publicClient.waitForTransactionReceipt({ hash }).catch(() => null);

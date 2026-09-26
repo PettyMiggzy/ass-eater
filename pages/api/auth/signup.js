@@ -2,7 +2,7 @@ import { createUser, findUserByEmail } from '../../../lib/users-store';
 import { createCreator, getCreators, isPubliclyVisible } from '../../../lib/creators-store';
 import { normalizeReferralCode } from '../../../lib/referral';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
-import { clientIp, consumeAttempt } from '../../../lib/rate-limit';
+import { clientIp, clientNetwork, consumeAttempt } from '../../../lib/rate-limit';
 import { withTransaction } from '../../../lib/db';
 import { signupsOpen, SIGNUPS_CLOSED_MESSAGE } from '../../../lib/signups';
 import {
@@ -136,7 +136,7 @@ export default async function handler(req, res) {
 
   // Counted after the shape checks, so somebody fumbling the form doesn't
   // spend their own budget on requests that never reached the account list.
-  const { limited, retryAfterSeconds } = consumeAttempt(`signup:ip:${clientIp(req)}`, {
+  const { limited, retryAfterSeconds } = consumeAttempt(`signup:ip:${clientNetwork(req)}`, {
     limit: MAX_SIGNUPS_PER_IP,
     windowMs: WINDOW_MS,
   });

@@ -225,6 +225,13 @@ git clone <your repo url> /opt/onlyone/app
 cp -p /opt/onlyone/server.old/.env /opt/onlyone/app/server/.env
 [ -f /opt/onlyone/server.old/.env.workers ] && cp -p /opt/onlyone/server.old/.env.workers /opt/onlyone/app/server/.env.workers
 ln -s /opt/onlyone/app/server /opt/onlyone/server
+# The old copy's .env still holds TREASURY_PRIVATE_KEY (and maybe
+# DEPOSIT_MNEMONIC), and under the older runbook the whole directory was
+# owned by the API's own user. Shred the secret-bearing files now that they
+# are copied, and take the rest away from every runtime user -- do not leave
+# the treasury key readable by the internet-facing API while you verify.
+shred -u /opt/onlyone/server.old/.env /opt/onlyone/server.old/.env.workers 2>/dev/null || true
+chown -R root:root /opt/onlyone/server.old && chmod -R go-rwx /opt/onlyone/server.old
 ```
 
 **Before running `app-setup.sh`, take the signing secrets out of `.env`.** A
@@ -251,8 +258,39 @@ If a `DEPOSIT_MNEMONIC` was moved, the API now derives deposit addresses from
 `systemctl restart onlyone-api`.
 
 Check the printed `Deployed commit`, then, once everything is verified,
-`rm -rf /opt/onlyone/server.old` (it contains secrets -- do not leave it
-around indefinitely).
+`rm -rf /opt/onlyone/server.old`. (`app-setup.sh` also locks down any
+`/opt/onlyone/server.old*` it finds to root-only and warns until it is gone.)
+
+**Rotate the treasury key after migrating.** Under the old layout
+`TREASURY_PRIVATE_KEY` sat in the internet-facing API's environment and in
+files the API's user owned; treat it as exposed. Create a new treasury
+wallet, move the funds, put the new key in `.env.workers`, and restart
+`onlyone-workers`.
+
+## Treasury outflow journal
+
+`onlyone-workers.service` has `StateDirectory=onlyone-workers`: systemd
+creates `/var/lib/onlyone-workers` (owner `onlyone-workers`, mode 0700) and
+exports it as `$STATE_DIRECTORY`. The workers append every signed treasury
+outflow there (`treasury-outflow.jsonl`) BEFORE broadcasting it, and the
+automatic caps -- `PAYOUT_MAX_CENTS` / `PAYOUT_DAILY_MAX_CENTS`,
+`TOKEN_BURN_BATCH_MAX_CENTS` / `TOKEN_BURN_DAILY_MAX_CENTS`,
+`TREASURY_HEDGE_BATCH_MAX_CENTS` / `TREASURY_HEDGE_DAILY_MAX_CENTS` and the
+hedge's token-side caps `TREASURY_HEDGE_BATCH_MAX_TOKENS` /
+`TREASURY_HEDGE_DAILY_MAX_TOKENS` (whole $ONLYONE sold) -- are
+counted from it, so a restart or redeploy no longer reopens the 24h window
+and nothing that can only write the database can shrink the count. If the
+journal is missing, unreadable or corrupt, payouts are HELD (`treasury
+outflow journal unavailable`) and burns/hedges defer; fix the directory,
+restart the unit, then release the held payouts. Never delete the file to
+"unstick" payouts -- that is exactly resetting the daily cap. Running the
+workers by hand outside systemd needs `OUTFLOW_JOURNAL_DIR` set to a private
+directory.
+
+The deposit indexer also refuses (logs an error, credits nothing) if the
+`DepositAddress` table for the chain holds more than `DEPOSIT_ADDRESS_MAX`
+(default 250,000) rows, rather than loading them all into the key-holding
+process -- a flood of injected rows used to be a way to OOM-restart it.
 
 ## Media bucket lifecycle rule
 

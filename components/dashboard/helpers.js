@@ -84,6 +84,20 @@ export function responseErrorMessage(status, data, fallback = 'Something went wr
 }
 
 /**
+ * " Try again in about N minutes." from a 429's Retry-After header (seconds),
+ * or '' when there is none or it is not a plain number of seconds.
+ */
+export function retryAfterHint(res) {
+  let raw = null;
+  try { raw = res?.headers?.get?.('Retry-After'); } catch { raw = null; }
+  const secs = Number.parseInt(String(raw ?? ''), 10);
+  if (!Number.isFinite(secs) || secs <= 0 || !/^\d+$/.test(String(raw).trim())) return '';
+  if (secs < 60) return ` Try again in about ${secs} second${secs === 1 ? '' : 's'}.`;
+  const mins = Math.ceil(secs / 60);
+  return ` Try again in about ${mins} minute${mins === 1 ? '' : 's'}.`;
+}
+
+/**
  * "12.50" -> 1250. Null for anything that isn't a plain non-negative dollar
  * amount with at most two decimals ("1e3", "12.345", "-5", "" all fail) --
  * Math.round(Number(x) * 100) silently accepted all of those.
