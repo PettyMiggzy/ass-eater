@@ -650,6 +650,30 @@ model TokenBurn {
   @@index([pendingTxHash])
 }
 
+// A referral cut earned on one charge, not yet credited to the referrer.
+//
+// core/ledger.ts charge() used to post every cut straight into the
+// referrer's balance the instant the referred person paid, so polling
+// GET /wallet/balance (or /payouts/earnings) dated each purchase the
+// referred friend made -- every live minute, every paid DM -- and its price
+// bracket. The cut is now held by the platform account and recorded here;
+// core/referrals.ts settleReferrals() credits one summed REFERRAL entry per
+// referrer per side per UTC day, only after that day has ended.
+// referrerId is deliberately not a relation: this is a settlement queue,
+// and a row that cannot be posted is logged and retried, never lost.
+model PendingReferral {
+  id          String    @id @default(uuid())
+  referrerId  String
+  side        String // 'creator' | 'fan' -- which side of the charge was referred
+  amountCents BigInt
+  chargeRefId String? // reconciliation only; never shown to the referrer
+  createdAt   DateTime  @default(now())
+  settledAt   DateTime?
+
+  @@index([settledAt, createdAt])
+  @@index([referrerId, settledAt])
+}
+
 model LedgerEntry {
   id          String   @id @default(uuid())
   userId      String

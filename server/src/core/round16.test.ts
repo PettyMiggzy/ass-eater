@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
 import { charge, grossFanSpendCents, money, post, PLATFORM_ID } from './ledger';
+import { settleReferrals } from './referrals';
 import { applyUserStatus } from './moderation';
 import { creatorMayOperate } from './creator-standing';
 import { createUploadWithinQuota, UPLOAD_LIMITS } from './upload-limits';
@@ -188,9 +189,14 @@ describe("srv-money-modules#1: a referrer never sees what the referred fan bough
     const creator = await makeCreator();
     await fund(fan, 10_000);
     await money(prisma, (tx) => charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'DM_SEND', refId: `dm:${fan}:${randomUUID()}` }));
+    // Round 18: the cut is held and credited per ended UTC day
+    // (core/referrals.ts); the charge ref stays on the pending row only.
+    const pending = await prisma.pendingReferral.findFirstOrThrow({ where: { referrerId: referrer } });
+    expect(pending.chargeRefId).toMatch(/^dm:/);
+    await settleReferrals({ now: new Date(Date.now() + 864e5), referrerIds: [referrer] });
     const row = await prisma.ledgerEntry.findFirstOrThrow({ where: { userId: referrer, type: 'REFERRAL' } });
     expect(row.refId).toBeNull();
-    expect((row.meta as any).chargeRefId).toMatch(/^dm:/);
+    expect((row.meta as any).chargeRefId).toBeUndefined();
 
     // An older row that still carries the purchase ref (and a stray fanId).
     await prisma.ledgerEntry.create({ data: { userId: referrer, amountCents: 5n, type: 'REFERRAL', refId: 'post-123', meta: { for: 'fan', fanId: fan } } });

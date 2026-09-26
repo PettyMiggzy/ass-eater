@@ -47,21 +47,26 @@ export const wallet: FastifyPluginAsync = async (app) => {
     // on subscribe/tip/unlock/buy/join-live). See core/ledger.ts charge().
     // withdrawableCents: the earned part of balanceCents -- the most a
     // payout (POST /payouts) can take. Deposited credits never are.
+    // Referral cuts reach both only once per ended UTC day, as a day's total
+    // (core/referrals.ts), so polling this cannot date a referred friend's
+    // purchases.
     return { balanceCents: Number(a?.balanceCents ?? 0), withdrawableCents: Number(a?.withdrawableCents ?? 0), onlyOneCents: Number(a?.onlyOneCents ?? 0) };
   });
 
   app.get('/history', { preHandler: app.auth }, async (req: any) => {
     const offset = page(req.query).offset;
-    // REFERRAL rows are the referrer's cut of SOMEONE ELSE's spending, posted
-    // one per charge (core/ledger.ts). Listed as they are, their exact times
-    // and price-derived amounts -- one row per live minute watched, one per
-    // paid DM -- told a referrer when and how often their friend watched,
-    // messaged or bought, and at what price. So they are returned only as
-    // ONE row per UTC day per side (creator/fan referred), summed, stamped
-    // at the day's start, and only for days that have ENDED: a running
-    // total for today, polled, would give the same per-charge timing back.
-    // The per-charge rows stay in the ledger (admin-side detail). A row's
-    // refId is never returned, and the meta is just the side (fanSafeMeta).
+    // REFERRAL rows are the referrer's cut of SOMEONE ELSE's spending. They
+    // used to be posted one per charge, and their exact times and
+    // price-derived amounts -- one row per live minute watched, one per paid
+    // DM -- told a referrer when and how often their friend watched,
+    // messaged or bought, and at what price. They are now credited once per
+    // ENDED UTC day per side, summed (core/referrals.ts settleReferrals), so
+    // the balance above never moves per charge either. This query still
+    // folds rows into one per day per side and hides today, which also
+    // covers any per-charge rows written before that change. The per-charge
+    // detail stays admin-side (PendingReferral, the platform's hold rows). A
+    // row's refId is never returned, and the meta is just the side
+    // (fanSafeMeta).
     const uid = String(req.user.id);
     const rows = await prisma.$queryRaw<Array<{ id: string; userId: string; amountCents: bigint; type: string; refId: string | null; meta: unknown; createdAt: Date }>>(Prisma.sql`
       SELECT * FROM (

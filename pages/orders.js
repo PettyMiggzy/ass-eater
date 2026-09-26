@@ -209,9 +209,15 @@ export default function OrdersPage({ sessionUser, viewerMark }) {
                   )}
                   {o.kind === 'physical' && o.status === 'shipped' && (o.carrier || o.trackingNumber) && (
                     <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-white/10">
+                      {/* The same carrier and tracking number the seller sees
+                          (round 18): an erasure request removes only the
+                          shipping name and address (Privacy §7). The
+                          "erased" wording is for legacy orders erased before
+                          that, whose number is gone. */}
                       {o.carrier ? `${o.carrier} — ` : ''}{o.trackingNumber || (o.trackingErasedAt ? 'Tracking number erased at your request' : 'No tracking number provided')}
                       {/* Set when the seller corrected the carrier/tracking
-                          after shipping (the ship date itself is kept). */}
+                          after shipping (the ship date itself is kept); the
+                          buyer is notified of a correction too. */}
                       {typeof o.trackingUpdatedAt === 'string' && !Number.isNaN(new Date(o.trackingUpdatedAt).getTime())
                         ? ` · tracking updated ${new Date(o.trackingUpdatedAt).toLocaleDateString()}`
                         : ''}

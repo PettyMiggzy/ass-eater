@@ -150,6 +150,18 @@ export type ReportListQuery = {
  * Report(targetType, targetId, status) and Media(messageId) indexes the
  * remaining probes use).
  */
+/**
+ * A post its CREATOR deleted that buyers are still served: a self-deleted
+ * PPV post stays viewable to every fan who unlocked it (core/access.ts
+ * canViewPost). The same predicate listReports() uses to count such a
+ * report as live content (not contentRemoved); GET /admin/reports/:id/target
+ * returns it too, so the queue and the target view never disagree.
+ */
+export async function postStillServedToBuyers(p: { id: string; removed: boolean; removedByCreator: boolean; visibility: string }) {
+  if (!p.removed || !p.removedByCreator || p.visibility !== 'PPV') return false;
+  return !!(await prisma.postUnlock.findFirst({ where: { postId: p.id }, select: { fanId: true } }));
+}
+
 export async function listReports(q: ReportListQuery) {
   const banned = (col: Prisma.Sql) => Prisma.sql`EXISTS (SELECT 1 FROM "User" ou WHERE ou.id = ${col} AND ou.status = 'BANNED')`;
   const removed = Prisma.sql`CASE r."targetType"

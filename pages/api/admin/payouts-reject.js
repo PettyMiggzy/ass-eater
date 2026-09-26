@@ -8,7 +8,9 @@ import { refuseMalformedText } from '../../../lib/field-validation';
  * request becomes 'rejected' and the reserved credits go back to the
  * creator's balance (as withdrawable again, 'payout_reversed' in the
  * ledger). For a banned/suspended account that refund is held: a frozen
- * balance can't be spent or cashed out.
+ * balance can't be spent or cashed out. For a DELETED account nothing is
+ * refunded: the credits are recorded as forfeited and the response's
+ * `request.forfeited` is true (lib/credits-store.js rejectPayout).
  *
  * Body: { id, reason } -- reason is required (shown to the creator).
  */

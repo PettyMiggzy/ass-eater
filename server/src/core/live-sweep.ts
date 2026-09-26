@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import { paidThrough, MAX_PREPAID_MS } from './live-billing.js';
 import type { RoomsLike } from './livekit.js';
+import { resolveLiveIdentity } from './live-identity.js';
 
 // A viewer gets this long after their paid time ends to buy the next minute
 // before being removed -- covers a client timer firing a little late.
@@ -47,8 +48,12 @@ export async function sweepLive(rooms: RoomsLike, now = new Date(), log: (...a: 
     let participants;
     try { participants = await rooms.listParticipants(s.roomName); } catch (e) { log('live-sweep listParticipants', s.id, e); continue; }
     for (const p of participants) {
-      if (!p.identity || p.identity === s.creatorId) continue;
-      if (!(await lacksEntitlement(s, p.identity, now))) continue;
+      if (!p.identity) continue;
+      // Viewers carry an opaque per-stream identity (core/live-identity.ts);
+      // one that does not decode for this stream belongs to nobody entitled.
+      const userId = resolveLiveIdentity(s.id, p.identity);
+      if (userId === s.creatorId) continue;
+      if (userId && !(await lacksEntitlement(s, userId, now))) continue;
       try { await rooms.removeParticipant(s.roomName, p.identity); removed++; } catch (e) { log('live-sweep removeParticipant', s.id, p.identity, e); }
     }
   }
@@ -74,7 +79,7 @@ export async function minuteRefusal(fanId: string, s: { id: string; creatorId: s
 }
 
 /**
- * Should `identity` be removed from stream `s` right now? Two independent
+ * Should viewer `userId` be removed from stream `s` right now? Two independent
  * entitlements, both required where they apply:
  *
  *  - a ticketed stream needs a LiveTicket -- paid minutes do not stand in for
@@ -82,10 +87,10 @@ export async function minuteRefusal(fanId: string, s: { id: string; creatorId: s
  *    for a minute, and this check, looking only at minutes, left them in);
  *  - a per-minute stream needs paid time that has not lapsed (plus grace).
  */
-async function lacksEntitlement(s: { id: string; ticketPriceCents: number; perMinuteCents: number }, identity: string, now: Date) {
-  if (s.ticketPriceCents > 0 && !(await hasTicket(identity, s.id))) return true;
+async function lacksEntitlement(s: { id: string; ticketPriceCents: number; perMinuteCents: number }, userId: string, now: Date) {
+  if (s.ticketPriceCents > 0 && !(await hasTicket(userId, s.id))) return true;
   if (s.perMinuteCents > 0) {
-    const through = await paidThrough(identity, s.id);
+    const through = await paidThrough(userId, s.id);
     if (!through || through.getTime() + PAY_GRACE_MS <= now.getTime()) return true;
   }
   return false;
@@ -193,9 +198,15 @@ export async function checkViewerOnJoin(
     where: { roomName },
     select: { id: true, creatorId: true, status: true, ticketPriceCents: true, perMinuteCents: true, creator: { select: { user: { select: { status: true } } } } },
   });
-  if (!s || identity === s.creatorId) return false;
+  if (!s) return false;
+  // `identity` is what LiveKit reports -- an opaque per-stream viewer
+  // identity, or the creator's own id on their publish token. Entitlement is
+  // checked against the user it decodes to; the raw identity is what gets
+  // removed.
+  const userId = resolveLiveIdentity(s.id, identity);
+  if (userId === s.creatorId) return false;
   let remove = s.status !== 'LIVE' || s.creator.user.status !== 'ACTIVE';
-  if (!remove) remove = await lacksEntitlement(s, identity, now);
+  if (!remove) remove = !userId || await lacksEntitlement(s, userId, now);
   if (!remove) return false;
   await rooms.removeParticipant(roomName, identity);
   return true;

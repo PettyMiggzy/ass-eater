@@ -329,8 +329,15 @@ export default async function handler(req, res) {
       // opposite order, so the two can deadlock; Postgres aborts one, the
       // claim is released below and the admin simply retries. Both are
       // rare, admin-only actions, and reordering deleteCreator would invert
-      // it against the users-first money paths instead.
-      updated = await withTransaction(async (client) => {
+      // it against the users-first money paths instead. Account deletion
+      // (lib/users-store.js purgeUserContent) locks the account's
+      // conversations before any report row (round-18 media#0 / social#0), the
+      // same conversation -> report order as here. As a backstop against any
+      // cycle still left (the residual above, or a three-way one through the
+      // TAKE IT DOWN paths), a deadlock (SQLSTATE 40P01) is retried ONCE: the
+      // whole transaction rolled back, so it runs again from the same
+      // starting state (the outcome variables are reset first).
+      const resolveTx = () => withTransaction(async (client) => {
         if (removing && report.targetType === 'message' && typeof report.conversationId === 'string') {
           // removeConversationMessage below re-enters this lock.
           await client.query('select 1 from conversations where id = $1 for update', [report.conversationId]);
@@ -456,6 +463,22 @@ export default async function handler(req, res) {
         await client.query(`update reports set data = data - 'resolving' where id = $1`, [String(report.id)]);
         return { ...out, resolving: undefined };
       });
+      const noteBefore = contentNote;
+      const preservedBefore = [...preservedPaths];
+      for (let attempt = 1; ; attempt += 1) {
+        contentNote = noteBefore;
+        preservedPaths.clear();
+        for (const p of preservedBefore) preservedPaths.add(p);
+        removedFiles = [];
+        banFiles = [];
+        pushUid = null;
+        try {
+          updated = await resolveTx();
+          break;
+        } catch (err) {
+          if (err?.code !== '40P01' || attempt >= 2) throw err;
+        }
+      }
     } catch (err) {
       await releaseClaim(report.id);
       throw err;

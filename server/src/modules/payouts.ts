@@ -123,10 +123,16 @@ export const payouts: FastifyPluginAsync = async (app) => {
     return rows.map(r => ({ ...r, amountCents: Number(r.amountCents), feeCents: Number(r.feeCents) }));
   });
 
+  // REFERRAL is credited once per ended UTC day as that day's total
+  // (core/referrals.ts); it is also cut off at today's start here, like
+  // GET /wallet/history and /auth/referral, so a total polled through the
+  // day can never date a referred friend's individual purchases.
   app.get('/earnings', { preHandler: app.creatorOk }, async (req) => {
     const rows = await prisma.$queryRaw<{ type: string; total: bigint }[]>`
       SELECT type, SUM("amountCents") AS total FROM "LedgerEntry"
-      WHERE "userId"=${req.user.id} AND "amountCents">0 AND "createdAt" > now() - interval '30 days' GROUP BY type`;
+      WHERE "userId"=${req.user.id} AND "amountCents">0 AND "createdAt" > now() - interval '30 days'
+        AND (type <> 'REFERRAL' OR "createdAt" < date_trunc('day', now() AT TIME ZONE 'UTC'))
+      GROUP BY type`;
     return Object.fromEntries(rows.map(r => [r.type, Number(r.total)]));
   });
 };

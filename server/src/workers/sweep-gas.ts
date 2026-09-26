@@ -130,7 +130,8 @@ export async function depositCreditedFor(chainId: number, derivationIndex: numbe
  * the sweep must not run at all -- a credited earlier deposit is not enough:
  * it swept the unpriced one into the treasury with no ledger record. The
  * sweep is deferred, not failed: repricePending() (workers/deposit-indexer.ts)
- * queues a sweep for the address once that deposit is credited.
+ * queues a sweep for the address once that deposit is settled -- credited,
+ * or cleared as dust that priced to zero.
  */
 export async function depositPricePendingFor(chainId: number, derivationIndex: number, asset: 'ONLYONE' | 'ETH'): Promise<boolean> {
   const addr = await prisma.depositAddress.findFirst({ where: { chainId, derivationIndex }, select: { userId: true } });

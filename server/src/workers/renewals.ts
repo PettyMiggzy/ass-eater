@@ -8,6 +8,7 @@ import { registerWorker } from './process-guards.js';
 import { CREATOR_STANDING_SELECT } from '../core/creator-standing.js';
 import { renewalShouldExpire } from '../core/renewal-policy.js';
 import { liftLapsedSiteSuspensions } from '../lib/bridge.js';
+import { settleReferrals } from '../core/referrals.js';
 
 await renewalQueue.add('tick', {}, { repeat: { every: 5 * 60_000 }, jobId: 'renewals-tick', removeOnComplete: true });
 
@@ -35,6 +36,10 @@ registerWorker(new Worker('renewals', async () => {
     // creator whose 30-day suspension just ended is payable again in this
     // same tick (lib/bridge.ts). Its own failure must not stop renewals.
     try { await liftLapsedSiteSuspensions(); } catch (e) { console.error('renewals: lifting lapsed site suspensions failed', e); }
+    // Referral cuts earned on days that have ended are credited to their
+    // referrers, one total per referrer per side per day (core/referrals.ts).
+    // Its own failure must not stop renewals either.
+    try { await settleReferrals(); } catch (e) { console.error('renewals: settling referrals failed', e); }
     // Which due rows are expired rather than charged: core/renewal-policy.ts
     // (creator must still be payable -- not suspended/banned AND approved --
     // and the FAN must be ACTIVE, since a suspended/banned fan cannot reach

@@ -11,6 +11,7 @@ import { ensureMinutePaid, payNextMinute } from '../core/live-billing.js';
 import { startLiveStream, checkViewerOnJoin, viewerTokenTtlSeconds, hasTicket, minuteRefusal } from '../core/live-sweep.js';
 import { withProfileImageUrls } from '../core/public-images.js';
 import { assertCleanText } from '../lib/text-screen.js';
+import { viewerIdentity } from '../core/live-identity.js';
 
 let _receiver: WebhookReceiver | undefined;
 const receiver = () => (_receiver ??= new WebhookReceiver(LK.key, LK.secret));
@@ -22,9 +23,27 @@ const receiver = () => (_receiver ??= new WebhookReceiver(LK.key, LK.secret));
 // anyone who gets in without paid time anyway. Other viewer tokens stay short
 // so a leaked one is only good for a fresh connect for a few minutes; the
 // creator's is a full session.
-async function token(identity: string, room: string, publish: boolean, ttlSeconds?: number) {
-  const at = new AccessToken(LK.key, LK.secret, { identity, ttl: publish ? '6h' : (ttlSeconds ?? 600) });
-  at.addGrant({ roomJoin: true, room, canPublish: publish, canSubscribe: true, canPublishData: true });
+//
+// Only the creator's publish token may publish anything, data packets
+// included. A viewer holding canPublishData could send arbitrary text to the
+// creator and every other viewer (or privately to the creator via
+// destinationIdentities) -- never screened (lib/text-screen.ts), never
+// stored, not reportable, and free where a DM to a creator is paid. If live
+// chat is wanted, it goes through a server endpoint that screens, stores and
+// prices it, not through LiveKit data.
+//
+// Viewers join under an opaque per-stream identity (core/live-identity.ts),
+// never their platform user id: identities are listed to every participant.
+// The creator's publish token keeps the creator's id -- the creator is public
+// and the sweep recognises them by it.
+async function publisherToken(creatorId: string, room: string) {
+  const at = new AccessToken(LK.key, LK.secret, { identity: creatorId, ttl: '6h' });
+  at.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: true, canPublishData: true });
+  return at.toJwt();
+}
+async function viewerToken(streamId: string, userId: string, room: string, ttlSeconds?: number) {
+  const at = new AccessToken(LK.key, LK.secret, { identity: viewerIdentity(streamId, userId), ttl: ttlSeconds ?? 600 });
+  at.addGrant({ roomJoin: true, room, canPublish: false, canSubscribe: true, canPublishData: false });
   return at.toJwt();
 }
 
@@ -50,14 +69,14 @@ export const live: FastifyPluginAsync = async (app) => {
     const started = await startLiveStream(rooms(), req.user.id, b, roomName);
     if (!started.ok) return reply.code(409).send({ error: 'already_live' });
     const s = started.stream;
-    return { stream: s, token: await token(req.user.id, roomName, true), wsUrl: process.env.LIVEKIT_WS_URL };
+    return { stream: s, token: await publisherToken(req.user.id, roomName), wsUrl: process.env.LIVEKIT_WS_URL };
   });
 
   app.post('/:id/join', { preHandler: app.auth }, async (req: any, reply) => {
     const s = await prisma.liveStream.findUnique({ where: { id: req.params.id } });
     if (!s || s.status !== 'LIVE') return reply.code(404).send({ error: 'not_live' });
     if (s.creatorId === req.user.id) {
-      return { token: await token(req.user.id, s.roomName, false), wsUrl: process.env.LIVEKIT_WS_URL, streamId: s.id, creatorId: s.creatorId };
+      return { token: await viewerToken(s.id, req.user.id, s.roomName), wsUrl: process.env.LIVEKIT_WS_URL, streamId: s.id, creatorId: s.creatorId };
     }
     // A suspended or banned creator's stream is not joinable by anyone else
     // (core/moderation.ts also ends it; this covers the moment in between).
@@ -102,7 +121,7 @@ export const live: FastifyPluginAsync = async (app) => {
     let paidThrough: Date | null = null;
     if (s.perMinuteCents > 0) paidThrough = (await ensureMinutePaid(req.user.id, s)).paidThrough;
     return {
-      token: await token(req.user.id, s.roomName, false, viewerTokenTtlSeconds(s.perMinuteCents, paidThrough)), wsUrl: process.env.LIVEKIT_WS_URL, streamId: s.id, creatorId: s.creatorId,
+      token: await viewerToken(s.id, req.user.id, s.roomName, viewerTokenTtlSeconds(s.perMinuteCents, paidThrough)), wsUrl: process.env.LIVEKIT_WS_URL, streamId: s.id, creatorId: s.creatorId,
       perMinuteCents: s.perMinuteCents, paidThrough,
     };
   });
@@ -135,7 +154,7 @@ export const live: FastifyPluginAsync = async (app) => {
     // with the viewer's earlier paid time, so a reconnect needs this one.
     return {
       paidMinutes: r.paidMinutes, paidThrough: r.paidThrough, perMinuteCents: s.perMinuteCents,
-      token: await token(req.user.id, s.roomName, false, viewerTokenTtlSeconds(s.perMinuteCents, r.paidThrough)),
+      token: await viewerToken(s.id, req.user.id, s.roomName, viewerTokenTtlSeconds(s.perMinuteCents, r.paidThrough)),
     };
   });
 

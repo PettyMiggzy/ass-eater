@@ -25,7 +25,7 @@ import {
 const screenPublicText = screenPublicTextJs as unknown as (text: string, opts: { context: string | null }) => ScreenHit | null;
 
 type Detection = { flagged: boolean; reasons: string[] };
-const detectProhibitedTerms = detectProhibitedTermsJs as unknown as (text: string) => Detection;
+const detectProhibitedTerms = detectProhibitedTermsJs as unknown as (text: string, opts?: { nameLike?: boolean; strictAge?: boolean; squashWhole?: boolean }) => Detection;
 const detectPaymentCircumvention = detectPaymentCircumventionJs as unknown as (text: string, opts?: { crossTag: boolean }) => Detection;
 const normalizeForMatching = normalizeForMatchingJs as unknown as (text: string) => string;
 const foldLookalikeLetters = foldLookalikeLettersJs as unknown as (text: string) => string;
@@ -151,7 +151,8 @@ function singleWordRuns(list: string[]): string[][] {
  *  1. every tag on its own, raw and stored form, as a TAG (strict minor-age
  *     rule);
  *  2. prohibited phrases across runs of whole single-word tags
- *     (["barely", "legal"]), raw and stored;
+ *     (["barely", "legal"], ["16", "girl"]), raw and stored, judged as a
+ *     label (the strict tag rule), not as free text;
  *  3. payment details across tags:
  *     a. the STORED tags joined by a space (joinForPaymentScreen), crossTag
  *        mode: "cash" + "app", "telegram" + "janedoe99";
@@ -170,8 +171,15 @@ export function assertCleanTags(tags: unknown) {
   const stored = sanitizeTags(tags);
   assertCleanText([['tag', [...strings, ...stored]]]);
   for (const list of [strings, stored]) {
+    // A run of single-word tags is still a LABEL, not a sentence: judged
+    // like one tag, with the strict minor-age rule and squashed whole --
+    // exactly the site's step 2 (lib/listings-store.js, round-18
+    // srv-auth-core#1). In free-text mode ["16", "girl"] and ["sixteen",
+    // "and", "ready"] published as adjacent chips although the tag "16 girl"
+    // is refused. Plurals stay counts (["16", "girls"]) and codes stay codes
+    // (["1080p", "girl"]).
     for (const r of singleWordRuns(list)) {
-      if (r.length >= 2 && detectProhibitedTerms(r.join(' ')).flagged) throwHit('prohibited', 'tags');
+      if (r.length >= 2 && detectProhibitedTerms(r.join(' '), { strictAge: true, squashWhole: true }).flagged) throwHit('prohibited', 'tags');
     }
   }
   if (stored.length >= 2 && detectPaymentCircumvention(joinForPaymentScreen(stored), { crossTag: true }).flagged) throwHit('payment', 'tags');

@@ -2,6 +2,11 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { charge, creditDeposit, FEES, InsufficientFunds, money, PLATFORM_ID, post, splitDeposit } from './ledger';
+import { settleReferrals } from './referrals';
+
+// Referral cuts are credited once their UTC day has ended
+// (core/referrals.ts): settle as of tomorrow, for just these referrers.
+const settleNow = (...referrerIds: string[]) => settleReferrals({ now: new Date(Date.now() + 864e5), referrerIds });
 
 const prisma = new PrismaClient();
 
@@ -117,6 +122,10 @@ describe('ledger.charge', () => {
     );
 
     expect(result.referral).toBe(50); // 5% of gross
+    // Held by the platform until the day ends -- never credited per charge.
+    expect(await balanceOf(referrer)).toBe(0n);
+    expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(100n);
+    await settleNow(referrer);
     expect(await balanceOf(referrer)).toBe(50n);
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(50n); // fee(100) - referral(50)
   });
@@ -152,6 +161,8 @@ describe('ledger.charge', () => {
     );
 
     expect(result.referral).toBe(50); // 5% of gross
+    expect(await balanceOf(referrer)).toBe(0n);
+    await settleNow(referrer);
     expect(await balanceOf(referrer)).toBe(50n);
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(50n); // fee(100) - referral(50)
   });
@@ -188,6 +199,7 @@ describe('ledger.charge', () => {
     );
 
     expect(result.referral).toBe(100); // 5% + 5% of gross
+    await settleNow(fanReferrer, creatorReferrer);
     expect(await balanceOf(fanReferrer)).toBe(50n);
     expect(await balanceOf(creatorReferrer)).toBe(50n);
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(0n); // fee(100) - referral(100)
@@ -212,6 +224,7 @@ describe('ledger.charge', () => {
     // invariant, and a future rate change must not be able to mint value.
     expect(result.fee).toBe(100);
     expect(result.referral).toBe(100);
+    await settleNow(fanReferrer, creatorReferrer);
     expect(await balanceOf(fanReferrer)).toBe(50n);
     expect(await balanceOf(creatorReferrer)).toBe(50n);
     expect((await balanceOf(PLATFORM_ID)) - platformBefore).toBe(0n);

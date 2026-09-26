@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { charge, money, post, PLATFORM_ID } from './ledger';
+import { settleReferrals } from './referrals';
 import { canViewPost } from './access';
 import { assertCleanTags, sanitizeTags } from '../lib/text-screen';
 import { ethSweepCandidates, depositPricePendingFor } from '../workers/sweep-gas';
@@ -235,9 +236,15 @@ describe('srv-money-modules#2: referral history is one row per ended UTC day per
       await money(prisma, (tx) => charge(tx, { fanId: fan, creatorId: creator, grossCents: 1000, type: 'DM_SEND', refId: `dm:${fan}:${randomUUID()}` }));
     }
     const yesterday = new Date(Date.now() - 864e5);
-    const ids = (await prisma.ledgerEntry.findMany({ where: { userId: referrer, type: 'REFERRAL' }, select: { id: true } })).map((r) => r.id);
+    // Round 18: cuts are held as PendingReferral rows and credited once their
+    // UTC day has ended (core/referrals.ts). Two are moved to yesterday and
+    // settled; today's stays pending and is nowhere in the referrer's view.
+    const ids = (await prisma.pendingReferral.findMany({ where: { referrerId: referrer }, select: { id: true } })).map((r) => r.id);
     expect(ids.length).toBe(3);
-    await prisma.ledgerEntry.updateMany({ where: { id: { in: ids.slice(0, 2) } }, data: { createdAt: yesterday } });
+    expect(await prisma.ledgerEntry.count({ where: { userId: referrer, type: 'REFERRAL' } })).toBe(0);
+    await prisma.pendingReferral.updateMany({ where: { id: { in: ids.slice(0, 2) } }, data: { createdAt: yesterday } });
+    await settleReferrals({ referrerIds: [referrer] });
+    expect(await prisma.pendingReferral.count({ where: { referrerId: referrer, settledAt: null } })).toBe(1);
 
     const { wallet } = await import('../modules/wallet');
     const app = await appWith(wallet, '/wallet', referrer);

@@ -16,7 +16,7 @@ import { storageKeyOf } from '../core/media-key.js';
 import { cancelAuction } from '../core/auctions.js';
 import { adminResolveInFlight } from '../core/treasury-inflight.js';
 import { CREATOR_STANDING_SELECT, creatorMayBePaid } from '../core/creator-standing.js';
-import { REPORT_TARGETS, messageAndBroadcastSiblings, listReports } from '../core/reports.js';
+import { REPORT_TARGETS, messageAndBroadcastSiblings, listReports, postStillServedToBuyers } from '../core/reports.js';
 
 export const admin: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.role('ADMIN'));
@@ -289,7 +289,17 @@ export const admin: FastifyPluginAsync = async (app) => {
         // other reports as live content, and the admin deciding one needs to
         // see the ban before choosing suspend_user.
         const owner = await prisma.user.findUnique({ where: { id: p.creatorId }, select: OWNER_SELECT });
-        target = { id: p.id, creatorId: p.creatorId, owner, text: p.text, visibility: p.visibility, priceCents: p.priceCents, removed: p.removed, createdAt: p.createdAt, media: p.media.map(mediaView) };
+        // `removed` alone read "down" for a PPV post its creator deleted, which
+        // every past buyer is still served (core/access.ts) and which the
+        // queue lists as live content. removedByCreator says who removed it;
+        // stillServedToBuyers is the queue's own predicate (core/reports.ts),
+        // so dismissing it as "already down" is not the obvious misread.
+        const stillServedToBuyers = await postStillServedToBuyers(p);
+        target = {
+          id: p.id, creatorId: p.creatorId, owner, text: p.text, visibility: p.visibility, priceCents: p.priceCents,
+          removed: p.removed, removedByCreator: p.removedByCreator, stillServedToBuyers,
+          createdAt: p.createdAt, media: p.media.map(mediaView),
+        };
       }
     } else if (r.targetType === 'message') {
       const m = await prisma.message.findUnique({ where: { id: r.targetId }, include: { media: { select: MEDIA_SELECT } } });
@@ -837,8 +847,14 @@ export const admin: FastifyPluginAsync = async (app) => {
       SELECT date_trunc('day',"createdAt") AS day, meta->>'source' AS source, SUM("amountCents") AS cents
       FROM "LedgerEntry" WHERE "userId"=${PLATFORM_ID} AND type='PLATFORM_FEE' AND "createdAt" > now() - (${days} || ' days')::interval
       GROUP BY 1,2 ORDER BY 1`;
-    const treasury = await prisma.account.findUnique({ where: { userId: PLATFORM_ID } });
-    return { treasuryCents: Number(treasury?.balanceCents ?? 0), series: rows.map(r => ({ ...r, cents: Number(r.cents) })) };
+    const [treasury, owed] = await Promise.all([
+      prisma.account.findUnique({ where: { userId: PLATFORM_ID } }),
+      prisma.pendingReferral.aggregate({ where: { settledAt: null }, _sum: { amountCents: true } }),
+    ]);
+    // referralsOwedCents: referral cuts the platform account is holding until
+    // their day ends and core/referrals.ts credits them. Part of
+    // treasuryCents, but not the platform's to keep.
+    return { treasuryCents: Number(treasury?.balanceCents ?? 0), referralsOwedCents: Number(owed._sum.amountCents ?? 0n), series: rows.map(r => ({ ...r, cents: Number(r.cents) })) };
   });
 
   /** Treasury's $ONLYONE hedge exposure: how much of what's come in is still unconverted risk vs already de-risked into stablecoin. */

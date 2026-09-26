@@ -2048,6 +2048,18 @@ const REPORT_CATEGORY_LABELS = {
  * attaches (lib/reports-store.js attachReportTargets). Without it a moderator
  * pressed "Remove Content" on a bare "#123".
  */
+/**
+ * " · conversation between ..." for a message report. An account that no
+ * longer exists comes back from the reports API as null (round-18 social#1:
+ * a deleted reporter's id is never shown), so it reads "a deleted account"
+ * rather than "user null".
+ */
+function participantsText(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return '';
+  const names = ids.map((p) => (p == null || String(p) === 'null' || String(p) === '' ? 'a deleted account' : `user ${String(p)}`));
+  return ` · conversation between ${names.join(' and ')}`;
+}
+
 function ReportTarget({ report }) {
   const t = report?.target;
   if (!t || (t.exists === false && !t.fromSnapshot)) {
@@ -2081,7 +2093,7 @@ function ReportTarget({ report }) {
           Direct message from user #{String(t.senderId ?? '?')}
           {t.senderLogin ? ` (${String(t.senderLogin)}${t.senderRole ? `, ${String(t.senderRole)}` : ''})` : ''}
           {t.createdAt ? `, ${new Date(t.createdAt).toLocaleString()}` : ''}
-          {Array.isArray(t.participantIds) && t.participantIds.length ? ` · conversation between users ${t.participantIds.map(String).join(' and ')}` : ''}:
+          {participantsText(t.participantIds)}:
         </p>
         <p className="whitespace-pre-wrap break-words">"{String(t.text ?? '')}"</p>
       </div>
@@ -3644,7 +3656,12 @@ function PayoutAccount({ r }) {
           {a.status}
         </span>
       )}
-      {!a.creatorId && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">NO CREATOR PROFILE</span>}
+      {a.deleted && (
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-600 text-white font-bold" title="The login no longer exists. Rejecting this payout forfeits the credits: there is no balance left to return them to.">
+          ACCOUNT DELETED
+        </span>
+      )}
+      {!a.creatorId && !a.deleted && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">NO CREATOR PROFILE</span>}
       {a.seed && <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-500/30 text-gray-300 font-bold">DEMO</span>}
       {r.frozen && r.status === 'pending' && (
         <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-600 text-white font-bold" title="The account is no longer an active creator. Reject it (credits go back, still frozen) rather than pay it.">
@@ -3779,10 +3796,17 @@ function PayoutsPanel({ adminKey }) {
   };
 
   const reject = async (r) => {
+    // A request whose login no longer exists (account.deleted) has no balance
+    // to return the credits to: the server records them as forfeited and
+    // notifies nobody (lib/credits-store.js rejectPayout).
+    const gone = !!r.account?.deleted;
     const reason = window.prompt(
-      `Reject payout #${r.id} of ${formatCredits(r.amount_cents)}? The credits go back to the creator's balance`
-      + `${r.frozen ? ' (and stay frozen while the account is suspended or banned)' : ''}. `
-      + 'The reason is shown to the creator:',
+      gone
+        ? `Reject payout #${r.id} of ${formatCredits(r.amount_cents)}? This account has been DELETED, so the credits `
+          + 'cannot go back to anyone: they are forfeited. The reason is kept on the record:'
+        : `Reject payout #${r.id} of ${formatCredits(r.amount_cents)}? The credits go back to the creator's balance`
+          + `${r.frozen ? ' (and stay frozen while the account is suspended or banned)' : ''}. `
+          + 'The reason is shown to the creator:',
     );
     if (reason === null) return;
     if (!reason.trim()) {
@@ -3801,7 +3825,9 @@ function PayoutsPanel({ adminKey }) {
         return;
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to reject'));
-      setNotice(`Payout #${r.id} rejected; ${formatCredits(r.amount_cents)} returned to the creator's balance.`);
+      setNotice(data?.request?.forfeited
+        ? `Payout #${r.id} rejected; the account no longer exists, so ${formatCredits(r.amount_cents)} was forfeited (not refunded).`
+        : `Payout #${r.id} rejected; ${formatCredits(r.amount_cents)} returned to the creator's balance.`);
       await load();
     } catch (err) {
       setError(err.message);
@@ -3902,7 +3928,8 @@ function PayoutsPanel({ adminKey }) {
       </p>
       <p className="text-xs text-gray-500 mb-4">
         FROZEN means the account is no longer an active creator (suspended, banned, pending or deleted). Don't pay those:
-        Reject returns the credits to their balance, which stays frozen until they're reinstated.
+        Reject returns the credits to their balance, which stays frozen until they're reinstated. For an ACCOUNT
+        DELETED request there is no balance left, so Reject forfeits the credits instead.
       </p>
 
       {error && <div className="mb-4 px-4 py-3 rounded-md bg-red-900/30 border border-red-500/40 text-red-300 text-sm whitespace-pre-line">{error}</div>}
@@ -3945,7 +3972,7 @@ function PayoutsPanel({ adminKey }) {
                   disabled={busyId === r.id}
                   className="text-xs px-4 py-1.5 rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
                 >
-                  Reject &amp; refund
+                  {r.account?.deleted ? 'Reject (forfeit)' : <>Reject &amp; refund</>}
                 </button>
               </div>
             </div>
@@ -4326,11 +4353,15 @@ function PerformerRecordsPanel({ adminKey, creators }) {
   // records linked to that creator plus the co-performers attested on that
   // exact item -- a plain text match against contentUrls would miss both.
   const urlSearch = /\/creator\/|\/api\/media\//.test(q);
+  // Aliases are stored without a leading "@" while the site shows every
+  // handle with one, so "@luna" pasted as shown must find "luna" -- same rule
+  // as matchesRecord in lib/performer-records-store.js. Alias check only.
+  const aliasQ = q.replace(/^@/, '');
   const visible = records
     .filter((r) => (showArchived ? r.status === 'archived' : r.status !== 'archived'))
     .filter((r) => !q
       || (urlSearch && serverMatches && serverMatches.has(String(r.id)))
-      || (r.aliases || []).some((a) => a.includes(q))
+      || (aliasQ && (r.aliases || []).some((a) => a.includes(aliasQ)))
       || (r.contentUrls || []).some((u) => u.toLowerCase().includes(q))
       || String(r.legalName || '').toLowerCase().includes(q));
 
@@ -5161,7 +5192,7 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
   const eraseAddr = async (o) => {
     const id = String(o.id);
     if (!confirm(
-      `Erase the shipping name and address, and the tracking numbers, on order #${id}? This cannot be undone, and the seller can no longer change the tracking afterwards. Only do it when no dispute or `
+      `Erase the shipping name and address on order #${id}? This cannot be undone. The carrier and tracking number stay on the order (buyer and seller keep seeing them). Only do it when no dispute or `
       + 'legal claim about this order is in progress.',
     )) return;
     setBusy(true);
@@ -5172,7 +5203,7 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
       if (res.status === 404) throw new Error(`There is no order #${id}.`);
       if (res.status === 409) throw new Error(`Order #${id} is still waiting to ship, so its address is still needed and was not erased. If it can never ship, close it first.`);
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not erase the address'));
-      setNotice(data.erased ? `Shipping name, address and tracking numbers erased from order #${id}.` : `Order #${id} has no shipping address or tracking number left to erase.`);
+      setNotice(data.erased ? `Shipping name and address erased from order #${id}. Its carrier and tracking number are kept.` : `Order #${id} has no shipping address left to erase.`);
       await load({ keepNotice: true });
     } catch (err) {
       setError(err.message);
@@ -5242,11 +5273,10 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {list.map((o) => {
               const closable = o.kind === 'physical' && o.status === 'pending_shipment';
-              // Also an order whose address went before tracking numbers were
-              // erased with it (lib/orders-store.js ERASABLE_SHIPPING_WHERE_SQL).
-              const hasTrackingNumbers = (typeof o.trackingNumber === 'string' && o.trackingNumber !== '')
-                || (Array.isArray(o.trackingHistory) && o.trackingHistory.some((h) => h && h.trackingNumber));
-              const erasable = (o.hasAddress || hasTrackingNumbers) && o.status !== 'pending_shipment';
+              // Only the shipping name and address are erasable: the carrier and
+              // tracking numbers stay with the order (round-18 decision,
+              // lib/orders-store.js ERASABLE_SHIPPING_WHERE_SQL).
+              const erasable = o.hasAddress && o.status !== 'pending_shipment';
               const open = closing && String(closing.id) === String(o.id);
               return (
                 <div key={o.id} className={`px-3 py-2 rounded-md bg-black/30 border ${open ? 'border-red-500/50' : 'border-white/5'} text-xs`}>
@@ -5265,7 +5295,8 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
                         Seller: <span className={o.seller?.unableToFulfil ? 'text-red-300' : 'text-gray-300'}>{sellerLabel(o.seller)}</span>
                         {' · '}Buyer: user {String(o.buyerId ?? '?')}
                         {' · '}{o.hasAddress ? 'address stored' : o.addressErasedAt ? 'address erased' : 'no address'}
-                        {o.trackingErasedAt ? ' · tracking numbers erased' : ''}
+                        {/* Only on orders erased before round 18, when erasure took the tracking numbers too. */}
+                        {o.trackingErasedAt ? ' · tracking numbers erased (older erasure)' : ''}
                       </p>
                       {o.closeReason && <p className="text-gray-500 break-words">Close reason: {String(o.closeReason)}</p>}
                       {(typeof o.trackingNumber === 'string' && o.trackingNumber) && (
@@ -5294,7 +5325,7 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
                       )}
                       {erasable && (
                         <button onClick={() => eraseAddr(o)} disabled={busy} className="text-[11px] px-2 py-1 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50">
-                          {o.hasAddress ? 'Erase address…' : 'Erase tracking…'}
+                          Erase address…
                         </button>
                       )}
                     </div>
@@ -5407,7 +5438,7 @@ function OrderAddressErasePanel({ adminKey }) {
     setNotice('');
     if (!/^[1-9][0-9]{0,17}$/.test(id)) { setError('Enter the order number, a plain number like 42.'); return; }
     if (!confirm(
-      `Erase the shipping name and address, and the tracking numbers, on order #${id}? This cannot be undone, and the seller can no longer change the tracking afterwards. Only do it when no dispute or `
+      `Erase the shipping name and address on order #${id}? This cannot be undone. The carrier and tracking number stay on the order (buyer and seller keep seeing them). Only do it when no dispute or `
       + 'legal claim about this order is in progress.',
     )) return;
     setBusy(true);
@@ -5418,8 +5449,8 @@ function OrderAddressErasePanel({ adminKey }) {
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not erase the address'));
       const at = data.addressErasedAt ? ` (erased ${new Date(data.addressErasedAt).toLocaleString()})` : '';
       setNotice(data.erased
-        ? `Shipping name, address and tracking numbers erased from order #${id}${at}.`
-        : `Order #${id} has no shipping address or tracking number left to erase${at}.`);
+        ? `Shipping name and address erased from order #${id}${at}. Its carrier and tracking number are kept.`
+        : `Order #${id} has no shipping address left to erase${at}.`);
       setOrderId('');
     } catch (err) {
       setError(err.message);

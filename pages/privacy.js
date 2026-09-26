@@ -3,8 +3,10 @@ import Head from 'next/head';
 // Bump on every material change -- Section 10 promises it. This policy has to
 // describe what the code actually collects and sets; when a feature adds a
 // field, a cookie, or a new recipient of someone's data, this file changes
-// in the same release.
-const LAST_UPDATED = 'September 27, 2026';
+// in the same release. Set it to the day the change actually ships -- never
+// ahead of the deploy date: acceptance dates on orders and signups are read
+// against it, and a date that hasn't happened yet makes that history useless.
+const LAST_UPDATED = 'September 26, 2026';
 
 export default function Privacy() {
   return (
@@ -77,12 +79,13 @@ export default function Privacy() {
                   address. That name and address are encrypted at rest and are{' '}
                   <strong>disclosed to the creator who sold you the item</strong> so they can ship it —
                   they are not shown to anyone else. When the creator ships it, the order also records the
-                  carrier and tracking number they enter, which you see on your orders page; if the creator
-                  corrects them later, each earlier carrier and tracking number is kept on the order too
-                  (visible only to Platform administrators, for resolving delivery disputes). A tracking
-                  number can be looked up with the carrier, which shows roughly where the parcel was
-                  delivered, so we treat it like the address (Section 7). We also record your age
-                  confirmation and acceptance of the Marketplace terms against each order.
+                  carrier and tracking number they enter, which you and the creator both see on the order;
+                  if the creator corrects them later, you are notified, and each earlier carrier and
+                  tracking number is kept on the order too (visible only to Platform administrators, for
+                  resolving delivery disputes). A tracking number can be looked up with the carrier, which
+                  shows roughly where the parcel was delivered. Tracking numbers stay with the order record
+                  and are not deleted along with the shipping name and address (Section 7). We also record
+                  your age confirmation and acceptance of the Marketplace terms against each order.
                 </li>
                 <li>
                   <strong>Wallet addresses and on-chain activity.</strong> If you connect a wallet — to buy
@@ -339,15 +342,15 @@ export default function Privacy() {
                   can fulfil it. Once the order has shipped — or has been closed because the seller could not
                   fulfil it — you can ask us to delete them (email team@onlyone1.fun with the order), unless we
                   need them for a dispute or legal claim already in progress; the order record itself stays,
-                  without them. Deleting them also deletes, from your copy of the order and from what
-                  administrators see, the order&apos;s tracking number and every earlier tracking number kept
-                  for it (the carrier name and dates stay), and no tracking number is ever written back to your
-                  copy after that. The creator who shipped the order keeps the tracking number they entered in
-                  their own view of that order (they typed it, and can still correct it there); it is shown to
-                  no one else, and you are not notified of such a correction. Deleting your account from the
-                  Settings page deletes the shipping name and address, and the tracking numbers, from every one
-                  of your orders that has already shipped or been closed, at the same time; an order still
-                  waiting to ship keeps them only until it ships or is closed, and they are deleted then.
+                  without them. Only the shipping name and address are deleted: the carrier, the tracking
+                  number and every earlier tracking number kept for the order stay on it, because they are
+                  the record that the order was shipped and are needed to resolve delivery disputes. You and
+                  the creator who shipped it keep seeing the same carrier and tracking number, and if you
+                  still have an account you are notified when the creator corrects them. Deleting your
+                  account from the Settings page deletes the shipping name and address (not the carrier or
+                  tracking numbers) from every one of your orders that has already shipped or been closed,
+                  at the same time; an order still waiting to ship keeps them only until it ships or is
+                  closed, and they are deleted then.
                 </li>
                 <li>We may retain limited data where necessary to investigate fraud, abuse, or a legal claim already in progress.</li>
               </ul>

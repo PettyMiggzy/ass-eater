@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { money, type Tx } from '../core/ledger.js';
 
 type PendingDeposit = Awaited<ReturnType<typeof prisma.deposit.findMany>>[number];
 
@@ -45,4 +46,35 @@ export async function forEachPricedPending(
     cursor = { createdAt: last.createdAt, id: last.id };
   }
   return seen;
+}
+
+/**
+ * Settles one price-pending deposit at price `px` (`cents` already derived
+ * from it): the guarded claim (pricePending true -> false) and, if it priced
+ * above zero, the credit -- one serializable transaction, so two passes can
+ * never both credit one deposit. Dust that priced to zero is settled with
+ * nothing to credit, same as the first pass does.
+ *
+ * `claimed` and `credited` are returned separately because they drive
+ * different follow-ups in repricePending: the address's sweep is re-queued
+ * whenever the row was CLAIMED (a pending row defers every ETH/$ONLYONE sweep
+ * at its address, so clearing it -- dust included -- must queue one), while
+ * the deposit notification and the credited count need an actual credit.
+ */
+export async function settleRepriced(
+  d: { id: string; hedgedAt: Date | null },
+  cents: bigint,
+  px: number,
+  postCredit: (tx: Tx) => Promise<void>,
+): Promise<{ claimed: boolean; credited: boolean }> {
+  return money(prisma, async (tx) => {
+    const claim = await tx.deposit.updateMany({
+      where: { id: d.id, pricePending: true },
+      data: { pricePending: false, usdCents: cents > 0n ? cents : 0n, priceUsed: px, hedgedAt: cents > 0n ? null : d.hedgedAt },
+    });
+    if (!claim.count) return { claimed: false, credited: false };
+    if (cents <= 0n) return { claimed: true, credited: false };
+    await postCredit(tx);
+    return { claimed: true, credited: true };
+  });
 }

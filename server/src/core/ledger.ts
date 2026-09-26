@@ -286,6 +286,10 @@ export async function lockBalance(tx: Tx, userId: string, balance: Balance = 'CR
  * as withdrawable -- the part the hold took from their earned credits --
  * and the rest comes back as ordinary spendable credits. Clamped to the
  * credit itself.
+ *
+ * `opts.at` stamps the ledger row with a time other than now -- only
+ * core/referrals.ts uses it, to date a day's settled referral total to the
+ * UTC day it was earned.
  */
 export async function post(
   tx: Tx,
@@ -295,7 +299,7 @@ export async function post(
   refId?: string,
   meta?: object,
   balance: Balance = 'CREDITS',
-  opts: { earned?: boolean; withdrawableCents?: bigint | number } = {},
+  opts: { earned?: boolean; withdrawableCents?: bigint | number; at?: Date } = {},
 ) {
   const amt = BigInt(amountCents);
   const field = balance === 'ONLYONE' ? 'onlyOneCents' : 'balanceCents';
@@ -323,7 +327,7 @@ export async function post(
       WHERE "userId" = ${userId} AND "withdrawableCents" > GREATEST(0, "balanceCents")`;
   }
   await tx.ledgerEntry.create({
-    data: { userId, amountCents: amt, type, refId, meta: meta as Prisma.InputJsonValue },
+    data: { userId, amountCents: amt, type, refId, meta: meta as Prisma.InputJsonValue, ...(opts.at ? { createdAt: opts.at } : {}) },
   });
 }
 
@@ -452,16 +456,26 @@ export async function charge(
   // here is the one safe place, since every fan->creator charge posts here.
   await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, originalPriceCents: p.grossCents, fanId: p.fanId }, 'CREDITS', { earned: true });
   await postPlatformRevenue(tx, fee - referral, p.refId, { source: p.type });
-  // A referral row lands in the REFERRER's own history (GET /wallet/history),
-  // so it carries no refId: the charge's refId is the purchased object --
-  // the PPV post, the live stream (per minute watched), the unlocked message,
-  // and for a DM the paying fan's own id -- which told a fan's referrer
-  // exactly what their friend paid for and when. The charge ref is kept for
-  // reconciliation in meta.chargeRefId, which fanSafeMeta (modules/wallet.ts)
-  // never returns to the referrer.
-  const refMeta = (side: 'creator' | 'fan') => ({ for: side, ...(p.refId ? { chargeRefId: p.refId } : {}) });
-  if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', undefined, refMeta('creator'), 'CREDITS', { earned: true });
-  if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', undefined, refMeta('fan'), 'CREDITS', { earned: true });
+  // Referral cuts are NOT credited to the referrer here. Posting each one
+  // straight into the referrer's balance let them poll GET /wallet/balance
+  // (or /payouts/earnings, or watch a spend succeed) and date every purchase
+  // their referred friend made -- each live minute, each paid DM -- and its
+  // price bracket. The platform account holds the cut (a REFERRAL row on
+  // PLATFORM_ID, meta.held) and a PendingReferral row records who it is owed
+  // to; core/referrals.ts settleReferrals() credits one summed REFERRAL entry
+  // per referrer per side per UTC day, only once that day has ended.
+  //
+  // The referrer's settled row carries no refId and no charge ref: the
+  // charge's refId is the purchased object (the PPV post, the live stream,
+  // the unlocked message, for a DM the paying fan's own id). The charge ref
+  // stays on the platform-side hold row and the pending row, for
+  // reconciliation; neither is ever returned to the referrer.
+  const hold = async (referrerId: string, cents: number, side: 'creator' | 'fan') => {
+    await post(tx, PLATFORM_ID, cents, 'REFERRAL', undefined, { held: true, for: side, ...(p.refId ? { chargeRefId: p.refId } : {}) });
+    await tx.pendingReferral.create({ data: { referrerId, side, amountCents: BigInt(cents), chargeRefId: p.refId || null } });
+  };
+  if (creatorReferral) await hold(creator.user.referredById!, creatorReferral, 'creator');
+  if (fanReferral) await hold(fan.referredById!, fanReferral, 'fan');
 
   return { gross: chargeCents, fee, net, referral };
 }

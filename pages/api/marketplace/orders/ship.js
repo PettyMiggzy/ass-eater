@@ -55,7 +55,8 @@ export default async function handler(req, res) {
   // Round 15 (money#0, public-pages#0, legal-journeys#1): the carrier and
   // tracking number are shown on the buyer's /orders page, so they are not
   // free text: the carrier is one of a fixed list and the tracking number is
-  // 8-35 letters/digits with at least 6 digits (lib/tracking-rules.js). Round
+  // 6-35 letters/digits with at least 2 digits (lib/tracking-rules.js; round
+  // 18 money#0 lowered it from 8-35 / 6 for GLS TrackIDs). Round
   // 16 (money#0/#1, dashboard#0/#1) dropped the per-carrier formats, check
   // digits and phone heuristics, which refused real numbers: only what cannot
   // be a tracking number is refused, and ONLY an app name (as the carrier or

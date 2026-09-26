@@ -26,7 +26,7 @@ import { eraseAddressesOfDeletedBuyers } from '../../../lib/orders-store';
  *     lapsed recently: an unapproved creator's account suspension is sent to
  *     server/ with no end (lib/users-store.js combinedCreatorPushStanding), so
  *     nothing else would ever tell server/ it is over.
- *   - erasing the shipping name/address and tracking of any finished order
+ *   - erasing the shipping name/address of any finished order
  *     whose buyer's account is gone (lib/orders-store.js
  *     eraseAddressesOfDeletedBuyers, round-17 money#1): what account
  *     deletion and the ship/close paths did not already erase.

@@ -388,7 +388,9 @@ nothing to rotate; skip this.) Rotating it:
    credited $ONLYONE deposit, only while `INDEX_ONLYONE_DEPOSITS` is on. An
    ETH or $ONLYONE sweep moves the address's whole balance, so neither runs
    while ANY deposit of that asset to the address is still price-pending
-   (the sweep is deferred until `repricePending` credits it). A
+   (the sweep is deferred until `repricePending` settles it -- credits it,
+   or clears it as dust that priced to zero -- and `repricePending` then
+   queues the address's sweep again either way). A
    sweep that needs a gas top-up additionally needs a credited deposit of
    that asset and a balance worth a dollar. So these are **never** swept
    automatically:

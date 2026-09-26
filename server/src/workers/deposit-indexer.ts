@@ -10,7 +10,7 @@ import { chunk } from './indexer-chunks.js';
 import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, depositPricePendingFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, ethSweepCandidates, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
-import { forEachPricedPending } from './reprice-scan.js';
+import { forEachPricedPending, settleRepriced } from './reprice-scan.js';
 
 const BATCH = 1000n;
 // Deposit addresses per eth_getLogs `to` filter (geth caps a position at 1000).
@@ -217,23 +217,24 @@ export async function repricePending(pageSize = 100) {
     if (!px) return;
     const raw = BigInt(d.rawAmount);
     const cents = depositCents(asset, raw, DECIMALS[asset], px);
-    const done = await money(prisma, async (tx) => {
-      // Dust that prices to zero is settled with nothing to credit, same as
-      // credit() does on the first pass.
-      const claim = await tx.deposit.updateMany({
-        where: { id: d.id, pricePending: true },
-        data: { pricePending: false, usdCents: cents > 0n ? cents : 0n, priceUsed: px, hedgedAt: cents > 0n ? null : d.hedgedAt },
-      });
-      if (!claim.count || cents <= 0n) return false;
-      await postDeposit(tx, d.userId, asset, cents, d.id, { asset, raw: d.rawAmount, px, repriced: true });
-      return true;
-    });
-    if (!done) return;
-    credited++;
+    const r = await settleRepriced(d, cents, px, (tx) => postDeposit(tx, d.userId, asset, cents, d.id, { asset, raw: d.rawAmount, px, repriced: true }));
+    if (!r.claimed) return;
+    // The address's sweep is queued whenever this row stopped being pending
+    // -- dust that priced to zero included. While it was pending, an ETH or
+    // $ONLYONE sweep for an EARLIER credited deposit at this address returned
+    // without moving anything (the sweep job's depositPricePendingFor check),
+    // relying on this to queue it again; queued only on a credit, a pending
+    // row that turned out to be dust left that credited balance at the
+    // address for good (the reconciler skips small ETH, and skips $ONLYONE
+    // entirely with INDEX_ONLYONE_DEPOSITS off). Safe either way: the job
+    // re-checks for a credited deposit, for any other pending one, and reads
+    // the live balance.
     const addr = await prisma.depositAddress.findUnique({ where: { userId_chainId: { userId: d.userId, chainId: CHAIN_ID } } });
     if (addr) {
-      await enqueueSweep({ derivationIndex: addr.derivationIndex, asset, tokenAddress: asset === 'ONLYONE' ? TOKENS.ONLYONE.address : undefined }, sweepJobId(d.txHash, d.logIndex));
+      await enqueueSweep({ derivationIndex: addr.derivationIndex, asset, tokenAddress: asset === 'ONLYONE' ? TOKENS.ONLYONE.address : undefined }, `${sweepJobId(d.txHash, d.logIndex)}-reprice`);
     }
+    if (!r.credited) return;
+    credited++;
     await publish(d.userId, { type: 'deposit', asset, amount: formatUnits(raw, DECIMALS[asset]), usdCents: Number(cents) })
       .catch((e) => console.warn('indexer: deposit notification failed', e));
   }, { pageSize });
@@ -488,7 +489,7 @@ registerWorker(new Worker('sweep', async (job) => {
     // The transfer below is the WHOLE balance: while any ETH deposit to this
     // address is still price-pending it would take that one too, uncredited.
     // Deferred by returning -- repricePending() queues this sweep again once
-    // the pending deposit is credited.
+    // the pending deposit is settled (credited, or priced to dust).
     if (await depositPricePendingFor(CHAIN_ID, derivationIndex, 'ETH')) return;
     const bal = await publicClient.getBalance({ address: me });
     const gas = await publicClient.estimateFeesPerGas(); const cost = 21_000n * (gas.maxFeePerGas ?? 0n) * 2n;
@@ -498,7 +499,8 @@ registerWorker(new Worker('sweep', async (job) => {
   const tok = asset === 'ONLYONE' ? TOKENS.ONLYONE : ACCEPTED_STABLES.get((tokenAddress ?? '').toLowerCase());
   if (!tok?.address) return; // unknown token in a sweep job -- never guess which contract to move
   // The same whole-balance rule for $ONLYONE: never while a deposit of it to
-  // this address is still price-pending (repricePending re-queues the sweep).
+  // this address is still price-pending (repricePending re-queues the sweep
+  // once that deposit is settled, credited or priced to dust).
   if (asset === 'ONLYONE' && await depositPricePendingFor(CHAIN_ID, derivationIndex, 'ONLYONE')) return;
 
   const bal = await publicClient.readContract({ address: tok.address, abi: erc20Abi, functionName: 'balanceOf', args: [me] });

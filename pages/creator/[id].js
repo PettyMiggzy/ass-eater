@@ -13,6 +13,7 @@ import { viewerMarkFor } from '../../lib/viewer-mark';
 import { holderGateState } from '../../lib/holder-access';
 import { tokenGateLive, formatGate } from '../../lib/token-gate';
 import { DM_PRICE_FLOOR_CENTS, formatCredits } from '../../lib/brand';
+import { feeWaiverActive } from '../../lib/founding';
 import { FoundingBadge, Icons, SolidIcons, Tagline, pickTagline } from '../../components/Brand';
 import SiteNav from '../../components/SiteNav';
 import DemoBadge from '../../components/public/DemoBadge';
@@ -94,6 +95,12 @@ export async function getServerSideProps({ req, params }) {
     !!viewerCreator && effectiveCreatorStatus(viewerCreator) === 'active' && !isDemoCreator(viewerCreator);
   const ownPrice = Number.isInteger(creator?.dmPriceCents) ? creator.dmPriceCents : 0;
   const dmPriceCents = viewerIsLiveCreator ? 0 : Math.max(DM_PRICE_FLOOR_CENTS, ownPrice);
+  // A Founding Creator inside their 0% window keeps the whole price:
+  // lib/credits-store.js transferWithFee takes no fee while feeWaiverActive()
+  // is true for the recipient. Decided from the full stored record (founding,
+  // foundingSince), which toPublicCreator does not pass down. Display only --
+  // the charge stays authoritative (round-18 public-pages#1).
+  const dmFeeWaived = !!creator && feeWaiverActive(creator);
 
   return {
     props: {
@@ -120,6 +127,7 @@ export async function getServerSideProps({ req, params }) {
       // formatted by the server and again by the browser (whose locale may
       // differ) was a hydration mismatch on every page view.
       dmPriceLabel: dmPriceCents > 0 ? formatCredits(dmPriceCents) : '',
+      dmFeeWaived,
       gateLabel: creator ? formatGate(creator) : '',
       listings,
       wallPosts,
@@ -232,6 +240,7 @@ export default function CreatorProfile({
   demo,
   dmPriceCents,
   dmPriceLabel,
+  dmFeeWaived,
   gateLabel,
   listings,
   wallPosts,
@@ -319,7 +328,9 @@ export default function CreatorProfile({
       return;
     }
     if (!creatorUserId) {
-      flash("This creator hasn't claimed their account yet — messaging isn't available.");
+      // No login is attached to this profile, and nothing can attach one
+      // yet, so nothing is promised (round-18 public-pages#2).
+      flash("Messaging isn't available for this creator.");
       return;
     }
     if (String(viewerId) === String(creatorUserId)) {
@@ -631,12 +642,13 @@ export default function CreatorProfile({
                         <Icons.check className="h-4 w-4 mt-0.5 shrink-0 text-brand-pink" />
                         <span>
                           {/* Same condition as the Message button: a creator
-                              with no claimed login can't be messaged, so no
-                              price is offered for it (credits never refund). */}
+                              with no login can't be messaged, so no price is
+                              offered for it (credits never refund), and no
+                              future change is promised. */}
                           {!creatorUserId
-                            ? 'Messaging opens once this creator claims their account.'
+                            ? "Messaging isn't available for this creator."
                             : dmPriceCents > 0
-                              ? `Send a message — ${dmPriceLabel} each (goes to the creator, less OnlyOne's platform fee).`
+                              ? `Send a message — ${dmPriceLabel} each (${dmFeeWaived ? 'goes to the creator in full' : "goes to the creator, less OnlyOne's platform fee"}).`
                               : 'Send a message — free for you as a creator.'}
                         </span>
                       </li>
@@ -929,6 +941,7 @@ export default function CreatorProfile({
           otherName={creator.name}
           otherImg={creator.img}
           initialPriceCents={dmPriceCents}
+          feeWaived={dmFeeWaived}
           onClose={() => setInboxOpen(false)}
         />
       )}
@@ -957,7 +970,7 @@ async function readJson(res) {
 
 const MAX_DM_LENGTH = 2000;
 
-function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onClose }) {
+function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, feeWaived, onClose }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1212,7 +1225,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
         )}
         {canSend && priceCents > 0 && (
           <p className="text-[11px] text-gray-400 px-4 pt-2">
-            Each message costs {formatCredits(priceCents)} (goes to {otherName}, less OnlyOne&apos;s platform fee).
+            Each message costs {formatCredits(priceCents)} (goes to {otherName}{feeWaived ? ' in full' : <>, less OnlyOne&apos;s platform fee</>}).
           </p>
         )}
         {notice && <p className="text-yellow-300 text-xs px-4 pt-1">{notice}</p>}
