@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { money, post, PLATFORM_ID, FEES, grossFanSpendCents } from '../core/ledger.js';
+import { money, PLATFORM_ID, FEES, grossFanSpendCents } from '../core/ledger.js';
 import { deleteObject, deletePrefix, purgeCdnPrefix, cdnSignedUrl } from '../lib/s3.js';
 import { wmPrefix } from '../lib/watermark.js';
 import { recordManualBurn } from '../core/vip.js';
@@ -16,6 +16,7 @@ import { storageKeyOf } from '../core/media-key.js';
 import { cancelAuction } from '../core/auctions.js';
 import { adminResolveInFlight } from '../core/treasury-inflight.js';
 import { CREATOR_STANDING_SELECT, creatorMayBePaid } from '../core/creator-standing.js';
+import { adminAdjust, AdjustRefused } from '../core/admin-adjust.js';
 import { REPORT_TARGETS, messageAndBroadcastSiblings, listReports, postStillServedToBuyers } from '../core/reports.js';
 
 export const admin: FastifyPluginAsync = async (app) => {
@@ -662,14 +663,28 @@ export const admin: FastifyPluginAsync = async (app) => {
    */
   app.delete('/media/:id', async (req: any) => takedownMedia(String(req.params.id ?? ''), req.log));
 
-  /** Manual credit/debit (refunds, goodwill, corrections). Counter-posted against treasury. */
-  app.post('/users/:id/adjust', async (req: any) => {
-    const { amountCents, reason } = z.object({ amountCents: z.number().int(), reason: z.string().max(200) }).parse(req.body);
-    await money(prisma, async (tx) => {
-      await post(tx, req.params.id, amountCents, 'ADJUSTMENT', undefined, { reason, by: req.user.id });
-      await post(tx, PLATFORM_ID, -amountCents, 'ADJUSTMENT', undefined, { reason, target: req.params.id });
-    });
-    return { ok: true };
+  /**
+   * Manual credit/debit (refunds, goodwill, corrections). Counter-posted
+   * against treasury, at most once per client `requestId` (core/admin-adjust.ts):
+   * resend the SAME requestId on any retry; a replay answers
+   * { ok: true, replayed: true } and posts nothing. 404 for an unknown user,
+   * 400 system_account for the platform/burn accounts, 409
+   * insufficient_balance for a debit past zero unless allowNegative: true.
+   */
+  app.post('/users/:id/adjust', async (req: any, reply) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const b = z.object({
+      requestId: z.string().uuid(),
+      amountCents: z.number().int().min(-100_000_000).max(100_000_000).refine((n) => n !== 0, 'amount_zero'),
+      reason: z.string().trim().min(1).max(200),
+      allowNegative: z.boolean().optional(),
+    }).parse(req.body);
+    try {
+      return await adminAdjust(req.user.id, id, b);
+    } catch (e) {
+      if (e instanceof AdjustRefused) return reply.code(e.statusCode).send({ error: e.reason });
+      throw e;
+    }
   });
 
   app.get('/payouts', async (req: any) => {

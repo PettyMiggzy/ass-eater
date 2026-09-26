@@ -4,7 +4,7 @@ import { nanoid } from 'nanoid';
 import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
 import { prisma } from '../lib/prisma.js';
 import { charge, money, FEES, zeroOrAtLeast } from '../core/ledger.js';
-import { isSubscribed, creatorIsActive } from '../core/access.js';
+import { isSubscribedForLive, creatorIsActive } from '../core/access.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { LK, rooms } from '../core/livekit.js';
 import { ensureMinutePaid, payNextMinute } from '../core/live-billing.js';
@@ -83,7 +83,9 @@ export const live: FastifyPluginAsync = async (app) => {
     // Subscriptions are left ACTIVE on a suspension, so without this every
     // subscriber could keep joining a subscriber-only stream for free.
     if (!(await creatorIsActive(s.creatorId))) return reply.code(404).send({ error: 'not_live' });
-    let allowed = await isSubscribed(req.user.id, s.creatorId);
+    // Live entitlement keeps a renewal-pending subscriber in (core/access.ts
+    // isSubscribedForLive) -- the same rule the sweep applies.
+    let allowed = await isSubscribedForLive(req.user.id, s.creatorId);
     if (s.ticketPriceCents > 0) {
       const has = await prisma.liveTicket.findUnique({ where: { fanId_streamId: { fanId: req.user.id, streamId: s.id } } });
       if (!has) {
@@ -204,7 +206,7 @@ export const live: FastifyPluginAsync = async (app) => {
       if (!(await creatorIsActive(s.creatorId))) return null;
       let ok: boolean;
       if (s.ticketPriceCents > 0) ok = await hasTicket(user.id, s.id);
-      else ok = (await isSubscribed(user.id, s.creatorId))
+      else ok = (await isSubscribedForLive(user.id, s.creatorId))
         || (s.perMinuteCents > 0 && !!(await prisma.liveMinute.findFirst({ where: { fanId: user.id, streamId: s.id }, select: { minuteIndex: true } })));
       return ok ? `u:stream:${id}` : null;
     });

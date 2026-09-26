@@ -38,8 +38,11 @@ import {
  *   { userId, login, role, creatorId, creatorName, creatorHandle }, or for a
  *   deleted account { userId: null, login: null, role: null, creatorId: null,
  *   deleted: true } -- never the deleted account's id (round-19 admin-ui#0).
- *   A conversation's own `id` still joins the two participant ids; the panel
- *   must not print it when a participant is deleted. A message's (and a
+ *   A conversation's own `id` joins the two participant ids, so for a thread
+ *   with a deleted participant it is returned SEALED ("ref.<opaque>",
+ *   lib/content-takedown.js sealConversationRef, round-20 social#0); pass it
+ *   back unchanged as `conversationId` here or to /api/admin/content-takedown.
+ *   A message's (and a
  *   conversation's lastMessage's) senderId is null when its sender is deleted.
  */
 function str(v) {

@@ -12,6 +12,7 @@ import { consumeAttempt } from '../../../lib/rate-limit';
 import { userWriteRestriction } from '../../../lib/user-moderation';
 import { wallAuthorKey } from '../../../lib/wall-author-key';
 import { refuseMalformedText } from '../../../lib/field-validation';
+import { AUTHOR_ACCOUNT_GONE } from '../../../lib/author-lock';
 
 // Per author. A wall is public, so this is the surface where flooding is
 // most visible to everyone else.
@@ -103,7 +104,7 @@ export default async function handler(req, res) {
     }
 
     const authorName = await displayNameFor(user);
-    const post = await addWallPost({ creatorId: String(wallCreator.id), authorId: uid, authorName, text, isWallOwner: !!isOwner });
+    const post = await addWallPost({ creatorId: String(wallCreator.id), authorId: uid, authorName, text, isWallOwner: !!isOwner, requireAuthor: true });
 
     // Let the wall's creator know -- unless they wrote it themselves. A
     // burst of comments folds into one unread notification per wall.
@@ -124,6 +125,11 @@ export default async function handler(req, res) {
             // the same commenter across walls (round-8 social#1). The key is
             // also stripped from GET /api/notifications -- it is only needed
             // here, server-side, for the coalescing.
+            // Only while the commenter's account still exists (round-20
+            // social#1): a notification naming a sender whose deletion
+            // committed in between is not written (lib/notifications-store.js
+            // actorId).
+            actorId: String(uid),
             meta: {
               creatorId: String(wallCreator.id),
               // Per (wall, author), keyed by a secret (lib/wall-author-key.js).
@@ -142,6 +148,7 @@ export default async function handler(req, res) {
     if (err.message === 'Comment cannot be empty') return res.status(400).json({ error: err.message });
     if (err.code === 'WALL_DAILY_CAP') return res.status(429).json({ error: WALL_DAILY_CAP_MESSAGE });
     if (err.code === 'WALL_CONTROL_CHARS') return res.status(400).json({ error: WALL_CONTROL_CHARS_MESSAGE });
+    if (err.code === AUTHOR_ACCOUNT_GONE) return res.status(401).json({ error: 'Your account no longer exists.' });
     console.error('[wall/post] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

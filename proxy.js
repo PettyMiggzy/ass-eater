@@ -331,7 +331,15 @@ export async function proxy(request) {
     // set by the platform and read the same way lib/rate-limit.js does.
     const onVercel = !!(process.env.VERCEL || process.env.VERCEL_ENV);
     const unknownCountry = !country && onVercel;
-    if (unknownCountry || (country === 'US' && (!region || BLOCKED_STATE_CODES.has(region)))) {
+    // Every visitor OUTSIDE the US verifies too (owner decision, 2026-09-26).
+    // The UK (Online Safety Act, enforced since July 2025), France (SREN/Arcom)
+    // and Italy (AGCOM) require real age assurance for adult content and act
+    // against foreign sites; rather than keep a per-country list current as
+    // laws change, every non-US country goes through the same AgeChecker gate
+    // the blocked US states use. Only US visitors outside BLOCKED_STATE_CODES
+    // get the click-through notice in pages/_app.js.
+    const outsideUs = !!country && country !== 'US';
+    if (unknownCountry || outsideUs || (country === 'US' && (!region || BLOCKED_STATE_CODES.has(region)))) {
       const token = request.cookies.get(AGE_VERIFIED_COOKIE_NAME)?.value;
       const verified = await verifyAgeVerificationToken(ageVerificationSecret(), token);
       if (!verified) {

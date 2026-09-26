@@ -2960,7 +2960,10 @@ function takedownTargetText(t) {
   const target = t?.target && typeof t.target === 'object' ? t.target : {};
   if (t?.type === 'listing') return `listing #${String(target.listingId ?? '?')}`;
   if (t?.type === 'wall_post') return `comment #${String(target.postId ?? '?')}`;
-  if (t?.type === 'message') return `message ${String(target.messageId ?? '?')} in conversation ${String(target.conversationId ?? '?')}`;
+  // Never the conversation id: it is '<a>__<b>' and names both participants,
+  // one of whom may since have deleted their account (round-20 admin-ui#0 /
+  // media#0). The API no longer returns it; older payloads are ignored here.
+  if (t?.type === 'message') return `message ${String(target.messageId ?? '?')} in a direct-message thread`;
   if (t?.type === 'gallery_item' || t?.type === 'avatar') return `creator #${String(target.creatorId ?? '?')}`;
   return '';
 }
@@ -3188,7 +3191,9 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
       target = { type: kind, conversationId: c, messageId: m };
       // A picked message from a thread with a deleted participant never shows
       // the thread id (it names the deleted account -- round-19 admin-ui#0).
-      what = `message ${m}${picked?.label ? ` (${picked.label})` : ''} in ${picked?.hideConversationId ? 'that conversation' : `conversation ${c}`}`;
+      // An opaque 'ref.' id (a thread with a deleted participant, from the
+      // lookup) is passed back verbatim but never printed either.
+      what = `message ${m}${picked?.label ? ` (${picked.label})` : ''} in ${picked?.hideConversationId || c.startsWith('ref.') ? 'that conversation' : `conversation ${c}`}`;
     }
     const quarantine = minor || preserve;
     if (!confirm(
@@ -3428,7 +3433,7 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
           {thread && (
             <div className="space-y-1">
               <p className="text-[10px] text-gray-500">
-                {threadHasDeleted(thread) ? 'Thread' : `Thread ${String(thread.id)}`} between {(thread.participants || []).map(lookupAccountLabel).join(' and ')}
+                {threadHasDeleted(thread) || String(thread.id).startsWith('ref.') ? 'Thread' : `Thread ${String(thread.id)}`} between {(thread.participants || []).map(lookupAccountLabel).join(' and ')}
                 {Number.isFinite(Number(thread.messageCount)) ? ` -- showing ${thread.messages.length} of ${Number(thread.messageCount)} message(s)` : ''}:
               </p>
               <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
@@ -4389,7 +4394,8 @@ function PerformerRecordsPanel({ adminKey, creators }) {
         <p className="mb-2">
           One record per performer who appears in sexually explicit content on the platform: legal
           name, date of birth, every name they have worked under, a copy of their photo ID, when the
-          content was produced and where it appears. Records are kept for seven years.
+          content was produced and where it appears. Each record is kept for at least seven years from
+          when it was created or last amended (the "keep at least until" date moves out on every change).
         </p>
         <p className="mb-2">
           Legal name, date of birth, ID number and the document itself are encrypted at rest with a
@@ -4562,7 +4568,7 @@ function PerformerRecordsPanel({ adminKey, creators }) {
                     </p>
                     <p className="text-xs text-gray-500">
                       DOB {r.dateOfBirth} · {r.ageAtProduction} at production · produced {r.producedAt} ·
-                      keep until {String(r.retainUntil).slice(0, 10)}
+                      keep at least until {String(r.retainUntil).slice(0, 10)}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">

@@ -69,10 +69,12 @@ export default function Statement2257() {
               team, and only after a record of the same kind exists for every other person shown.
             </p>
             <p>
-              These records are kept for seven years, indexed so that a record can be found from any
-              name the performer uses or any URL on which the content appears, and are held
-              encrypted and accessible only to the records custodian and authorized administrators of
-              the Platform.
+              These records are kept for at least seven years from when each record was created or last
+              amended, and are indexed so that a record can be found from any name the performer uses
+              or any URL on which the content appears. The performer&apos;s legal name, date of birth,
+              ID number and ID copy are encrypted at rest; the stage names and content URLs the index is
+              searched by are not. The records are accessible only to the records custodian and
+              authorized administrators of the Platform.
             </p>
 
             <p>

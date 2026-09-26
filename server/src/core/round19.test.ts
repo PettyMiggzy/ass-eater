@@ -72,7 +72,9 @@ describe('srv-money-modules#0: live viewers are re-checked on every stream', () 
     const suspended = await makeUser();
     const future = new Date(Date.now() + 864e5);
     await subscribe(current, creator, future);
-    await subscribe(lapsed, creator, new Date(Date.now() - 60_000));
+    // Lapsed past the round-20 renewal grace (core/access.ts
+    // LIVE_RENEWAL_GRACE_MS); one inside it is covered in round20.test.ts.
+    await subscribe(lapsed, creator, new Date(Date.now() - 60 * 60_000));
     await subscribe(banned, creator, future);
     await subscribe(suspended, creator, future);
     await prisma.user.update({ where: { id: banned }, data: { status: 'BANNED' } });

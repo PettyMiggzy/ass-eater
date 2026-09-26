@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import crypto from 'crypto';
 import { mailConfigured, sendNotificationMail } from '../lib/mailer.js';
+import { creatorMayOperate } from '../core/access.js';
 
 /**
  * The creator's notification inbox.
@@ -57,8 +58,15 @@ export const notifications: FastifyPluginAsync = async (app) => {
   // OnlyOne" mail at a coworker or an ex, and every resulting complaint
   // counts against the SES account. The confirmed address stays in use
   // until the new one is confirmed.
+  //
+  // Gated on the creator ROLE, not creatorOk: every notification mail says it
+  // can be turned off any time, and a creator whose KYC was reset or whose
+  // site approval lapsed used to get 403 here while the mail kept coming.
+  // Opting OUT (notifyOnDm=false, clearing the address) is always allowed;
+  // turning mail back ON or naming a new address still needs an operating
+  // creator (creatorMayOperate) -- core/notify.ts does not mail anyone else.
   app.patch('/settings', {
-    preHandler: app.creatorOk,
+    preHandler: app.role('CREATOR', 'ADMIN'),
     config: { rateLimit: { max: 20, timeWindow: '10 minutes' } },
   }, async (req: any, reply) => {
     const b = z.object({
@@ -69,10 +77,18 @@ export const notifications: FastifyPluginAsync = async (app) => {
     }).parse(req.body);
     if (b.notifyEmail === undefined && b.notifyOnDm === undefined) return reply.code(400).send({ error: 'nothing_to_update' });
 
-    const cur = await prisma.creatorProfile.findUniqueOrThrow({
+    const optsIn = b.notifyOnDm === true || (b.notifyEmail !== undefined && b.notifyEmail !== '');
+    if (optsIn) {
+      const u = await prisma.user.findUnique({ where: { id: req.user.id }, select: { role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true } });
+      if (u?.kycStatus !== 'APPROVED') return reply.code(403).send({ error: 'kyc_required' });
+      if (!creatorMayOperate(u)) return reply.code(403).send({ error: 'creator_not_approved' });
+    }
+
+    const cur = await prisma.creatorProfile.findUnique({
       where: { userId: req.user.id },
       select: { notifyEmail: true, notifyConfirmSentAt: true },
     });
+    if (!cur) return reply.code(403).send({ error: 'not_creator' });
     const data: Record<string, unknown> = {};
     if (b.notifyOnDm !== undefined) data.notifyOnDm = b.notifyOnDm;
     let confirmationSent = false;
@@ -106,8 +122,11 @@ export const notifications: FastifyPluginAsync = async (app) => {
     return { ...updated, confirmationSent, emailDelivery: mailConfigured() };
   });
 
-  app.get('/settings', { preHandler: app.creatorOk }, async (req: any) => {
-    const row = await prisma.creatorProfile.findUniqueOrThrow({ where: { userId: req.user.id }, select: SETTINGS_SELECT });
+  // Same weaker gate as PATCH, so the opt-out UI loads for a creator whose
+  // approval lapsed.
+  app.get('/settings', { preHandler: app.role('CREATOR', 'ADMIN') }, async (req: any, reply) => {
+    const row = await prisma.creatorProfile.findUnique({ where: { userId: req.user.id }, select: SETTINGS_SELECT });
+    if (!row) return reply.code(403).send({ error: 'not_creator' });
     return { ...row, emailDelivery: mailConfigured() };
   });
 

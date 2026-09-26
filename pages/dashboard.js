@@ -168,6 +168,11 @@ export default function Dashboard({
   // legacy value that fails today's rule is not sent, and the server drops an
   // unchanged echo anyway, so it must not block saving other fields.
   const walletError = walletDirty ? payoutWalletError(draft.walletAddress) : null;
+  // ...but the SAVED wallet still has to pass that rule to be paid (the
+  // server's requestPayout refuses it otherwise), so an unchanged legacy value
+  // gets a non-blocking warning here and CashOutPanel replaces Cash Out with
+  // the same message until it is re-pasted and saved (round-20 dashboard#0).
+  const savedWalletError = creator?.walletAddress ? payoutWalletError(creator.walletAddress) : null;
 
   // window is not available during SSR; reading it in render made the
   // server and client HTML differ.
@@ -903,6 +908,12 @@ export default function Dashboard({
                   className={`w-full px-4 py-3 rounded-md bg-black/40 border text-white font-mono text-sm ${walletError ? 'border-red-500/60' : 'border-brand-purple/30'}`}
                 />
                 {walletError && <p className="text-xs text-red-400 mt-1">{walletError}</p>}
+                {!walletDirty && savedWalletError && (
+                  <p className="text-xs text-brand-gold mt-1">
+                    Your saved payout wallet can&apos;t be paid: {savedWalletError} Re-paste it and save your profile
+                    before cashing out.
+                  </p>
+                )}
               </div>
               <p className="text-xs text-gray-500 -mt-2">
                 Payouts are {SETTLE_ASSET} only — the dollar stablecoin on {process.env.NEXT_PUBLIC_MARKETPLACE_CHAIN_NAME || 'Robinhood Chain'},
@@ -922,6 +933,7 @@ export default function Dashboard({
                 effectiveStatus={creatorStatus}
                 accountRestricted={accountRestricted}
                 savedWallet={creator.walletAddress || ''}
+                savedWalletError={savedWalletError}
                 walletDirty={walletDirty}
               />
 

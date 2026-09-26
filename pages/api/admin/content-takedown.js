@@ -1,5 +1,5 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { parseTakedownTarget, takeDownContent, listModerationActions } from '../../../lib/content-takedown';
+import { parseTakedownTarget, takeDownContent, listModerationActions, adminTakedownResultView } from '../../../lib/content-takedown';
 import { NCII_REPORT_NOT_FOUND } from '../../../lib/ncii-reports-store';
 import { refuseMalformedText } from '../../../lib/field-validation';
 
@@ -18,6 +18,11 @@ import { refuseMalformedText } from '../../../lib/field-validation';
  *   400 bad target; 404 { code: 'report_not_found' } unknown takedown request.
  *
  * GET ?nciiReportId=12 -> 200 { ok, actions: [...] }   the audit trail (newest first)
+ *
+ * Neither response carries a DM takedown's conversation id (it is the two
+ * participants' ids joined); a deleted participant reads as null.
+ * `snapshot` is { type, text, senderId, ..., participantIds } without
+ * `conversationId`, and each action's `target` is { type, messageId } for a DM.
  */
 export default async function handler(req, res) {
   // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
@@ -55,7 +60,9 @@ export default async function handler(req, res) {
       nciiReportId: hasReport ? String(rawReport) : null,
       preserve: body.preserve === true,
     });
-    return res.status(200).json({ ok: true, ...out });
+    // The copy's conversation id names both participants; the panel only
+    // needs the message id (lib/content-takedown.js adminTakedownResultView).
+    return res.status(200).json({ ok: true, ...adminTakedownResultView(out) });
   } catch (err) {
     if (err.code === NCII_REPORT_NOT_FOUND) {
       return res.status(404).json({ code: 'report_not_found', error: 'Takedown request not found. Nothing was removed.' });

@@ -14,6 +14,7 @@ import { isPubliclyVisible } from '../../../lib/creator-status';
 import { sendReportAlert } from '../../../lib/alerts';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { refuseMalformedText } from '../../../lib/field-validation';
+import { AUTHOR_ACCOUNT_GONE } from '../../../lib/author-lock';
 
 const MAX_REPORTS = 20;
 const WINDOW_MS = 60 * 1000;
@@ -86,10 +87,11 @@ export default async function handler(req, res) {
       reason: input.reason,
       category: input.category,
       reportedContent,
-    }, { holdMedia: input.category === 'minor' ? [item.src] : null });
+    }, { holdMedia: input.category === 'minor' ? [item.src] : null, requireReporter: true });
     await sendReportAlert(report);
     return res.status(200).json({ ok: true, report: reporterView(report) });
   } catch (err) {
+    if (err.code === AUTHOR_ACCOUNT_GONE) return res.status(401).json({ error: 'Your account no longer exists.' });
     console.error('[creator/report-media] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

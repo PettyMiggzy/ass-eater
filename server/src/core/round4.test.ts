@@ -321,6 +321,7 @@ describe('notification email confirmation is a two-step GET page + POST', () => 
     const app = Fastify();
     app.decorate('auth', async () => {});
     app.decorate('creatorOk', async () => {});
+    app.decorate('role', () => async () => {}); // settings routes gate on the creator role since round 20
     await app.register(notifications, { prefix: '/notifications' });
     const token = crypto.randomBytes(32).toString('base64url');
     const creator = await makeCreator({

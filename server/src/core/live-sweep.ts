@@ -1,8 +1,9 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
-import { paidThrough, MAX_PREPAID_MS } from './live-billing.js';
+import { MAX_PREPAID_MS, MINUTE_MS } from './live-billing.js';
 import type { RoomsLike } from './livekit.js';
 import { resolveLiveIdentity } from './live-identity.js';
-import { isSubscribed } from './access.js';
+import { subscriptionCoversLive } from './access.js';
 
 // A viewer gets this long after their paid time ends to buy the next minute
 // before being removed -- covers a client timer firing a little late.
@@ -21,21 +22,30 @@ export const NEW_STREAM_GRACE_MS = 2 * 60_000;
  *     a crashed creator with no webhook configured stayed LIVE forever, which
  *     booked every later ordinary tip at the 20% live rate (modules/tips.ts)
  *     and made /live/start answer 409 already_live.
- *  2. Every viewer who is no longer entitled is removed (lacksEntitlement):
+ *  2. Every viewer who is no longer entitled is removed (entitledViewers):
  *     on a per-minute stream one whose paid time has lapsed (past
  *     PAY_GRACE_MS), on a ticketed stream one without a ticket, on a
  *     subscriber-only stream (no ticket, no per-minute price) one whose
- *     subscription has ended, and on ANY stream a viewer whose own account
+ *     subscription has ended (past the renewal grace if it auto-renews), and on ANY stream a viewer whose own account
  *     is no longer ACTIVE. Joining is gated by /join; this is what makes the
  *     NEXT minutes owed, and what ends a session LiveKit would otherwise keep
  *     refreshing the token of (unpriced streams used to be skipped here
  *     entirely, so a lapsed subscriber or a banned fan watched to the end).
  *
  * A LiveKit error on one stream is logged and skipped -- never treated as
- * "room gone", which would end a healthy stream on a network blip.
+ * "room gone", which would end a healthy stream on a network blip. So is a
+ * database error while deciding one stream's removals: it no longer aborts
+ * the rest of the pass.
+ *
+ * Entitlement is decided per stream in a fixed number of queries
+ * (entitledViewers), not two per viewer: a 4,000-viewer free stream used to
+ * cost ~8,000 sequential lookups every pass and starve the per-minute
+ * streams after it, whose removal IS their paywall. Per-minute streams are
+ * also swept first for the same reason.
  */
 export async function sweepLive(rooms: RoomsLike, now = new Date(), log: (...a: unknown[]) => void = console.error) {
   const streams = await prisma.liveStream.findMany({ where: { status: 'LIVE' } });
+  streams.sort((a, b) => Number(b.perMinuteCents > 0) - Number(a.perMinuteCents > 0));
   let ended = 0, removed = 0;
   for (const s of streams) {
     let exists: boolean;
@@ -45,20 +55,27 @@ export async function sweepLive(rooms: RoomsLike, now = new Date(), log: (...a: 
 
     if (!exists) {
       if (now.getTime() - s.startedAt.getTime() < NEW_STREAM_GRACE_MS) continue;
-      const r = await prisma.liveStream.updateMany({ where: { id: s.id, status: 'LIVE' }, data: { status: 'ENDED', endedAt: now } });
-      ended += r.count;
+      try {
+        const r = await prisma.liveStream.updateMany({ where: { id: s.id, status: 'LIVE' }, data: { status: 'ENDED', endedAt: now } });
+        ended += r.count;
+      } catch (e) { log('live-sweep end stream', s.id, e); }
       continue;
     }
 
     let participants;
     try { participants = await rooms.listParticipants(s.roomName); } catch (e) { log('live-sweep listParticipants', s.id, e); continue; }
-    for (const p of participants) {
-      if (!p.identity) continue;
-      // Viewers carry an opaque per-stream identity (core/live-identity.ts);
-      // one that does not decode for this stream belongs to nobody entitled.
-      const userId = resolveLiveIdentity(s.id, p.identity);
-      if (userId === s.creatorId) continue;
-      if (userId && !(await lacksEntitlement(s, userId, now))) continue;
+    // Viewers carry an opaque per-stream identity (core/live-identity.ts);
+    // one that does not decode for this stream belongs to nobody entitled.
+    const decoded = participants
+      .filter((p) => !!p.identity)
+      .map((p) => ({ identity: p.identity, userId: resolveLiveIdentity(s.id, p.identity) }))
+      .filter((p) => p.userId !== s.creatorId);
+    let entitled: Set<string>;
+    try {
+      entitled = await entitledViewers(s, decoded.map((p) => p.userId).filter((u): u is string => !!u), now);
+    } catch (e) { log('live-sweep entitlement', s.id, e); continue; }
+    for (const p of decoded) {
+      if (p.userId && entitled.has(p.userId)) continue;
       try { await rooms.removeParticipant(s.roomName, p.identity); removed++; } catch (e) { log('live-sweep removeParticipant', s.id, p.identity, e); }
     }
   }
@@ -84,8 +101,8 @@ export async function minuteRefusal(fanId: string, s: { id: string; creatorId: s
 }
 
 /**
- * Should viewer `userId` be removed from stream `s` right now? The same
- * entitlements POST /live/:id/join applies, each required where it applies:
+ * Which of `userIds` may stay in stream `s` right now? The same entitlements
+ * POST /live/:id/join applies, each required where it applies:
  *
  *  - the viewer's own account must be ACTIVE -- a suspended or banned fan
  *    fails app.auth everywhere else, and a ticket or paid minutes bought
@@ -95,18 +112,56 @@ export async function minuteRefusal(fanId: string, s: { id: string; creatorId: s
  *    for a minute, and this check, looking only at minutes, left them in);
  *  - a per-minute stream needs paid time that has not lapsed (plus grace);
  *  - a subscriber-only stream (no ticket, no per-minute price) needs a
- *    subscription that is still current.
+ *    subscription that still covers live access (core/access.ts
+ *    subscriptionCoversLive: current, or auto-renewing and inside the renewal
+ *    grace -- the renewals worker charges due rows on a 5-minute tick, and a
+ *    fan about to be renewed was otherwise ejected at every period boundary).
+ *
+ * At most three queries whatever the audience size.
  */
-async function lacksEntitlement(s: { id: string; creatorId: string; ticketPriceCents: number; perMinuteCents: number }, userId: string, now: Date) {
-  const viewer = await prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
-  if (viewer?.status !== 'ACTIVE') return true;
-  if (s.ticketPriceCents <= 0 && s.perMinuteCents <= 0) return !(await isSubscribed(userId, s.creatorId));
-  if (s.ticketPriceCents > 0 && !(await hasTicket(userId, s.id))) return true;
-  if (s.perMinuteCents > 0) {
-    const through = await paidThrough(userId, s.id);
-    if (!through || through.getTime() + PAY_GRACE_MS <= now.getTime()) return true;
+export async function entitledViewers(
+  s: { id: string; creatorId: string; ticketPriceCents: number; perMinuteCents: number },
+  userIds: string[],
+  now: Date,
+): Promise<Set<string>> {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return new Set();
+  const active = await prisma.user.findMany({ where: { id: { in: ids }, status: 'ACTIVE' }, select: { id: true } });
+  let ok = new Set(active.map((u) => u.id));
+  if (!ok.size) return ok;
+
+  if (s.ticketPriceCents <= 0 && s.perMinuteCents <= 0) {
+    const subs = await prisma.subscription.findMany({
+      where: { creatorId: s.creatorId, fanId: { in: [...ok] } },
+      select: { fanId: true, status: true, autoRenew: true, currentPeriodEnd: true },
+    });
+    return new Set(subs.filter((r) => subscriptionCoversLive(r, now)).map((r) => r.fanId));
   }
-  return false;
+  if (s.ticketPriceCents > 0) {
+    const tickets = await prisma.liveTicket.findMany({ where: { streamId: s.id, fanId: { in: [...ok] } }, select: { fanId: true } });
+    ok = new Set(tickets.map((t) => t.fanId));
+    if (!ok.size) return ok;
+  }
+  if (s.perMinuteCents > 0) {
+    // Each viewer's latest minute (core/live-billing.ts paidThrough), in one query.
+    const latest = await prisma.$queryRaw<{ fanId: string; paidThrough: Date | null; createdAt: Date }[]>`
+      SELECT DISTINCT ON ("fanId") "fanId", "paidThrough", "createdAt"
+      FROM "LiveMinute"
+      WHERE "streamId" = ${s.id} AND "fanId" IN (${Prisma.join([...ok])})
+      ORDER BY "fanId", "minuteIndex" DESC`;
+    const paid = new Set<string>();
+    for (const r of latest) {
+      const through = r.paidThrough ?? new Date(r.createdAt.getTime() + MINUTE_MS);
+      if (through.getTime() + PAY_GRACE_MS > now.getTime()) paid.add(r.fanId);
+    }
+    ok = paid;
+  }
+  return ok;
+}
+
+/** Should viewer `userId` be removed from stream `s` right now? (entitledViewers, for one viewer.) */
+async function lacksEntitlement(s: { id: string; creatorId: string; ticketPriceCents: number; perMinuteCents: number }, userId: string, now: Date) {
+  return !(await entitledViewers(s, [userId], now)).has(userId);
 }
 
 /**
@@ -197,7 +252,7 @@ export function viewerTokenTtlSeconds(perMinuteCents: number, through: Date | nu
  * LiveKit's participant_joined webhook: a viewer who joins (or rejoins with
  * a token LiveKit refreshed for them) is removed at once if they have no
  * ticket on a ticketed stream, no paid time left on a per-minute stream, no
- * current subscription on a subscriber-only stream, if their own account is
+ * subscription covering live access on a subscriber-only stream, if their own account is
  * not ACTIVE, or if the stream's creator is no longer ACTIVE. Returns true when the
  * participant was removed.
  */

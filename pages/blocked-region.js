@@ -52,8 +52,8 @@ export default function BlockedRegion() {
           <Lockup className="h-12 justify-center mb-6" />
           <h1 className="text-2xl font-black premium-title mb-3">Verify Your Age to Continue</h1>
           <p className="text-gray-400 text-sm mb-4">
-            Your state requires identity-based age verification before an adult site can let you
-            in — not just an age checkbox. (If we couldn&apos;t tell which state you&apos;re in, we
+            Where you are requires identity-based age verification before an adult site can let you
+            in — not just an age checkbox. (If we couldn&apos;t tell where you&apos;re visiting from, we
             ask for the same check, to be safe.)
           </p>
           <p className="text-gray-400 text-sm mb-6">
@@ -72,7 +72,7 @@ export default function BlockedRegion() {
             <WaitlistForm
               source="blocked-region"
               title="NOT READY TO VERIFY?"
-              blurb="Leave your email and we’ll keep you posted — including if your state’s rules change."
+              blurb="Leave your email and we’ll keep you posted — including if the rules where you are change."
             />
           </div>
         </div>

@@ -8,16 +8,25 @@ import { Icons } from './Brand';
 // open. The list holds every unread row (up to 200) plus the newest read
 // ones, and exactly the ids DISPLAYED are marked read -- never a range, which
 // could sweep in a row the user never saw, and never if the panel was closed
-// before the list arrived (round-19 public-pages#0). "Mark all as read"
-// clears everything, so a stale badge can always be cleared.
+// before the list arrived (round-19 public-pages#0). Once that mark
+// succeeds the shown rows render as read and the header count drops to what
+// is still unread beyond them. "Mark all as read" clears everything, so a
+// stale badge can always be cleared; it is disabled while the list (and its
+// mark) is in flight, so a list fetched before the mark cannot land after it
+// and repaint rows the server already has as read. A failed mark-all shows
+// its own inline error and leaves the loaded list on screen -- the list-load
+// error is for a list that never arrived (round-20 money#0 / dashboard#1).
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState(null);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
-  // Total unread at the moment the list was fetched (the badge drops as the
-  // displayed rows are marked read; this keeps the whole count visible).
+  const [markAllError, setMarkAllError] = useState(false);
+  // True while the list GET and its ids POST are in flight.
+  const [loading, setLoading] = useState(false);
+  // Unread count shown in the panel header: the total when the list arrives,
+  // then whatever is still unread once the displayed rows are marked read.
   const [listUnread, setListUnread] = useState(0);
   const rootRef = useRef(null);
   // Guards against a slow fetch from an earlier open/close resolving after
@@ -49,6 +58,8 @@ export default function NotificationBell() {
         // Closing supersedes any in-flight load, so a list that arrives
         // after the panel is gone is never marked read.
         requestId.current += 1;
+        setLoading(false);
+        setMarkAllError(false);
         setOpen(false);
       }
     };
@@ -59,12 +70,15 @@ export default function NotificationBell() {
   const toggle = async () => {
     const next = !open;
     setOpen(next);
+    setMarkAllError(false);
     if (!next) {
       requestId.current += 1; // see onClickOutside above
+      setLoading(false);
       return;
     }
     const id = ++requestId.current;
     setError(false);
+    setLoading(true);
     try {
       const res = await fetch('/api/notifications');
       if (!res.ok) throw new Error('bad response');
@@ -86,17 +100,27 @@ export default function NotificationBell() {
           body: JSON.stringify({ ids: shownUnreadIds.slice(0, 500) }),
         }).catch(() => null);
         const d = r && r.ok ? await r.json().catch(() => null) : null;
-        if (id === requestId.current && d && Number.isFinite(d.unreadCount)) setUnread(d.unreadCount);
+        if (id === requestId.current && d && Number.isFinite(d.unreadCount)) {
+          setUnread(d.unreadCount);
+          setListUnread(Math.max(0, d.unreadCount));
+          const marked = new Set(shownUnreadIds);
+          setItems((prev) => (Array.isArray(prev)
+            ? prev.map((n) => (marked.has(Number(n.id)) ? { ...n, read: true } : n))
+            : prev));
+        }
       }
     } catch {
       if (id !== requestId.current) return;
       setError(true);
+    } finally {
+      if (id === requestId.current) setLoading(false);
     }
   };
 
   const markAll = async () => {
-    if (markingAll) return;
+    if (markingAll || loading) return;
     setMarkingAll(true);
+    setMarkAllError(false);
     try {
       const r = await fetch('/api/notifications/read', {
         method: 'POST',
@@ -109,7 +133,7 @@ export default function NotificationBell() {
       setListUnread(0);
       setItems((prev) => (Array.isArray(prev) ? prev.map((n) => ({ ...n, read: true })) : prev));
     } catch {
-      setError(true);
+      setMarkAllError(true);
     } finally {
       setMarkingAll(false);
     }
@@ -138,12 +162,15 @@ export default function NotificationBell() {
             </span>
             <button
               onClick={markAll}
-              disabled={markingAll}
+              disabled={markingAll || loading}
               className="text-[11px] font-semibold text-brand-pink hover:underline disabled:opacity-50"
             >
               Mark all as read
             </button>
           </div>
+          {markAllError && (
+            <p role="alert" className="px-4 pt-2 text-[11px] text-red-400">Couldn't mark them read. Try again in a moment.</p>
+          )}
           {error ? (
             <p className="px-4 py-6 text-sm text-gray-500">Couldn't load notifications. Try again in a moment.</p>
           ) : items === null ? (

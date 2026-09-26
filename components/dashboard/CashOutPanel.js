@@ -14,8 +14,9 @@ import { cashOutBlockedReason, centsToDollarsInput, dollarsToCents, payoutStatus
  *   - only an approved (active) creator; held while suspended; never paid
  *     to a banned account
  */
-export default function CashOutPanel({ creator, effectiveStatus, accountRestricted = false, savedWallet, walletDirty }) {
-  const [balance, setBalance] = useState(null); // { balanceCents, withdrawableCents } | { error }
+export default function CashOutPanel({ creator, effectiveStatus, accountRestricted = false, savedWallet, savedWalletError = null, walletDirty }) {
+  // { balanceCents, withdrawableCents, payoutWallet } | { error }
+  const [balance, setBalance] = useState(null);
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -31,13 +32,19 @@ export default function CashOutPanel({ creator, effectiveStatus, accountRestrict
         setBalance({ error: responseErrorMessage(res.status, data, 'Could not load your balance.') });
         return;
       }
-      setBalance({ balanceCents: Number(data?.balanceCents) || 0, withdrawableCents: Number(data?.withdrawableCents) || 0 });
+      setBalance({
+        balanceCents: Number(data?.balanceCents) || 0,
+        withdrawableCents: Number(data?.withdrawableCents) || 0,
+        payoutWallet: data?.payoutWallet && typeof data.payoutWallet === 'object' ? data.payoutWallet : null,
+      });
     } catch {
       setBalance({ error: 'Could not load your balance. Check your connection.' });
     }
   };
 
-  useEffect(() => { loadBalance(); }, []);
+  // Reloaded when the saved wallet changes (a profile save), so the server's
+  // payoutWallet verdict below is always about the wallet shown above.
+  useEffect(() => { loadBalance(); }, [savedWallet]);
 
   // Loaded when the activity panel is opened, not on every dashboard visit.
   // Overlapping loads (opening it, then cashing out before the first one
@@ -61,6 +68,16 @@ export default function CashOutPanel({ creator, effectiveStatus, accountRestrict
     : cashOutBlockedReason(creator, effectiveStatus);
   const withdrawable = balance && !balance.error ? balance.withdrawableCents : 0;
   const spendOnly = balance && !balance.error ? Math.max(0, balance.balanceCents - balance.withdrawableCents) : 0;
+  // A saved wallet that fails today's rule can never be paid (lib/credits-store.js
+  // refuses it), so it is treated like a missing one: the dashboard's own check
+  // of the saved value, or the server's verdict from /api/credits/balance.
+  const serverWallet = balance && !balance.error ? balance.payoutWallet : null;
+  const unpayableWallet = savedWallet
+    ? (savedWalletError
+      || (serverWallet && serverWallet.saved && serverWallet.payable === false
+        ? (typeof serverWallet.error === 'string' && serverWallet.error ? serverWallet.error : 'It isn’t a valid wallet address.')
+        : null))
+    : null;
 
   const requestCashOut = async () => {
     setMsg('');
@@ -92,7 +109,11 @@ export default function CashOutPanel({ creator, effectiveStatus, accountRestrict
         if (res.status === 402) loadBalance();
         return;
       }
-      setBalance({ balanceCents: Number(data?.balanceCents) || 0, withdrawableCents: Number(data?.withdrawableCents) || 0 });
+      setBalance((prev) => ({
+        balanceCents: Number(data?.balanceCents) || 0,
+        withdrawableCents: Number(data?.withdrawableCents) || 0,
+        payoutWallet: prev && !prev.error ? prev.payoutWallet : null,
+      }));
       setAmount('');
       setMsg(`Requested ${formatCredits(cents)}. It's reviewed and sent by hand as ${SETTLE_ASSET} to your saved wallet — you'll get a notification when it's paid.`);
       if (history !== null) loadActivity();
@@ -134,6 +155,10 @@ export default function CashOutPanel({ creator, effectiveStatus, accountRestrict
         <p className={`text-xs ${accountRestricted || effectiveStatus === 'suspended' || effectiveStatus === 'banned' ? 'text-red-400' : 'text-brand-gold'}`}>{blocked}</p>
       ) : !savedWallet ? (
         <p className="text-xs text-brand-gold">Add a payout wallet address above and save your profile before cashing out.</p>
+      ) : unpayableWallet ? (
+        <p className="text-xs text-red-400">
+          Your saved payout wallet can&apos;t be paid: {unpayableWallet} Re-paste it and save your profile before cashing out.
+        </p>
       ) : (
         <>
           {walletDirty && (

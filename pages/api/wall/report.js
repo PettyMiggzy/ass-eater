@@ -5,6 +5,7 @@ import { sendReportAlert } from '../../../lib/alerts';
 import { query } from '../../../lib/db';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { refuseMalformedText } from '../../../lib/field-validation';
+import { AUTHOR_ACCOUNT_GONE } from '../../../lib/author-lock';
 
 // Every other write-heavy endpoint in this codebase throttles per-user
 // (wall/post.js, messages/send.js) -- this one didn't, so a single free
@@ -66,12 +67,13 @@ export default async function handler(req, res) {
       reason: input.reason,
       category: input.category,
       reportedContent: await snapshotWallPost(rows[0].data),
-    });
+    }, { requireReporter: true });
     // A possible-minor or non-consensual report alerts the operator (no PII,
     // never blocks the filing) -- the same channel as a takedown request.
     await sendReportAlert(report);
     return res.status(200).json({ ok: true, report: reporterView(report) });
   } catch (err) {
+    if (err.code === AUTHOR_ACCOUNT_GONE) return res.status(401).json({ error: 'Your account no longer exists.' });
     console.error('[wall/report] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

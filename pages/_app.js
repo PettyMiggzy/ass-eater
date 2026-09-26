@@ -175,7 +175,7 @@ function AgeGate({ onVerify }) {
         </a>
 
         <p className="text-xs text-gray-600 text-center mt-6">
-          This is a content notice, not identity verification. Where your state requires a real age
+          This is a content notice, not identity verification. Where your location requires a real age
           check, you will be asked for one separately. Your answer here is stored in this browser
           only.
         </p>

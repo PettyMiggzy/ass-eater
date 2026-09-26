@@ -852,6 +852,21 @@ model TipRequest {
   @@id([fanId, key])
 }
 
+// Admin manual credit/debit idempotency (modules/admin.ts POST
+// /users/:id/adjust, core/admin-adjust.ts): one row per client requestId,
+// inserted in the same transaction as the two ADJUSTMENT postings, so a
+// retried adjust collides on the primary key and posts nothing a second time.
+model AdminAdjustRequest {
+  key         String   @id // client-generated uuid, one per adjustment intended
+  adminId     String
+  targetId    String
+  amountCents BigInt
+  reason      String
+  createdAt   DateTime @default(now())
+
+  @@index([targetId, createdAt])
+}
+
 // ---------- LIVE ----------
 
 model LiveStream {

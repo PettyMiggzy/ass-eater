@@ -7,7 +7,8 @@ import { toPublicCreator, toPublicListing, isPubliclyVisible, effectiveCreatorSt
 import { getSessionUser } from '../../lib/session';
 import { findUserByCreatorId } from '../../lib/users-store';
 import { getListings } from '../../lib/listings-store';
-import { getWallPageForCreator, toPublicWallPost, wallBlockFlagsFor } from '../../lib/wall-store';
+import { getWallPageForCreator, toPublicWallPost, wallBlockFlagsFor, MAX_TEXT_LENGTH as WALL_MAX_TEXT_LENGTH } from '../../lib/wall-store';
+import { MAX_MESSAGE_LENGTH } from '../../lib/messages-store';
 import { isFavorite } from '../../lib/favorites-store';
 import { viewerMarkFor } from '../../lib/viewer-mark';
 import { holderGateState } from '../../lib/holder-access';
@@ -132,6 +133,13 @@ export async function getServerSideProps({ req, params }) {
       listings,
       wallPosts,
       wallNextBefore: wallPage.hasMore ? wallPage.nextBefore : null,
+      // The servers' own length limits, passed down rather than imported into
+      // client code (those stores pull in the Postgres driver). The composers
+      // show a counter against them and refuse over-length text before
+      // sending -- never a maxLength attribute, which silently cuts a paste
+      // (round-20 public-pages#0).
+      dmMaxLength: MAX_MESSAGE_LENGTH,
+      wallMaxLength: WALL_MAX_TEXT_LENGTH,
       initialFavorited,
     },
   };
@@ -245,6 +253,8 @@ export default function CreatorProfile({
   listings,
   wallPosts,
   wallNextBefore,
+  dmMaxLength = 2000,
+  wallMaxLength = 500,
   initialFavorited,
 }) {
   const router = useRouter();
@@ -819,7 +829,7 @@ export default function CreatorProfile({
                         <h2 className="font-bold">Fan Messages</h2>
                         <button onClick={() => setActiveTab('about')} className="text-xs text-brand-pink hover:underline">About</button>
                       </div>
-                      <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} initialNextBefore={wallNextBefore} isWallOwner={isOwner} profileLocation={profileLocation} />
+                      <Wall creatorId={creator.id} viewerId={viewerId} initialPosts={wallPosts} initialNextBefore={wallNextBefore} isWallOwner={isOwner} profileLocation={profileLocation} maxLength={wallMaxLength} />
                     </div>
 
                     <div className="rounded-xl border border-white/10 bg-brand-card p-4">
@@ -942,6 +952,7 @@ export default function CreatorProfile({
           otherImg={creator.img}
           initialPriceCents={dmPriceCents}
           feeWaived={dmFeeWaived}
+          maxLength={dmMaxLength}
           onClose={() => setInboxOpen(false)}
         />
       )}
@@ -968,9 +979,20 @@ async function readJson(res) {
   }
 }
 
-const MAX_DM_LENGTH = 2000;
+// Live "used/limit" line under a composer. The limit counts the TRIMMED
+// text, as the servers do, and over the limit nothing is cut: the send is
+// refused until the text is shortened.
+function LengthCounter({ length, max }) {
+  const over = length > max;
+  return (
+    <p className={`text-[11px] text-right ${over ? 'text-red-400 font-bold' : 'text-gray-500'}`}>
+      {length}/{max}
+      {over && ' — too long; shorten it (nothing has been cut)'}
+    </p>
+  );
+}
 
-function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, feeWaived, onClose }) {
+function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, feeWaived, maxLength: MAX_DM_LENGTH = 2000, onClose }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1087,6 +1109,9 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
       cancelled = true;
     };
   }, [otherUserId]);
+
+  const dmTrimmedLength = text.trim().length;
+  const dmOverLimit = dmTrimmedLength > MAX_DM_LENGTH;
 
   const send = async (e) => {
     e.preventDefault();
@@ -1241,20 +1266,34 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
           </p>
         )}
 
-        <form onSubmit={send} className="p-3 border-t border-white/10 flex gap-2">
-          <input
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              attemptId.current = null; // different text = a new attempt
-            }}
-            maxLength={MAX_DM_LENGTH}
-            placeholder="Type a message..."
-            className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm"
-          />
-          <button type="submit" disabled={sending || loading || !canSend || blockedByMe || blockedByThem || !text.trim()} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
-            {sending ? 'Sending…' : priceCents > 0 ? `Send · $${(priceCents / 100).toFixed(2)}` : 'Send'}
-          </button>
+        {/* A textarea with no maxLength (round-20 public-pages#0): a pasted
+            message stays whole and visible before it is paid for, and one over
+            the limit is refused below instead of being cut and charged.
+            Enter sends; Shift+Enter adds a new line. */}
+        <form onSubmit={send} className="p-3 border-t border-white/10">
+          <div className="flex gap-2 items-end">
+            <textarea
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                attemptId.current = null; // different text = a new attempt
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }}
+              rows={2}
+              placeholder="Type a message..."
+              aria-invalid={dmOverLimit}
+              className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm resize-none"
+            />
+            <button type="submit" disabled={sending || loading || !canSend || blockedByMe || blockedByThem || !text.trim() || dmOverLimit} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
+              {sending ? 'Sending…' : priceCents > 0 ? `Send · $${(priceCents / 100).toFixed(2)}` : 'Send'}
+            </button>
+          </div>
+          <LengthCounter length={dmTrimmedLength} max={MAX_DM_LENGTH} />
         </form>
       </div>
     </div>
@@ -1269,7 +1308,7 @@ function mergeWallPosts(...lists) {
   return [...byId.values()].sort((a, b) => Number(b.id) - Number(a.id));
 }
 
-function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwner, profileLocation }) {
+function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwner, profileLocation, maxLength: WALL_MAX = 500 }) {
   const router = useRouter();
   const [posts, setPosts] = useState(initialPosts);
   // Cursor for the next OLDER page (null = nothing older). Only the newest
@@ -1336,6 +1375,10 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
       return;
     }
     if (!text.trim()) return;
+    if (text.trim().length > WALL_MAX) {
+      setError(`That post is too long (${WALL_MAX} characters maximum).`);
+      return;
+    }
     setSending(true);
     setError('');
     try {
@@ -1424,11 +1467,14 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
           onChange={(e) => setText(e.target.value)}
           placeholder={viewerId ? 'Say something on their wall...' : 'Log in to post on the wall'}
           rows={2}
-          maxLength={500}
-          className="w-full px-4 py-3 rounded-md bg-black/40 border border-white/10 text-white text-sm mb-2"
+          aria-invalid={text.trim().length > WALL_MAX}
+          className="w-full px-4 py-3 rounded-md bg-black/40 border border-white/10 text-white text-sm"
         />
+        {/* No maxLength: a browser would silently cut a paste (round-20
+            public-pages#0). Counted and refused instead, like the DM box. */}
+        <div className="mb-2"><LengthCounter length={text.trim().length} max={WALL_MAX} /></div>
         {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
-        <button type="submit" disabled={sending} className="px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition text-sm px-6 disabled:opacity-50">
+        <button type="submit" disabled={sending || text.trim().length > WALL_MAX} className="px-6 py-2 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition text-sm px-6 disabled:opacity-50">
           Post
         </button>
       </form>

@@ -5,6 +5,7 @@ import { addReport, validateReportInput, snapshotMessage, reporterView } from '.
 import { sendReportAlert } from '../../../lib/alerts';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { refuseMalformedText } from '../../../lib/field-validation';
+import { AUTHOR_ACCOUNT_GONE } from '../../../lib/author-lock';
 
 const MAX_REPORTS = 20;
 const WINDOW_MS = 60 * 1000;
@@ -64,10 +65,11 @@ export default async function handler(req, res) {
       // newest 500 messages, so the reported one can be gone before anyone
       // looks.
       reportedContent: await snapshotMessage(found.message, { conversationId: found.conversationId, participantIds: found.participantIds }),
-    });
+    }, { requireReporter: true });
     await sendReportAlert(report);
     return res.status(200).json({ ok: true, report: reporterView(report) });
   } catch (err) {
+    if (err.code === AUTHOR_ACCOUNT_GONE) return res.status(401).json({ error: 'Your account no longer exists.' });
     console.error('[messages/report] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

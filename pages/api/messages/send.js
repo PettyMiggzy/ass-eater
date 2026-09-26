@@ -144,6 +144,8 @@ export default async function handler(req, res) {
         message: `New message from ${await displayNameFor(user)}`,
         meta: { fromUserId: String(uid) },
         coalesceKey: 'fromUserId',
+        // Not written once the sender's account is gone (round-20 social#1).
+        actorId: String(uid),
       });
     } catch (err) {
       console.error('[messages/send] notification failed:', err?.message);

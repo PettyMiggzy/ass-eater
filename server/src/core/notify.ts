@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { sendNotificationMail } from '../lib/mailer.js';
+import { creatorMayOperate } from './creator-standing.js';
 
 /**
  * Record that a creator should know about something, then try to email them.
@@ -23,7 +24,10 @@ export async function notifyDmReceived(opts: {
   const [recipient, actor] = await Promise.all([
     prisma.user.findUnique({
       where: { id: opts.recipientId },
-      select: { creator: { select: { notifyEmail: true, notifyEmailVerifiedAt: true, notifyOnDm: true, displayName: true } } },
+      select: {
+        role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true,
+        creator: { select: { notifyEmail: true, notifyEmailVerifiedAt: true, notifyOnDm: true, displayName: true } },
+      },
     }),
     prisma.user.findUnique({ where: { id: opts.actorId }, select: { username: true } }),
   ]);
@@ -41,6 +45,10 @@ export async function notifyDmReceived(opts: {
   // exactly the harm the anonymous-signup option exists to prevent.
   const creator = recipient.creator;
   if (!creator || !creator.notifyOnDm) return;
+  // Only an OPERATING creator (KYC-approved and, if bridged, site-approved --
+  // core/creator-standing.ts). One whose approval lapsed keeps the in-app row
+  // above but gets no mail; they can still opt out in settings regardless.
+  if (!creatorMayOperate(recipient)) return;
 
   // Only a CONFIRMED notification address (modules/notifications.ts
   // double opt-in). Never the account email: neither stack verifies that

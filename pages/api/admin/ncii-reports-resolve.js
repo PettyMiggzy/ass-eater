@@ -8,6 +8,7 @@ import {
   NCII_NOT_REOPENABLE,
   NCII_NOTE_MAX,
   NCII_TAKEDOWN_REQUIRED,
+  adminNciiReportView,
 } from '../../../lib/ncii-reports-store';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { deliverFor, reportPushFailure } from '../../../lib/server-api';
@@ -64,7 +65,7 @@ export default async function handler(req, res) {
     try {
       const report = await reopenNciiReport(id, { reason, by: 'admin' });
       console.info('[admin/ncii-reports-resolve] reopened', String(id));
-      return res.status(200).json({ ok: true, report });
+      return res.status(200).json({ ok: true, report: adminNciiReportView(report) });
     } catch (err) {
       if (err.code === NCII_REPORT_NOT_FOUND) return res.status(404).json({ error: 'Report not found' });
       if (err.code === NCII_NOT_REOPENABLE) {
@@ -105,7 +106,7 @@ export default async function handler(req, res) {
     // (subscriptions, payouts, live): queued in the resolve's own commit,
     // delivered now, retried by the cron if this delivery fails.
     if (pushUid) reportPushFailure(await deliverFor([pushUid]), `ncii report ${id}`);
-    return res.status(200).json({ ok: true, report, creator, outrightBan: !!outrightBan, preservedCount: preservedCount || 0 });
+    return res.status(200).json({ ok: true, report: adminNciiReportView(report), creator, outrightBan: !!outrightBan, preservedCount: preservedCount || 0 });
   } catch (err) {
     if (err.code === NCII_REPORT_NOT_FOUND) return res.status(404).json({ error: 'Report not found' });
     if (err.code === NCII_ALREADY_RESOLVED) return res.status(409).json({ error: 'That report was already resolved.' });

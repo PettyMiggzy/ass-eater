@@ -43,8 +43,9 @@ export default function Privacy() {
                   for how long they are kept.
                 </li>
                 <li>
-                  <strong>Fan age-verification info.</strong> Some states now require real age verification
-                  (not just a checkbox) before an adult site can let a visitor in. Where that applies, we
+                  <strong>Fan age-verification info.</strong> Many places now require real age verification
+                  (not just a checkbox) before an adult site can let a visitor in. We require it for every
+                  visitor outside the United States, and for visitors in the US states that require it. We
                   use a third-party age-verification vendor to confirm you're of legal age — see Section 6.
                   That vendor handles whatever information their verification method requires (e.g., a
                   government-issued ID or a database match) under their own privacy terms; we retain only
@@ -147,7 +148,7 @@ export default function Privacy() {
                 information a Fan account requires, the less there is to ever be exposed, subpoenaed
                 unnecessarily, or leaked. Two exceptions: buying a <strong>physical</strong> Marketplace
                 item requires a real shipping name and address, which the selling creator sees (Section
-                1); and fans in some states must pass age verification through our vendor (Section 6).
+                1); and fans outside the US, and in some US states, must pass age verification through our vendor (Section 6).
               </p>
               <p className="mt-3">
                 Creators and the people who appear in their content are held to a different standard.
@@ -258,7 +259,7 @@ export default function Privacy() {
               <p>
                 We use infrastructure providers (web hosting, a database host, private file storage, a
                 blockchain node provider used to check payments and token balances, and an
-                age-verification vendor, AgeChecker.Net, for fans in states that require it) to run the
+                age-verification vendor, AgeChecker.Net, for fans outside the US and in US states that require it) to run the
                 Platform. Those providers can access the specific data needed to perform their function
                 (e.g., storage providers hold uploaded files; AgeChecker.Net handles age-verification
                 documents) under their own confidentiality and security obligations — we don&apos;t hand
@@ -308,7 +309,7 @@ export default function Privacy() {
                 <li>On-chain transaction history cannot be deleted — see Section 4.</li>
                 <li>
                   Performer records kept under 18 U.S.C. §2257 (Section 1) are retained for at least seven
-                  years, including after the related account or content is deleted, because the law requires
+                  years from when each record was created or last amended, including after the related account or content is deleted, because the law requires
                   it. They cannot be deleted on request during that period.
                 </li>
                 <li>

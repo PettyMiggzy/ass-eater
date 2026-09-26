@@ -38,6 +38,41 @@ export async function isSubscribed(fanId: string, creatorId: string) {
 }
 
 /**
+ * How long past its period end an auto-renewing subscription still counts
+ * for LIVE entitlement. Renewals are not charged at currentPeriodEnd: the
+ * renewals worker (workers/renewals.ts) picks up due rows on a 5-minute
+ * repeat, under a tick lock that can be held up to 15 minutes by an overrunning
+ * tick. Without this grace the 20-second live sweep removed a fan who was about
+ * to be renewed from a subscriber-only stream at every period boundary, and
+ * /join refused them until the tick landed. The worker renews or EXPIRES the
+ * row inside this window, after which the strict rule applies again.
+ */
+export const LIVE_RENEWAL_GRACE_MS = 20 * 60_000;
+
+type SubRow = { status: string; autoRenew: boolean; currentPeriodEnd: Date };
+
+/**
+ * Live entitlement from a subscription row: current, or ACTIVE with auto-renew
+ * on and inside LIVE_RENEWAL_GRACE_MS of its period end (a renewal is pending).
+ * Deliberately only for live rooms: post/media gating keeps strict
+ * isSubscribed(), so nothing else is loosened.
+ */
+export function subscriptionCoversLive(s: SubRow | null | undefined, now = new Date()) {
+  if (!s || s.status !== 'ACTIVE') return false;
+  if (s.currentPeriodEnd > now) return true;
+  return s.autoRenew && s.currentPeriodEnd.getTime() > now.getTime() - LIVE_RENEWAL_GRACE_MS;
+}
+
+export async function isSubscribedForLive(fanId: string, creatorId: string, now = new Date()) {
+  if (fanId === creatorId) return true;
+  const s = await prisma.subscription.findUnique({
+    where: { fanId_creatorId: { fanId, creatorId } },
+    select: { status: true, autoRenew: true, currentPeriodEnd: true },
+  });
+  return subscriptionCoversLive(s, now);
+}
+
+/**
  * Per-request memo for canViewPost over a page of posts: without it a
  * 30-post list re-reads the same creator's status (and the viewer's VIP
  * status) once per row. Keys are namespaced; values are the pending lookups.

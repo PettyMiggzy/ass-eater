@@ -5177,3 +5177,21 @@ until today's second real deploy. If this script gets touched again, the
 standing verification bar for it is: **run it twice in a row against a box
 that already has a working deploy, and check the real public URL after
 the second run**, not just the first.
+
+## Age verification now required for every visitor outside the US (decided 2026-09-26)
+
+Audit round 20 found the only real age check (AgeChecker cookie in
+`proxy.js`) applied solely to the 27 blocked US states; every other country
+got the `_app.js` click-through. The UK (Online Safety Act, enforced since
+July 2025), France (SREN/Arcom) and Italy (AGCOM) require real age assurance
+for adult sites and act against foreign ones. **Founder's choice, from four
+options offered: verify everyone outside the US** (not a per-country list,
+not a geoblock). `proxy.js` now gates `country !== 'US'` exactly like a
+blocked state: page -> `/blocked-region` -> `/verify-age`, API and
+`/_next/data` -> 451, exempt legal/report paths unchanged. Only US visitors
+outside `BLOCKED_STATE_CODES` still get the click-through. Copy on
+`/blocked-region`, `/verify-age`, the `_app.js` notice and Privacy §1/§6
+reworded from "your state" to "where you are". Costs AgeChecker's per-check
+fee for international traffic. **Open item for the founder:** confirm with
+AgeChecker that their flow accepts non-US IDs and meets Ofcom's "highly
+effective" standard; if not, switch to a vendor that does or geoblock.

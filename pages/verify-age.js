@@ -117,12 +117,12 @@ export default function VerifyAge() {
 
           {!API_KEY ? (
             <p className="text-gray-400 text-sm">
-              Identity verification is still being set up for your state. Please check back soon.
+              Identity verification is still being set up for your location. Please check back soon.
             </p>
           ) : (
             <>
               <p className="text-gray-400 text-sm mb-6">
-                Your state requires real age verification before you can enter. This takes a minute —
+                Where you are requires real age verification before you can enter. This takes a minute —
                 you'll be asked for your name, address, and date of birth so we can confirm you're 18+.
               </p>
               {status === 'error' && <p className="text-sm text-red-400 mb-4">{error}</p>}
