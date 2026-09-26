@@ -1,5 +1,5 @@
 import { clearSessionCookie, getSessionClaims } from '../../../lib/session';
-import { bumpSessionVersion, SESSION_ALREADY_REVOKED } from '../../../lib/users-store';
+import { bumpSessionVersion, SESSION_ALREADY_REVOKED, SESSION_USER_GONE } from '../../../lib/users-store';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
       // the owner's freshly created session every time they signed back in.
       await bumpSessionVersion(claims.uid, claims.sv);
     } catch (err) {
-      if (err?.code === SESSION_ALREADY_REVOKED) {
+      if (err?.code === SESSION_ALREADY_REVOKED || err?.code === SESSION_USER_GONE) {
         // An earlier logout already retired this token. Nothing left to do,
         // and nothing went wrong.
         return res.status(200).json({ ok: true });

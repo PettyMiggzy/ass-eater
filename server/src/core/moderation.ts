@@ -110,7 +110,11 @@ export async function applyUserStatus(
     // fan who wants to keep going subscribes again when it ends. Token
     // locks get the same treatment (nothing cancels them today, but a row
     // CANCELLED by anything else is likewise a ban's).
-    if (status === 'ACTIVE' && prior === 'BANNED') {
+    // Any return to ACTIVE, not only a direct BANNED -> ACTIVE step: an admin
+    // can ease a ban to a suspension first, and a CANCELLED row can only be a
+    // ban's leftover, so restoring on every transition to ACTIVE is safe
+    // (round 13; the direct-step-only rule left those fans cut off).
+    if (status === 'ACTIVE' && prior !== 'ACTIVE') {
       const live = { creatorId: userId, status: 'CANCELLED' as const, currentPeriodEnd: { gt: new Date() } };
       await tx.subscription.updateMany({ where: live, data: { status: 'ACTIVE', autoRenew: false } });
       await tx.tokenLock.updateMany({ where: live, data: { status: 'ACTIVE', autoRenew: false } });

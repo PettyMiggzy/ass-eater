@@ -106,14 +106,21 @@ describe('srv-auth-core#1: reversing a ban restores paid-for subscriptions', () 
     // Payouts stay frozen: lifting a ban is not lifting a freeze.
     expect((await prisma.creatorProfile.findUniqueOrThrow({ where: { userId: creator } })).payoutsFrozen).toBe(true);
 
-    // Re-activating an already ACTIVE account, or lifting a SUSPENSION,
-    // restores nothing (only a ban writes CANCELLED).
+    // Round 13: a ban eased to a suspension first, then lifted, restores the
+    // ban's CANCELLED rows too (only a ban ever writes CANCELLED).
     const other = await makeCreator();
     const s = await subscribe(other, new Date(Date.now() + 20 * 864e5));
-    await prisma.subscription.update({ where: { id: s.sub.id }, data: { status: 'CANCELLED' } });
+    expect(await applyUserStatus(other, 'BANNED', { rooms: noRooms })).toBe(true);
     expect(await applyUserStatus(other, 'SUSPENDED', { rooms: noRooms })).toBe(true);
-    expect(await applyUserStatus(other, 'ACTIVE')).toBe(true);
     expect((await prisma.subscription.findUniqueOrThrow({ where: { id: s.sub.id } })).status).toBe('CANCELLED');
+    expect(await applyUserStatus(other, 'ACTIVE')).toBe(true);
+    expect(await prisma.subscription.findUniqueOrThrow({ where: { id: s.sub.id } })).toMatchObject({ status: 'ACTIVE', autoRenew: false });
+
+    // Re-activating an already ACTIVE account changes nothing.
+    const third = await makeCreator();
+    const t = await subscribe(third, new Date(Date.now() + 20 * 864e5));
+    expect(await applyUserStatus(third, 'ACTIVE')).toBe(true);
+    expect(await prisma.subscription.findUniqueOrThrow({ where: { id: t.sub.id } })).toMatchObject({ status: 'ACTIVE' });
   });
 });
 
