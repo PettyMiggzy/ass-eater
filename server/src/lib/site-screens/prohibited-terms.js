@@ -82,6 +82,10 @@ const PROHIBITED_TERMS = [
   { term: 'school girl', category: 'minor-suggestive' },
   { term: 'schoolboy', compound: true, category: 'minor-suggestive' },
   { term: 'school boy', category: 'minor-suggestive' },
+  // Round 19 (accounts#5): the one-word "highschool" (and middle school,
+  // junior high) paired with a person or sexual word. "high school girl"
+  // matched "school girl" but "highschool girl" matched nothing. Built below
+  // (SCHOOL_PAIR_TERMS): the glued forms are compound and name-safe.
   { term: 'little girl', category: 'minor-suggestive' },
   { term: 'little boy', category: 'minor-suggestive' },
   { term: 'loli', compound: true, category: 'minor-suggestive' },
@@ -127,6 +131,13 @@ const PROHIBITED_TERMS = [
   { term: 'zoophile', compound: true, category: 'bestiality' },
   { term: 'necrophilia', compound: true, category: 'necrophilia' },
 ];
+const SCHOOL_PAIR_LEADS = ['high school', 'middle school', 'junior high'];
+const SCHOOL_PAIR_WORDS = ['girl', 'boy', 'slut', 'whore', 'babe', 'virgin', 'gf', 'bf', 'sis', 'twink', 'daughter', 'porn', 'sex',
+  'nudes', 'nude', 'pussy', 'cum', 'fuck', 'horny', 'naked', 'bitch', 'hoe', 'cheerleader', 'teen'];
+const SCHOOL_PAIR_TERMS = SCHOOL_PAIR_LEADS.flatMap((lead) => SCHOOL_PAIR_WORDS.map((w) => `${lead} ${w}`));
+// `openStart`: matched after any letters too ("16andhighschool girl",
+// "hothighschool girl") -- no ordinary word ends in "high" before "school".
+for (const term of SCHOOL_PAIR_TERMS) PROHIBITED_TERMS.push({ term, compound: true, openStart: true, category: 'minor-suggestive' });
 
 // Digit/symbol-for-letter spellings. Narrower than the payment filter's leet
 // map on purpose: "!" and "|" are left out, because "lol!" must not read as
@@ -152,11 +163,11 @@ function wordPattern(word) {
   return `(?:${letters.join('')}|${letters.join(LETTER_SEP)})`;
 }
 
-function buildRe({ term, suffixes = '(?:s|es|ed|er|ers|ing)?' }, flags = '') {
+function buildRe({ term, suffixes = '(?:s|es|ed|er|ers|ing)?', openStart = false }, flags = '') {
   const body = term.split(' ').map(wordPattern).join(WORD_GAP);
   // Plural/verb suffixes stay matched ("teens"); an adjacent LETTER breaks the
   // match so "eighteen", "canteen" and "grape" never do.
-  return new RegExp(`(?<![a-z])${body}${suffixes}(?![a-z])`, flags);
+  return new RegExp(`${openStart ? '' : '(?<![a-z])'}${body}${suffixes}(?![a-z])`, flags);
 }
 
 const COMPILED = PROHIBITED_TERMS.map((t) => ({ ...t, re: buildRe(t, t.disclaimable ? 'g' : '') }));
@@ -462,6 +473,15 @@ const GLUED_AGE_RE = new RegExp('(?:[a-z]' + MINOR_AGE_DIGITS + '(?:yo|yrs?old|y
 const SELF_ADVERB = '(?:only|just|barely|now|literally)';
 const SELF_LEAD = "(?<![a-z])(?:i'?m|i am|she'?s|she is|he'?s|he is|aged|(?<!(?:at|since|from|until|till|by|of)[\\s-]{1,2})age"
   + "|(?<!" + THING_NOUN + "[\\s-]{1,2})just turned|(?:i|she|he)(?:\\s+just)?\\s+turned)(?:\\s+" + SELF_ADVERB + "){0,2}[\\s:,-]{1,3}";
+// Round 19 (accounts#3): the singular sexual nouns (line "slut 16"): a
+// plural or "sex toys" before a number is a price menu or a count.
+const SEXUAL_NOUN_SINGULAR = '(?:slut|whore|hoe|babe|bitch|pussy|cunt|twink|bimbo|milf|sissy|nympho|cumslut|fucktoy)';
+// A rank, a size, an episode or a set number in front of the digits, with a
+// real separator (round-19 fix-up: glued "set16" is a name, and "no 16 and
+// horny" is a sentence, not "No. 16" -- same rule as neutralizeNonAges).
+const FREE_NOT_A_RANK_EARLY = '(?<!(?<![a-z])(?:(?:size|top|vol|volume|ep|episode|part|pt|chapter|ch|day|week|level|lvl|number|season|series|set|scene)[\\s.#:_-]{1,2}|no\\s?[.#]\\s?))';
+// The sexual words a "16f" label may be followed by, two words on.
+const LABEL_SEXUAL_WORD = '(?:porn|sex|nudes?|pussy|cum|xxx|fuck|dick|cock|tits|boobs|horny|sluts?|whores?)';
 const MINOR_AGE_RES = [
   // Short form, digits only: alone / after punctuation, or after a descriptive
   // word, a sexual noun or a sexual verb.
@@ -497,12 +517,16 @@ const MINOR_AGE_RES = [
   // inches", "i'm 10/10"). Round 8 required the number to end the clause for
   // digits too, which let the most explicit form of the claim through.
   new RegExp(SELF_LEAD + MINOR_AGE_DIGITS + NOT_A_COUNT),
-  // A sexual noun directly before a bare digit age ("slut 16", "slut, 16"),
-  // unless a unit or a counted thing follows ("babes 10 pics").
-  new RegExp('(?<![a-z])' + SEXUAL_NOUN + '[\\s,:-]{1,3}' + MINOR_AGE_DIGITS + NOT_A_COUNT),
+  // A SINGULAR sexual noun directly before a bare digit age ("slut 16", "slut,
+  // 16"), unless a unit or a counted thing follows ("babe 10 pics"). Round 19
+  // (accounts#3): plurals and "sex toys" / "pornstars" are a price menu or a
+  // count ("Used sex toys 15, lingerie 20", "Babes 12"), not an age.
+  new RegExp('(?<![a-z])' + SEXUAL_NOUN_SINGULAR + '[\\s,:-]{1,3}' + MINOR_AGE_DIGITS + NOT_A_COUNT),
   // A bare digit age joined to a sexual word: "16 and horny", "Emma, 16,
-  // horny" (the comma-separated profile shape).
-  new RegExp(MINOR_AGE_DIGITS + '(?![0-9])' + SEXUAL_AND),
+  // horny" (the comma-separated profile shape). Round 19 (accounts#3): not a
+  // rank, a height or a rating -- and every rule here runs on the text with
+  // those numbers already neutralized (neutralizeNonAges).
+  new RegExp(FREE_NOT_A_RANK_EARLY + "(?<![0-9]\\s?['’′\"]\\s?)" + MINOR_AGE_DIGITS + '(?![0-9])(?!\\s?\\/\\s?[0-9])' + SEXUAL_AND),
   new RegExp(',\\s*' + MINOR_AGE_DIGITS + '\\s*,\\s*(?:' + SEXUAL_ADJ + '|' + PERSON_OR_SEXUAL_NOUN + ')(?![a-z])'),
   // "only 17 years old" standing alone.
   new RegExp('(?:^|[^a-z0-9\\s]\\s*)' + SELF_ADVERB + '\\s+' + MINOR_AGE_DIGITS + MINOR_LONG_AGE + PERSON_AFTER_LONG),
@@ -517,6 +541,9 @@ const MINOR_AGE_RES = [
   new RegExp('[\\[(]\\s?' + AGE_SEX_LABEL + '\\s?[\\])]'),
   new RegExp('(?:^|[.!?;,|:]\\s*)' + AGE_SEX_LABEL_F + '(?=\\s*(?:$|[.!?;,|:)\\]]))'),
   new RegExp('(?:^|[^a-z0-9$/.\\s]\\s*|\\s)' + AGE_SEX_LABEL_F + '\\s+(?:' + SEXUAL_ADJ + '|' + SEXUAL_NOUN + ')(?![a-z])'),
+  // Round 19 (accounts#9): the female label with a sexual word up to two
+  // words on ("16f selling nudes", "16f new nudes here").
+  new RegExp('(?:^|[^a-z0-9$/.\\s]\\s*|\\s)' + AGE_SEX_LABEL_F + '(?:\\s+[a-z]+){1,2}\\s+(?:' + LABEL_SEXUAL_WORD + '|' + SEXUAL_ADJ + ')(?![a-z])'),
   // In front of a person or sexual noun ("17-year-old girl", "sixteen year
   // old schoolgirl", "16 year old slut").
   new RegExp(MINOR_AGE_NUM + '(?:' + MINOR_ANY_AGE + '|' + MINOR_YRS + ')[\\s-]{1,2}' + PERSON_OR_SEXUAL_NOUN + '(?![a-z])'),
@@ -666,6 +693,13 @@ const AGE_OLD_AFTER = '[\\s-]{0,2}(?:yo|y\\.o\\.?|(?:years?|yrs?)[\\s-]{0,2}olds
 // the sexual or person word ("16 tight pussy", "15 little slut"). A fixed
 // list: "new" / "real" / "fresh" are left out ("16 new pussy pics" is a
 // count, and they describe content more than a person).
+// A PRICE after the phrase makes its number a count ("15 nudes $30", "12 wet
+// pussy $30", "10 hot pussy 20 each"): a currency sign, or a number with a
+// currency word or a per-item word after it. A bare number alone is not a
+// price here (round-19 fix-up: "Mia 16 wet pussy 25", "sexy 16 wet pussy 25"
+// are an age with a number tacked on) -- a real menu ("Nudes 15, wet pussy
+// 25") has its prices neutralized before any age rule runs.
+const PAIR_PRICE_AFTER = '(?![^a-z0-9]{1,3}(?:[$\\u00a3\\u20ac]\\s?[0-9]|[0-9]{1,4}\\s?(?:[$\\u00a3\\u20ac]|usd|dollars?|bucks|each|ea|per|tokens?|credits?)(?![a-z])))';
 const AGE_NOUN_ADJ = '(?:tight|wet|little|tiny|young|petite|horny|slutty|naughty|innocent|hot|sexy|cute|virgin|dirty|kinky|shy|sweet|skinny|nude|naked|busty|teen)';
 // The singular person words a digit age labels in a tag or a handle ("16
 // girl"); plurals are counts ("16 girls").
@@ -749,7 +783,9 @@ const GLUED_AND_TAIL = `(?:and|n)(?:so|very|super)?(?:${SEXUAL_ADJ}|${PERSON_OR_
 const GLUED_AND_RE = new RegExp(`(?:(?<![0-9])1[0-7]|${NAME_SPELLED_MINOR_ONLY})${GLUED_AND_TAIL}`);
 // ...and for labels only (tags, handles): "16andready", and a glued
 // self-description standing on its own ("im16", "shes16", "im_16").
-const GLUED_AND_STRICT_RE = new RegExp(`(?<![a-z0-9])(?:1[0-7]|${NAME_SPELLED_MINOR_ONLY})(?:and|n)(?:ready|down|single|dtf|avirgin|aslut)(?![a-z])`
+// Round 19 (accounts#6): and the person adjectives STRICT_AND already reads
+// spaced ("16 and petite"): "16andpetite", "16andinnocent".
+const GLUED_AND_STRICT_RE = new RegExp(`(?<![a-z0-9])(?:1[0-7]|${NAME_SPELLED_MINOR_ONLY})(?:and|n)(?:ready|down|single|dtf|avirgin|aslut|petite|innocent|tiny|young|cute|sweet|little|shy|tight|pretty|skinny|curious|lonely|bored|fresh)(?![a-z])`
   + `|(?<![a-z0-9])(?:im|iam|shes|hes|only)1[0-7](?![0-9a-z])`);
 
 // Round 18 (accounts#0, srv-auth-core#0/#1) -- DECIDED DESIGN for NAME-LIKE
@@ -794,7 +830,12 @@ const SQ_AGE = `(?:(?<![0-9])1[0-7](?![0-9])|${NAME_SPELLED_MINOR_ONLY})`;
 const SQ_NOT_A_RANK = '(?<!(?:size|top|vol|episode|chapter|season|level|lvl|number|part|week|day))';
 // Letters may follow these. The plural ("girls", "sluts", "bitches") is a
 // count and does not match.
-const SQ_OPEN_WORD = '(?:(?:cumslut|slut|whore|bitch|cunt|pussy|girl|boy|babe|teen|virgin|daughter|stepdaughter|schoolgirl|schoolboy)(?!e?s)|horny|gf(?![sx]))';
+// Round 19 (accounts#2): the plural guard must not read the "s" of a
+// following "sixteen"/"seventeen" as a plural -- "girlsixteen" published
+// while "girlfifteen" was refused. (accounts#6): sis / stepsis / bf / twink,
+// which the strict rule already treats as persons, were missing here.
+const SQ_PLURAL = '(?!e?s(?!ixteen|eventeen))';
+const SQ_OPEN_WORD = `(?:(?:cumslut|slut|whore|bitch|cunt|pussy|girl|boy|babe|teen|virgin|daughter|stepdaughter|schoolgirl|schoolboy|stepsister|stepsis|twink)${SQ_PLURAL}|horny|gf(?!x|s(?!ixteen|eventeen))|bf(?!s(?!ixteen|eventeen))|sis${SQ_PLURAL})`;
 // Only as a whole word on the side away from the age.
 const SQ_CLOSED_WORD = '(?:porn(?:o|star)?|sex(?:y|ual)?|cum|fuck(?:ed|ing|er|toy)?|hoe|wet|nude)';
 const SQ_JOIN = '(?:(?:and|n|und)a?)?';
@@ -814,8 +855,14 @@ const SQUASHED_MINOR_AGE_RE = new RegExp([
 
 // The squashed forms of a value (see SQUASHED_MINOR_AGE_RE): masked, then
 // every non-alphanumeric dropped, either as one string or word by word.
+// A tag stays word by word here: squashing "10 pussy pics" or "12 porn
+// scenes" into one run would read the count as an age. The separated
+// one-chip shapes ("16 porn", "girl 16", round-19 accounts#1) are the
+// pairing rule's job (MINOR_AGE_PAIR_RE), which runs in every context with
+// the count guards. The ordinary words that contain a pairing word (Essex,
+// oasis, thorny...) are masked first, as they are for the pairing rule.
 function squashedForms(ageText, perWord) {
-  const masked = ageText.replace(NAME_ALLOWLIST_RE, '|').replace(NAME_COMPOUND_ALLOWLIST_RE, '|');
+  const masked = ageText.replace(NAME_ALLOWLIST_RE, '|').replace(NAME_COMPOUND_ALLOWLIST_RE, '|').replace(PAIR_NAME_MASK_RE, '|');
   const parts = perWord ? masked.split(/\s+/) : [masked];
   return parts.map((p) => p.replace(/[^a-z0-9|]+/g, '')).filter(Boolean);
 }
@@ -879,12 +926,14 @@ const MINOR_AGE_SEXUAL_FREE_RE = new RegExp([
   // ...or with ONE adjective between, not a count (round-17 accounts#2: "16
   // tight pussy", "15 little slut" -- but "10 hot slut videos")
   `${FREE_NOT_A_RANK}${FREE_AGE}[^a-z0-9$]{1,2}${AGE_NOUN_ADJ}[^a-z0-9]{1,2}${PERSON_SEXUAL_WORD}(?![a-z])${COUNTED_AFTER}`,
-  // ..."pussy" only when the phrase ENDS the clause with no price after it
-  // (round-18 accounts#1): "12 Wet Pussy Selfies", "10 wet pussy gifs" and
-  // the price menu "Nudes 15, wet pussy 25" are counts and prices, as they
-  // are without the adjective; "16 wet pussy" still reads as an age. The
-  // strict (tag / handle) rule keeps its own version.
-  `${FREE_NOT_A_RANK}${FREE_AGE}[^a-z0-9$]{1,2}${AGE_NOUN_ADJ}[^a-z0-9]{1,2}pussy(?![a-z])${FREE_END}(?![^a-z0-9]{1,3}\\$?\\d)`,
+  // ..."pussy" unless a counted thing or a price follows it (round-18
+  // accounts#1: "12 Wet Pussy Selfies", "10 wet pussy gifs" and the price menu
+  // "Nudes 15, wet pussy 25" are counts and prices, as they are without the
+  // adjective). Round 19 (accounts#0): round 18 required the phrase to END the
+  // clause, so any continuation -- an emoji, "dm me", "here" -- published "16
+  // wet pussy"; the exemptions are lookaheads again. The strict (tag / handle)
+  // rule keeps its own version.
+  `${FREE_NOT_A_RANK}${FREE_AGE}[^a-z0-9$]{1,2}${AGE_NOUN_ADJ}[^a-z0-9]{1,2}pussy(?![a-z])${COUNTED_AFTER}(?![\\s-]{1,3}(?:selfies?|gifs?|images?|closeups?|snaps?|shots?)(?![a-z]))${PAIR_PRICE_AFTER}`,
   // a sexual word, the age, then a singular person word ("horny 16 girl")
   `(?<![a-z])${MINOR_SEXUAL_WORD}${FREE_SEP}${FREE_AGE}[^a-z0-9]{1,2}${SINGULAR_PERSON}(?![a-z])`,
   // the age, "and", a sexual adjective or noun
@@ -900,6 +949,176 @@ const MINOR_AGE_SEXUAL_FREE_RE = new RegExp([
   // "at" / "aged" / "at age" (unchanged from the strict rule)
   `${AT_AGE_LEAD}(?:${DIGIT_AGE}(?:${DIGIT_NOT_A_COUNT}${NOT_A_TIME}|[\\s-]{0,2}(?:years?|yrs?|yo)(?![a-z]))|${NAME_SPELLED_MINOR_ONLY}(?![a-z])${COUNTED_AFTER}${NOT_A_TIME})`,
 ].join('|'));
+
+// ROUND 19 -- THE PAIRING RULE, built to a combinatorial spec rather than to
+// the strings of the last finding (lib/screen-generated.test.mjs generates
+// the shapes; seven rounds running, every one-string fix was followed by the
+// same shape with another separator, adjective, tail or order). A minor age
+// directly beside a sexual or singular person word is refused in EVERY
+// context -- name-like fields, tags and free text alike:
+//   - the age: digits 10..17 (never inside a longer number, after a currency
+//     sign, a decimal point or a "/"), or a spelled eleven..seventeen, with an
+//     optional yo / years old / yrs old after it; "ten" only as its own word
+//     and only with the sexual words that are not also names;
+//   - the join: nothing, spaces (and "_" "." "-", read as spaces), or and / n
+//     / & -- glued or spaced ("16andgirl", "girl n 16");
+//   - ONE adjective may sit in front of the word, age first ("16 hot girl");
+//   - letters may come before the pair ("jess16girl", "hotporn 16"); the
+//     ordinary words that contain a pairing word are masked first
+//     (PAIR_NAME_MASK_RE: Essex, oasis, thorny...);
+//   - anything may FOLLOW (an emoji, "dm me", "here", "lol") -- except, after
+//     a sexual CONTENT word (porn, sex, cum, nudes, pussy...), a counted or
+//     measured thing, another noun, or a price, which make the number a count
+//     ("12 porn scenes", "10 wet pussy pics", "15 nudes for $30", "cum 12
+//     loads"). A singular PERSON word is an age whatever follows ("16 girl
+//     nudes", "girl 16 nudes"); its plural is a count ("16 girls").
+// Numbers that are never an age -- ranks, sizes, episodes, heights, ratings,
+// price menus -- are neutralized BEFORE any age rule runs (neutralizeNonAges),
+// so this rule, the older ones and the glued/squashed ones all agree on them.
+// Person words, and the sexual person words (slut, whore...). Both are an
+// age label whatever follows when nothing sits between them and the age ("16
+// slut pics"); with an ADJECTIVE between, a sexual person word followed by a
+// counted thing is a count ("10 hot slut videos"), as the spec's free-text
+// carve-out has it.
+const PAIR_PERSON_ONLY = '(?:girl|boy|babe|teen|virgin|gf|bf|stepsister|stepsis|sis|daughter|stepdaughter|twink|schoolgirl|schoolboy)';
+const PAIR_SEXUAL_PERSON = '(?:cumslut|slut|whore|bitch|cunt)';
+const PAIR_PERSON = `(?:${PAIR_PERSON_ONLY}|${PAIR_SEXUAL_PERSON})`;
+// "xx+": the text reaching the rules has stretched letters folded to two
+// (foldStretched), so "xxx" arrives as "xx".
+const PAIR_CONTENT = '(?:porn|sex|cum|fuck|nudes?|xx+|pussy|horny|wet|naked)';
+const PAIR_TEN_WORD = '(?:porn|fuck|slut|pussy|nudes?|horny|xx+)';
+const PAIR_AGE_DIGIT = `${FREE_NOT_A_RANK}(?<![0-9$\u00a3\u20ac"/.][\\s]?)(?<![0-9])1[0-7](?![0-9])`;
+const PAIR_AGE = `(?:${PAIR_AGE_DIGIT}|${NAME_SPELLED_MINOR_ONLY})`;
+const PAIR_AGE_WORD = '(?:\\s{0,2}(?:yo|years?\\s{0,2}olds?|yrs?\\s{0,2}olds?))?';
+const PAIR_SEP = '(?:\\s{0,3}(?:and|&|n)?\\s{0,3})';
+// A counted or measured thing after a content word (or after the age, word
+// first): the COUNT_WORD units, the product nouns a listing counts, and any
+// sexual or person noun (so "12 wet pussy" is read with "wet" as the
+// adjective, and "10 horny girls" as a count).
+const PAIR_COUNTED = `(?:${COUNT_WORD}|${MINOR_AGE_UNIT}|for|each|ea|per|at|only|apiece|stars?|scenes?|parod(?:y|ies)|toys?`
+  + '|positions?|tips?|loads?|facials?|tributes?|guys|men|women|chicks|models?|selfies?|gifs?|images?|closeups?|snaps?|shots?'
+  + '|tapes?|movies?|films?|sites?|bundles?|compilations?|comps|part|series|porn|sex|cum|fuck|nudes?|pussy|horny|wet|naked'
+  + `|${PAIR_PERSON}s?)`;
+// ...or any plural noun ("13 wet wipes"), but not the everyday words that
+// merely end in "s".
+const PAIR_PLURAL = '(?!(?:always|lets|thanks|kisses|xoxos|hugs|miss|kiss|yes|pls|plus|dms|ass|bless)(?![a-z]))[a-z]{3,}s(?![a-z])';
+const PAIR_CONTENT_AFTER = `(?![\\s-]{1,3}(?:${PAIR_COUNTED})(?![a-z]))(?![\\s-]{1,3}${PAIR_PLURAL})${PAIR_PRICE_AFTER}`;
+const PAIR_AFTER_AGE_CONTENT = `${FREE_NOT_A_COUNT}(?![\\s-]{1,3}(?:${PAIR_COUNTED})(?![a-z]))(?![\\s-]{1,3}${PAIR_PLURAL})`;
+const PAIR_ADJ_PERSON = `(?:(?:${AGE_NOUN_ADJ}|porn|sex|xxx|cum|fuck)\\s{0,3})?`;
+const PAIR_ADJ_CONTENT = `(?:${AGE_NOUN_ADJ}\\s{0,3})?`;
+const MINOR_AGE_PAIR_RE = new RegExp([
+  // age first
+  `${PAIR_AGE}${PAIR_AGE_WORD}${PAIR_SEP}(?:${PAIR_ADJ_PERSON}${PAIR_PERSON_ONLY}(?![a-z])|${PAIR_SEXUAL_PERSON}(?![a-z])`
+    + `|(?:${AGE_NOUN_ADJ}|porn|sex|xxx|cum|fuck)\\s{0,3}${PAIR_SEXUAL_PERSON}(?![a-z])${PAIR_CONTENT_AFTER}`
+    + `|${PAIR_ADJ_CONTENT}${PAIR_CONTENT}(?![a-z])${PAIR_CONTENT_AFTER})`,
+  // word first
+  `${PAIR_PERSON}${PAIR_SEP}${PAIR_AGE}${PAIR_AGE_WORD}${FREE_NOT_A_COUNT}`,
+  `${PAIR_CONTENT}${PAIR_SEP}${PAIR_AGE}${PAIR_AGE_WORD}${PAIR_AFTER_AGE_CONTENT}`,
+  // "ten": its own word, separated, the non-name sexual words only
+  `(?<![a-z])ten\\s{1,3}(?:(?:and|&)\\s{1,3})?${PAIR_TEN_WORD}(?![a-z])${PAIR_CONTENT_AFTER}`,
+  `(?<![a-z])${PAIR_TEN_WORD}\\s{1,3}(?:(?:and|&)\\s{1,3})?ten(?![a-z])${PAIR_AFTER_AGE_CONTENT}`,
+].join('|'));
+// Ordinary words that contain a pairing word, blanked before the pairing and
+// squashed rules run: the "-sex" places (Essex, Wessex, Sussex, Middlesex)
+// and "unisex", "thorny", and the everyday "-sis" words (basis, oasis,
+// crisis, genesis...). Add to it here when an honest word turns out refused.
+// Whole words only: "jessex" (a folded "jesssex") is not Essex.
+const PAIR_NAME_MASK_RE = /(?<![a-z])(?:(?:es|wes|sus|middle|uni)sex|thorny|(?:ba|oa|cri|the|gene|analy|empha|paraly|synthe|hypothe|diagno|progno|psoria|neme|osmo|neuro|psycho|metamorpho|parenthe|kine|mime|tme|i)sis)(?![a-z])/g;
+
+// Numbers that are never a person's age, replaced by "0" before the age rules
+// read the text (round 19, accounts#3 and srv-auth-core#0: "5'10 and sexy",
+// "UK size 12 and sexy", "Rated 10/10 and sexy", "size-16-and-sexy",
+// "ep-12-and-horny", "Used sex toys 15, lingerie 20" were refused and logged
+// as minor content because each age rule carried its own, different guards):
+//   - a rank, size, episode, chapter, season, volume, part, level, day, set...
+//     word right before the number, with a real separator between them
+//     ("size 16", "ep-12", "chapter fifteen") -- never glued ("set16girl",
+//     "no16horny" are a name, not a rank), and "no" only as "no." / "no #"
+//     ("no 16 and horny" is a sentence);
+//   - a height: a single digit, a foot mark / "ft" / a dash, then 0-11 inches
+//     ("5'10", "5ft10", "5-10") -- twelve or more inches is not a height, so
+//     "5-16 slut" keeps its 16;
+//   - a rating ("10/10", "12/10", "ten out of ten");
+//   - an aperture after at/on/shot ("shot at f/16");
+//   - a number after "#" or an apostrophe that follows a word ("porn #16",
+//     "porn '16");
+//   - a price in a MENU: a number with another "<words> <number>" item right
+//     after it or right before it ("Nudes 15, videos 25", "Customs from 15.
+//     Nudes 10.") -- unless the word in front of it is a singular person word
+//     or a sexual adjective ("slut 16, porn 15", "sexy 16 wet pussy 25"), or
+//     the number is directly followed by a sexual adjective or person word
+//     and the word in front of it is not a menu item ("Mia 16 wet pussy 25",
+//     "Emma 16 horny nudes 20"; "Custom nudes 15 wet pussy 25" is a menu).
+// Round-19 fix-up: the rank list is only genuine rank/size/episode words.
+// Ordinary nouns ("model", "gen", "room", "row", "unit", "rated", "pic",
+// "vid"...) are how a minor would describe themselves ("cam model 16
+// horny"), and neutralizing after them published exactly that.
+// In NAME-LIKE contexts (handles, usernames, tags: strictAge), where
+// over-refusal is accepted, only the height and rating guards and the
+// narrowest size/episode words (NON_AGE_RANK_STRICT, separated:
+// "size-16-and-sexy" as a #chip, srv-auth-core#0) apply -- a price tail or
+// any other word must never launder "model16horny", "set16girl" or
+// "Mia 16 wet pussy 25" into a handle or a #chip.
+const NON_AGE_RANK = '(?:size|sz|top|num|number|vol|volume|ep|eps|episode|part|pt|chapter|chap|ch|day|week|wk|level|lvl|lv'
+  + '|season|series|set|scene)';
+const NON_AGE_RANK_STRICT_RE = new RegExp('(?<![a-z])((?:size|sz|vol|volume|ep|eps|episode|chapter|chap|season|part|level|lvl)[\\s._-]{1,3})'
+  + '(?:[0-9]{1,4}(?![0-9])|(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)(?![a-z]))', 'g');
+const NON_AGE_NUMBER = '(?:[0-9]{1,4}(?![0-9])|(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)(?![a-z]))';
+const NON_AGE_RANK_RE = new RegExp(`(?<![a-z])(${NON_AGE_RANK}[\\s.#:_-]{1,3}|no\\s?[.#]\\s?)${NON_AGE_NUMBER}`, 'g');
+const NON_AGE_HEIGHT_RE = /(?<![0-9])([1-9][\s-]?(?:['\u2019\u2032"]{1,2}|ft\.?|foot|feet|[-\u2013])[\s-]{0,2})(?:1[01]|[0-9])(?![0-9])/g;
+const NON_AGE_RATING_RE = /(?<![a-z0-9])(?:[0-9]{1,3}|ten|eleven|twelve)(\s?(?:\/|out\s+of|outta)\s?)(?:5|10|100|ten)(?![0-9a-z])/g;
+const NON_AGE_APERTURE_RE = /(?<=(?:at|on|shot|aperture|@)\s{0,2}f\s?\/\s?)[0-9]{1,2}(?![0-9])/g;
+const NON_AGE_MARKED_RE = /(?<=[a-z0-9]\s?[#'\u2019])[0-9]{1,4}(?![0-9])/g;
+const MENU_PERSON_WORD = new Set(['girl', 'boy', 'babe', 'teen', 'virgin', 'gf', 'bf', 'sis', 'stepsis', 'stepsister', 'daughter',
+  'stepdaughter', 'twink', 'schoolgirl', 'schoolboy', 'cumslut', 'slut', 'whore', 'hoe', 'bitch', 'cunt', 'im', 'i\'m', 'am', 'aged',
+  'age', 'turned', 'only', 'just', 'barely',
+  // sexual adjectives: "sexy 16 wet pussy 25" is an age with a price tail
+  'tight', 'wet', 'little', 'tiny', 'young', 'petite', 'horny', 'slutty', 'naughty', 'innocent', 'hot', 'sexy', 'cute', 'dirty',
+  'kinky', 'shy', 'sweet', 'skinny', 'nude', 'naked', 'busty', 'freaky', 'thirsty', 'needy']);
+// A sexual adjective or person word straight after the number...
+const MENU_AGE_FOLLOW_RE = new RegExp(`^\\s{1,2}(?:${AGE_NOUN_ADJ}|freaky|thirsty|needy|${PAIR_PERSON})(?![a-z])`);
+// ...is still a menu price only after an item noun ("Custom nudes 15 wet
+// pussy 25").
+const MENU_ITEM_WORD_RE = /^(?:pussy|nudes?|videos?|vids?|pics?|photos?|sexting|customs?|clips?|lingerie|panties|socks|toys?|sets?|tapes?|porn|xx+|boobs|tits|feet|gifs?|selfies?|ratings?|rates?|bundles?)$/;
+// The next item's price has two digits or a currency sign, and is not a
+// "24/7": "horny 16, dm me 4 more" is not a menu.
+const MENU_PRICE = '(?:[$\\u00a3\\u20ac]\\s?[0-9]|[0-9]{2})(?![0-9]*\\s?\\/)';
+const MENU_NEXT_RE = new RegExp('^\\s?(?:[,;|\\u2022/]\\s?(?:[a-z]+[\\s:]{1,2}){1,3}|\\s(?:[a-z]+\\s){0,2}'
+  + '(?:pussy|nudes?|videos?|vids?|pics?|photos?|sexting|customs?|clips?|lingerie|panties|socks|toys?|sets?)\\s?:?\\s?)' + MENU_PRICE);
+const MENU_PREV_RE = /(?:[$\u00a3\u20ac]\s?[0-9]{1,4}|[0-9]{2})\s?[,;|\u2022/.]\s?(?:[a-z]+[\s:]{1,2}){1,3}[$\u00a3\u20ac]?$/;
+function neutralizeMenuPrices(text) {
+  return text.replace(/(?<![0-9])[0-9]{1,4}(?![0-9])/g, (num, offset) => {
+    const before = text.slice(Math.max(0, offset - 60), offset);
+    const item = before.match(/([a-z']+)[\s:]{1,2}[$\u00a3\u20ac]?$/);
+    if (!item || MENU_PERSON_WORD.has(item[1])) return num;
+    const after = text.slice(offset + num.length, offset + num.length + 60);
+    if (MENU_AGE_FOLLOW_RE.test(after) && !MENU_ITEM_WORD_RE.test(item[1])) return num;
+    return MENU_NEXT_RE.test(after) || MENU_PREV_RE.test(before) ? '0' : num;
+  });
+}
+export function neutralizeNonAges(text, { strictAge = false } = {}) {
+  let t = String(text ?? '')
+    .replace(NON_AGE_HEIGHT_RE, (m, lead) => `${lead}0`)
+    .replace(NON_AGE_RATING_RE, (m, mid) => `0${mid}0`);
+  if (strictAge) return t.replace(NON_AGE_RANK_STRICT_RE, (m, lead) => `${lead}0`);
+  t = t
+    .replace(NON_AGE_RANK_RE, (m, lead) => `${lead}0`)
+    .replace(NON_AGE_APERTURE_RE, '0')
+    .replace(NON_AGE_MARKED_RE, '0');
+  return neutralizeMenuPrices(t);
+}
+// Emoji and pictographs read as a space for the age rules: "16 horny 😈"
+// ends its clause exactly as "16 horny" does (round-19 accounts#7).
+const EMOJI_RUN_RE = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0E}\u{FE0F}\u{200D}\u{20E3}]+/gu;
+// The text the pairing rule reads: "y.o." / "y/o" as "yo", the name mask
+// applied, and "_" "." "-" joiners between letters (or a digit and a letter)
+// read as spaces. A "." or "-" between two digits stays (a decimal, a range).
+function pairTextOf(text) {
+  return text
+    .replace(/(?<![a-z])y\s?[./]\s?o(?:\.|(?![a-z]))/g, 'yo')
+    .replace(PAIR_NAME_MASK_RE, ' ')
+    .replace(/(?<=[a-z])[_.-]+(?=[a-z0-9])|(?<=[0-9])[_.-]+(?=[a-z])/g, ' ');
+}
 
 // Round 12 (accounts#0): round 11 dropped the WHOLE compound tier in name
 // mode, not just the few terms real names collide with, so "@sexyschoolgirl",
@@ -921,6 +1140,7 @@ const NAME_SAFE_COMPOUND_TERMS = new Set([
   'preteen', 'underage', 'jailbait', 'barely legal', 'schoolgirl', 'schoolboy', 'lolita', 'lolicon', 'shotacon',
   'pedophile', 'paedophile', 'pedophilia', 'paedophilia', 'child porn', 'nonconsent', 'nonconsensual',
   'bestiality', 'beastiality', 'zoophilia', 'zoophile', 'necrophilia',
+  ...SCHOOL_PAIR_TERMS,
 ]);
 const NAME_SAFE_COMPOUND = COMPILED_COMPOUND.filter((t) => NAME_SAFE_COMPOUND_TERMS.has(t.term));
 const compoundBody = (term) => [...term].map((ch) => COMPOUND_LEET[ch] || ch).join('');
@@ -978,6 +1198,39 @@ const NAME_DESCRIPTOR_RES = [
   { term: 'ageplay', category: 'minor-suggestive' },
 ].map((t) => ({ ...t, re: new RegExp(`${compoundBody(t.term)}${NAME_PLAY_WORD}|${NAME_PLAY_LEAD}${compoundBody(t.term)}`) })));
 
+// Every under-18 age rule, on one reading of the text (curly apostrophes
+// folded, non-age numbers already neutralized). True when any of them hits.
+function minorAgeHit(ageText, { strictAge, squashWhole }) {
+  // Handles, usernames and tags join words with "_" and "." ("hot_16_yo",
+  // "jess.16.yo", "im_16"). Read those as spaces for the age rules -- except a
+  // "." between two letters ("16 y.o") or two digits ("v1.16", a decimal) --
+  // and, separately, with them removed for the glued forms (GLUED_AGE_RE).
+  const spaced = ageText.replace(/(?<=[a-z0-9])_+(?=[a-z0-9])|(?<=[0-9])\.(?=[a-z])|(?<=[a-z])\.(?=[0-9])/g, ' ');
+  const glued = ageText.replace(/(?<=[a-z0-9])[_.]+(?=[a-z0-9])/g, '');
+  if (MINOR_AGE_RES.some((re) => re.test(ageText) || re.test(spaced)) || GLUED_AGE_RE.test(glued)) return true;
+  // A minor age next to a sexual word, in EVERY mode (round-15 accounts#0):
+  // tags, display names, bios, locations and listing copy as well as handles.
+  // On the name mask (spelled minor ages kept, "nineteen" and the name
+  // collisions blanked).
+  // Round 16: the strict rule for name-like fields and tags, the narrower
+  // free-text rule everywhere else (see MINOR_AGE_SEXUAL_FREE_RE), and
+  // "barely" + a minor age in both.
+  const ageMasked = ageText.replace(NAME_ALLOWLIST_RE, ' ').replace(NAME_COMPOUND_ALLOWLIST_RE, ' ');
+  const ageRe = strictAge ? MINOR_AGE_SEXUAL_STRICT_RE : MINOR_AGE_SEXUAL_FREE_RE;
+  const gluedAge = ageMasked.replace(/(?<=[a-z0-9])[_.]+(?=[a-z0-9])/g, '');
+  // ...and with "-" joiners removed too, for the glued "and" forms only
+  // ("16-and-horny", "jess-16-and-horny"; round-18 accounts#0).
+  const gluedDash = ageMasked.replace(/(?<=[a-z0-9])[-_.]+(?=[a-z0-9])/g, '');
+  return ageRe.test(ageMasked) || BARELY_MINOR_AGE_RE.test(ageMasked) || BARELY_MINOR_AGE_RE.test(gluedAge)
+    || GLUED_AND_RE.test(gluedAge) || GLUED_AND_RE.test(gluedDash) || GLUED_AND_RE.test(glued)
+    // Round 19: the pairing rule, in every context (MINOR_AGE_PAIR_RE).
+    || MINOR_AGE_PAIR_RE.test(pairTextOf(ageMasked))
+    || (strictAge && GLUED_AND_STRICT_RE.test(gluedAge))
+    // Name-like values: the squashed rule (round 18), the whole value for a
+    // name or a joined tag run, word by word for a single tag.
+    || (strictAge && squashedForms(ageText, !squashWhole).some((f) => SQUASHED_MINOR_AGE_RE.test(f)));
+}
+
 function detectIn(normalized, add, { compound = true, strictAge = !compound, squashWhole = !compound } = {}) {
   if (!normalized) return;
   for (const { term, category, re, disclaimable } of COMPILED) {
@@ -996,14 +1249,15 @@ function detectIn(normalized, add, { compound = true, strictAge = !compound, squ
   }
   // Curly apostrophes (the iOS default) read as straight ones for the
   // self-description lead-ins.
-  const ageText = normalized.replace(/[\u2018\u2019\u02bc]/g, "'");
-  // Handles, usernames and tags join words with "_" and "." ("hot_16_yo",
-  // "jess.16.yo", "im_16"). Read those as spaces for the age rules -- except a
-  // "." between two letters ("16 y.o") or two digits ("v1.16", a decimal) --
-  // and, separately, with them removed for the glued forms (GLUED_AGE_RE).
-  const spaced = ageText.replace(/(?<=[a-z0-9])_+(?=[a-z0-9])|(?<=[0-9])\.(?=[a-z])|(?<=[a-z])\.(?=[0-9])/g, ' ');
-  const glued = ageText.replace(/(?<=[a-z0-9])[_.]+(?=[a-z0-9])/g, '');
-  if (MINOR_AGE_RES.some((re) => re.test(ageText) || re.test(spaced)) || GLUED_AGE_RE.test(glued)) {
+  const ageBase = normalized.replace(/[\u2018\u2019\u02bc]/g, "'");
+  // Round 19: every age rule reads the text twice -- as typed, and with emoji
+  // read as spaces (so "16 horny" plus an emoji ends its clause like "16 horny") -- and
+  // both times with the numbers that are never an age neutralized first
+  // (neutralizeNonAges: ranks, sizes, heights, ratings, price menus).
+  const ageVariants = [ageBase];
+  const noEmoji = ageBase.replace(EMOJI_RUN_RE, ' ');
+  if (noEmoji !== ageBase) ageVariants.push(noEmoji);
+  if (ageVariants.some((v) => minorAgeHit(neutralizeNonAges(v, { strictAge }), { strictAge, squashWhole }))) {
     add('under-18 age', 'minor-suggestive');
   }
   const masked = normalized.replace(NAME_ALLOWLIST_RE, ' ').replace(COMPOUND_ALLOWLIST_RE, ' ');
@@ -1015,27 +1269,6 @@ function detectIn(normalized, add, { compound = true, strictAge = !compound, squ
     const nameMasked = normalized.replace(NAME_ALLOWLIST_RE, ' ').replace(NAME_COMPOUND_ALLOWLIST_RE, ' ');
     for (const { term, category, re } of NAME_COMPOUND_RES) if (re.test(nameMasked)) add(term, category);
     for (const { term, category, re } of NAME_DESCRIPTOR_RES) if (re.test(nameMasked)) add(term, category);
-  }
-  // A minor age next to a sexual word, in EVERY mode (round-15 accounts#0):
-  // tags, display names, bios, locations and listing copy as well as handles.
-  // On the name mask (spelled minor ages kept, "nineteen" and the name
-  // collisions blanked), with curly apostrophes folded.
-  // Round 16: the strict rule for name-like fields and tags, the narrower
-  // free-text rule everywhere else (see MINOR_AGE_SEXUAL_FREE_RE), and
-  // "barely" + a minor age in both.
-  const ageMasked = ageText.replace(NAME_ALLOWLIST_RE, ' ').replace(NAME_COMPOUND_ALLOWLIST_RE, ' ');
-  const ageRe = strictAge ? MINOR_AGE_SEXUAL_STRICT_RE : MINOR_AGE_SEXUAL_FREE_RE;
-  const gluedAge = ageMasked.replace(/(?<=[a-z0-9])[_.]+(?=[a-z0-9])/g, '');
-  // ...and with "-" joiners removed too, for the glued "and" forms only
-  // ("16-and-horny", "jess-16-and-horny"; round-18 accounts#0).
-  const gluedDash = ageMasked.replace(/(?<=[a-z0-9])[-_.]+(?=[a-z0-9])/g, '');
-  if (ageRe.test(ageMasked) || BARELY_MINOR_AGE_RE.test(ageMasked) || BARELY_MINOR_AGE_RE.test(gluedAge)
-    || GLUED_AND_RE.test(gluedAge) || GLUED_AND_RE.test(gluedDash) || GLUED_AND_RE.test(glued)
-    || (strictAge && GLUED_AND_STRICT_RE.test(gluedAge))
-    // Name-like values: the squashed rule (round 18), the whole value for a
-    // name or a joined tag run, word by word for a single tag.
-    || (strictAge && squashedForms(ageText, !squashWhole).some((f) => SQUASHED_MINOR_AGE_RE.test(f)))) {
-    add('under-18 age', 'minor-suggestive');
   }
   for (const { term, category, re, disclaimable } of compound ? COMPILED_COMPOUND : NAME_SAFE_COMPOUND) {
     for (const m of masked.matchAll(re)) {

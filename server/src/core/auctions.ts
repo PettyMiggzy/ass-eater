@@ -288,6 +288,8 @@ export async function closeAuction(tx: Tx, listingId: string, now: Date = new Da
   // winner already paid. Never re-read listing.shippingCents here.
   const held = heldNow(listing);
   const shippingCents = Math.max(0, held - chargeCents);
+  // Founding Creator waiver not applied on server/: no founding data here
+  // (TODO(founding-waiver) at platformBpsFor in core/ledger.ts).
   const platformFee = Math.floor((chargeCents * PLATFORM_FEE_BPS) / 10_000);
   const listingFee = Math.floor((chargeCents * LISTING_FEE_BPS) / 10_000);
   const net = chargeCents - platformFee - listingFee;

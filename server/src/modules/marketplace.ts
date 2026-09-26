@@ -444,6 +444,8 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       const bal = await lockBalance(tx, req.user.id);
       if (bal < BigInt(totalCharge)) throw new InsufficientFunds();
 
+      // Founding Creator waiver not applied on server/: no founding data here
+      // (TODO(founding-waiver) at platformBpsFor in core/ledger.ts).
       const platformFee = Math.floor((chargeCents * PLATFORM_FEE_BPS) / 10_000);
       const listingFee = Math.floor((chargeCents * LISTING_FEE_BPS) / 10_000);
       const net = chargeCents - platformFee - listingFee;

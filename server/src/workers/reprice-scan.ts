@@ -60,6 +60,8 @@ export async function forEachPricedPending(
  * whenever the row was CLAIMED (a pending row defers every ETH/$ONLYONE sweep
  * at its address, so clearing it -- dust included -- must queue one), while
  * the deposit notification and the credited count need an actual credit.
+ * The re-queue itself is recorded here (sweepRequeue) and performed by
+ * drainSweepRequeues, so it survives a failure after this commits.
  */
 export async function settleRepriced(
   d: { id: string; hedgedAt: Date | null },
@@ -70,11 +72,57 @@ export async function settleRepriced(
   return money(prisma, async (tx) => {
     const claim = await tx.deposit.updateMany({
       where: { id: d.id, pricePending: true },
-      data: { pricePending: false, usdCents: cents > 0n ? cents : 0n, priceUsed: px, hedgedAt: cents > 0n ? null : d.hedgedAt },
+      // sweepRequeue in the same statement as the claim: once pricePending is
+      // false no reprice pass reads this row again, so the "this address's
+      // sweep must be re-queued" obligation has to be durable before the
+      // enqueue is even attempted (drainSweepRequeues clears it after).
+      data: { pricePending: false, sweepRequeue: true, usdCents: cents > 0n ? cents : 0n, priceUsed: px, hedgedAt: cents > 0n ? null : d.hedgedAt },
     });
     if (!claim.count) return { claimed: false, credited: false };
     if (cents <= 0n) return { claimed: true, credited: false };
     await postCredit(tx);
     return { claimed: true, credited: true };
   });
+}
+
+type RequeueRow = { id: string; userId: string; txHash: string; logIndex: number; asset: string };
+
+/**
+ * Performs the sweep re-queues settleRepriced recorded: for every settled
+ * row still carrying sweepRequeue, `enqueue` it and only THEN clear the flag
+ * (guarded on the flag, so a concurrent drain clearing it first is a no-op).
+ * A failure on one row -- Redis down, the address lookup failing -- is
+ * logged and leaves that row flagged for the next pass; it never aborts the
+ * others. The round-18 version enqueued straight after the settle committed,
+ * so an exception there lost the re-queue for good: the row was no longer
+ * pending and nothing read it again.
+ *
+ * Rows of an asset in `skipAssets` (one whose indexing is switched off) keep
+ * their flag untouched: their sweep would be refused anyway, and turning the
+ * flag back on picks them up again.
+ */
+export async function drainSweepRequeues(
+  chainId: number,
+  enqueue: (d: RequeueRow) => Promise<void>,
+  opts: { skipAssets?: string[]; limit?: number; log?: (...a: unknown[]) => void } = {},
+): Promise<{ queued: number; failed: number }> {
+  const log = opts.log ?? console.error;
+  const rows = await prisma.deposit.findMany({
+    where: { chainId, sweepRequeue: true, pricePending: false, ...(opts.skipAssets?.length ? { asset: { notIn: opts.skipAssets as any } } : {}) },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: opts.limit ?? 500,
+    select: { id: true, userId: true, txHash: true, logIndex: true, asset: true },
+  });
+  let queued = 0, failed = 0;
+  for (const d of rows) {
+    try {
+      await enqueue(d);
+      await prisma.deposit.updateMany({ where: { id: d.id, sweepRequeue: true }, data: { sweepRequeue: false } });
+      queued++;
+    } catch (e) {
+      failed++;
+      log(`indexer: sweep re-queue for repriced deposit ${d.txHash}#${d.logIndex} failed -- kept for the next pass`, e);
+    }
+  }
+  return { queued, failed };
 }

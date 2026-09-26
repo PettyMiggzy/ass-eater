@@ -376,6 +376,22 @@ export async function reserveWithdrawable(tx: Tx, userId: string, amountCents: n
  * the rate is a property of the ledger row: reading the ledger back tells you
  * which rate applied and why, months later, without re-deriving it from a
  * stream that has since ended.
+ *
+ * NOT HONOURED HERE (yet): the site's Founding Creator fee waiver -- 0% total
+ * fee for 30 days from the later of the founding grant and PAYMENTS_LIVE_AT
+ * (lib/founding.js feeWaiverActive on the Next.js site). server/ holds no
+ * founding data at all: the bridge (lib/bridge.ts) carries a creator's
+ * standing, not their founding flag or foundingSince, so there is nothing
+ * here to decide a waiver from, and none is invented. Until the bridge
+ * carries it, every server/ charge pays the rate below, and marketplace
+ * buys and auction closes (modules/marketplace.ts, core/auctions.ts) the
+ * fixed 10% + 5%. TODO(founding-waiver): once the site sends the waiver
+ * window start on a creator's bridge token, store it on CreatorProfile and
+ * zero the platform fee AND the listing fee in charge(), the marketplace
+ * buy and closeAuction while the window is open -- the creator's side of
+ * the split only (never a fan-facing discount); the proportional referral
+ * cap then brings referral cuts to 0 with it. The live site does not route
+ * money through server/ today, so no founding creator is charged by this.
  */
 const PLATFORM_BPS_BY_TYPE: Partial<Record<TxType, number>> = {
   LIVE_TICKET: FEES.LIVE_BPS,

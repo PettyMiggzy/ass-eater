@@ -10,7 +10,7 @@ import { chunk } from './indexer-chunks.js';
 import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, depositPricePendingFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, ethSweepCandidates, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
-import { forEachPricedPending, settleRepriced } from './reprice-scan.js';
+import { forEachPricedPending, settleRepriced, drainSweepRequeues } from './reprice-scan.js';
 
 const BATCH = 1000n;
 // Deposit addresses per eth_getLogs `to` filter (geth caps a position at 1000).
@@ -194,17 +194,62 @@ async function creditIsolated(d: Parameters<typeof credit>[0]) {
 }
 
 /**
+ * The ETH/$ONLYONE assets whose deposits are being indexed right now. An
+ * asset switched off (TRACK_NATIVE_ETH / INDEX_ONLYONE_DEPOSITS) is neither
+ * repriced nor swept: later transfers of it to a deposit address are never
+ * recorded or credited, and every sweep moves the address's WHOLE balance,
+ * so settling an old pending row and sweeping would carry those uncredited
+ * funds into the treasury with no Deposit row or ledger entry. Its pending
+ * and credited balances stay at the address for manual handling
+ * (deploy/DEPLOY.md).
+ */
+function indexedVolatileAssets(): Array<'ETH' | 'ONLYONE'> {
+  const out: Array<'ETH' | 'ONLYONE'> = [];
+  if (TRACK_NATIVE_ETH) out.push('ETH');
+  if (INDEX_ONLYONE_DEPOSITS) out.push('ONLYONE');
+  return out;
+}
+
+/** Queues the sweep a settled reprice recorded (Deposit.sweepRequeue). */
+async function requeueRepricedSweep(d: { userId: string; txHash: string; logIndex: number; asset: string }) {
+  const asset = d.asset as 'ETH' | 'ONLYONE';
+  const addr = await prisma.depositAddress.findUnique({ where: { userId_chainId: { userId: d.userId, chainId: CHAIN_ID } } });
+  if (!addr) return;   // no address, nothing to sweep: the flag is cleared
+  await enqueueSweep({ derivationIndex: addr.derivationIndex, asset, tokenAddress: asset === 'ONLYONE' ? TOKENS.ONLYONE.address : undefined }, `${sweepJobId(d.txHash, d.logIndex)}-reprice`);
+}
+
+/**
  * Credits price-pending deposits once their asset can be priced. The claim
  * is a guarded UPDATE (pricePending true -> false) inside the same
  * transaction as the ledger posting, so two passes can never both credit one
  * deposit. Each asset is priced ONCE per pass, and only the assets that
  * priced are read (workers/reprice-scan.ts): a backlog of deposits that
  * cannot be priced never starves the ones that can. A deposit still
- * unpriceable is left pending for the next pass.
+ * unpriceable is left pending for the next pass, and so is one of an asset
+ * whose indexing is switched off (indexedVolatileAssets).
+ *
+ * The address's sweep is re-queued whenever a row stops being pending --
+ * dust that priced to zero included. While it was pending, an ETH or
+ * $ONLYONE sweep for an EARLIER credited deposit at this address returned
+ * without moving anything (the sweep job's depositPricePendingFor check),
+ * relying on this to queue it again. That obligation is written in the
+ * settle's own transaction (Deposit.sweepRequeue) and performed by
+ * drainSweepRequeues, which clears it only once the enqueue succeeded: a
+ * Redis failure after the settle used to abort the pass with the row no
+ * longer pending, so nothing ever re-queued it and a credited balance the
+ * reconciler skips (small ETH, $ONLYONE with indexing off) stayed at the
+ * address. The drain runs before the reprice too, so a pass that fails
+ * part-way is picked up by the next one. Safe either way: the job re-checks
+ * for a credited deposit, for any other pending one, and reads the live
+ * balance.
  */
 export async function repricePending(pageSize = 100) {
+  const indexed = indexedVolatileAssets();
+  const skipAssets = (['ETH', 'ONLYONE'] as const).filter((a) => !indexed.includes(a));
+  const drain = () => drainSweepRequeues(CHAIN_ID, requeueRepricedSweep, { skipAssets });
+  await drain();
   const prices = new Map<'ETH' | 'ONLYONE', number>();
-  for (const asset of ['ETH', 'ONLYONE'] as const) {   // a stablecoin is never parked: it is $1
+  for (const asset of indexed) {   // a stablecoin is never parked: it is $1
     try {
       const px = await getUsdPrice(asset);
       if (Number.isFinite(px) && px > 0) prices.set(asset, px);
@@ -218,26 +263,12 @@ export async function repricePending(pageSize = 100) {
     const raw = BigInt(d.rawAmount);
     const cents = depositCents(asset, raw, DECIMALS[asset], px);
     const r = await settleRepriced(d, cents, px, (tx) => postDeposit(tx, d.userId, asset, cents, d.id, { asset, raw: d.rawAmount, px, repriced: true }));
-    if (!r.claimed) return;
-    // The address's sweep is queued whenever this row stopped being pending
-    // -- dust that priced to zero included. While it was pending, an ETH or
-    // $ONLYONE sweep for an EARLIER credited deposit at this address returned
-    // without moving anything (the sweep job's depositPricePendingFor check),
-    // relying on this to queue it again; queued only on a credit, a pending
-    // row that turned out to be dust left that credited balance at the
-    // address for good (the reconciler skips small ETH, and skips $ONLYONE
-    // entirely with INDEX_ONLYONE_DEPOSITS off). Safe either way: the job
-    // re-checks for a credited deposit, for any other pending one, and reads
-    // the live balance.
-    const addr = await prisma.depositAddress.findUnique({ where: { userId_chainId: { userId: d.userId, chainId: CHAIN_ID } } });
-    if (addr) {
-      await enqueueSweep({ derivationIndex: addr.derivationIndex, asset, tokenAddress: asset === 'ONLYONE' ? TOKENS.ONLYONE.address : undefined }, `${sweepJobId(d.txHash, d.logIndex)}-reprice`);
-    }
     if (!r.credited) return;
     credited++;
     await publish(d.userId, { type: 'deposit', asset, amount: formatUnits(raw, DECIMALS[asset]), usdCents: Number(cents) })
       .catch((e) => console.warn('indexer: deposit notification failed', e));
   }, { pageSize });
+  await drain();
   return credited;
 }
 
@@ -480,6 +511,12 @@ registerWorker(new Worker('sweep', async (job) => {
   assertSweepsUnpaused();
   const wc = await expectedDepositSigner(derivationIndex); const me = wc.account.address;
   const treasuryAddress = treasuryAccount().address;
+  // An asset whose indexing is switched off is never swept, whoever queued
+  // the job (a reprice, a stale job from before the switch, a reconcile):
+  // later transfers of it are not recorded or credited, and every sweep below
+  // moves the WHOLE balance, so sweeping would carry uncredited funds into
+  // the treasury. Balances of it stay at the address for manual handling.
+  if ((asset === 'ETH' && !TRACK_NATIVE_ETH) || (asset === 'ONLYONE' && !INDEX_ONLYONE_DEPOSITS)) return;
   if (asset === 'ETH') {
     // Never move ETH off an address with no credited ETH deposit: an
     // unpriced one stays at the fan's address until it is priced (credit()

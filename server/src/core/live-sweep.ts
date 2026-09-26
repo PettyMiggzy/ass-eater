@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma.js';
 import { paidThrough, MAX_PREPAID_MS } from './live-billing.js';
 import type { RoomsLike } from './livekit.js';
 import { resolveLiveIdentity } from './live-identity.js';
+import { isSubscribed } from './access.js';
 
 // A viewer gets this long after their paid time ends to buy the next minute
 // before being removed -- covers a client timer firing a little late.
@@ -20,10 +21,15 @@ export const NEW_STREAM_GRACE_MS = 2 * 60_000;
  *     a crashed creator with no webhook configured stayed LIVE forever, which
  *     booked every later ordinary tip at the 20% live rate (modules/tips.ts)
  *     and made /live/start answer 409 already_live.
- *  2. On a per-minute stream, every viewer whose paid time has lapsed (past
- *     PAY_GRACE_MS) is removed from the room, and on a ticketed stream every
- *     viewer without a ticket. Joining is gated by /join charging the ticket
- *     and the first minute; this is what makes the NEXT minutes owed.
+ *  2. Every viewer who is no longer entitled is removed (lacksEntitlement):
+ *     on a per-minute stream one whose paid time has lapsed (past
+ *     PAY_GRACE_MS), on a ticketed stream one without a ticket, on a
+ *     subscriber-only stream (no ticket, no per-minute price) one whose
+ *     subscription has ended, and on ANY stream a viewer whose own account
+ *     is no longer ACTIVE. Joining is gated by /join; this is what makes the
+ *     NEXT minutes owed, and what ends a session LiveKit would otherwise keep
+ *     refreshing the token of (unpriced streams used to be skipped here
+ *     entirely, so a lapsed subscriber or a banned fan watched to the end).
  *
  * A LiveKit error on one stream is logged and skipped -- never treated as
  * "room gone", which would end a healthy stream on a network blip.
@@ -44,7 +50,6 @@ export async function sweepLive(rooms: RoomsLike, now = new Date(), log: (...a: 
       continue;
     }
 
-    if (s.perMinuteCents <= 0 && s.ticketPriceCents <= 0) continue;
     let participants;
     try { participants = await rooms.listParticipants(s.roomName); } catch (e) { log('live-sweep listParticipants', s.id, e); continue; }
     for (const p of participants) {
@@ -79,15 +84,23 @@ export async function minuteRefusal(fanId: string, s: { id: string; creatorId: s
 }
 
 /**
- * Should viewer `userId` be removed from stream `s` right now? Two independent
- * entitlements, both required where they apply:
+ * Should viewer `userId` be removed from stream `s` right now? The same
+ * entitlements POST /live/:id/join applies, each required where it applies:
  *
+ *  - the viewer's own account must be ACTIVE -- a suspended or banned fan
+ *    fails app.auth everywhere else, and a ticket or paid minutes bought
+ *    before the ban do not keep them in the room;
  *  - a ticketed stream needs a LiveTicket -- paid minutes do not stand in for
  *    one (POST /live/:id/minute used to hand a room token to anyone who paid
  *    for a minute, and this check, looking only at minutes, left them in);
- *  - a per-minute stream needs paid time that has not lapsed (plus grace).
+ *  - a per-minute stream needs paid time that has not lapsed (plus grace);
+ *  - a subscriber-only stream (no ticket, no per-minute price) needs a
+ *    subscription that is still current.
  */
-async function lacksEntitlement(s: { id: string; ticketPriceCents: number; perMinuteCents: number }, userId: string, now: Date) {
+async function lacksEntitlement(s: { id: string; creatorId: string; ticketPriceCents: number; perMinuteCents: number }, userId: string, now: Date) {
+  const viewer = await prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
+  if (viewer?.status !== 'ACTIVE') return true;
+  if (s.ticketPriceCents <= 0 && s.perMinuteCents <= 0) return !(await isSubscribed(userId, s.creatorId));
   if (s.ticketPriceCents > 0 && !(await hasTicket(userId, s.id))) return true;
   if (s.perMinuteCents > 0) {
     const through = await paidThrough(userId, s.id);
@@ -183,8 +196,9 @@ export function viewerTokenTtlSeconds(perMinuteCents: number, through: Date | nu
 /**
  * LiveKit's participant_joined webhook: a viewer who joins (or rejoins with
  * a token LiveKit refreshed for them) is removed at once if they have no
- * ticket on a ticketed stream, no paid time left on a per-minute stream, or
- * if the stream's creator is no longer ACTIVE. Returns true when the
+ * ticket on a ticketed stream, no paid time left on a per-minute stream, no
+ * current subscription on a subscriber-only stream, if their own account is
+ * not ACTIVE, or if the stream's creator is no longer ACTIVE. Returns true when the
  * participant was removed.
  */
 export async function checkViewerOnJoin(

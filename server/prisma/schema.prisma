@@ -735,9 +735,17 @@ model Deposit {
   // hedge never sells it) so the indexer's cursor can move on; the deposit
   // indexer's reprice loop credits it once a price exists and clears this.
   pricePending Boolean   @default(false)
+  // Set in the SAME transaction that settles a price-pending row (workers/
+  // reprice-scan.ts settleRepriced): this address's sweep still has to be
+  // re-queued. Cleared only after that enqueue succeeds, so a Redis failure
+  // (or a restart) between the settle and the enqueue leaves it set and the
+  // next reprice pass queues it again, instead of the row -- no longer
+  // pending -- being forgotten with a credited balance left at the address.
+  sweepRequeue Boolean   @default(false)
 
   @@unique([chainId, txHash, logIndex])
   @@index([pricePending])
+  @@index([sweepRequeue])
 }
 
 // One row per auto-hedge swap the treasury worker executes: converts a slice of

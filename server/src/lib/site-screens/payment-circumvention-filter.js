@@ -364,7 +364,16 @@ const CONTACT_RAIL_KEYWORDS = [
   // "tele: jess_99") and also ordinary ("watching tele tonight", "new tele
   // lens shots", "tele: private"), so it takes the same restrictions as
   // "line" (round-18 accounts#2).
-  { word: 'tele', label: 'telegram', handoverOnly: true, adjacentAtOnly: true, handleLikeOnly: true },
+  // Round 19 (accounts#8): a payment instruction DIRECTLY beside it counts
+  // too -- the cue BEFORE the word ("pay me on tele", "$20 on tele", "cheaper
+  // on my tele"), or, after it, only an explicit channel phrase ("tele for
+  // cheaper", "tele payments", "tele: $20"). Never the five-word bridge,
+  // never before a camera or TV word ("cheaper tele lens"), and never the
+  // ordinary after-cue: "our tele is cheaper than cable" and "tele cheaper at
+  // walmart" talk about a television (round-19 fix-up).
+  { word: 'tele', label: 'telegram', handoverOnly: true, adjacentAtOnly: true, handleLikeOnly: true, directInstruction: true,
+    notInstruction: /^[^a-z0-9]{1,3}(?:lens|lenses|zoom|photo|photos|shot|shots|converter|extender|scope|vision|tv|show|shows|end)(?![a-z])/,
+    instructionAfter: /^[^a-z0-9$.!?]{1,3}(?:(?:for|4)[^a-z0-9$.!?]{1,3}(?:cheaper|less)(?![a-z0-9])|(?:payments?|pay)(?![a-z0-9])|:\s?\$\d|\$\d)/ },
   // Round-11 accounts#1: these words are ordinary prose ("my new lingerie
   // line with @jess_rose", "Charleston, SC | collab w/ @mia", "signal boost
   // for @jess_rose"), and "@handle" is how every creator on this platform is
@@ -525,12 +534,14 @@ const CUE_AFTER_RAIL_RE = new RegExp(`^(?:${INSTRUCTION_SEP}${CONNECTOR_AFTER}(?
 // instruction test. "pay per view" is ONE phrase, never "pay" + an app.
 const PLATFORM_PAYMENT_PHRASE_RE = /(?<![a-z0-9])(?:paid[\s-]{0,2}(?:dms?|content|messages?|msgs?|posts?|sets?|pics?|photos?|videos?|vids?|subscriptions?|subs|unlocks?)|pay[\s-]{0,2}per[\s-]{0,2}(?:view|message|msg|minute|min)|ppv)(?![a-z0-9])/g;
 
-function hasPaymentInstructionAt(text, start, end) {
+// afterRe replaces CUE_AFTER_RAIL_RE for a rail whose after-cue has to be an
+// explicit channel phrase ("tele", see CONTACT_RAIL_KEYWORDS).
+function hasPaymentInstructionAt(text, start, end, { directOnly = false, afterRe = CUE_AFTER_RAIL_RE } = {}) {
   const masked = text.replace(PLATFORM_PAYMENT_PHRASE_RE, (m) => ' '.repeat(m.length));
   const before = masked.slice(Math.max(0, start - CUE_RADIUS), start);
   return CUE_BEFORE_RAIL_RE.test(before)
-    || CUE_BRIDGE_BEFORE_RAIL_RE.test(before)
-    || CUE_AFTER_RAIL_RE.test(masked.slice(end, end + CUE_RADIUS));
+    || (!directOnly && CUE_BRIDGE_BEFORE_RAIL_RE.test(before))
+    || (afterRe || CUE_AFTER_RAIL_RE).test(masked.slice(end, end + CUE_RADIUS));
 }
 
 // A tag whose LAST words are a strong payment cue, optionally followed by up
@@ -584,6 +595,11 @@ const AT_HANDLE_RE = /(?<![a-z0-9])@[a-z0-9_.]{3,30}/;
 // "Looks like a handle": has a digit, or a "_"/"." with something after it
 // (so the full stop ending "is private." doesn't count).
 const HANDLE_LIKE = '(?=[a-z0-9_.]*(?:[0-9]|[_.][a-z0-9]))[a-z0-9_.]{3,30}';
+// Round 19 (accounts#4): for the ordinary-word rails, a handle must also
+// have a letter and not be a number with a short unit ("2025", "100", "85mm",
+// "50pcs" -- see DIRECT_HANDOVER_ORDINARY_RE).
+const NOT_A_NUMBER_TOKEN = '(?![0-9]+[a-z]{0,6}(?![a-z0-9_.]))(?=[a-z0-9_.]*[a-z])';
+const ORDINARY_HANDLE_LIKE = `${NOT_A_NUMBER_TOKEN}${HANDLE_LIKE}`;
 const HANDLE_NOUN = '(?:tag|handle|username|user ?name|name|id|acct|account|addy)';
 // The nouns that can sit between a service name and its separator ("Snapchat
 // username: jane_doe", "LINE ID: jane_doe", "snap user: jane_doe") -- shape 2
@@ -602,13 +618,13 @@ function buildHandoverAfterRe({ strict }) {
     // rails need a handle-looking token after the colon, or a handle noun
     // before it.
     + (strict
-      ? `(?:[a-z]{1,10}[^a-z0-9:=]{0,3}){0,2}[:=][^a-z0-9]{0,3}${HANDLE_LIKE}`
+      ? `(?:[a-z]{1,10}[^a-z0-9:=]{0,3}){0,2}[:=][^a-z0-9]{0,3}${ORDINARY_HANDLE_LIKE}`
         + `|(?:[a-z]{1,10}[^a-z0-9:=]{1,3}){0,1}${DIRECT_HANDLE_NOUN}[^a-z0-9:=]{0,3}[:=][^a-z0-9]{0,3}[a-z0-9_.]{3,30}`
       : `(?:[a-z]{1,10}[^a-z0-9:=]{0,3}){0,2}[:=][^a-z0-9]{0,3}[a-z0-9_.]{3,30}`)
     // "my chime tag is jdoe", "my snap username is jane"
     + `|(?:[a-z]{1,10}[^a-z0-9]{1,3}){0,1}${HANDLE_NOUN}[^a-z0-9]{1,3}is[^a-z0-9]{1,3}[a-z0-9_.]{3,30}`
     // "my snap is jane_doe99" -- but not "my snap is cute"
-    + `|(?:[a-z]{1,10}[^a-z0-9]{1,3}){0,2}is[^a-z0-9]{1,3}${HANDLE_LIKE}`
+    + `|(?:[a-z]{1,10}[^a-z0-9]{1,3}){0,2}is[^a-z0-9]{1,3}${strict ? ORDINARY_HANDLE_LIKE : HANDLE_LIKE}`
     + ')',
   );
 }
@@ -643,14 +659,25 @@ const DIRECT_NOUN = `(?:\\s{1,2}${DIRECT_HANDLE_NOUN})?`;
 //    "snap me jessxo" (no digit, no inner "_"/".") therefore passes, exactly
 //    as "snap jessxo" does.
 const POINTER = '(?:(?:\u{1F449}|\u27A1|\u2192|\u21D2|\u{1F447}|\u2B07|\u27F6|\u279C|\u27A4)(?:\uFE0F|[\u{1F3FB}-\u{1F3FF}])?|->|=>|-->|>>|~)';
-const ME_HANDLE = `\\s{1,2}me(?:\\s{1,2}(?:at|on))?\\s{0,2}:?\\s{0,3}(?:@\\s{0,2})?${HANDLE_LIKE}`;
-const DIRECT_HANDOVER_RE = new RegExp(
-  `^(?:${DIRECT_NOUN}\\s{0,2}(?:[:=@]\\s{0,3}(?:${HANDLE_LIKE}|${PLAIN_WORD_HANDLE})|-\\s{0,3}${HANDLE_LIKE})`
-  + `|${DIRECT_NOUN}\\s{0,2}${POINTER}{1,3}\\s{0,3}(?:@\\s{0,2})?${HANDLE_LIKE}`
-  + `|${ME_HANDLE}`
-  + `|\\s{1,2}${SPACED_HANDLE})`,
-  'u',
-);
+const meHandle = (token) => `\\s{1,2}me(?:\\s{1,2}(?:at|on))?\\s{0,2}:?\\s{0,3}(?:@\\s{0,2})?${token}`;
+function buildDirectHandoverRe(token, plainWord) {
+  return new RegExp(
+    `^(?:${DIRECT_NOUN}\\s{0,2}(?:[:=@]\\s{0,3}(?:${token}|${plainWord})|-\\s{0,3}${token})`
+    + `|${DIRECT_NOUN}\\s{0,2}${POINTER}{1,3}\\s{0,3}(?:@\\s{0,2})?${token}`
+    + `|${meHandle(token)}`
+    + `|\\s{1,2}${SPACED_HANDLE})`,
+    'u',
+  );
+}
+const DIRECT_HANDOVER_RE = buildDirectHandoverRe(HANDLE_LIKE, PLAIN_WORD_HANDLE);
+// Round 19 (accounts#4): on the ORDINARY-word rails (sc, tg, signal, line,
+// tele -- adjacentAtOnly), a bare number or a number with a unit after the
+// separator is not a handle: "Columbia SC - 29201", "Greenville, SC: 29601",
+// "Spring line: 2025", "Bottom line: 100% worth it", "tele: 85mm f/1.8". The
+// token needs a letter and must not be digits-then-a-short-unit, the guards
+// SPACED_HANDLE already carries (NOT_A_NUMBER_TOKEN). "line: jane_doe99" and
+// "tele: jess_99" are still handles.
+const DIRECT_HANDOVER_ORDINARY_RE = buildDirectHandoverRe(ORDINARY_HANDLE_LIKE, `${NOT_A_NUMBER_TOKEN}${PLAIN_WORD_HANDLE}`);
 // After a possessive ("my snap -> jessxo", "my insta 👉 jess"): a pointer
 // then a handle, or a plain word that ends the clause (round-12 accounts#2).
 const POSSESSIVE_POINTER_RE = new RegExp(`^\\s{0,2}${POINTER}{1,3}\\s{0,3}(?:@\\s{0,2})?(?:${HANDLE_LIKE}|${PLAIN_WORD_HANDLE})`, 'u');
@@ -666,10 +693,16 @@ const AT_BEFORE_RE = /(?<![a-z0-9])@[a-z0-9_.]{3,30}[^a-z0-9]{1,3}(?:on|at|via)[
 // handleLikeOnly rails: a handle-looking token after a separator, or any
 // handle after a handle noun ("line id: janedoe"). A plain word after a bare
 // colon is not a handle there.
+// Round 19 (accounts#8): also the pointer and "me" forms the other rails
+// already refuse ("tele 👉 jess_99", "tele -> jess_99", "tele me jess_99"),
+// with a handle-looking token -- and never a bare number (accounts#4).
 const DIRECT_HANDOVER_STRICT_RE = new RegExp(
-  `^(?:\\s{0,2}[:=@-]\\s{0,3}${HANDLE_LIKE}`
+  `^(?:\\s{0,2}[:=@-]\\s{0,3}${ORDINARY_HANDLE_LIKE}`
   + `|\\s{1,2}${DIRECT_HANDLE_NOUN}\\s{0,2}(?:[:=@]\\s{0,3}(?:${HANDLE_LIKE}|${PLAIN_WORD_HANDLE})|-\\s{0,3}${HANDLE_LIKE})`
+  + `|\\s{0,2}${POINTER}{1,3}\\s{0,3}(?:@\\s{0,2})?${ORDINARY_HANDLE_LIKE}`
+  + `|${meHandle(ORDINARY_HANDLE_LIKE)}`
   + `|\\s{1,2}${SPACED_HANDLE})`,
+  'u',
 );
 // Shape 3: an invitation in front, a handle-looking token after.
 const INVITE_BEFORE_RE = /(?<![a-z0-9])(?:add|follow|find|message|msg|dm|hmu|hit me up|reach me|reach out|contact me|talk to me|chat with me)(?:\s+me)?\s+(?:on|at|via|over)\s*$/;
@@ -685,7 +718,7 @@ function isHandover(text, start, end, { adjacentAtOnly = false, handleLikeOnly =
   } else if (AT_HANDLE_RE.test(text.slice(Math.max(0, start - HANDLE_RADIUS), end + HANDLE_RADIUS))) {
     return true;
   }
-  if ((handleLikeOnly ? DIRECT_HANDOVER_STRICT_RE : DIRECT_HANDOVER_RE).test(after)) return true;
+  if ((handleLikeOnly ? DIRECT_HANDOVER_STRICT_RE : adjacentAtOnly ? DIRECT_HANDOVER_ORDINARY_RE : DIRECT_HANDOVER_RE).test(after)) return true;
   const before = text.slice(Math.max(0, start - 30), start);
   if (INVITE_BEFORE_RE.test(before) && INVITE_AFTER_RE.test(after)) return true;
   if (!POSSESSIVE_BEFORE_RE.test(before)) return false;
@@ -930,7 +963,7 @@ function detectIn(normalized, crossTag, add, reasons) {
   }
   if (OFF_PLATFORM_LINK_RE.test(normalized)) add('links to an off-platform store or link page');
 
-  for (const { label, re, handoverOnly, adjacentAtOnly, handleLikeOnly, ordinary } of CONTACT_RAIL_KEYWORDS) {
+  for (const { label, re, handoverOnly, adjacentAtOnly, handleLikeOnly, ordinary, directInstruction, notInstruction, instructionAfter } of CONTACT_RAIL_KEYWORDS) {
     for (const m of normalized.matchAll(re)) {
       if (!isWordNotNumber(m[0])) continue;
       const start = m.index;
@@ -939,7 +972,11 @@ function detectIn(normalized, crossTag, add, reasons) {
       // like an adjacentAtOnly rail for this one match.
       const ordinaryHere = !!ordinary && (ordinary.before.test(normalized.slice(Math.max(0, start - 10), start))
         || ordinary.after.test(normalized.slice(end, end + 30)));
-      if (isHandover(normalized, start, end, { adjacentAtOnly: !!adjacentAtOnly || ordinaryHere, handleLikeOnly: !!handleLikeOnly }) || (!handoverOnly && !crossTag && hasPaymentInstructionAt(normalized, start, end))) {
+      const instruction = !crossTag && (!handoverOnly
+        ? hasPaymentInstructionAt(normalized, start, end)
+        : !!directInstruction && !notInstruction.test(normalized.slice(end, end + 30))
+          && hasPaymentInstructionAt(normalized, start, end, { directOnly: true, afterRe: instructionAfter }));
+      if (isHandover(normalized, start, end, { adjacentAtOnly: !!adjacentAtOnly || ordinaryHere, handleLikeOnly: !!handleLikeOnly }) || instruction) {
         add(`points to "${label}" off-platform`);
         break;
       }

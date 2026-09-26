@@ -185,20 +185,26 @@ export function draftFromCreator(creator) {
  * The /api/me/profile payload for a draft. Returns { fields } or { error }
  * for the one client-side check that needs a clear message before sending
  * (the server repeats every check regardless).
+ *
+ * `savedWallet` is the creator's stored walletAddress. When the draft's
+ * wallet is unchanged from it, the wallet is neither validated nor sent: a
+ * legacy stored value that fails today's rule (e.g. a bad EIP-55 checksum)
+ * must not block an unrelated bio edit, matching the server, which drops an
+ * unchanged echo (round-19 dashboard#0). Omit it to always validate.
  */
-export function profileFieldsFromDraft(draft) {
-  const walletError = payoutWalletError(draft.walletAddress);
-  if (walletError) return { error: walletError };
+export function profileFieldsFromDraft(draft, savedWallet) {
+  const wallet = String(draft.walletAddress || '').trim();
+  const walletUnchanged = savedWallet !== undefined && wallet === String(savedWallet || '').trim();
+  if (!walletUnchanged) {
+    const walletError = payoutWalletError(draft.walletAddress);
+    if (walletError) return { error: walletError };
+  }
   const dm = dmPriceCentsFromInput(draft.dmPrice);
   if (dm.error) return { error: dm.error };
-  const { dmPrice, ...rest } = draft;
-  return {
-    fields: {
-      ...rest,
-      walletAddress: String(draft.walletAddress || '').trim(),
-      dmPriceCents: dm.value,
-    },
-  };
+  const { dmPrice, walletAddress, ...rest } = draft;
+  const fields = { ...rest, dmPriceCents: dm.value };
+  if (!walletUnchanged) fields.walletAddress = wallet;
+  return { fields };
 }
 
 /** Label and colour class for a payout request's status. */

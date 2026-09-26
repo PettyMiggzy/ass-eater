@@ -35,7 +35,12 @@ import {
  *   so a specific listing can be taken down without a report or a takedown
  *   request existing (round-9 admin-ui#1). Never a media src.
  * `account` / `author` / `other` / participants are
- *   { userId, login, role, creatorId, creatorName, creatorHandle } (or { userId, deleted: true }).
+ *   { userId, login, role, creatorId, creatorName, creatorHandle }, or for a
+ *   deleted account { userId: null, login: null, role: null, creatorId: null,
+ *   deleted: true } -- never the deleted account's id (round-19 admin-ui#0).
+ *   A conversation's own `id` still joins the two participant ids; the panel
+ *   must not print it when a participant is deleted. A message's (and a
+ *   conversation's lastMessage's) senderId is null when its sender is deleted.
  */
 function str(v) {
   return typeof v === 'string' ? v : undefined;

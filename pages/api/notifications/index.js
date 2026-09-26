@@ -1,5 +1,5 @@
 import { getVerifiedSessionUserId } from '../../../lib/session';
-import { getNotificationsForUser, getUnreadCount } from '../../../lib/notifications-store';
+import { getNotificationsPage, getUnreadCount } from '../../../lib/notifications-store';
 
 // Keys that exist only so createNotification can fold a burst into one row
 // (its `coalesceKey`). Never sent to the client: `wallAuthorKey` identifies a
@@ -15,6 +15,13 @@ function publicMeta(meta) {
   return out;
 }
 
+/**
+ * GET -> 200 { notifications: [{ id, type, message, meta, createdAt, read }], unreadCount }
+ * `notifications` is every unread row (up to 200) plus the newest 30, newest
+ * first (round-19 public-pages#0: an unread row older than the newest 30 used
+ * to be unreachable). `unreadCount` counts every unread row. Mark read with
+ * POST /api/notifications/read { ids } (exactly what was shown) or { all: true }.
+ */
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -23,10 +30,17 @@ export default async function handler(req, res) {
   const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in first' });
 
-  const [rows, unreadCount] = await Promise.all([
-    getNotificationsForUser(uid, 30),
-    getUnreadCount(uid),
-  ]);
+  let rows;
+  let unreadCount;
+  try {
+    [rows, unreadCount] = await Promise.all([
+      getNotificationsPage(uid, { limit: 30, unreadCap: 200 }),
+      getUnreadCount(uid),
+    ]);
+  } catch (err) {
+    console.error('[notifications] list failed:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
 
   return res.status(200).json({
     notifications: rows.map((n) => ({

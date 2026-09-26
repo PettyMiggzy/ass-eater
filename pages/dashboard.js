@@ -163,8 +163,11 @@ export default function Dashboard({
   // hand, for any reason. The banners name a content violation only when the
   // record's count actually supports it.
   const violationCount = creator ? Math.max(0, Math.floor(Number(creator.contentViolationCount) || 0)) : 0;
-  const walletError = payoutWalletError(draft.walletAddress);
   const walletDirty = String(draft.walletAddress || '').trim() !== String(creator?.walletAddress || '').trim();
+  // Only an edited wallet is validated (round-19 dashboard#0): an unchanged
+  // legacy value that fails today's rule is not sent, and the server drops an
+  // unchanged echo anyway, so it must not block saving other fields.
+  const walletError = walletDirty ? payoutWalletError(draft.walletAddress) : null;
 
   // window is not available during SSR; reading it in render made the
   // server and client HTML differ.
@@ -210,7 +213,7 @@ export default function Dashboard({
   };
 
   const saveProfile = async () => {
-    const built = profileFieldsFromDraft(draft);
+    const built = profileFieldsFromDraft(draft, creator?.walletAddress || '');
     if (built.error) {
       setStatus(`Error: ${built.error}`);
       return;
@@ -316,6 +319,9 @@ export default function Dashboard({
   // edit in another tab was a different photo from the one clicked.
   const deleteItem = async (item, index) => {
     if (!item?.src) return;
+    // One tap deletes the stored file for good (the X is always visible on
+    // phones), so ask first, like removeListingMedia (round-19 dashboard#1).
+    if (typeof window !== 'undefined' && !window.confirm('Remove this photo/video from your profile? This deletes the file.')) return;
     setBusy(true);
     setStatus('Removing...');
     try {

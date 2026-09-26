@@ -156,9 +156,18 @@ export type ReportListQuery = {
  * canViewPost). The same predicate listReports() uses to count such a
  * report as live content (not contentRemoved); GET /admin/reports/:id/target
  * returns it too, so the queue and the target view never disagree.
+ *
+ * That includes the owner's standing: the queue counts a BANNED creator's
+ * post as removed (its `banned(p."creatorId")` branch), so this answers
+ * false for one too -- it used to say "still served" for a report the queue
+ * listed as already down. A SUSPENDED owner deliberately does not count,
+ * matching the queue: canViewPost refuses buyers only while the suspension
+ * lasts, and it lifts by itself, so the content is served again after it.
  */
-export async function postStillServedToBuyers(p: { id: string; removed: boolean; removedByCreator: boolean; visibility: string }) {
+export async function postStillServedToBuyers(p: { id: string; creatorId: string; removed: boolean; removedByCreator: boolean; visibility: string }) {
   if (!p.removed || !p.removedByCreator || p.visibility !== 'PPV') return false;
+  const owner = await prisma.user.findUnique({ where: { id: p.creatorId }, select: { status: true } });
+  if (!owner || owner.status === 'BANNED') return false;
   return !!(await prisma.postUnlock.findFirst({ where: { postId: p.id }, select: { fanId: true } }));
 }
 

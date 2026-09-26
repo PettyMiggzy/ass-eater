@@ -10,6 +10,7 @@ import {
   REPORT_REASON_REQUIRED,
   REPORT_NOTE_MAX,
   PROFILE_MEDIA_TARGETS,
+  stripReporterTrail,
 } from '../../../lib/reports-store';
 import { removeGalleryItem, setCreatorAvatar, GALLERY_ITEM_GONE } from '../../../lib/creators-store';
 import { takeDownListing } from '../../../lib/listings-store';
@@ -189,7 +190,9 @@ export default async function handler(req, res) {
   if (action === 'reopen') {
     try {
       const report = await reopenReport(String(id), { reason, by: 'admin' });
-      return res.status(200).json({ ok: true, report });
+      // Every report body this route returns is stripped of the reporter
+      // trail (round-19 media#0): the stored row keeps it.
+      return res.status(200).json({ ok: true, report: stripReporterTrail(report) });
     } catch (err) {
       if (err.code === REPORT_NOT_FOUND) return res.status(404).json({ error: 'Report not found' });
       if (err.code === REPORT_REASON_REQUIRED) return res.status(400).json({ code: 'reason_required', error: err.message });
@@ -205,7 +208,7 @@ export default async function handler(req, res) {
     const first = await getReportById(String(id));
     if (!first) return res.status(404).json({ error: 'Report not found' });
     if (first.status !== 'open') {
-      return res.status(409).json({ code: 'already_resolved', error: 'Someone else resolved this report first. Reload the queue.', report: first });
+      return res.status(409).json({ code: 'already_resolved', error: 'Someone else resolved this report first. Reload the queue.', report: stripReporterTrail(first) });
     }
     if (action === 'dismiss' && dismissNeedsReason(first) && !(typeof reason === 'string' && reason.trim())) {
       return res.status(400).json({ code: 'reason_required', error: 'A reason is required to dismiss a possible-minor or non-consensual report.' });
@@ -492,7 +495,7 @@ export default async function handler(req, res) {
     if (pushUid) reportPushFailure(await deliverFor([pushUid]), `report ${report.id} ban`);
     return res.status(200).json({
       ok: true,
-      report: updated,
+      report: stripReporterTrail(updated),
       content: contentNote,
       ...(preserved ? { preserved } : {}),
       ...(banCreatorId ? { bannedCreatorId: banCreatorId } : {}),

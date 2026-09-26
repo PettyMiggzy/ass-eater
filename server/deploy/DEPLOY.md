@@ -390,7 +390,9 @@ nothing to rotate; skip this.) Rotating it:
    while ANY deposit of that asset to the address is still price-pending
    (the sweep is deferred until `repricePending` settles it -- credits it,
    or clears it as dust that priced to zero -- and `repricePending` then
-   queues the address's sweep again either way). A
+   queues the address's sweep again either way; that re-queue is recorded
+   on the deposit row in the same transaction and retried every pass until
+   the enqueue succeeds, so a Redis outage cannot lose it). A
    sweep that needs a gas top-up additionally needs a credited deposit of
    that asset and a balance worth a dollar. So these are **never** swept
    automatically:
@@ -399,7 +401,15 @@ nothing to rotate; skip this.) Rotating it:
    - stablecoin at an address with no credited STABLE deposit (a transfer
      that priced to 0 cents, or one from before the indexer's start block);
    - any $ONLYONE while `INDEX_ONLYONE_DEPOSITS=false` (the recommended
-     setting above -- it is never credited, so never swept);
+     setting above), and any ETH while `TRACK_NATIVE_ETH` is off. Switching
+     either flag OFF stops that asset's indexing, repricing and sweeping
+     together: later transfers of it are never recorded or credited, and a
+     sweep moves the address's whole balance, so the sweep worker refuses
+     that asset outright rather than carry uncredited funds into the
+     treasury. Balances of it that were ALREADY credited, and deposits still
+     price-pending when the flag went off, stay at the deposit address too
+     (the pending ones stay pending) -- for manual handling, or picked up
+     again if the flag is turned back on;
    - ETH or $ONLYONE at an address with a deposit of that asset that is
      still price-pending -- including the CREDITED earlier deposits at that
      same address, which wait with it until it is priced.

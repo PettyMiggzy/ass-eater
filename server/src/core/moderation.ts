@@ -2,10 +2,11 @@ import { prisma } from '../lib/prisma.js';
 import { money } from './ledger.js';
 import { cancelAuction, dropLead } from './auctions.js';
 import { rooms as liveRooms, livekitConfigured } from './livekit.js';
+import { viewerIdentity } from './live-identity.js';
 
 export type ModerationStatus = 'ACTIVE' | 'SUSPENDED' | 'BANNED';
 type Log = { error: (obj: unknown, msg?: string) => void };
-type RoomDeleter = { deleteRoom: (name: string) => Promise<unknown> };
+type RoomDeleter = { deleteRoom: (name: string) => Promise<unknown>; removeParticipant?: (room: string, identity: string) => Promise<unknown> };
 
 /**
  * Everything a change of account standing does, in one place, for both of
@@ -134,6 +135,20 @@ export async function applyUserStatus(
       try { await r.deleteRoom(s.roomName); } catch (err) { log.error({ err, streamId: s.id }, 'moderation: failed to delete live room'); }
     }
     await prisma.liveStream.updateMany({ where: { id: s.id, status: 'LIVE' }, data: { status: 'ENDED', endedAt: new Date() } });
+  }
+
+  // ...and stops WATCHING now. LiveKit refreshes a connected viewer's token,
+  // so a ticket or paid minutes bought before the ban kept the account in
+  // every room it was in until the stream ended. Best effort, per room: a
+  // viewer who is not in a room is the common case and not an error (the
+  // live sweep and the participant_joined check refuse a non-ACTIVE viewer
+  // too, core/live-sweep.ts, so anything missed here goes on the next pass).
+  const viewerRooms = opts.rooms ?? (livekitConfigured() ? liveRooms() : null);
+  if (viewerRooms?.removeParticipant) {
+    const watching = await prisma.liveStream.findMany({ where: { status: 'LIVE', creatorId: { not: userId } }, select: { id: true, roomName: true } });
+    for (const s of watching) {
+      try { await viewerRooms.removeParticipant(s.roomName, viewerIdentity(s.id, userId)); } catch { /* not in this room */ }
+    }
   }
 
   // A ban takes the creator's marketplace down: fixed-price listings are

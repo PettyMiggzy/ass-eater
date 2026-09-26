@@ -3004,9 +3004,12 @@ function TakedownList({ report }) {
 const TAKEDOWN_ID_RE = /^[1-9][0-9]{0,17}$/;
 
 // How the content lookup (GET /api/admin/content-lookup) names an account.
+// A deleted account comes back with no id (round-19 admin-ui#0: a purged
+// account's id is how a deleted reporter was re-identified from a DM thread),
+// so it is only ever "a deleted account" -- never "deleted account 17".
 function lookupAccountLabel(a) {
   if (!a) return 'unknown account';
-  if (a.deleted) return `deleted account ${String(a.userId)}`;
+  if (a.deleted) return 'a deleted account';
   const creator = a.creatorName ? `${String(a.creatorName)}${a.creatorHandle ? ` (${String(a.creatorHandle)})` : ''} — ` : '';
   return `${creator}${a.login ? String(a.login) : '(no login)'} · user ${String(a.userId)}${a.role ? ` · ${String(a.role)}` : ''}`;
 }
@@ -3183,7 +3186,9 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
       const m = String(picked?.messageId ?? messageId).trim();
       if (!c || !m || c.length > 300 || m.length > 100) { onError('Find the message with "Find conversations", or enter both the conversation id and the message id.'); return; }
       target = { type: kind, conversationId: c, messageId: m };
-      what = `message ${m}${picked?.label ? ` (${picked.label})` : ''} in conversation ${c}`;
+      // A picked message from a thread with a deleted participant never shows
+      // the thread id (it names the deleted account -- round-19 admin-ui#0).
+      what = `message ${m}${picked?.label ? ` (${picked.label})` : ''} in ${picked?.hideConversationId ? 'that conversation' : `conversation ${c}`}`;
     }
     const quarantine = minor || preserve;
     if (!confirm(
@@ -3245,7 +3250,19 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
   const creatorOptions = (Array.isArray(creators) ? creators : []).map((c) => (
     <option key={c.id} value={String(c.id)}>{String(c.name || 'Unnamed')} {c.handle ? `(${String(c.handle)})` : ''} · #{String(c.id)}</option>
   ));
-  const participantById = (id) => (thread?.participants || []).find((p) => String(p.userId) === String(id));
+  // A deleted participant has userId null and its messages senderId null, so
+  // a null senderId is never matched against anyone: it reads "a deleted
+  // account" below (round-19 admin-ui#0).
+  const participantById = (id) => (id == null || id === '' ? null
+    : (thread?.participants || []).find((p) => !p?.deleted && p?.userId != null && String(p.userId) === String(id)));
+  const senderLabel = (m) => {
+    const sender = participantById(m.senderId);
+    if (sender) return lookupAccountLabel(sender);
+    return m.senderId == null || m.senderId === '' ? 'a deleted account' : `user ${String(m.senderId)}`;
+  };
+  // The thread id is '<a>__<b>', so it names both participants: never print
+  // it when one of them is a deleted account.
+  const threadHasDeleted = (t) => (t?.participants || []).some((p) => !p || p.deleted);
 
   return (
     <div className="mb-2 px-3 py-2 rounded-md bg-red-900/10 border border-red-500/30 text-xs text-gray-300">
@@ -3411,7 +3428,7 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
           {thread && (
             <div className="space-y-1">
               <p className="text-[10px] text-gray-500">
-                Thread {String(thread.id)} between {(thread.participants || []).map(lookupAccountLabel).join(' and ')}
+                {threadHasDeleted(thread) ? 'Thread' : `Thread ${String(thread.id)}`} between {(thread.participants || []).map(lookupAccountLabel).join(' and ')}
                 {Number.isFinite(Number(thread.messageCount)) ? ` -- showing ${thread.messages.length} of ${Number(thread.messageCount)} message(s)` : ''}:
               </p>
               <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
@@ -3421,18 +3438,18 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
                   </button>
                 )}
                 {!thread.messages.length ? <p className="text-gray-500">No stored messages.</p> : thread.messages.map((m) => {
-                  const sender = participantById(m.senderId);
+                  const from = senderLabel(m);
                   return (
                     <div key={m.id} className="flex items-start gap-2 px-2 py-1 rounded bg-black/30 border border-white/5">
                       <div className="flex-1 min-w-0">
                         <p className="text-[10px] text-gray-500">
-                          {m.createdAt ? new Date(m.createdAt).toLocaleString() : ''} · from {sender ? lookupAccountLabel(sender) : `user ${String(m.senderId)}`}
+                          {m.createdAt ? new Date(m.createdAt).toLocaleString() : ''} · from {from}
                           {m.priceCents ? ` · paid ${formatCredits(m.priceCents)}` : ''} · id {String(m.id)}
                         </p>
                         <p className="text-gray-200 whitespace-pre-wrap break-words">{String(m.text)}</p>
                       </div>
                       <button
-                        onClick={() => submit({ type: 'message', conversationId: String(thread.id), messageId: String(m.id), label: `from ${sender?.login || `user ${String(m.senderId)}`}` })}
+                        onClick={() => submit({ type: 'message', conversationId: String(thread.id), messageId: String(m.id), label: `from ${participantById(m.senderId)?.login || from}`, hideConversationId: threadHasDeleted(thread) })}
                         disabled={off}
                         className={smallBtn}
                       >
