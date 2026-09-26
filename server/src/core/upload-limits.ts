@@ -10,7 +10,8 @@ type Db = Pick<Prisma.TransactionClient, 'media'>;
  * limit, and a single huge image enough to exhaust the workers' memory.
  *
  *  - Per object: images 50 MB for everyone (sharp works on whole images);
- *    video 4 GiB for an operating creator, 100 MB for anyone else.
+ *    video 4 GiB for an operating creator, 100 MB for anyone else. (Media.bytes
+ *    is a BIGINT for this reason: 4 GiB does not fit an int4 column.)
  *  - Outstanding: at most MAX_OPEN_UPLOADS never-completed (UPLOADING) rows
  *    per account; abandoned ones older than STALE_UPLOAD_MS stop counting
  *    and are swept (workers/transcode.ts sweepAbandonedUploads).
@@ -49,7 +50,9 @@ export async function uploadQuotaError(ownerId: string, bytes: number, isCreator
     _sum: { bytes: true },
   });
   const cap = isCreator ? UPLOAD_LIMITS.CREATOR_DAILY_BYTES : UPLOAD_LIMITS.OTHER_DAILY_BYTES;
-  if ((day._sum.bytes ?? 0) + bytes > cap) return 'upload_quota_exceeded';
+  // BigInt column (a single video may exceed int4); every sum here is far
+  // below 2^53, so Number is exact.
+  if (Number(day._sum.bytes ?? 0n) + bytes > cap) return 'upload_quota_exceeded';
   return null;
 }
 

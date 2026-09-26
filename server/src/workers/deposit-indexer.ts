@@ -7,7 +7,7 @@ import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
 import { registerWorker } from './process-guards.js';
 import { chunk } from './indexer-chunks.js';
-import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
+import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, ethSweepCandidates, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
 
@@ -392,10 +392,8 @@ async function reconcileSweeps() {
   // sits well above the 0.00005 ETH gas top-up an ERC-20 sweep leaves
   // behind, so leftover top-up gas alone never queues a job.
   if (TRACK_NATIVE_ETH) {
-    const ethRows = await prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
-      SELECT DISTINCT a."derivationIndex", a."address"
-        FROM "DepositAddress" a JOIN "Deposit" d ON d."userId" = a."userId" AND d."chainId" = a."chainId"
-       WHERE a."chainId" = ${CHAIN_ID} AND d."asset" = 'ETH'`;
+    // Credited ETH deposits only (workers/sweep-gas.ts ethSweepCandidates).
+    const ethRows = await ethSweepCandidates(CHAIN_ID);
     for (const r of ethRows) {
       const bal = await publicClient.getBalance({ address: r.address as `0x${string}` });
       if (bal < parseEther('0.0005')) continue;
@@ -475,6 +473,11 @@ registerWorker(new Worker('sweep', async (job) => {
   const wc = await expectedDepositSigner(derivationIndex); const me = wc.account.address;
   const treasuryAddress = treasuryAccount().address;
   if (asset === 'ETH') {
+    // Never move ETH off an address with no credited ETH deposit: an
+    // unpriced one stays at the fan's address until it is priced (credit()
+    // queues no sweep for it), and this job's data alone is not proof. Not
+    // retried (a plain return): the credit of that deposit queues its own.
+    if (!(await depositCreditedFor(CHAIN_ID, derivationIndex, 'ETH'))) return;
     const bal = await publicClient.getBalance({ address: me });
     const gas = await publicClient.estimateFeesPerGas(); const cost = 21_000n * (gas.maxFeePerGas ?? 0n) * 2n;
     if (bal > cost) await wc.sendTransaction({ to: treasuryAddress, value: bal - cost });

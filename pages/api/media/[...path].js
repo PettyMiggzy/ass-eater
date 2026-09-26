@@ -2,6 +2,7 @@ import { refuseMalformedText } from '../../../lib/field-validation';
 import { getSessionUser } from '../../../lib/session';
 import { getCreatorById, isPubliclyVisible } from '../../../lib/creators-store';
 import { getListingById } from '../../../lib/listings-store';
+import { effectiveCreatorStatus } from '../../../lib/creator-status';
 import { gateConfigured } from '../../../lib/token-gate';
 import {
   parseMediaPathname,
@@ -37,6 +38,12 @@ import { isMediaReaped } from '../../../lib/media-refs';
  *                                  An item the creator removed after a sale
  *                                  (retainedMedia) is served only to buyers
  *                                  whose order predates its removal.
+ *
+ * A BANNED creator is not treated as the owner of anything (round-16
+ * media#0): a ban hides their gallery and avatar without deleting the files,
+ * and the session a ban leaves signed in used to keep getting fresh presigned
+ * URLs for exactly the image a takedown request was about. Admins still see
+ * everything; a suspended creator still sees their own files.
  *
  * Everything unentitled answers 404, not 403: "does this file exist" is not
  * something to confirm to someone who may not see it. proxy.js already puts
@@ -78,7 +85,8 @@ export default async function handler(req, res) {
       if (admin) return await sendMedia(req, res, parsed.pathname);
       const user = await getSessionUser(req);
       const creator = await getCreatorById(parsed.creatorId);
-      const owner = !!creator && !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id);
+      const owner = !!creator && !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id)
+        && effectiveCreatorStatus(creator) !== 'banned';
       if (owner) {
         // The owner is served any file in their prefix without a reference
         // check (an upload in progress, a removed item), so a file this app
@@ -104,7 +112,8 @@ export default async function handler(req, res) {
     if (!creator) return notFound(res);
 
     const user = admin ? null : await getSessionUser(req);
-    const owner = !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id);
+    const owner = !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id)
+      && effectiveCreatorStatus(creator) !== 'banned';
 
     // Same rule as the listing branch: an owner is never served a file this
     // app has deleted (a token-replayed re-upload nothing records).

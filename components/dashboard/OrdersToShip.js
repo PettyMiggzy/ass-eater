@@ -1,14 +1,21 @@
 import { useEffect, useState } from 'react';
 import { getJson, postJson } from './media-upload';
 import { responseErrorMessage, retryAfterHint } from './helpers';
-import { SHIPPING_CARRIERS, TRACKING_FORMAT_HINTS, normalizeCarrier } from '../../lib/tracking-rules';
+import {
+  SHIPPING_CARRIERS, TRACKING_FORMAT_HINTS, normalizeCarrier, trackingFieldsError, trackingFormatWarning,
+} from '../../lib/tracking-rules';
 
-// Round 15: the carrier is one of a fixed list and the tracking number must
-// fit that carrier's format (lib/tracking-rules.js -- the ship route enforces
-// the same rules). The select offers only the list, and the format line under
-// the tracking input says what the server will accept for the chosen carrier.
+// The carrier is one of a fixed list (lib/tracking-rules.js -- the ship route
+// enforces the same rules). Since round 16 the tracking number is refused only
+// when it cannot be a tracking number at all (8-35 letters/digits, at least 6
+// digits, no words); a number that merely doesn't match the carrier's USUAL
+// shape gets a non-blocking note (trackingFormatWarning), shown live here and
+// again from the ship response. The line under the input is the carrier's
+// TRACKING_FORMAT_HINTS entry.
 function TrackingFields({ orderId, form, disabled, onChange, borderFor, orderError, labelled }) {
   const hint = form.carrier && TRACKING_FORMAT_HINTS[form.carrier];
+  const typed = typeof form.trackingNumber === 'string' ? form.trackingNumber.trim() : '';
+  const liveWarning = form.carrier && typed && !trackingFieldsError(form) ? trackingFormatWarning(form) : null;
   return (
     <>
       <select
@@ -36,8 +43,9 @@ function TrackingFields({ orderId, form, disabled, onChange, borderFor, orderErr
         <span id={`tracking-hint-${orderId}`} className="text-[11px] text-gray-500 mt-1 max-w-xs">
           {hint
             ? `${form.carrier}: ${hint}.`
-            : 'Pick the carrier first. Not listed? Choose Other and enter the digits-only or international (AB123456785CD) number.'}
+            : `Pick the carrier first. Not listed? Choose Other: ${TRACKING_FORMAT_HINTS.Other}.`}
         </span>
+        {liveWarning && <span className="text-[11px] text-brand-gold mt-1 max-w-xs">{liveWarning}</span>}
       </div>
     </>
   );
@@ -83,6 +91,10 @@ export default function OrdersToShip() {
   // carrier not on the list, a tracking number not in that carrier's format or
   // with a wrong check digit) and that input is outlined.
   const [orderError, setOrderError] = useState(null);
+  // The ship route's non-blocking `warning` after a successful save
+  // ({ orderId, message }): the number was saved but doesn't match the
+  // carrier's usual format, so the creator is asked to double-check it.
+  const [orderNotice, setOrderNotice] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -115,6 +127,7 @@ export default function OrdersToShip() {
     setBusyId(orderId);
     setError('');
     setOrderError(null);
+    setOrderNotice((n) => (n && n.orderId === orderId ? null : n));
     try {
       const { res, data } = await postJson('/api/marketplace/orders/ship', {
         orderId,
@@ -138,12 +151,13 @@ export default function OrdersToShip() {
         return;
       }
       if (res.status === 409 && data?.code === 'TRACKING_EDIT_LIMIT') {
-        // Corrections are capped per order (lib/orders-store.js); the form is
-        // closed so it stops offering a save the server will refuse.
-        // It also covers tracking erased at the buyer's request. The order's
+        // Tracking can no longer be changed for this order (the correction
+        // cap is used up, or it is locked for another reason the seller is
+        // not told -- round-16 legal-journeys#2). The form is closed so it
+        // stops offering a save the server will refuse, and the order's
         // trackingCorrectionsLeft is zeroed locally so the Edit control stays
         // hidden and this explanation stays on screen.
-        setOrderError({ orderId, field: '', code: 'TRACKING_EDIT_LIMIT', message: responseErrorMessage(res.status, data, 'This order’s tracking has been corrected too many times. Contact team@onlyone1.fun to change it again.') });
+        setOrderError({ orderId, field: '', code: 'TRACKING_EDIT_LIMIT', message: responseErrorMessage(res.status, data, 'Tracking can no longer be changed for this order. Contact team@onlyone1.fun if it needs changing.') });
         setOrders((list) => list.map((o) => (o.id === orderId ? { ...o, trackingCorrectionsLeft: 0 } : o)));
         setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
         return;
@@ -155,6 +169,7 @@ export default function OrdersToShip() {
         return;
       }
       setOrders((list) => list.map((o) => (o.id === orderId ? data.order : o)));
+      if (typeof data.warning === 'string' && data.warning) setOrderNotice({ orderId, message: data.warning });
       setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
     } catch {
       setOrderError({ orderId, field: '', message: 'Could not reach the server. Check your connection and try again.' });
@@ -170,6 +185,8 @@ export default function OrdersToShip() {
   const inputBorder = (orderId, field) => (orderError && orderError.orderId === orderId && orderError.field === field ? 'border-red-500' : 'border-brand-purple/30');
   const errorFor = (orderId) => (orderError && orderError.orderId === orderId ? (
     <p role="alert" className="text-xs text-red-400 mt-1 w-full">{orderError.message}</p>
+  ) : orderNotice && orderNotice.orderId === orderId ? (
+    <p role="status" className="text-xs text-brand-gold mt-1 w-full">Saved. {orderNotice.message}</p>
   ) : null);
 
   const openEdit = (o) => {
@@ -193,10 +210,12 @@ export default function OrdersToShip() {
     setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
   };
   // Corrections remaining for a shipped order (lib/orders-store.js
-  // toCreatorOrder derives it; 0 once the cap is used or tracking was erased).
+  // toCreatorOrder derives it; 0 once the cap is used or tracking is locked).
+  // It is the only signal: the payload deliberately carries no erasure stamps
+  // (round-16 legal-journeys#2), so the seller never learns WHY it is locked.
   // An older payload without the field counts as none known, not unlimited.
   const correctionsLeft = (o) => (Number.isInteger(o.trackingCorrectionsLeft) && o.trackingCorrectionsLeft > 0 ? o.trackingCorrectionsLeft : 0);
-  const canCorrect = (o) => !o.trackingErasedAt && correctionsLeft(o) > 0;
+  const canCorrect = (o) => correctionsLeft(o) > 0;
   const fmtDate = (iso) => {
     const d = typeof iso === 'string' ? new Date(iso) : null;
     return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString() : '';
@@ -305,9 +324,7 @@ export default function OrdersToShip() {
                       </p>
                       {!canCorrect(o) && !(orderError && orderError.orderId === o.id) && (
                         <p className="text-[11px] text-gray-500">
-                          {o.trackingErasedAt
-                            ? 'Tracking details were erased at the buyer’s request and can’t be changed.'
-                            : 'No tracking corrections left for this order.'}{' '}
+                          Tracking can no longer be changed for this order.{' '}
                           Contact <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> if it needs changing.
                         </p>
                       )}

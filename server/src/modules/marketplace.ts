@@ -9,6 +9,7 @@ import { OPERATING_CREATOR_USER_WHERE, creatorMayBePaidById } from '../core/crea
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
 import { assertOwnPublicImages, assertNotPublicImages, publicImageUrls, withProfileImageUrls, lockMedia } from '../core/public-images.js';
+import { assertCleanText } from '../lib/text-screen.js';
 // InsufficientFunds bubbles up to index.ts's global error handler (-> 402), same as every other charge path.
 
 // Physical orders pay the creator at purchase time, same as digital -- no
@@ -181,6 +182,8 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       minBidIncrementCents: z.number().int().min(1).max(100_000_00).optional(),
       reserveCents: z.number().int().min(100).max(100_000_00).optional(),
     }).parse(req.body);
+    // Same screens the site runs on this kind of text (lib/text-screen.ts).
+    assertCleanText([['title', b.title], ['description', b.description]]);
     const { mediaIds, auctionDurationHours, earlyAccessHours, ...fields } = b;
     if (fields.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
     if (earlyAccessHours) (fields as any).vipEarlyUntil = new Date(Date.now() + earlyAccessHours * 3_600_000);
@@ -240,6 +243,8 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       auctionDurationHours: z.number().int().min(MIN_AUCTION_HOURS).max(MAX_AUCTION_HOURS).optional(),
       saleType: z.enum(['FIXED', 'AUCTION']).optional(),
     }).parse(req.body);
+    // Same screens the site runs on this kind of text (lib/text-screen.ts).
+    assertCleanText([['title', b.title], ['description', b.description]]);
     if (b.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
     if (b.kind === 'PHYSICAL') b.unlimited = false;
     const { auctionDurationHours, saleType, ...edit } = b;

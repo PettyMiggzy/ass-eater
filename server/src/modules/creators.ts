@@ -7,6 +7,7 @@ import { isSubscribed, creatorMayOperate } from '../core/access.js';
 import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
 import { withProfileImageUrls, assertOwnPublicImages, lockMedia } from '../core/public-images.js';
+import { assertCleanText, assertCleanTags } from '../lib/text-screen.js';
 
 // What anyone may see of a creator's profile. userId and user.kycStatus are
 // also needed by the visibility check in GET /:username below.
@@ -101,6 +102,14 @@ export const creators: FastifyPluginAsync = async (app) => {
       // is charged at the floor anyway, so it can never be free.
       inboundDmPriceCents: z.number().int().min(0).max(50_000).nullable().optional(),
     }).parse(req.body);
+    // The site's own screens (prohibited/minor-suggestive terms, payment
+    // circumvention), so nothing the site refuses on a profile is publishable
+    // here -- this text is served by GET /creators and /:username, and tags
+    // feed the public GET /creators/tags cloud (screened one by one AND
+    // together, as the site does, so a phrase or handle split across two
+    // tags is caught too).
+    assertCleanText([['displayName', b.displayName], ['bio', b.bio]]);
+    assertCleanTags(b.tags);
     const images = [b.avatarKey, b.bannerKey].filter((k): k is string => typeof k === 'string');
     // Check and publish in ONE transaction: assertOwnPublicImages locks the
     // image rows before counting mass-DM copies of them, which only

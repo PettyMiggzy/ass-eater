@@ -10,6 +10,7 @@ import { notifyDmReceived } from '../core/notify.js';
 import { page } from '../plugins/pagination.js';
 import { fileReport, broadcastTakenDown } from '../core/reports.js';
 import { assertNotPublicImages } from '../core/public-images.js';
+import { assertCleanText } from '../lib/text-screen.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
@@ -290,6 +291,8 @@ export const messages: FastifyPluginAsync = async (app) => {
       // charged again and delivered a duplicate. Optional for creators.
       requestId: z.string().uuid().optional(),
     }).parse(req.body);
+    // Same screens the site runs on this kind of text (lib/text-screen.ts).
+    assertCleanText([['text', b.text]]);
     const to = req.params.userId as string;
     if (to === req.user.id) return reply.code(400).send({ error: 'self' });
     const me = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true } });
@@ -334,7 +337,19 @@ export const messages: FastifyPluginAsync = async (app) => {
     }
     if (!isCreator && !b.requestId) return reply.code(400).send({ error: 'request_id_required' });
 
-    const sent = await sendDirectMessage(req.user.id, to, isCreator, b);
+    let sent: Awaited<ReturnType<typeof sendDirectMessage>>;
+    try {
+      sent = await sendDirectMessage(req.user.id, to, isCreator, b);
+    } catch (e: any) {
+      // The new price rides along so the client can show it and re-confirm.
+      // The global error handler sends only { error } for a 4xx (on purpose:
+      // it must not pass arbitrary error properties through), so it is
+      // answered here.
+      if (e?.message === 'price_changed' && Number.isInteger(e.priceCents)) {
+        return reply.code(409).send({ error: 'price_changed', priceCents: e.priceCents });
+      }
+      throw e;
+    }
     if (sent.already) {
       // A replay of a message already sent (and, for a fan, already paid
       // for): the same message back, with no second charge, notification or
@@ -423,6 +438,8 @@ export const messages: FastifyPluginAsync = async (app) => {
       // subscriber got two identical priced messages, each chargeable.
       requestId: z.string().uuid(),
     }).parse(req.body);
+    // Same screens the site runs on this kind of text (lib/text-screen.ts).
+    assertCleanText([['text', b.text]]);
     // Every requested attachment must exist, belong to this creator, be an
     // original (not someone's broadcast copy), not be a marketplace listing's
     // product (listingId -- copying a sold one-of-a-kind item out to every

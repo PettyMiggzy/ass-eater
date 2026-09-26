@@ -1768,6 +1768,22 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
         await load(statusFilter);
         return;
       }
+      if (res.status === 409 && data?.code === 'content_removed') {
+        // An earlier Remove Content attempt already took the gallery item or
+        // photo down (and stamped the report) but did not finish recording
+        // it; the report is still open and cannot be dismissed as invalid.
+        setError(`Report #${r.id} is still open: its content was already taken down by an earlier attempt, so it cannot be dismissed. Press "Remove Content" to finish recording it.`);
+        await load(statusFilter);
+        return;
+      }
+      if (res.status >= 500) {
+        // Nothing was recorded as resolved; the report is still open and a
+        // retry is safe. Re-read so the row shows anything an earlier part of
+        // the attempt did take down (contentRemovedAt).
+        setError(`${errorFrom(res, data, 'Something went wrong -- the report is still open.')} Retry when ready; it is safe to press the button again.`);
+        await load(statusFilter);
+        return;
+      }
       if (res.status === 409) {
         // already_resolved: someone else (or another tab) resolved it first;
         // not_reopenable: it is no longer dismissed. Either way nothing was
@@ -1879,11 +1895,16 @@ function ReportsPanel({ adminKey, onCreatorBanned }) {
                   ))}
                 </ul>
               )}
+              {r.status === 'open' && r.contentRemovedAt && (
+                <p className="text-[11px] text-yellow-300 mb-2">
+                  The reported item was already taken down ({new Date(r.contentRemovedAt).toLocaleString()}{r.contentRemovedBy ? ` by ${String(r.contentRemovedBy)}` : ''}) but the report was not finished. Press "Remove Content" to record it; it can no longer be dismissed.
+                </p>
+              )}
               {r.status === 'open' ? (
                 <div className="flex gap-2">
                   <button
                     onClick={() => resolve(r, 'dismiss')}
-                    disabled={busyId === r.id}
+                    disabled={busyId === r.id || !!r.contentRemovedAt}
                     className="text-xs px-3 py-1.5 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
                   >
                     {r.category === 'minor' || r.category === 'non_consensual' ? 'Dismiss…' : 'Dismiss'}
@@ -2286,6 +2307,11 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
   // (Open -> Dismissed -> Open) used to let a slower earlier response land
   // last and show one status's rows under another status's label.
   const loadSeq = useRef(0);
+  // Which filter the rows in `reports` belong to (null before the first load
+  // lands). Set wherever the list is written. The filter VALUE alone is not
+  // enough (round-16 admin-ui#0): after Open -> Dismissed -> Open, `reports`
+  // still holds the Dismissed rows until the new Open load lands.
+  const rowsFilterRef = useRef(null);
   // The list is paged by the server (possible-minor first, then oldest
   // first); "Load more" follows nextCursor.
   const [nextCursor, setNextCursor] = useState(null);
@@ -2300,6 +2326,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       const { res, data } = await adminGet(adminKey, `/api/admin/ncii-reports?status=${encodeURIComponent(status)}`);
       if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load takedown requests'));
+      rowsFilterRef.current = status;
       setReports(Array.isArray(data.reports) ? data.reports : []);
       setHasMore(!!data.hasMore && typeof data.nextCursor === 'string');
       setNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
@@ -2328,6 +2355,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load more takedown requests'));
       const more = Array.isArray(data.reports) ? data.reports : [];
+      rowsFilterRef.current = statusFilter;
       setReports((prev) => {
         const seen = new Set(prev.map((x) => String(x.id)));
         return [...prev, ...more.filter((x) => !seen.has(String(x.id)))];
@@ -2381,10 +2409,28 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
   // being worked on. A request that has left the filter (resolved elsewhere,
   // or `dropId`) never comes back, so the loop still ends on the last page or
   // the page cap.
+  //
+  // While a refresh runs, `refreshingSeq` holds its sequence number, so a
+  // patchReport that has to void it (to keep a stale refresh from overwriting
+  // its patch) knows to run it again rather than drop it (round-16
+  // admin-ui#1: a takedown's refresh used to be discarded by another row's
+  // dismiss, leaving the taken-down row without its recorded takedown).
+  const refreshingSeq = useRef(null);
   const refreshKeepingDepth = async ({ dropId = null } = {}) => {
     const status = statusFilter;
     if (status !== statusFilterRef.current) { await refreshSummary(); return; }
+    if (rowsFilterRef.current !== status) {
+      // The filter was switched away and back: the rows on screen belong to
+      // another filter (or to none yet) and this filter's own load is still
+      // pending (round-16 admin-ui#0). Their ids say nothing about this
+      // filter's depth, so do not page for them or show them under this
+      // label; re-issue this filter's load instead -- the one in flight may
+      // have been answered before this action committed.
+      await load(status);
+      return;
+    }
     const seq = ++loadSeq.current;
+    refreshingSeq.current = seq;
     // Taking the sequence voids any load in flight, whose finally will then
     // not clear the Loading state: this refresh owns it now.
     setLoading(false);
@@ -2422,16 +2468,26 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       }
     } catch (err) {
       if (seq === loadSeq.current) setError(err.message);
+    } finally {
+      if (refreshingSeq.current === seq) refreshingSeq.current = null;
     }
   };
   // Patch one request in place from the server's copy (the resolve/reopen
   // response): kept if it still matches the filter, dropped if it no longer
-  // does. Any list load still in flight is voided so it cannot overwrite this.
+  // does. Any list load still in flight is voided so it cannot overwrite this;
+  // a refreshKeepingDepth voided that way is run again afterwards, since it
+  // was carrying another action's result (round-16 admin-ui#1).
   const patchReport = async (fresh) => {
     // Started under another filter than the one on screen: the new filter's
     // own load owns the list (admin-ui#0). Only the summary is refreshed.
     if (statusFilter !== statusFilterRef.current) { await refreshSummary(); return; }
+    // The rows on screen belong to another filter (switched away and back
+    // while this filter's load is pending): re-issue that load rather than
+    // patch foreign rows (round-16 admin-ui#0).
+    if (rowsFilterRef.current !== statusFilter) { await load(statusFilter); return; }
     if (!fresh || fresh.id === undefined || fresh.id === null) { await refreshKeepingDepth(); return; }
+    const refreshWasRunning = refreshingSeq.current !== null;
+    refreshingSeq.current = null;
     loadSeq.current += 1;
     setLoading(false);
     setLoadingMore(false);
@@ -2439,6 +2495,12 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
     setReports((prev) => (keep
       ? prev.map((x) => (String(x.id) === String(fresh.id) ? { ...x, ...fresh } : x))
       : prev.filter((x) => String(x.id) !== String(fresh.id))));
+    if (refreshWasRunning) {
+      // reportsRef has not seen the patch yet (no render in between), so a
+      // request this patch dropped is excluded from the depth explicitly.
+      await refreshKeepingDepth(keep ? {} : { dropId: fresh.id });
+      return;
+    }
     await refreshSummary();
   };
 

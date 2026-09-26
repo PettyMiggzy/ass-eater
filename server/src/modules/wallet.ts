@@ -13,7 +13,8 @@ const ADDRESS_LOCK_NS = 84120;
 const publicAddr = <T extends { issuedBlock: bigint | null }>(a: T) => ({ ...a, issuedBlock: a.issuedBlock?.toString() ?? null });
 
 /**
- * Ledger meta as the account holder may see it. Auction rows once carried
+ * Ledger meta as the account holder may see it. Referral rows show only
+ * which side was referred (below). Auction rows once carried
  * the id of the bidder who outbid this fan (`outbidBy`); the release now
  * records only {reason:'outbid'} (core/auctions.ts) and the migration
  * stripped old rows, but no other bidder's identity is ever returned from
@@ -21,6 +22,14 @@ const publicAddr = <T extends { issuedBlock: bigint | null }>(a: T) => ({ ...a, 
  * be undone through the fan's own wallet.
  */
 export function fanSafeMeta(type: string, meta: unknown): unknown {
+  // A REFERRAL row is the referrer's cut of SOMEONE ELSE's purchase: only
+  // which side of the charge they referred is theirs to see. Anything else
+  // (core/ledger.ts keeps the charge ref as chargeRefId; a hand-posted row
+  // could carry a fanId) would say what the referred person bought.
+  if (type === 'REFERRAL') {
+    const side = meta && typeof meta === 'object' && !Array.isArray(meta) ? (meta as Record<string, unknown>).for : undefined;
+    return side === 'creator' || side === 'fan' ? { for: side } : {};
+  }
   if (!type.startsWith('AUCTION_BID_') || !meta || typeof meta !== 'object' || Array.isArray(meta)) return meta;
   const { outbidBy, bidderId, winnerId, ...rest } = meta as Record<string, unknown>;
   void outbidBy; void bidderId; void winnerId;
@@ -42,7 +51,9 @@ export const wallet: FastifyPluginAsync = async (app) => {
 
   app.get('/history', { preHandler: app.auth }, async (req: any) => {
     const rows = await prisma.ledgerEntry.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' }, take: 100, skip: page(req.query).offset });
-    return rows.map(r => ({ ...r, meta: fanSafeMeta(r.type, r.meta), amountCents: Number(r.amountCents) }));
+    // A REFERRAL row's refId is dropped too: rows posted before round 16
+    // carry the purchase's own id there (see fanSafeMeta).
+    return rows.map(r => ({ ...r, refId: r.type === 'REFERRAL' ? null : r.refId, meta: fanSafeMeta(r.type, r.meta), amountCents: Number(r.amountCents) }));
   });
 
   /** One address per user per chain, derived deterministically. Accepts any allowlisted dollar stablecoin, ETH and $ONLYONE on that address. */

@@ -491,7 +491,7 @@ model Media {
   hlsKey        String? // transcoded playlist key
   previewKey    String? // blurred thumbnail (public)
   mime          String
-  bytes         Int         @default(0)
+  bytes         BigInt      @default(0) // BIGINT: a creator video may be up to 4 GiB (core/upload-limits.ts), past int4
   status        MediaStatus @default(UPLOADING)
   postId        String?
   post          Post?       @relation(fields: [postId], references: [id], onDelete: SetNull)

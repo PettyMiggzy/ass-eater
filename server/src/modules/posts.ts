@@ -7,6 +7,7 @@ import { page } from '../plugins/pagination.js';
 import { fileReport } from '../core/reports.js';
 import type { MediaStatus } from '@prisma/client';
 import { withProfileImageUrls, assertNotPublicImages } from '../core/public-images.js';
+import { assertCleanText } from '../lib/text-screen.js';
 
 // strip locked media down to preview thumbnails, and locked text down to a
 // teaser that can never be the whole thing
@@ -123,6 +124,8 @@ export const posts: FastifyPluginAsync = async (app) => {
       // paywall on content subscribers already paid for.
       earlyAccessHours: z.number().int().min(0).max(72).default(0),
     }).parse(req.body);
+    // Same screens the site runs on this kind of text (lib/text-screen.ts).
+    assertCleanText([['text', b.text]]);
     if (b.visibility === 'PPV' && b.priceCents < 100) throw Object.assign(new Error('ppv_min_price'), { statusCode: 400 });
     const ids = [...new Set(b.mediaIds)];
     if (ids.length !== b.mediaIds.length) throw Object.assign(new Error('bad_media'), { statusCode: 400 });

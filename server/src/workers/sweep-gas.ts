@@ -116,11 +116,26 @@ export function claimGasTopUp(journal: OutflowJournal, ref: string, dailyMaxGwei
  * symbol: the hourly reconciler sweeps every accepted stablecoin at an
  * address that has ever received a STABLE deposit.
  */
-export async function depositCreditedFor(chainId: number, derivationIndex: number, asset: 'STABLE' | 'ONLYONE'): Promise<boolean> {
+export async function depositCreditedFor(chainId: number, derivationIndex: number, asset: 'STABLE' | 'ONLYONE' | 'ETH'): Promise<boolean> {
   const addr = await prisma.depositAddress.findFirst({ where: { chainId, derivationIndex }, select: { userId: true } });
   if (!addr) return false;
   const d = await prisma.deposit.findFirst({ where: { userId: addr.userId, chainId, asset, pricePending: false, usdCents: { gt: 0n } }, select: { id: true } });
   return !!d;
+}
+
+/**
+ * Deposit addresses the hourly reconciler may re-sweep native ETH from:
+ * only those with a CREDITED (priced, non-zero) ETH deposit -- the same bar
+ * the $ONLYONE reconciler uses. Selecting on any ETH Deposit row swept
+ * price-pending deposits (usdCents 0, nothing on the ledger: e.g.
+ * CHAINLINK_ETH_USD unset) into the treasury with no ledger record, where an
+ * unpriced deposit is meant to stay at the fan's address until it is priced.
+ */
+export async function ethSweepCandidates(chainId: number) {
+  return prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
+    SELECT DISTINCT a."derivationIndex", a."address"
+      FROM "DepositAddress" a JOIN "Deposit" d ON d."userId" = a."userId" AND d."chainId" = a."chainId"
+     WHERE a."chainId" = ${chainId} AND d."asset" = 'ETH' AND d."pricePending" = false AND d."usdCents" > 0`;
 }
 
 /**

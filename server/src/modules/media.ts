@@ -40,7 +40,7 @@ export const media: FastifyPluginAsync = async (app) => {
     // output. Only the request that actually flips the row enqueues.
     const claimed = await prisma.media.updateMany({
       where: { id: m.id, ownerId: req.user.id, status: 'UPLOADING' },
-      data: { status: 'PROCESSING', processingSince: new Date(), bytes: Number(head.ContentLength ?? m.bytes) },
+      data: { status: 'PROCESSING', processingSince: new Date(), bytes: head.ContentLength != null ? BigInt(head.ContentLength) : m.bytes },
     });
     if (!claimed.count) {
       // Someone else already claimed it -- the caller's intent is satisfied

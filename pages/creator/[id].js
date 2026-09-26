@@ -250,6 +250,7 @@ export default function CreatorProfile({
   // through POST /api/creator/report-media: { targetType, src, label }.
   const [reportingMedia, setReportingMedia] = useState(null);
   const [mediaReportNotice, setMediaReportNotice] = useState('');
+  const [disconnectBusy, setDisconnectBusy] = useState(false);
 
   // /creators' "Hold to Unlock" links here with ?unlock=1 -- bring the
   // unlock control into view rather than leaving the visitor to find it.
@@ -384,11 +385,21 @@ export default function CreatorProfile({
     { key: 'about', label: 'About' },
   ];
 
+  // Same contract as TokenUnlockPanel's disconnect (round-16 public-pages#0):
+  // reload only once the server confirms the holder cookie is cleared. A
+  // failed or refused request shows an error instead of re-rendering a page
+  // that still reads "Unlocked" (and never escapes as an unhandled rejection).
   const disconnectWallet = async () => {
+    if (disconnectBusy) return;
+    setDisconnectBusy(true);
     try {
-      await fetch('/api/token-gate/clear', { method: 'POST', credentials: 'same-origin' });
+      const res = await fetch('/api/token-gate/clear', { method: 'POST', credentials: 'same-origin' });
+      if (!res.ok) throw new Error('clear_failed');
+      await router.replace(router.asPath, undefined, { scroll: false });
+    } catch {
+      flash('Could not disconnect. Please try again.');
     } finally {
-      router.replace(router.asPath, undefined, { scroll: false });
+      setDisconnectBusy(false);
     }
   };
 
@@ -681,7 +692,7 @@ export default function CreatorProfile({
               {unlockedByWallet && (
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-xl border border-brand-pink/30 bg-brand-pink/5 text-xs text-gray-300">
                   <span>Unlocked — your verified wallet holds enough $ONLYONE for this creator.</span>
-                  <button onClick={disconnectWallet} className="text-gray-400 hover:text-white underline">Disconnect wallet</button>
+                  <button onClick={disconnectWallet} disabled={disconnectBusy} className="text-gray-400 hover:text-white underline disabled:opacity-50">Disconnect wallet</button>
                 </div>
               )}
 

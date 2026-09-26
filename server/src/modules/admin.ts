@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { money, post, PLATFORM_ID, FEES } from '../core/ledger.js';
+import { money, post, PLATFORM_ID, FEES, grossFanSpendCents } from '../core/ledger.js';
 import { deleteObject, deletePrefix, purgeCdnPrefix, cdnSignedUrl } from '../lib/s3.js';
 import { wmPrefix } from '../lib/watermark.js';
 import { recordManualBurn } from '../core/vip.js';
@@ -885,8 +885,8 @@ export const admin: FastifyPluginAsync = async (app) => {
     const [users, creators, activeSubs, gmv] = await Promise.all([
       prisma.user.count(), prisma.creatorProfile.count({ where: { user: { kycStatus: 'APPROVED' } } }),
       prisma.subscription.count({ where: { status: 'ACTIVE', currentPeriodEnd: { gt: new Date() } } }),
-      prisma.ledgerEntry.aggregate({ _sum: { amountCents: true }, where: { amountCents: { lt: 0 }, type: { in: ['SUBSCRIPTION', 'PPV', 'TIP', 'MESSAGE_UNLOCK', 'LIVE_TICKET'] }, createdAt: { gt: new Date(Date.now() - 30 * 864e5) } } }),
+      grossFanSpendCents(prisma, new Date(Date.now() - 30 * 864e5)),
     ]);
-    return { users, creators, activeSubs, gmv30dCents: -Number(gmv._sum.amountCents ?? 0) };
+    return { users, creators, activeSubs, gmv30dCents: gmv };
   });
 };

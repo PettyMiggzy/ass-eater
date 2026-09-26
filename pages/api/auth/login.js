@@ -2,7 +2,7 @@ import { findUserByEmail, verifyPassword } from '../../../lib/users-store';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
 import { clientNetwork, clientNetworkCoarse } from '../../../lib/rate-limit';
 import {
-  clearLoginCounters, consumeLoginAttempts, markLoginFailure, pruneLoginAttempts, readLoginCounters, releaseLoginAttempts,
+  loginGuardKeys, clearLoginCounters, consumeLoginAttempts, markLoginFailure, pruneLoginAttempts, readLoginCounters, releaseLoginAttempts,
 } from '../../../lib/login-guard';
 import { effectiveUserStatus } from '../../../lib/user-moderation';
 import { EMAIL_IDENTIFIER_MAX, PASSWORD_MAX, refuseMalformedText } from '../../../lib/field-validation';
@@ -95,14 +95,14 @@ export default async function handler(req, res) {
   const ip = clientNetwork(req);
   const net = clientNetworkCoarse(req);
   const hasNet = net !== ip;
-  const ipKey = `login:ip:${ip}`;
-  const netKey = hasNet ? `login:net:${net}` : null;
-  const accountKey = `login:account:${email.toLowerCase()}`;
-  // Markers, not budgets: how many times this /64 has failed a login against
-  // this account inside the window (written on a wrong password below), and
-  // how many DISTINCT /64s of this /48 have.
-  const accountFromIpKey = `${accountKey}:from:${ip}`;
-  const accountFromNetKey = hasNet ? `${accountKey}:fromnet:${net}` : null;
+  // Markers, not budgets: accountFromIpKey counts how many times this /64 has
+  // failed a login against this account inside the window (written on a wrong
+  // password below), accountFromNetKey how many DISTINCT /64s of this /48
+  // have. The identifier enters every key only as a fixed-length digest, so
+  // a crafted identifier can never name another key (round-16 gates-token#0,
+  // lib/login-guard.js loginGuardKeys).
+  const { ipKey, netKey, accountKey, accountFromIpKey, accountFromNetKey } =
+    loginGuardKeys({ identifier: email, ip, net: hasNet ? net : null });
 
   // Now and then, drop long-expired counter rows. Best-effort, never blocks.
   if (Math.random() < 0.01) pruneLoginAttempts();

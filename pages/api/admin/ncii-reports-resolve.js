@@ -21,7 +21,9 @@ const POSITIVE_INT = /^[1-9]\d{0,17}$/;
  *        'removed' needs the removal on file: a takedown recorded against this
  *        request that actually removed something (result 'removed' -- from
  *        POST /api/admin/content-takedown, or a gallery/avatar removal
- *        attributed to it; an 'already_gone' entry does not count), the attributed creator ending up banned, or
+ *        attributed to it; an 'already_gone' entry does not count), a possible-minor request's
+ *        outright ban of the attributed creator (every file quarantined -- a ladder ban
+ *        only hides the gallery and does NOT count, round-16 media#0), or
  *        `contentGone: true` -- the admin confirming the content is already
  *        gone or was removed elsewhere (stored as report.removalBasis).
  *        409 { code: 'takedown_required' } otherwise; nothing is changed.

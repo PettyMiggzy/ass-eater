@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma.js';
 import { verifyBridgeToken, resolveBridgedUser, verifyBridgeStatusToken, syncSiteStanding } from '../lib/bridge.js';
 import { redis } from '../lib/redis.js';
 import { PLATFORM_ID, BURNED_ID } from '../core/ledger.js';
+import { assertCleanText } from '../lib/text-screen.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const age = (dob: Date) => Math.floor((Date.now() - dob.getTime()) / 31_557_600_000);
@@ -68,6 +69,8 @@ export const auth: FastifyPluginAsync = async (app) => {
       role: z.enum(['FAN', 'CREATOR']).default('FAN'), referralCode: z.string().optional(),
     }).parse(req.body);
     if (age(b.dob) < 18) return reply.code(403).send({ error: 'must_be_18' });
+    // Public (and a creator's initial displayName): the site's username screen.
+    assertCleanText([['username', b.username]]);
 
     const referredBy = b.referralCode ? await prisma.user.findUnique({ where: { username: b.referralCode }, select: { id: true } }) : null;
     const user = await prisma.user.create({

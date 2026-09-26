@@ -10,6 +10,7 @@ import { LK, rooms } from '../core/livekit.js';
 import { ensureMinutePaid, payNextMinute } from '../core/live-billing.js';
 import { startLiveStream, checkViewerOnJoin, viewerTokenTtlSeconds, hasTicket, minuteRefusal } from '../core/live-sweep.js';
 import { withProfileImageUrls } from '../core/public-images.js';
+import { assertCleanText } from '../lib/text-screen.js';
 
 let _receiver: WebhookReceiver | undefined;
 const receiver = () => (_receiver ??= new WebhookReceiver(LK.key, LK.secret));
@@ -39,6 +40,8 @@ export const live: FastifyPluginAsync = async (app) => {
       // more per hour than the same mistake on a ticket.
       perMinuteCents: z.number().int().min(0).max(2_000).refine(zeroOrAtLeast(FEES.MIN_PER_MINUTE_CENTS), 'per_minute_min_price').default(0),
     }).parse(req.body);
+    // Same screens the site runs on this kind of text (lib/text-screen.ts).
+    assertCleanText([['title', b.title]]);
     // A stream whose room is gone (crashed browser, no webhook) is ended
     // rather than blocking the creator with already_live indefinitely; and at
     // most one LIVE stream per creator even under a double tap

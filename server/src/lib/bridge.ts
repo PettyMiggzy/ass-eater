@@ -262,7 +262,13 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
     // down stay down until an admin restores them (core/moderation.ts).
     // Conditional in the database (applyUserStatus): `user` was read above,
     // and an admin's ban landing since must not be lifted by it.
-    if (standing === 'active' && siteMayLift(user, dim)) {
+    //
+    // A creator the site moved back to 'pending' (re-review after a ban,
+    // say) counts as a lift too: 'pending' is not a restriction on the site,
+    // and creatorMayOperate still refuses a 'pending' creator here, so the
+    // account can sign in and see its data but cannot publish, sell or
+    // withdraw until the site approves it again.
+    if ((standing === 'active' || (!fan && standing === 'pending')) && siteMayLift(user, dim)) {
       await applyUserStatus(user.id, 'ACTIVE', { bySite: true });
     }
   }
@@ -345,10 +351,11 @@ export async function claimStanding(
 /**
  * Applies the site's word on a bridged account's standing: 'banned' and
  * 'suspended' run the same effects as an admin action here
- * (core/moderation.ts), marked as coming from the site; 'active' lifts only
- * a suspension or ban the site itself applied. Never touches a system or
+ * (core/moderation.ts), marked as coming from the site; 'active' (and, for
+ * the creator dimension, 'pending') lifts only a suspension or ban the site
+ * itself applied. Never touches a system or
  * ADMIN row, and never softens a ban or suspension a server/ admin
- * applied: an 'active' for such a row returns 'ban_needs_server_admin' or
+ * applied: an 'active' (or creator 'pending') for such a row returns 'ban_needs_server_admin' or
  * 'suspension_needs_server_admin' (POST /auth/bridge/status answers 409 with
  * it) so the site's outbox keeps the reinstatement flagged instead of
  * reporting it delivered. A message older than the last one
@@ -409,7 +416,13 @@ export async function syncSiteStanding(
     if (user.status !== 'ACTIVE') return 'unchanged';
     return (await applyUserStatus(user.id, 'SUSPENDED', { bySite: true })) ? 'suspended' : 'unchanged';
   }
-  if (status === 'active') {
+  // A creator-dimension 'pending' lifts like 'active' (see resolveBridgedUser):
+  // it is not a restriction on the site, and creatorMayOperate still keeps a
+  // 'pending' creator from publishing, selling or withdrawing here. Without
+  // it, a site ban reversed to 'pending' for re-review answered 'unchanged'
+  // (a 2xx, so the site's outbox dropped it) while the account stayed BANNED
+  // here, with nothing on either admin surface showing the mismatch.
+  if (status === 'active' || (!fan && status === 'pending')) {
     if (siteMayLift(user, dim) && await applyUserStatus(user.id, 'ACTIVE', { bySite: true })) return 'reactivated';
     // `user` may be stale (an admin can ban in between), so decide the
     // refusal from the row as it is now.

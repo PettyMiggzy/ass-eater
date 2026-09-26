@@ -191,10 +191,39 @@ export async function creditDeposit(
 // via TIP/SUBSCRIPTION/PPV counted. This list has to be every TxType where
 // `meta.fanId` identifies who paid the creator; check here whenever a new
 // fan-facing charge type is added.
-const FAN_CHARGE_TYPES = [
+export const FAN_CHARGE_TYPES = [
   'TIP', 'SUBSCRIPTION', 'PPV', 'MESSAGE_UNLOCK', 'LIVE_TICKET', 'MARKETPLACE_SALE', 'TOKEN_LOCK',
   'LIVE_MINUTE', 'LIVE_TIP', 'DM_SEND',
-];
+] as const;
+
+/**
+ * Gross fan spend since `since`, in cents (GET /admin/stats gmv30dCents).
+ *
+ * Every fan-side debit of a FAN_CHARGE_TYPES type -- VIP membership books as
+ * a SUBSCRIPTION debit (core/vip.ts), so it is included -- EXCEPT the
+ * marketplace, which is counted from its orders instead: a won auction has
+ * no fan-side MARKETPLACE_SALE debit at all (the winner's money left at bid
+ * time as an AUCTION_BID_HOLD, which is a hold, not a sale, and would be
+ * double-counted with any outbid-and-released hold). ListingOrder carries
+ * exactly what each sale charged, fixed-price and auction alike: price plus
+ * shipping. It used to be a hardcoded five-type subset that missed every
+ * type added since (live minutes and tips, paid DMs, token locks, the
+ * marketplace).
+ */
+export async function grossFanSpendCents(db: Pick<PrismaClient, 'ledgerEntry' | 'listingOrder'> | Tx, since: Date) {
+  const [ledger, orders] = await Promise.all([
+    db.ledgerEntry.aggregate({
+      _sum: { amountCents: true },
+      where: {
+        amountCents: { lt: 0 },
+        type: { in: FAN_CHARGE_TYPES.filter((t) => t !== 'MARKETPLACE_SALE') },
+        createdAt: { gt: since },
+      },
+    }),
+    db.listingOrder.aggregate({ _sum: { priceCents: true, shippingCents: true }, where: { createdAt: { gt: since } } }),
+  ]);
+  return -Number(ledger._sum.amountCents ?? 0) + (orders._sum.priceCents ?? 0) + (orders._sum.shippingCents ?? 0);
+}
 
 export async function getTopSupporters(tx: Tx, creatorId: string, limit = 10) {
   const rows = await tx.$queryRaw<{ fanId: string; totalCents: bigint }[]>`
@@ -423,8 +452,16 @@ export async function charge(
   // here is the one safe place, since every fan->creator charge posts here.
   await post(tx, p.creatorId, net, p.type, p.refId, { gross: chargeCents, fee, originalPriceCents: p.grossCents, fanId: p.fanId }, 'CREDITS', { earned: true });
   await postPlatformRevenue(tx, fee - referral, p.refId, { source: p.type });
-  if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', p.refId, { for: 'creator' }, 'CREDITS', { earned: true });
-  if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', p.refId, { for: 'fan' }, 'CREDITS', { earned: true });
+  // A referral row lands in the REFERRER's own history (GET /wallet/history),
+  // so it carries no refId: the charge's refId is the purchased object --
+  // the PPV post, the live stream (per minute watched), the unlocked message,
+  // and for a DM the paying fan's own id -- which told a fan's referrer
+  // exactly what their friend paid for and when. The charge ref is kept for
+  // reconciliation in meta.chargeRefId, which fanSafeMeta (modules/wallet.ts)
+  // never returns to the referrer.
+  const refMeta = (side: 'creator' | 'fan') => ({ for: side, ...(p.refId ? { chargeRefId: p.refId } : {}) });
+  if (creatorReferral) await post(tx, creator.user.referredById!, creatorReferral, 'REFERRAL', undefined, refMeta('creator'), 'CREDITS', { earned: true });
+  if (fanReferral) await post(tx, fan.referredById!, fanReferral, 'REFERRAL', undefined, refMeta('fan'), 'CREDITS', { earned: true });
 
   return { gross: chargeCents, fee, net, referral };
 }

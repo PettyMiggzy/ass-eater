@@ -86,7 +86,9 @@ export default function TokenUnlockPanel({ gate, gateLabel, tokenLive, compact =
     setBusy(true);
     setError('');
     try {
-      await fetch('/api/token-gate/clear', { method: 'POST', credentials: 'same-origin' });
+      const res = await fetch('/api/token-gate/clear', { method: 'POST', credentials: 'same-origin' });
+      // A non-2xx answer did not clear the holder cookie: not a success.
+      if (!res.ok) throw new Error('clear_failed');
       await router.replace(router.asPath, undefined, { scroll: false });
     } catch {
       setError('Could not disconnect. Please try again.');

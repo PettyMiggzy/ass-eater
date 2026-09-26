@@ -279,7 +279,13 @@ settle: the payout worker signs queued payouts, and the burn and hedge loops
 sign a new swap in the same pass that settles the old one -- all with the old
 key, rebuilding what this procedure drains. So:
 
-1. Add `TREASURY_SETTLE_ONLY=true` to `.env.workers` (on a line of its own,
+1. Add `TREASURY_SETTLE_ONLY=true` to `.env.workers` -- and ONLY there; the
+   workers also load `.env`, so first check it is not set in `.env` either
+   (`grep -nE '^[[:space:]]*(export[[:space:]]+)?TREASURY_SETTLE_ONLY[[:space:]]*=' /opt/onlyone/server/.env`
+   must print nothing -- it matches only real assignments; a commented-out
+   `# ... TREASURY_SETTLE_ONLY ...` line from the `.env.example` template does
+   not count and is not printed), or it will still be on after you remove it
+   from `.env.workers` at the end -- (on a line of its own,
    no inline `# comment`; `true`, `1` and `yes` are accepted in any case,
    and any value the workers do not recognise makes them refuse to start),
    then `systemctl restart onlyone-workers`. In this mode the workers only
@@ -290,11 +296,18 @@ key, rebuilding what this procedure drains. So:
    address, so deposits are still credited but the funds wait at the
    deposit addresses (the sweep jobs retry, and the hourly reconciler
    re-queues them) until the new key and `TREASURY_ADDRESS` are in place.
-   **Before going on, confirm the mode is really on**:
-   `journalctl -u onlyone-workers -n 50 | grep 'TREASURY SIGNING PAUSED'`
-   must print `TREASURY SIGNING PAUSED (settle-only)`. If it prints nothing,
-   the switch was not read -- fix `.env.workers` and restart; do not
-   continue. **Keep it set until step 5 is finished.**
+   **Before going on, confirm the mode is really on** -- in THIS run of the
+   unit only. The mode is logged once, at startup, so neither the unit's
+   whole history (an older boot's line matches) nor the last N lines (later
+   output pushes it out) is a reliable check:
+
+   ```bash
+   journalctl -u onlyone-workers _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value onlyone-workers) | grep 'treasury signing\|TREASURY SIGNING'
+   ```
+
+   must print `TREASURY SIGNING PAUSED (settle-only)` and nothing else. If it
+   prints `treasury signing mode: normal`, or nothing, the switch was not
+   read -- fix `.env.workers` and restart; do not continue. **Keep it set until step 5 is finished.**
 2. Every payout in PROCESSING or FAILED: look its `txHash` up on the explorer
    and settle it with `POST /admin/payouts/:id/resolve` (mark it sent if it
    landed -- a transfer the recorded `signerAddress` sent is accepted for the
@@ -329,13 +342,25 @@ in `.env.workers`, set
 `TREASURY_ADDRESS` in `.env` to the new wallet's PUBLIC address (the API and
 the workers both read it: the API to accept `mark_sent` transfers and burns
 from the treasury, the workers to recognise their own gas top-ups), and
-remove `TREASURY_SETTLE_ONLY` from `.env.workers`, and restart BOTH
-`onlyone-api` and `onlyone-workers`. Left on the old address,
+remove `TREASURY_SETTLE_ONLY` from `.env.workers` (and confirm it is set in
+neither `.env` nor `.env.workers`:
+`grep -nE '^[[:space:]]*(export[[:space:]]+)?TREASURY_SETTLE_ONLY[[:space:]]*=' /opt/onlyone/server/.env /opt/onlyone/server/.env.workers`
+prints nothing; commented lines are not matched and do not count),
+and restart BOTH `onlyone-api` and `onlyone-workers`. Left on the old address,
 the API keeps trusting the exposed wallet and refuses the new one; the
 workers refuse to start while `TREASURY_ADDRESS` disagrees with the key
 they sign with.
-Deposit sweeps resume with that restart and now go to the new wallet;
-check `journalctl -u onlyone-workers` shows `treasury signing mode: normal`.
+Deposit sweeps resume with that restart and now go to the new wallet.
+Check the CURRENT run of the unit (every boot before the rotation logged
+`normal` too, so the unit's whole history proves nothing):
+
+```bash
+journalctl -u onlyone-workers _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value onlyone-workers) | grep 'treasury signing\|TREASURY SIGNING'
+```
+
+must print `treasury signing mode: normal` and no `TREASURY SIGNING PAUSED`
+line. Settle-only left on means every payout stays PENDING and deposit
+sweeps stay paused, with nothing else flagging it.
 
 **Rotate the deposit mnemonic too, if a real one was ever in `.env`.**
 `DEPOSIT_MNEMONIC` derives the private key of EVERY fan deposit address, and
@@ -352,9 +377,38 @@ nothing to rotate; skip this.) Rotating it:
 2. With the OLD mnemonic still in `.env.workers` and the workers running
    normally, drain every existing deposit address: every `DepositAddress`
    row must hold no USDG, no $ONLYONE and at most dust ETH (check on the
-   explorer; the hourly reconciler re-queues sweeps of anything a dollar or
-   more). Do this after the treasury rotation above, so the sweeps land in
-   the NEW treasury.
+   explorer). Do this after the treasury rotation above, so the sweeps land
+   in the NEW treasury.
+
+   **What moves by itself, and what does not.** The hourly reconciler
+   (`workers/deposit-indexer.ts` reconcileSweeps) re-queues a sweep only for:
+   an accepted stablecoin balance of a dollar or more at an address that has
+   a STABLE deposit on record; native ETH at an address with a CREDITED ETH
+   deposit (with `TRACK_NATIVE_ETH` on); and $ONLYONE at an address with a
+   credited $ONLYONE deposit, only while `INDEX_ONLYONE_DEPOSITS` is on. A
+   sweep that needs a gas top-up additionally needs a credited deposit of
+   that asset and a balance worth a dollar. So these are **never** swept
+   automatically:
+   - a credited stablecoin balance under $1 (the reconciler's floor, and the
+     top-up floor);
+   - stablecoin at an address with no credited STABLE deposit (a transfer
+     that priced to 0 cents, or one from before the indexer's start block);
+   - any $ONLYONE while `INDEX_ONLYONE_DEPOSITS=false` (the recommended
+     setting above -- it is never credited, so never swept);
+   - ETH from a deposit that is still price-pending.
+
+   **There is no tool in this repo that sweeps those today.** Moving them
+   means signing from each deposit address with the OLD mnemonic, funding
+   its gas from the treasury -- which is exactly the improvised hand-signing
+   this runbook otherwise forbids. So a rotation that finds any of them
+   needs an operator sweep script built FIRST (run with `.env.workers`;
+   derive the index's signer and check it against the `DepositAddress` row
+   the way `expectedDepositSigner` does; fund gas through the journaled
+   top-up path under `withTreasuryLock`; ignore the dollar floor and credit
+   status; one index and one token per run). Build it as part of the
+   step-3 retirement work, which is already a prerequisite. Until then,
+   list the stranded balances (index, token, amount) and treat the rotation
+   as not finished -- do not install the new mnemonic over them.
 3. Stop handing out addresses under the old mnemonic. **This needs a code or
    schema decision before it can be done**: today `POST /wallet/deposit-address`
    returns a user's existing row forever, and the indexer checks every row

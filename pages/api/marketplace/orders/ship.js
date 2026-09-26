@@ -6,6 +6,7 @@ import {
 import { refuseMalformedText } from '../../../../lib/field-validation';
 import { addViolation } from '../../../../lib/violations-store';
 import { consumeAttempt } from '../../../../lib/rate-limit';
+import { trackingFormatWarning } from '../../../../lib/tracking-rules';
 
 // Round 15 (money#1 / dashboard#0): the round-14 limit counted EVERY call --
 // first shipments, refused attempts and same-value re-saves -- so a creator
@@ -52,14 +53,15 @@ export default async function handler(req, res) {
   }
 
   // Round 15 (money#0, public-pages#0, legal-journeys#1): the carrier and
-  // tracking number are shown on the buyer's /orders page, and screening them
-  // as free text kept missing handovers ("UPS" + "whatsapp 44 7700 900123",
-  // "USPS" + "617 555 1234"). They are not free text any more: the carrier is
-  // one of a fixed list and the tracking number must fit that carrier's format
-  // (lib/tracking-rules.js), which leaves no room for a handle or a phone
-  // number. A refusal that looks like a handover rather than a typo (an app
-  // named as the carrier, a phone number or an app name in the tracking
-  // field) is still logged to the violations queue.
+  // tracking number are shown on the buyer's /orders page, so they are not
+  // free text: the carrier is one of a fixed list and the tracking number is
+  // 8-35 letters/digits with at least 6 digits (lib/tracking-rules.js). Round
+  // 16 (money#0/#1, dashboard#0/#1) dropped the per-carrier formats, check
+  // digits and phone heuristics, which refused real numbers: only what cannot
+  // be a tracking number is refused, and ONLY an app name (as the carrier or
+  // inside the number) is logged to the violations queue as a suspected
+  // handover. A number that merely looks unusual for its carrier ships, with
+  // a non-blocking `warning` in the response.
   const fieldError = trackingFieldsError({ carrier, trackingNumber });
   if (fieldError) {
     if (fieldError.suspicious) {
@@ -91,7 +93,8 @@ export default async function handler(req, res) {
     // markOrderShipped only matches an order whose creatorId equals creator.id --
     // a creator can't mark another creator's order shipped, this isn't just a UI restriction.
     const order = await markOrderShipped(orderId, creator.id, fields);
-    return res.status(200).json({ ok: true, order });
+    const warning = trackingFormatWarning(fields);
+    return res.status(200).json({ ok: true, order, ...(warning ? { warning } : {}) });
   } catch (err) {
     if (err.code === ORDER_CLOSED) return res.status(409).json({ error: err.message, code: err.code });
     if (err.code === TRACKING_EDIT_LIMIT) return res.status(409).json({ error: err.message, code: err.code });

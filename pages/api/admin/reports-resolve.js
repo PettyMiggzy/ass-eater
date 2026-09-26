@@ -17,7 +17,7 @@ import { deleteWallPost } from '../../../lib/wall-store';
 import { removeConversationMessage } from '../../../lib/messages-store';
 import { preserveMedia, movePreservedToEvidence, reportRef, heldPathsForReport } from '../../../lib/media-preservation';
 import { mediaSrc } from '../../../lib/media';
-import { banCreatorForMinorReportTx, NCII_CREATOR_NOT_FOUND } from '../../../lib/ncii-reports-store';
+import { banCreatorForMinorReportTx, lockCreatorMediaItems, NCII_CREATOR_NOT_FOUND } from '../../../lib/ncii-reports-store';
 import { pushCreatorStatus, deliverFor, reportPushFailure } from '../../../lib/server-api';
 import { deleteMediaQuietly } from '../../../lib/blob-cleanup';
 import { requireAdminKey } from '../../../lib/admin-auth';
@@ -76,9 +76,16 @@ import { refuseMalformedText } from '../../../lib/field-validation';
  * of overwriting an 'actioned' possible-minor report with 'dismissed' -- and
  * never re-runs the removal. A claim is released on failure, and one left by
  * a function that died mid-resolve goes stale after CLAIM_STALE_SECONDS.
- * (A claim rather than a lock held across the removal: the removals run in
- * their own transactions, and holding a pool connection across them could
- * exhaust the small per-instance pool.)
+ *
+ * A listing, message or wall-comment removal commits in the SAME transaction
+ * as the report's status (and any ban), and a listing's files are deleted
+ * only after that commit (round-16 media#1 / social#1): a failure part-way
+ * leaves the content up and the report open, never the content gone with the
+ * report still open and the retry recording 'already_gone'. A gallery item or
+ * avatar is removed in its own transaction (it has to be, to delete the file
+ * it replaced), which also stamps `contentRemovedAt` on the report; a retry
+ * then records 'removed', and a report so stamped cannot be dismissed
+ * (409 { code: 'content_removed' }).
  */
 const CLAIM_STALE_SECONDS = 300;
 // The same placeholder the admin avatar takedown resets to (pages/api/admin/avatar.js).
@@ -232,40 +239,110 @@ export default async function handler(req, res) {
     const report = await claimReport(first.id, action);
     if (!report) throw new AlreadyResolved();
     let updated;
+    // Files the removal took off a listing; deleted only after the commit
+    // (round-16 media#1 / social#1).
+    let removedFiles = [];
     try {
       const keepText = report.category === 'minor' || report.category === 'non_consensual';
+      // A gallery item or avatar is removed in its own transaction (below);
+      // that transaction also stamps the report, so a retry after a failure
+      // between the two still records 'removed' rather than 'already_gone'
+      // and the report cannot then be dismissed as though nothing came down.
+      const markRemoved = (c) => c.query(
+        `update reports set data = data || jsonb_build_object('contentRemovedAt', to_jsonb(now()::text), 'contentRemovedBy', $2::text)
+          where id = $1`,
+        [String(report.id), action],
+      );
+      const removedEarlier = !!report.contentRemovedAt;
+      if (action === 'dismiss' && removedEarlier) {
+        const e = new Error('content already removed');
+        e.code = 'content_removed';
+        throw e;
+      }
 
-      if (removing) {
-        if (report.targetType === 'message') {
-          if (typeof report.conversationId !== 'string' || typeof report.targetId !== 'string') {
-            contentNote = 'already_gone';
-          } else {
-            // The evidence copy is written in the removal's own transaction,
-            // before the message is dropped: a failed copy leaves the message
-            // in place (and the report open) instead of losing the only record.
-            const gone = await removeConversationMessage(report.conversationId, report.targetId, {
-              beforeRemove: keepText
-                ? (c, m) => snapshot(report.id, { type: 'message', text: m.text, senderId: String(m.senderId), createdAt: m.createdAt }, c)
-                : undefined,
+      if (removing && PROFILE_MEDIA_TARGETS.includes(report.targetType)) {
+        const creatorId = normalizeTargetId(report.targetId);
+        const src = typeof report.src === 'string' ? report.src : null;
+        if (report.category === 'minor') {
+          // The held file (and the reported src) is quarantined first, in
+          // its own commit: removing the item below then skips deleting it.
+          const held = (await heldPathsForReport(reportRef('report', report.id))).map(mediaSrc);
+          const kept = await withTransaction(async (c) => {
+            const out = await preserveMedia([...held, ...(src ? [src] : [])], {
+              reportId: reportRef('report', report.id),
+              reason: `possible minor report (in-product) #${report.id}: ${report.targetType} of creator ${creatorId}`,
+              client: c,
             });
-            contentNote = gone ? 'removed' : 'already_gone';
+            await releaseReportHolds(report.id, c);
+            return out;
+          });
+          for (const p of kept) preservedPaths.add(p);
+        }
+        contentNote = 'already_gone';
+        if (creatorId && src) {
+          if (report.targetType === 'gallery_item') {
+            try {
+              await removeGalleryItem(creatorId, { src, beforeRemove: (c) => markRemoved(c) });
+              contentNote = 'removed';
+            } catch (err) {
+              if (err.code !== GALLERY_ITEM_GONE && err.message !== 'Creator not found') throw err;
+            }
+          } else {
+            // Reset only while the reported photo is still the avatar: a
+            // creator who has since replaced it must not lose the new one.
+            const NOT_CURRENT = 'avatar_not_current';
+            try {
+              await setCreatorAvatar(creatorId, AVATAR_PLACEHOLDER, {
+                beforeChange: async (c, current) => {
+                  if (current !== src) throw Object.assign(new Error('Avatar changed'), { code: NOT_CURRENT });
+                  await markRemoved(c);
+                },
+              });
+              contentNote = 'removed';
+            } catch (err) {
+              if (err.code !== NOT_CURRENT && err.message !== 'Creator not found') throw err;
+            }
           }
-        } else if (report.targetType === 'listing') {
+        }
+      }
+
+      // Everything else -- the listing, message or wall-comment removal, the
+      // outright ban and the report's status -- commits in ONE transaction
+      // (round-16 media#1 / social#1). The removals used to commit on their
+      // own first (a listing's files were even deleted before the report was
+      // touched), so a failure in between left the content gone and the
+      // report open, and the retry recorded 'already_gone' -- or let it be
+      // dismissed. Now a failure rolls the removal back with the rest, and
+      // files are deleted only after COMMIT. Lock order as elsewhere: the
+      // creator and every file and listing row (when banning), then the
+      // conversation / wall rows, then the report rows.
+      updated = await withTransaction(async (client) => {
+        const listingExtra = [];
+        let minorListingHeld = [];
+        if (removing && report.targetType === 'listing' && report.category === 'minor') {
+          minorListingHeld = (await heldPathsForReport(reportRef('report', report.id), client)).map(mediaSrc);
+          listingExtra.push(...minorListingHeld, ...(Array.isArray(report.reportedContent?.media) ? report.reportedContent.media : []));
+        }
+        if (banCreatorId) {
+          // Creator, then every file (the listing's held extras too), then
+          // the listing rows -- taken up front so the takedown and the ban
+          // below only re-enter locks this transaction already holds.
+          const locked = await lockCreatorMediaItems(client, banCreatorId, listingExtra);
+          if (!locked) throw Object.assign(new Error('That creator no longer exists.'), { code: NCII_CREATOR_NOT_FOUND });
+        }
+
+        if (removing && report.targetType === 'listing') {
           const targetId = normalizeTargetId(report.targetId);
-          // Preservation and takedown in ONE transaction, with the listing
-          // read under its file and row locks (lib/listings-store.js
-          // takeDownListing): a file the seller finalized after an unlocked
-          // read used to be missed by the quarantine and then deleted by the
-          // takedown (round-8 media#1).
+          // Preservation and takedown with the listing read under its file
+          // and row locks (lib/listings-store.js takeDownListing): a file the
+          // seller finalized after an unlocked read used to be missed by the
+          // quarantine and then deleted by the takedown (round-8 media#1).
           const minor = report.category === 'minor';
-          const held = minor ? (await heldPathsForReport(reportRef('report', report.id))).map(mediaSrc) : [];
           const out = await takeDownListing(targetId, {
             // Every file the report has held since it was filed (the seller
             // may have removed some from the listing meanwhile) plus what the
             // listing carries now (added by takeDownListing from the locked row).
-            extraItems: minor
-              ? [...held, ...(Array.isArray(report.reportedContent?.media) ? report.reportedContent.media : [])]
-              : [],
+            extraItems: listingExtra,
             preserve: minor
               ? async (c, items) => {
                 const kept = await preserveMedia(items, { reportId: reportRef('report', report.id), reason: `possible minor report (in-product) #${report.id}: listing ${targetId}`, client: c });
@@ -274,88 +351,13 @@ export default async function handler(req, res) {
                 return kept;
               }
               : null,
+            client,
           });
           for (const p of out.preserved) preservedPaths.add(p);
+          removedFiles = out.files || [];
           contentNote = out.removed ? 'removed' : 'already_gone';
-        } else if (PROFILE_MEDIA_TARGETS.includes(report.targetType)) {
-          const creatorId = normalizeTargetId(report.targetId);
-          const src = typeof report.src === 'string' ? report.src : null;
-          if (report.category === 'minor') {
-            // The held file (and the reported src) is quarantined first, in
-            // its own commit: removing the item below then skips deleting it.
-            const held = (await heldPathsForReport(reportRef('report', report.id))).map(mediaSrc);
-            const kept = await withTransaction(async (c) => {
-              const out = await preserveMedia([...held, ...(src ? [src] : [])], {
-                reportId: reportRef('report', report.id),
-                reason: `possible minor report (in-product) #${report.id}: ${report.targetType} of creator ${creatorId}`,
-                client: c,
-              });
-              await releaseReportHolds(report.id, c);
-              return out;
-            });
-            for (const p of kept) preservedPaths.add(p);
-          }
-          contentNote = 'already_gone';
-          if (creatorId && src) {
-            if (report.targetType === 'gallery_item') {
-              try {
-                await removeGalleryItem(creatorId, { src });
-                contentNote = 'removed';
-              } catch (err) {
-                if (err.code !== GALLERY_ITEM_GONE && err.message !== 'Creator not found') throw err;
-              }
-            } else {
-              // Reset only while the reported photo is still the avatar: a
-              // creator who has since replaced it must not lose the new one.
-              const NOT_CURRENT = 'avatar_not_current';
-              try {
-                await setCreatorAvatar(creatorId, AVATAR_PLACEHOLDER, {
-                  beforeChange: async (_client, current) => {
-                    if (current !== src) throw Object.assign(new Error('Avatar changed'), { code: NOT_CURRENT });
-                  },
-                });
-                contentNote = 'removed';
-              } catch (err) {
-                if (err.code !== NOT_CURRENT && err.message !== 'Creator not found') throw err;
-              }
-            }
-          }
-        } else if (report.targetType === 'wall_post') {
-          const targetId = normalizeTargetId(report.targetId);
-          if (!targetId) {
-            contentNote = 'already_gone';
-          } else {
-            if (keepText) {
-              const { rows: post } = await query('select data from wall_posts where id = $1', [targetId]);
-              if (post.length) {
-                await snapshot(report.id, { type: 'wall_post', text: post[0].data.text, authorId: String(post[0].data.authorId ?? ''), createdAt: post[0].data.createdAt });
-              }
-            }
-            try {
-              await deleteWallPost(targetId, 'admin', { isWallOwner: true });
-              contentNote = 'removed';
-            } catch (err) {
-              // Only "it's already gone" is fine to treat as done. Anything
-              // else (a DB error) must NOT be recorded as actioned -- the
-              // content would stay live while the queue says it was removed.
-              if (err.message !== 'Comment not found') throw err;
-              contentNote = 'already_gone';
-            }
-          }
-        } else {
-          // An unrecognised target type cannot be acted on here, so it is not
-          // marked actioned as though it had been.
-          const e = new Error('unsupported target');
-          e.code = 'unsupported_target';
-          throw e;
         }
-      }
 
-      updated = await withTransaction(async (client) => {
-        // The outright ban commits with the status change: the report reads
-        // 'actioned' only if the ban, the quarantine and the listing takedown
-        // all did. Lock order: creator, files, listing rows, then the report
-        // row (updateReportStatus) -- creator before report, as everywhere.
         let bannedCreatorId = null;
         if (banCreatorId) {
           const ban = await banCreatorForMinorReportTx(client, banCreatorId, {
@@ -367,6 +369,64 @@ export default async function handler(req, res) {
           bannedCreatorId = String(ban.creator.id);
           pushUid = (await pushCreatorStatus(bannedCreatorId, { client })).uid || null;
         }
+
+        if (removing && report.targetType === 'message') {
+          if (typeof report.conversationId !== 'string' || typeof report.targetId !== 'string') {
+            contentNote = 'already_gone';
+          } else {
+            // The evidence copy is written before the message is dropped, in
+            // this same commit.
+            const gone = await removeConversationMessage(report.conversationId, report.targetId, {
+              beforeRemove: keepText
+                ? (c, m) => snapshot(report.id, { type: 'message', text: m.text, senderId: String(m.senderId), createdAt: m.createdAt }, c)
+                : undefined,
+              client,
+            });
+            contentNote = gone ? 'removed' : 'already_gone';
+          }
+        } else if (removing && report.targetType === 'wall_post') {
+          const targetId = normalizeTargetId(report.targetId);
+          if (!targetId) {
+            contentNote = 'already_gone';
+          } else {
+            // Every report on this comment is locked first, in id order --
+            // the same lock deleteWallPost takes below -- so the snapshot
+            // (which writes THIS report's row) cannot hold one report row
+            // while another admin resolving a second report on the same
+            // comment holds theirs: that inverted order deadlocked.
+            await client.query(
+              `select 1 from reports where data->>'targetType' = 'wall_post' and data->>'targetId' = $1 order by id for update`,
+              [targetId],
+            );
+            if (keepText) {
+              const { rows: post } = await client.query('select data from wall_posts where id = $1', [targetId]);
+              if (post.length) {
+                await snapshot(report.id, { type: 'wall_post', text: post[0].data.text, authorId: String(post[0].data.authorId ?? ''), createdAt: post[0].data.createdAt }, client);
+              }
+            }
+            try {
+              await deleteWallPost(targetId, 'admin', { isWallOwner: true, client });
+              contentNote = 'removed';
+            } catch (err) {
+              // Only "it's already gone" is fine to treat as done (it is
+              // thrown before anything is written). Anything else (a DB
+              // error) must NOT be recorded as actioned.
+              if (err.message !== 'Comment not found') throw err;
+              contentNote = 'already_gone';
+            }
+          }
+        } else if (removing && report.targetType !== 'listing' && !PROFILE_MEDIA_TARGETS.includes(report.targetType)) {
+          // An unrecognised target type cannot be acted on here, so it is not
+          // marked actioned as though it had been.
+          const e = new Error('unsupported target');
+          e.code = 'unsupported_target';
+          throw e;
+        }
+
+        // A gallery/avatar removal an earlier, interrupted attempt of THIS
+        // report already committed is recorded as removed, not already_gone.
+        if (removing && contentNote === 'already_gone' && removedEarlier) contentNote = 'removed';
+
         const out = await updateReportStatus(report.id, action === 'dismiss' ? 'dismissed' : 'actioned', 'admin', {
           reason: action === 'dismiss' ? reason : null,
           client,
@@ -385,7 +445,7 @@ export default async function handler(req, res) {
     // After the commit: deletion cannot be rolled back (deleteMediaQuietly
     // re-checks and skips anything preserved), and the new standing reaches
     // server/ now, retried by the cron if this delivery fails.
-    if (banFiles.length) await deleteMediaQuietly(banFiles);
+    if (removedFiles.length || banFiles.length) await deleteMediaQuietly([...removedFiles, ...banFiles]);
     const preserved = preservedPaths.size;
     if (preserved) await movePreservedToEvidence({ limit: Math.min(preserved, 200) });
     if (pushUid) reportPushFailure(await deliverFor([pushUid]), `report ${report.id} ban`);
@@ -399,6 +459,12 @@ export default async function handler(req, res) {
   } catch (err) {
     if (err instanceof AlreadyResolved) {
       return res.status(409).json({ code: 'already_resolved', error: 'Someone else resolved this report first. Reload the queue.' });
+    }
+    if (err.code === 'content_removed') {
+      return res.status(409).json({
+        code: 'content_removed',
+        error: 'This content was already taken down by an earlier attempt -- use Remove Content to finish recording it, not Dismiss.',
+      });
     }
     if (err.code === 'unsupported_target') {
       return res.status(400).json({ error: 'This report type cannot be actioned automatically. Dismiss it or handle it by hand.' });

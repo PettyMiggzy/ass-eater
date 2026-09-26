@@ -7,6 +7,7 @@ import { getUsdPrice } from '../lib/price.js';
 import { DECIMALS } from '../lib/chain.js';
 import { page } from '../plugins/pagination.js';
 import { withProfileImageUrls } from '../core/public-images.js';
+import { assertCleanText } from '../lib/text-screen.js';
 
 const PERIOD_MS = 30 * 864e5;
 
@@ -52,6 +53,8 @@ export const stake: FastifyPluginAsync = async (app) => {
       description: z.string().max(500).optional(),
       usdCents: z.number().int().min(100).max(1_000_000).optional(),
     }).parse(req.body);
+    // Same screens the site runs on this kind of text (lib/text-screen.ts).
+    assertCleanText([['description', b.description]]);
     if (b.enabled && (!b.description || !b.usdCents)) {
       throw Object.assign(new Error('description_and_usdCents_required'), { statusCode: 400 });
     }
