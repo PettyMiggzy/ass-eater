@@ -103,6 +103,50 @@ export async function endStaleStreamFor(rooms: RoomsLike, creatorId: string): Pr
   return false;
 }
 
+type StartRooms = RoomsLike & Pick<import('livekit-server-sdk').RoomServiceClient, 'createRoom' | 'deleteRoom'>;
+
+/**
+ * POST /live/start: at most ONE LIVE stream per creator. The check used to be
+ * a plain read before the insert, so a double-tapped "Go Live" passed it
+ * twice and made two LIVE streams, each with its own room -- the creator
+ * published into one, fans could buy a ticket and per-minute time for the
+ * empty other, and an occupied room never hits emptyTimeout, so the sweep
+ * never ended it.
+ *
+ * The re-check and the insert now run in one transaction holding a
+ * per-creator advisory lock, so of two concurrent starts exactly one inserts;
+ * the partial unique index "LiveStream_one_live_per_creator" (round-9
+ * migration) enforces the same thing in the database as a backstop. The
+ * loser deletes the room it just created and gets already_live.
+ */
+export async function startLiveStream(
+  rooms: StartRooms,
+  creatorId: string,
+  data: { title: string; ticketPriceCents: number; perMinuteCents: number },
+  roomName: string,
+): Promise<{ ok: true; stream: Awaited<ReturnType<typeof prisma.liveStream.create>> } | { ok: false; error: 'already_live' }> {
+  if (await endStaleStreamFor(rooms, creatorId)) return { ok: false, error: 'already_live' };
+  await rooms.createRoom({ name: roomName, emptyTimeout: 300, maxParticipants: 5000 });
+  let stream: Awaited<ReturnType<typeof prisma.liveStream.create>> | null = null;
+  try {
+    stream = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'live:' + creatorId}))`;
+      if (await tx.liveStream.findFirst({ where: { creatorId, status: 'LIVE' }, select: { id: true } })) return null;
+      return tx.liveStream.create({ data: { creatorId, roomName, ...data } });
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'P2002') {
+      try { await rooms.deleteRoom(roomName); } catch { /* best effort */ }
+      throw err;
+    }
+  }
+  if (!stream) {
+    try { await rooms.deleteRoom(roomName); } catch { /* an empty room also times out on its own */ }
+    return { ok: false, error: 'already_live' };
+  }
+  return { ok: true, stream };
+}
+
 /**
  * Lifetime of a viewer's LiveKit token.
  *

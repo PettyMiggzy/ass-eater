@@ -1,5 +1,5 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM, ACCOUNT_GONE, ACCOUNT_FROZEN } from '../../../lib/deposit';
+import { creditDepositFromChain, findPriorDepositCredit, TX_ALREADY_USED, BELOW_MINIMUM, ACCOUNT_GONE, ACCOUNT_FROZEN } from '../../../lib/deposit';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import { findUserById } from '../../../lib/users-store';
 import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
@@ -72,6 +72,20 @@ export default async function handler(req, res) {
     // decided to anyway. There is no tool that returns USDG: once claimed, a
     // refund is a manual on-chain transfer by the owner.
     const standing = await accountStanding(String(userId));
+    // A hash ALREADY credited to this very account is answered as that credit
+    // (alreadyCredited, with a plain `message`), before the frozen prompt and
+    // the chain lookup: the panel printed "Credited N credits" for it as if
+    // something new had been added (round-9 money#2).
+    const prior = await findPriorDepositCredit(String(userId), txHash);
+    if (prior) {
+      return res.status(200).json({
+        ok: true,
+        ...prior,
+        creditedUserEmail: user.email,
+        frozen: isFrozenStanding(standing),
+        message: `This transaction was already credited to ${user.email || `user ${user.id}`} earlier; nothing new was added.`,
+      });
+    }
     if (isFrozenStanding(standing) && creditFrozen !== true) {
       const rawUntil = standing.effectiveStatus === 'suspended'
         ? (standing.creator?.suspendedUntil || standing.user?.moderationUntil || null)
@@ -118,7 +132,15 @@ export default async function handler(req, res) {
       config,
       allowFrozen: creditFrozen === true,
     });
-    return res.status(200).json({ ok: true, ...result, creditedUserEmail: user.email, frozen: isFrozenStanding(standing) });
+    return res.status(200).json({
+      ok: true,
+      ...result,
+      creditedUserEmail: user.email,
+      frozen: isFrozenStanding(standing),
+      ...(result.alreadyCredited
+        ? { message: `This transaction was already credited to ${user.email || `user ${user.id}`} earlier; nothing new was added.` }
+        : {}),
+    });
   } catch (err) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });

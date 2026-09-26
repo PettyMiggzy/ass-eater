@@ -157,6 +157,10 @@ export function describeObligation(o, creators = []) {
   const parts = [];
   if (Number(o.balanceCents) > 0) parts.push(`${dollars(o.balanceCents)} credit balance`);
   if (Number(o.pendingPayouts) > 0) parts.push(`${o.pendingPayouts} pending payout(s) totalling ${dollars(o.pendingPayoutCents)}`);
-  if (Number(o.pendingShipments) > 0) parts.push(`${o.pendingShipments} paid order(s) not yet shipped`);
+  // The count alone left the admin with no order numbers to close; the
+  // creator's editor ("Their orders") and ACCOUNTS -> Orders list them.
+  if (Number(o.pendingShipments) > 0) {
+    parts.push(`${o.pendingShipments} paid order(s) not yet shipped (ACCOUNTS -> Orders, seller number ${o.creatorId}, lists them)`);
+  }
   return `${who}: ${parts.length ? parts.join(', ') : 'no outstanding money or orders'}`;
 }

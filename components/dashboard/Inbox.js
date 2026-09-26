@@ -74,6 +74,9 @@ function mergeConversations(firstPage, current) {
 /**
  * The dashboard inbox, on the paginated messaging API:
  *   GET /api/messages/conversations?limit&before=<opaque nextBefore>
+ *     (a row with blockOnly: true is a wall commenter the viewer blocked:
+ *     no counterpart id, only an opaque blockHandle, lifted with
+ *     POST /api/messages/block { blockHandle, blocked: false })
  *   GET /api/messages/with/<userId>?before=<messageId>  (marks the thread read)
  *   POST /api/messages/send { toUserId, text, clientMessageId, expectedPriceCents }
  *
@@ -369,8 +372,7 @@ export default function Inbox({ currentUserId, isCreator }) {
       setOpen((prev) => (prev && prev.conversationId === target
         ? { ...prev, blockedByMe: !!data?.conversation?.blockedByMe, blockedByThem: !!data?.conversation?.blockedByThem }
         : prev));
-      // The list row too: its "Blocked" label (a block-only row has no last
-      // message to show instead) must not outlive the block.
+      // The list row too, so its block state matches the thread's.
       setConversations((list) => list.map((c) => (c.id === target
         ? { ...c, blockedByMe: !!data?.conversation?.blockedByMe, blockedByThem: !!data?.conversation?.blockedByThem }
         : c)));
@@ -384,6 +386,33 @@ export default function Inbox({ currentUserId, isCreator }) {
       if (openRef.current?.conversationId === target) setSendError('Could not reach the server. Try again.');
     } finally {
       setBlockBusy(false);
+    }
+  };
+
+  // A block-only row (a wall commenter blocked from the wall, who never
+  // messaged) carries no counterpart id -- /api/messages/conversations sends
+  // only an opaque blockHandle, so the block that de-anonymised nobody on the
+  // wall does not do it here either. It has no thread to open; it is lifted
+  // by that handle, and once lifted the row no longer exists.
+  const [unblockingHandle, setUnblockingHandle] = useState(null);
+  const [rowError, setRowError] = useState('');
+  const unblockRow = async (c) => {
+    const handle = typeof c?.blockHandle === 'string' ? c.blockHandle : null;
+    if (!handle || unblockingHandle) return;
+    setUnblockingHandle(handle);
+    setRowError('');
+    try {
+      const { res, data } = await postJson('/api/messages/block', { blockHandle: handle, blocked: false });
+      if (!res.ok && res.status !== 404) {
+        setRowError(responseErrorMessage(res.status, data, 'Could not lift that block.'));
+        return;
+      }
+      // 404: already lifted (another tab or device) -- the row is gone either way.
+      setConversations((list) => list.filter((row) => row.blockHandle !== handle));
+    } catch {
+      setRowError('Could not reach the server. Try again.');
+    } finally {
+      setUnblockingHandle(null);
     }
   };
 
@@ -411,7 +440,24 @@ export default function Inbox({ currentUserId, isCreator }) {
       ) : (
         <div className="grid sm:grid-cols-3 gap-4">
           <div className="space-y-2 sm:border-r border-brand-purple/20 sm:pr-4 max-h-80 overflow-y-auto">
-            {conversations.map((c) => (
+            {rowError && <p className="text-xs text-red-400">{rowError}</p>}
+            {conversations.map((c) => (c.blockOnly ? (
+              <div key={c.id} className="w-full flex items-center gap-2 p-2 rounded-md">
+                <ThreadAvatar src={null} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-white truncate">{c.other?.name || 'A blocked account'}</p>
+                  <p className="text-xs text-gray-500 truncate">Blocked from your wall</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => unblockRow(c)}
+                  disabled={!!unblockingHandle}
+                  className="shrink-0 text-[11px] px-2.5 py-1 rounded-full border border-brand-purple/30 text-gray-400 hover:text-white transition disabled:opacity-50"
+                >
+                  {unblockingHandle === c.blockHandle ? 'Unblocking…' : 'Unblock'}
+                </button>
+              </div>
+            ) : (
               <button
                 key={c.id}
                 onClick={() => openThread(c)}
@@ -422,10 +468,6 @@ export default function Inbox({ currentUserId, isCreator }) {
                 <ThreadAvatar src={c.other?.img} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-white truncate">{c.other?.name || 'Unknown'}</p>
-                  {/* A block-only row (a wall commenter blocked from the
-                      wall, who never messaged) has no messages; it is
-                      listed only to whoever made the block, so they can
-                      lift it here. */}
                   <p className="text-xs text-gray-500 truncate">
                     {c.lastMessage?.text || (c.blockedByMe ? 'Blocked' : '')}
                   </p>
@@ -436,7 +478,7 @@ export default function Inbox({ currentUserId, isCreator }) {
                   </span>
                 )}
               </button>
-            ))}
+            )))}
             {nextBefore && (
               <button onClick={loadMore} disabled={loadingMore} className="w-full text-xs text-brand-pink hover:underline py-2 disabled:opacity-50">
                 {loadingMore ? 'Loading…' : 'Load older conversations'}

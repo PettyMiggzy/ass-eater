@@ -1,6 +1,6 @@
 import { getSessionUser } from '../../../lib/session';
 import { getWallPostById, wallPostIdsByAuthor } from '../../../lib/wall-store';
-import { setConversationBlocked, DM_ERRORS } from '../../../lib/messages-store';
+import { setConversationBlocked, accountsBlockedBy, DM_ERRORS } from '../../../lib/messages-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
 /**
@@ -9,7 +9,10 @@ import { consumeAttempt } from '../../../lib/rate-limit';
  *      postIds: every comment by the same author on this wall (newest
  *      first, capped) -- a block is per author, so the wall flips all of
  *      them at once. Comment ids only; the author's account id never
- *      leaves the server.
+ *      leaves the server. Only when the call actually CHANGED the block
+ *      (blocking someone not yet blocked, or lifting a block this owner
+ *      made); otherwise postIds is [], so the endpoint can't be used to
+ *      group anonymous comments by author without blocking anyone.
  *   -> 403 not the owner of the wall this comment is on
  *   -> 404 no such comment (or its author's account is gone)
  *
@@ -51,6 +54,8 @@ export default async function handler(req, res) {
     if (!post.authorId || String(post.authorId) === String(user.id)) {
       return res.status(400).json({ error: 'You cannot block yourself.' });
     }
+    const wasBlocked = (await accountsBlockedBy(user.id, [String(post.authorId)])).has(String(post.authorId));
+    if (wasBlocked === blocked) return res.status(200).json({ ok: true, blocked, postIds: [] });
     await setConversationBlocked(user.id, String(post.authorId), blocked);
     // The block itself is done; failing to list the author's other comments
     // only means the page flips this one, so it never fails the request.

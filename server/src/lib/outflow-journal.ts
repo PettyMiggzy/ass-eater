@@ -97,12 +97,40 @@ export class OutflowJournal {
       if (!isTornTail) throw new OutflowJournalUnavailable(`outflow journal corrupt at line ${i + 1}`);
       dirty = true;
     });
+    // A last line with no newline -- torn and dropped above, or a COMPLETE
+    // entry whose '\n' never landed (a short write, a crash between the two)
+    // -- is re-terminated by the rewrite. Kept as it was, the next append
+    // landed on the same line ({A}{B}), which still worked in that process
+    // and then made every later load refuse "corrupt" -- every automatic
+    // payout HELD from the next restart on.
+    if (text && !text.endsWith('\n')) dirty = true;
+    if (this.clampFuture(entries)) dirty = true;
     const cutoff = this.now() - KEEP_MS;
     const kept = entries.filter((e) => e.at >= cutoff);
     if (kept.length !== entries.length) dirty = true;
     if (dirty) this.rewrite(kept);
     this.entries = kept;
     return kept;
+  }
+
+  /**
+   * Entries stamped in the future (the wall clock was set ahead when they
+   * were written, then corrected) are pulled back to now. Left as they were,
+   * each counted against the rolling window for as long as the clock jump --
+   * a month-fast clock held every automatic payout for a month, with nothing
+   * pointing at the clock. Clamped, each still counts for one full window
+   * from now: the safe direction, but bounded. Returns whether any moved.
+   */
+  private clampFuture(entries: OutflowEntry[]): boolean {
+    const now = this.now();
+    let moved = 0, maxAheadMs = 0;
+    for (const e of entries) {
+      if (e.at > now) { maxAheadMs = Math.max(maxAheadMs, e.at - now); e.at = now; moved++; }
+    }
+    if (moved) {
+      console.error(`OUTFLOW JOURNAL: ${moved} entr${moved === 1 ? 'y' : 'ies'} dated up to ${Math.round(maxAheadMs / 1000)}s in the FUTURE -- the system clock was ahead when they were written. Counted as of now (they hold outflow room for one full window). Check NTP / the droplet clock.`);
+    }
+    return moved > 0;
   }
 
   /** Atomic replace: write a temp file, fsync it, rename over, fsync the directory. */
@@ -128,8 +156,12 @@ export class OutflowJournal {
 
   /** `kind` outflow (in that kind's unit, see OutflowEntry) signed in the rolling window ending now. */
   sumSince(kind: OutflowKind, windowMs = DAY_MS): number {
+    const entries = this.load();
+    // The clock can also step BACK while this process runs, after entries
+    // were recorded (loaded ones were clamped at load); same treatment.
+    this.clampFuture(entries);
     const since = this.now() - windowMs;
-    return this.load().filter((e) => e.kind === kind && e.at >= since).reduce((a, e) => a + e.cents, 0);
+    return entries.filter((e) => e.kind === kind && e.at >= since).reduce((a, e) => a + e.cents, 0);
   }
 
   /**
@@ -145,7 +177,16 @@ export class OutflowJournal {
       try {
         const fd = fs.openSync(this.file!, 'a', 0o600);
         try {
-          fs.writeSync(fd, JSON.stringify(entry) + '\n');
+          // writeSync may write only part of the buffer (ENOSPC partway, a
+          // signal): its return value was ignored, so a torn line counted as
+          // a success. Loop until every byte is down; no progress is a failure.
+          const buf = Buffer.from(JSON.stringify(entry) + '\n', 'utf8');
+          let off = 0;
+          while (off < buf.length) {
+            const n = fs.writeSync(fd, buf, off, buf.length - off);
+            if (!(n > 0)) throw Object.assign(new Error('short write'), { code: 'ESHORTWRITE' });
+            off += n;
+          }
           fs.fsyncSync(fd);
         } finally { fs.closeSync(fd); }
       } catch (e: any) {

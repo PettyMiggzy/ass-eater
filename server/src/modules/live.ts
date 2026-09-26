@@ -8,7 +8,7 @@ import { isSubscribed, creatorIsActive } from '../core/access.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { LK, rooms } from '../core/livekit.js';
 import { ensureMinutePaid, payNextMinute } from '../core/live-billing.js';
-import { endStaleStreamFor, checkViewerOnJoin, viewerTokenTtlSeconds, hasTicket, minuteRefusal } from '../core/live-sweep.js';
+import { startLiveStream, checkViewerOnJoin, viewerTokenTtlSeconds, hasTicket, minuteRefusal } from '../core/live-sweep.js';
 import { withProfileImageUrls } from '../core/public-images.js';
 
 let _receiver: WebhookReceiver | undefined;
@@ -39,12 +39,14 @@ export const live: FastifyPluginAsync = async (app) => {
       // more per hour than the same mistake on a ticket.
       perMinuteCents: z.number().int().min(0).max(2_000).refine(zeroOrAtLeast(FEES.MIN_PER_MINUTE_CENTS), 'per_minute_min_price').default(0),
     }).parse(req.body);
-    // A stream whose room is gone (crashed browser, no webhook) is ended here
-    // rather than blocking the creator with already_live indefinitely.
-    if (await endStaleStreamFor(rooms(), req.user.id)) return reply.code(409).send({ error: 'already_live' });
+    // A stream whose room is gone (crashed browser, no webhook) is ended
+    // rather than blocking the creator with already_live indefinitely; and at
+    // most one LIVE stream per creator even under a double tap
+    // (core/live-sweep.ts startLiveStream).
     const roomName = `live_${nanoid(10)}`;
-    await rooms().createRoom({ name: roomName, emptyTimeout: 300, maxParticipants: 5000 });
-    const s = await prisma.liveStream.create({ data: { creatorId: req.user.id, roomName, ...b } });
+    const started = await startLiveStream(rooms(), req.user.id, b, roomName);
+    if (!started.ok) return reply.code(409).send({ error: 'already_live' });
+    const s = started.stream;
     return { stream: s, token: await token(req.user.id, roomName, true), wsUrl: process.env.LIVEKIT_WS_URL };
   });
 

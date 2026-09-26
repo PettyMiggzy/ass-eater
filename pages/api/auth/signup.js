@@ -2,7 +2,7 @@ import { createUser, findUserByEmail } from '../../../lib/users-store';
 import { createCreator, getCreators, isPubliclyVisible } from '../../../lib/creators-store';
 import { normalizeReferralCode } from '../../../lib/referral';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
-import { clientIp, clientNetwork, consumeAttempt } from '../../../lib/rate-limit';
+import { clientIp, clientNetwork, clientNetworkCoarse, consumeAttempt, refundAttempt } from '../../../lib/rate-limit';
 import { withTransaction } from '../../../lib/db';
 import { signupsOpen, SIGNUPS_CLOSED_MESSAGE } from '../../../lib/signups';
 import {
@@ -36,6 +36,9 @@ import { CURRENT_TOS_VERSION } from '../../../lib/orders-store';
 // stop them outright while the "taken" answer has to be given at all.
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_SIGNUPS_PER_IP = 5;
+// A second, generous bucket per IPv6 /48 (round-9 gates-token#0): one party
+// can hold 65,536 /64s. Same address as the first for IPv4.
+const MAX_SIGNUPS_PER_NETWORK = 25;
 
 // Something@domain.tld, with a 2+ letter TLD and no whitespace.
 const CREATOR_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@.]{2,}$/;
@@ -143,6 +146,14 @@ export default async function handler(req, res) {
   if (limited) {
     res.setHeader('Retry-After', String(retryAfterSeconds));
     return res.status(429).json({ error: 'Too many signup attempts from this connection. Please wait a few minutes and try again.' });
+  }
+  if (clientNetworkCoarse(req) !== clientNetwork(req)) {
+    const perNet = consumeAttempt(`signup:net:${clientNetworkCoarse(req)}`, { limit: MAX_SIGNUPS_PER_NETWORK, windowMs: WINDOW_MS });
+    if (perNet.limited) {
+      refundAttempt(`signup:ip:${clientNetwork(req)}`);
+      res.setHeader('Retry-After', String(perNet.retryAfterSeconds));
+      return res.status(429).json({ error: 'Too many signup attempts from this connection. Please wait a few minutes and try again.' });
+    }
   }
 
   // The same public-text screen every other creator-text writer runs

@@ -287,6 +287,31 @@ restart the unit, then release the held payouts. Never delete the file to
 workers by hand outside systemd needs `OUTFLOW_JOURNAL_DIR` set to a private
 directory.
 
+**Repairing a corrupt line** (the log says `outflow journal corrupt at line
+N`). A torn or unterminated last line is repaired automatically at load;
+damage anywhere else is refused on purpose. To repair it by hand:
+
+1. `systemctl stop onlyone-workers`
+2. Back the file up first:
+   `cp -a /var/lib/onlyone-workers/treasury-outflow.jsonl /var/lib/onlyone-workers/treasury-outflow.jsonl.bak-$(date +%s)`
+3. Edit line N. Each line is one JSON object
+   (`{"at":…,"kind":…,"cents":…,"ref":…}`). If two entries are glued onto
+   one line (`{…}{…}`), SPLIT them onto two lines -- never drop either. Remove
+   only a fragment that is not a complete entry. Never remove a whole valid
+   entry: each one is money the treasury signed, and removing it raises the
+   daily cap by that much.
+4. `systemctl start onlyone-workers`, confirm the error is gone in
+   `journalctl -u onlyone-workers`, then release the HELD payouts.
+
+**Clock corrections.** Entries are stamped with the system clock. If the
+clock ran AHEAD and was then corrected, entries written meanwhile are dated
+in the future; the journal pulls them back to "now" at load (the log says
+`OUTFLOW JOURNAL: … in the FUTURE`) so they still count, but only for one
+full 24h window. Automatic payouts, burns and hedges may therefore stay
+HELD/deferred for up to 24h after a clock correction -- expected, not a
+fault. Keep NTP (`timedatectl`) enabled on the droplet; release held
+payouts by hand if they cannot wait.
+
 The deposit indexer also refuses (logs an error, credits nothing) if the
 `DepositAddress` table for the chain holds more than `DEPOSIT_ADDRESS_MAX`
 (default 250,000) rows, rather than loading them all into the key-holding

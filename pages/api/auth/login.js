@@ -1,6 +1,6 @@
 import { findUserByEmail, verifyPassword } from '../../../lib/users-store';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
-import { checkRateLimit, clearFailures, clientNetwork, consumeAttempt, recordFailure, refundAttempt } from '../../../lib/rate-limit';
+import { checkRateLimit, clearFailures, clientNetwork, clientNetworkCoarse, consumeAttempt, recordFailure, refundAttempt } from '../../../lib/rate-limit';
 import { effectiveUserStatus } from '../../../lib/user-moderation';
 import { EMAIL_IDENTIFIER_MAX, PASSWORD_MAX } from '../../../lib/field-validation';
 
@@ -29,7 +29,17 @@ import { EMAIL_IDENTIFIER_MAX, PASSWORD_MAX } from '../../../lib/field-validatio
 // serverless -- it is a speed bump, not a hard lockout.
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS_PER_IP = 10;
+// Per IPv6 /48 (IPv4: the same address, so this only adds anything for
+// IPv6). Generous, because a mobile carrier puts many subscribers in one /48;
+// it exists to stop a free /48 from being 65,536 separate /64 budgets.
+const MAX_ATTEMPTS_PER_NETWORK = 100;
 const MAX_ATTEMPTS_PER_ACCOUNT = 10;
+// How many DIFFERENT /64s of one /48 must have failed against an account
+// before the whole /48 counts as dirty for it. One is not enough: a carrier
+// puts many subscribers in one /48, and a single neighbour failing once must
+// not lock everyone else in it out of their own account. Three still caps a
+// party holding the whole /48 at a handful of guesses per saturated account.
+const NET_DIRTY_DISTINCT_64S = 3;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -64,12 +74,26 @@ export default async function handler(req, res) {
   // addresses, so a per-/128 key gave every request a fresh per-IP budget
   // AND a clean "dirty" marker below -- unlimited sequential guesses at one
   // account (round-8 gates-token#0). See lib/rate-limit.js clientNetwork.
+  //
+  // A /64 is not the smallest unit one party controls either (a free routed
+  // /48 is 65,536 of them), so the "dirty" marker is also written and checked
+  // at the /48, and the /48 gets a generous per-network budget of its own
+  // (round-9 gates-token#0): rotating /64s inside one allocation neither
+  // resets the marker nor multiplies the budget. The /48 marker needs
+  // NET_DIRTY_DISTINCT_64S different failing /64s, not one, so a neighbour on
+  // a shared carrier /48 cannot lock others out alone. For IPv4 both keys are
+  // the same address.
   const ip = clientNetwork(req);
+  const net = clientNetworkCoarse(req);
   const ipKey = `login:ip:${ip}`;
+  const netKey = `login:net:${net}`;
   const accountKey = `login:account:${email.toLowerCase()}`;
   // Marker, not a counter: "this host has failed a login against this
   // account inside the window." Written on a wrong password below.
   const accountFromIpKey = `${accountKey}:from:${ip}`;
+  // At the /48 it counts DISTINCT failing /64s (see NET_DIRTY_DISTINCT_64S).
+  const accountFromNetKey = `${accountKey}:fromnet:${net}`;
+  const hasNet = net !== ip;
 
   // Counted here, BEFORE the bcrypt compare below -- not recorded after it.
   // Checking up here and only counting failures down there is a
@@ -82,9 +106,20 @@ export default async function handler(req, res) {
     res.setHeader('Retry-After', String(perIp.retryAfterSeconds));
     return res.status(429).json({ error: 'Too many login attempts. Please wait a few minutes and try again.' });
   }
+  if (hasNet) {
+    const perNet = consumeAttempt(netKey, { limit: MAX_ATTEMPTS_PER_NETWORK, windowMs: WINDOW_MS });
+    if (perNet.limited) {
+      // This request was never let through, so its /64 hit is taken back.
+      refundAttempt(ipKey);
+      res.setHeader('Retry-After', String(perNet.retryAfterSeconds));
+      return res.status(429).json({ error: 'Too many login attempts. Please wait a few minutes and try again.' });
+    }
+  }
 
   const perAccount = consumeAttempt(accountKey, { limit: MAX_ATTEMPTS_PER_ACCOUNT, windowMs: WINDOW_MS });
-  if (perAccount.limited && checkRateLimit(accountFromIpKey, { limit: 1, windowMs: WINDOW_MS }).limited) {
+  const dirty = checkRateLimit(accountFromIpKey, { limit: 1, windowMs: WINDOW_MS }).limited
+    || (hasNet && checkRateLimit(accountFromNetKey, { limit: NET_DIRTY_DISTINCT_64S, windowMs: WINDOW_MS }).limited);
+  if (perAccount.limited && dirty) {
     res.setHeader('Retry-After', String(perAccount.retryAfterSeconds));
     return res.status(429).json({ error: 'Too many login attempts. Please wait a few minutes and try again.' });
   }
@@ -100,7 +135,11 @@ export default async function handler(req, res) {
     if (!user || !passwordOk) {
       // Marks this host dirty for this account, which is what makes the
       // per-account brake above apply to it.
+      // The /48 marker counts this /64 only the first time it fails in the
+      // window, so one neighbour cannot make its whole /48 dirty alone.
+      const firstFromThis64 = !checkRateLimit(accountFromIpKey, { limit: 1, windowMs: WINDOW_MS }).limited;
       recordFailure(accountFromIpKey, { limit: 1, windowMs: WINDOW_MS });
+      if (hasNet && firstFromThis64) recordFailure(accountFromNetKey, { limit: NET_DIRTY_DISTINCT_64S, windowMs: WINDOW_MS });
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -112,8 +151,10 @@ export default async function handler(req, res) {
     // taken back, so successful logins from a shared IP (carrier NAT, an
     // office) never count against it, while failures still do.
     refundAttempt(ipKey);
+    if (hasNet) refundAttempt(netKey);
     clearFailures(accountKey);
     clearFailures(accountFromIpKey);
+    if (hasNet) clearFailures(accountFromNetKey);
 
     // A banned account cannot sign in (lib/user-moderation.js). Only said
     // after a correct password, so it reveals nothing to a guesser.

@@ -35,13 +35,18 @@ type RoomDeleter = { deleteRoom: (name: string) => Promise<unknown> };
  *  - suspend a row that is still ACTIVE (never downgrade a ban, nor take
  *    over an admin's suspension, which the site could then lift);
  *  - ban anything not already BANNED.
- * An admin's change (bySite unset) always applies. Returns whether the
- * change was applied; when it was not, nothing else here runs.
+ * An admin's change (bySite unset) always applies -- unless `noDowngrade`
+ * is set, when a SUSPENDED never overwrites a row that is already BANNED.
+ * The report-resolve route sets it: suspend_user there is a side effect of
+ * judging one report, and an admin working the queue must not silently
+ * lift a ban (the explicit POST /admin/users/:id/status may still do so).
+ * Returns whether the change was applied; when it was not, nothing else
+ * here runs.
  */
 export async function applyUserStatus(
   userId: string,
   status: ModerationStatus,
-  opts: { bySite?: boolean; log?: Log; rooms?: RoomDeleter } = {},
+  opts: { bySite?: boolean; noDowngrade?: boolean; log?: Log; rooms?: RoomDeleter } = {},
 ): Promise<boolean> {
   const log = opts.log ?? { error: (o: unknown, m?: string) => console.error(m ?? 'moderation', o) };
   // A site LIFT also requires, in the same statement, that neither recorded
@@ -57,7 +62,7 @@ export async function applyUserStatus(
     { OR: [{ siteCreatorStatus: null }, { siteCreatorStatus: { notIn: RESTRICTIVE } }] },
     { OR: [{ siteAccountStatus: null }, { siteAccountStatus: { notIn: RESTRICTIVE } }] },
   ];
-  const guard = !opts.bySite ? {}
+  const guard = !opts.bySite ? (opts.noDowngrade && status === 'SUSPENDED' ? { status: { not: 'BANNED' as const } } : {})
     : status === 'ACTIVE' ? { status: 'SUSPENDED' as const, statusBySite: true, AND: siteNoLongerRestricts }
       : status === 'SUSPENDED' ? { status: 'ACTIVE' as const }
         : { status: { not: 'BANNED' as const } };

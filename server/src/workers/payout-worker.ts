@@ -157,10 +157,16 @@ export async function outflowLimitReason(payoutId: string, amountCents: number, 
     console.error('payout: outflow journal unavailable -- holding payouts', (e as Error).message);
     return 'held: treasury outflow journal unavailable -- fix the workers state directory, then release';
   }
-  const since = Date.now() - DAY_MS;
+  const now = Date.now();
+  const since = now - DAY_MS;
+  // Bounded above as well: a row signed while the clock ran ahead would
+  // otherwise count for as long as the jump. The journal is the binding
+  // figure for such a row (outflow-journal.ts clamps future entries to now,
+  // so they still count for one full window); the database figure is only
+  // the second opinion here, and is writable by any DB writer anyway.
   const agg = await prisma.payout.aggregate({
     _sum: { amountCents: true },
-    where: { id: { not: payoutId }, signedAt: { gte: new Date(since) }, status: { in: ['PROCESSING', 'SENT', 'FAILED', 'HELD'] } },
+    where: { id: { not: payoutId }, signedAt: { gte: new Date(since), lte: new Date(now) }, status: { in: ['PROCESSING', 'SENT', 'FAILED', 'HELD'] } },
   });
   const recorded = Number(agg._sum.amountCents ?? 0n);
   if (Math.max(here, recorded) + amountCents > DAILY_MAX_CENTS) return 'held: daily payout limit reached (PAYOUT_DAILY_MAX_CENTS) -- release it later';

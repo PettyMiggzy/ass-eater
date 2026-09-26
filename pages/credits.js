@@ -139,7 +139,11 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
       body: JSON.stringify({ txHash }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw frozenError(res, data, 'Could not confirm payment');
+    if (!res.ok) {
+      const err = frozenError(res, data, 'Could not confirm payment');
+      err.code = typeof data?.code === 'string' ? data.code : null;
+      throw err;
+    }
     return data;
   };
 
@@ -201,13 +205,27 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
       if (!/^0x[0-9a-fA-F]{64}$/.test(recoverHash.trim())) {
         throw new Error('That doesn’t look like a transaction hash (should start with 0x, 66 characters total)');
       }
-      // A frozen account can't prove a wallet (the nonce is refused), and
-      // doesn't need to: /api/credits/buy answers a frozen account BEFORE the
-      // sender proof, crediting nothing -- it only reports a hash that was
-      // already credited to this account (alreadyCredited + frozen), so the
-      // fan isn't sent chasing a refund for money already in their balance.
-      if (!frozen) await proveWallet();
-      const data = await submitPayment(recoverHash.trim());
+      // Asked WITHOUT a fresh wallet proof first: /api/credits/buy answers a
+      // hash already credited to this account (alreadyCredited, plus frozen
+      // and a note for a frozen account) before it asks for any proof, and a
+      // still-valid proof from earlier is read from its cookie. So a fan
+      // whose payment was in fact credited -- or whose wallet is no longer to
+      // hand -- is not made to connect and sign just to hear that. Only a
+      // PROOF_REQUIRED answer (nothing credited, no valid proof) leads to the
+      // wallet signature and one retry. So does SENDER_MISMATCH: a proof from
+      // earlier (the cookie lasts 2h) may be for a different wallet than the
+      // one this payment was sent from, and re-proving with the wallet now
+      // connected replaces it. A frozen account can't prove a wallet (the
+      // nonce is refused) and is never asked to.
+      const hash = recoverHash.trim();
+      let data;
+      try {
+        data = await submitPayment(hash);
+      } catch (err) {
+        if (frozen || (err.code !== 'PROOF_REQUIRED' && err.code !== 'SENDER_MISMATCH')) throw err;
+        await proveWallet();
+        data = await submitPayment(hash);
+      }
       // alreadyCredited: this hash was credited to this account before (a
       // retry after a lost response). That is a success -- show it as one
       // and re-read the balance, which may have moved since.

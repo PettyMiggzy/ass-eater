@@ -199,6 +199,24 @@ describe('auctions placeBid', () => {
 });
 
 describe('auctions closeAuction', () => {
+  it('is a no-op while the deadline is still in the future (an anti-snipe extension landed after the sweep picked it)', async () => {
+    const creatorId = await makeCreator();
+    const bidderId = await makeUser();
+    await fund(bidderId, 10_000);
+    const listing = await makeAuctionListing(creatorId, { startingBidCents: 1000, endsInMs: 60_000 });
+    await money(prisma, (tx) => placeBid(tx, listing.id, bidderId, 1000));
+    const result = await money(prisma, (tx) => closeAuction(tx, listing.id));
+    expect(result.sold).toBe(false);
+    expect((result as { notDue?: boolean }).notDue).toBe(true);
+    const still = await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } });
+    expect(still.status).toBe('ACTIVE');
+    expect(still.currentBidderId).toBe(bidderId);
+    expect(await balanceOf(bidderId)).toBe(9000n); // hold not released
+    // Once the (extended) deadline passes, the next sweep sells it.
+    const sold = await money(prisma, (tx) => closeAuction(tx, listing.id, new Date(still.auctionEndsAt!.getTime() + 1)));
+    expect(sold.sold).toBe(true);
+  });
+
   it('removes the listing with no sale when there were no bids', async () => {
     const creatorId = await makeCreator();
     const listing = await makeAuctionListing(creatorId, { endsInMs: -1000 });

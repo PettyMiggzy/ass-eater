@@ -486,6 +486,9 @@ model Media {
 
   @@index([sourceMediaId])
   @@index([status, processingSince])
+  // Report queue: "does this message have REJECTED media" (core/reports.ts
+  // listReports), and every takedown that selects a message's media.
+  @@index([messageId])
 }
 
 model Conversation {
@@ -515,6 +518,9 @@ model Message {
 
   @@unique([conversationId, broadcastId])
   @@index([conversationId, createdAt])
+  // Every copy of one mass DM (sender + broadcastId): broadcast takedowns,
+  // messageAndBroadcastSiblings, and the report queue (core/reports.ts).
+  @@index([senderId, broadcastId])
 }
 
 model MessageUnlock {
@@ -776,6 +782,12 @@ model LiveStream {
   endedAt          DateTime?
   tickets          LiveTicket[]
   minutes          LiveMinute[]
+
+  // At most one LIVE stream per creator: a partial unique index
+  // ("LiveStream_one_live_per_creator", round-9 migration -- Prisma can't
+  // express WHERE); core/live-sweep.ts startLiveStream also serializes on a
+  // per-creator advisory lock.
+  @@index([creatorId, status])
 }
 
 model LiveTicket {
@@ -828,6 +840,10 @@ model Report {
   // At most one OPEN report per (reporter, target): a partial unique index
   // in the round-4 migration (Prisma can't express WHERE); core/reports.ts
   // fileReport answers a collision with the existing report.
+
+  // Reports on one target, any reporter and status: the report queue's
+  // "already actioned" probe and the resolve route's related-report lookup.
+  @@index([targetType, targetId, status])
 }
 
 // ---------- NOTIFICATIONS ----------

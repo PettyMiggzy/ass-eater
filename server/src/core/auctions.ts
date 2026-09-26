@@ -179,10 +179,18 @@ export async function cancelAuction(tx: Tx, listingId: string, reason: string) {
 }
 
 /** Closes an ended auction: no sale (and a full release) if there were no bids, the reserve wasn't met or the seller is no longer active, otherwise converts the held winning bid into a real order. */
-export async function closeAuction(tx: Tx, listingId: string) {
+export async function closeAuction(tx: Tx, listingId: string, now: Date = new Date()) {
   const listing = await tx.listing.findUniqueOrThrow({ where: { id: listingId } });
   if (listing.saleType !== 'AUCTION') throw statusCode('not_an_auction', 400);
   if (listing.status !== 'ACTIVE') throw statusCode('wrong_status', 400);
+  // The deadline is re-checked HERE, on the row read inside this transaction.
+  // The sweep picks its `due` list outside any transaction, and a bid in the
+  // last 5 minutes pushes auctionEndsAt forward (placeBid, anti-snipe): one
+  // committing between that list and this read used to be closed anyway,
+  // settling to the last-second bidder and cancelling the extension every
+  // other bidder was promised. Not due is a no-op -- nothing released, status
+  // untouched -- and the sweep after the new deadline closes it.
+  if (!listing.auctionEndsAt || listing.auctionEndsAt.getTime() > now.getTime()) return { sold: false as const, notDue: true as const };
 
   const meetsReserve = listing.currentBidCents != null && (!listing.reserveCents || listing.currentBidCents >= listing.reserveCents);
   const active = await sellerActive(tx, listing.creatorId);

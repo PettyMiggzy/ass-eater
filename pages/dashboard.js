@@ -23,6 +23,7 @@ import { effectiveUserStatus } from '../lib/user-moderation';
 import { Icons, SolidIcons } from '../components/Brand';
 import PremiumBadge from '../components/public/PremiumBadge';
 import SiteNav from '../components/SiteNav';
+import { useCart } from '../lib/cart';
 import Inbox from '../components/dashboard/Inbox';
 import CashOutPanel from '../components/dashboard/CashOutPanel';
 import OrdersToShip from '../components/dashboard/OrdersToShip';
@@ -122,6 +123,7 @@ export default function Dashboard({
   publiclyVisible,
 }) {
   const router = useRouter();
+  const cart = useCart();
   const [creator, setCreator] = useState(initialCreator);
   const [listings, setListings] = useState(initialListings || []);
   const [draft, setDraft] = useState(() => draftFromCreator(initialCreator));
@@ -169,6 +171,9 @@ export default function Dashboard({
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
     } finally {
+      // Signed out: the cart (lib/cart.js) belongs to this account and must
+      // not be shown to, or paid for by, whoever signs in next on this browser.
+      cart.setViewer(null);
       router.push('/');
     }
   };
@@ -431,7 +436,10 @@ export default function Dashboard({
                 ? 'This account has been banned. You can no longer post, message, report or buy'
                 : `This account is suspended until ${formatDate(user.moderationUntil)}. Until then you can't post, message, report or buy`}
               {user.role === 'creator' && creator ? ', edit your profile, upload, list items or cash out' : ''}.
-              {user.role === 'creator' && creator ? ' You can still ship orders fans have already paid for.' : ''}{' '}
+              {/* Shipping stays open to a restricted LOGIN, but not to a
+                  creator record that is itself banned: /api/marketplace/orders
+                  /creator and /ship refuse that, so don't promise it. */}
+              {user.role === 'creator' && creator && creatorStatus !== 'banned' ? ' You can still ship orders fans have already paid for.' : ''}{' '}
               Questions: <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a>.
             </div>
           )}

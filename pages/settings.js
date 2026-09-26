@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Head from 'next/head';
 import SiteNav from '../components/SiteNav';
+import { useCart } from '../lib/cart';
 import { getSessionUser } from '../lib/session';
 import { publicUser } from '../lib/users-store';
 import { formatCredits } from '../lib/brand';
@@ -109,6 +110,7 @@ function DeleteAccount({ isCreator }) {
   // null = no confirmation pending; else { cents, purchases, changed } from the 409.
   const [forfeit, setForfeit] = useState(null);
   const [deleted, setDeleted] = useState(false);
+  const cart = useCart();
 
   if (isCreator) {
     return (
@@ -145,6 +147,9 @@ function DeleteAccount({ isCreator }) {
       }
       if (!res.ok) throw new Error(data.error || 'Could not delete your account.');
       setPassword('');
+      // Signed out: this account's cart must not carry over to whoever uses
+      // this browser next (lib/cart.js).
+      cart.setViewer(null);
       setDeleted(true);
     } catch (err) {
       setForfeit(null);

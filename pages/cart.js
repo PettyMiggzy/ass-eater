@@ -194,6 +194,15 @@ export default function CartPage({ sessionUser }) {
   const cartItemsRef = useRef(cart.items);
   cartItemsRef.current = cart.items;
 
+  // This page knows the signed-in account from its own session: hand it to
+  // the cart so a cart built by a different account on this browser is
+  // discarded (lib/cart.js resolveCartOwnership) before anything renders or
+  // is paid for, without waiting on the cart's own /api/auth/me check.
+  useEffect(() => {
+    cart.setViewer(uid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
   const refreshBalance = () =>
     fetch('/api/credits/balance')
       .then((r) => r.json())

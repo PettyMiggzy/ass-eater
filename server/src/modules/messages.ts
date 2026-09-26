@@ -113,6 +113,19 @@ const SENT_INCLUDE = { media: { select: { id: true, mime: true, previewKey: true
  * so the idempotency is testable against a real Postgres, like unlockPost.
  * Authorization (who may message whom, who may price) is the route's job.
  */
+/**
+ * How a direct message from `senderId` to `to` is sent, or null if it may
+ * not be: 'creator' when an operating creator writes to their own
+ * subscriber (free, may be priced); 'fan' when the sender subscribes to the
+ * recipient (a paid DM into a creator's inbox) -- which includes a creator
+ * messaging a creator they subscribe to.
+ */
+export async function dmSendRole(senderId: string, to: string, senderIsOperatingCreator: boolean): Promise<'creator' | 'fan' | null> {
+  if (senderIsOperatingCreator && await isSubscribed(to, senderId)) return 'creator';
+  if (await isSubscribed(senderId, to)) return 'fan';
+  return null;
+}
+
 export async function sendDirectMessage(
   senderId: string, to: string, isCreator: boolean,
   b: { text: string; mediaIds: string[]; priceCents: number; expectedPriceCents?: number; requestId?: string },
@@ -280,17 +293,28 @@ export const messages: FastifyPluginAsync = async (app) => {
     const to = req.params.userId as string;
     if (to === req.user.id) return reply.code(400).send({ error: 'self' });
     const me = await prisma.user.findUniqueOrThrow({ where: { id: req.user.id }, select: { role: true, kycStatus: true, siteUid: true, siteCreatorStatus: true } });
-    const isCreator = me.role === 'CREATOR' && creatorMayOperate(me);
+    const operatingCreator = me.role === 'CREATOR' && creatorMayOperate(me);
+    // Who may message whom is decided by the subscription, in EITHER
+    // direction -- not by the sender's role alone. A creator may DM their own
+    // subscribers (free, and may price the message); anyone -- a creator
+    // included -- may DM a creator THEY subscribe to, and that send is a
+    // paid fan->creator DM. Deciding from the role alone checked the wrong
+    // direction for a creator acting as a fan: an approved creator who
+    // subscribed to another creator was refused subscription_required and
+    // could not reach them even by paying the DM fee.
+    const role = await dmSendRole(req.user.id, to, operatingCreator);
+    if (!role) return reply.code(403).send({ error: 'subscription_required' });
+    // true: the creator side of a creator->subscriber DM (free, may be
+    // priced). false: a paid DM into a creator's inbox.
+    const isCreator = role === 'creator';
     // Any message can be priced -- plain text included, not just media
-    // attachments -- as long as the sender is a KYC'd creator.
+    // attachments -- as long as it is a KYC'd creator writing to their own
+    // subscriber.
     if (b.priceCents > 0 && !isCreator) return reply.code(400).send({ error: 'only_creators_can_price_messages' });
     // A priced message must have something in it -- same rule as POST
     // /broadcast and a PPV post. (unlockMessage refuses an empty one at
     // unlock time too; this stops it being sent at all.)
     if (b.priceCents > 0 && !b.mediaIds.length && !b.text.trim()) return reply.code(400).send({ error: 'empty_message' });
-    // fans may only DM creators they subscribe to; creators may DM their subscribers
-    const allowed = isCreator ? await isSubscribed(to, req.user.id) : await isSubscribed(req.user.id, to);
-    if (!allowed) return reply.code(403).send({ error: 'subscription_required' });
 
     // What a fan pays to land a message in a creator's inbox.
     //

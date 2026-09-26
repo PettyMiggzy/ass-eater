@@ -113,39 +113,68 @@ export type ReportListQuery = {
 
 /**
  * The moderation queue, paged, each report marked `contentRemoved` when what
- * it points at is already down: a removed post, a REMOVED listing, a BANNED
- * user, or a message whose content was taken down (for a mass DM, ANY copy's
- * report ACTIONED or any copy's media REJECTED -- broadcastTakenDown; for a
- * single DM, an ACTIONED report on it).
+ * it points at is already down (nobody is served it any more):
+ *  - a post that is removed, or whose creator is BANNED;
+ *  - a listing that is REMOVED, or whose creator is BANNED;
+ *  - a BANNED user;
+ *  - a message whose sender is BANNED, that has an ACTIONED report or a
+ *    REJECTED media row of its own (a single DM taken down through DELETE
+ *    /admin/media/:id writes no report), or -- for a mass DM -- ANY copy of
+ *    the same broadcast with an ACTIONED report or REJECTED media
+ *    (broadcastTakenDown).
+ * SUSPENDED owners deliberately do not count: suspended content comes back
+ * when the suspension lifts, so a report on it still needs a decision.
  *
  * Ordered live-first, then oldest-first: one widely reported drop (a report
  * per subscriber's copy, left OPEN so every reason is still read) cannot
  * push a report on content that is still up behind it. Nothing is hidden
  * or auto-closed -- `contentRemoved=false` narrows to what still needs a
  * takedown, `true` to what needs only a decision on the reporter's reason.
+ *
+ * Cost: the ORDER BY evaluates the flag for every report of the status, so
+ * each branch must be an index probe. The taken-down broadcasts are computed
+ * ONCE per query (the `td` CTE, keyed by senderId+broadcastId) instead of
+ * joining every report's message to all its sibling copies -- that join,
+ * with an OR in its ON clause, was a sequential scan of Message per report
+ * (round-9 migration adds the Message(senderId, broadcastId),
+ * Report(targetType, targetId, status) and Media(messageId) indexes the
+ * remaining probes use).
  */
 export async function listReports(q: ReportListQuery) {
+  const banned = (col: Prisma.Sql) => Prisma.sql`EXISTS (SELECT 1 FROM "User" ou WHERE ou.id = ${col} AND ou.status = 'BANNED')`;
   const removed = Prisma.sql`CASE r."targetType"
-      WHEN 'post' THEN EXISTS (SELECT 1 FROM "Post" p WHERE p.id = r."targetId" AND p.removed)
-      WHEN 'listing' THEN EXISTS (SELECT 1 FROM "Listing" l WHERE l.id = r."targetId" AND l.status = 'REMOVED')
+      WHEN 'post' THEN EXISTS (SELECT 1 FROM "Post" p WHERE p.id = r."targetId" AND (p.removed OR ${banned(Prisma.sql`p."creatorId"`)}))
+      WHEN 'listing' THEN EXISTS (SELECT 1 FROM "Listing" l WHERE l.id = r."targetId" AND (l.status = 'REMOVED' OR ${banned(Prisma.sql`l."creatorId"`)}))
       WHEN 'user' THEN EXISTS (SELECT 1 FROM "User" u WHERE u.id = r."targetId" AND u.status = 'BANNED')
       WHEN 'message' THEN EXISTS (
-        SELECT 1 FROM "Message" m JOIN "Message" s
-          ON s.id = m.id OR (m."broadcastId" IS NOT NULL AND s."senderId" = m."senderId" AND s."broadcastId" = m."broadcastId")
-        WHERE m.id = r."targetId" AND (
-          EXISTS (SELECT 1 FROM "Report" r2 WHERE r2."targetType" = 'message' AND r2."targetId" = s.id AND r2.status = 'ACTIONED')
-          OR (m."broadcastId" IS NOT NULL AND EXISTS (SELECT 1 FROM "Media" md WHERE md."messageId" = s.id AND md.status = 'REJECTED'))))
+        SELECT 1 FROM "Message" m WHERE m.id = r."targetId" AND (
+          ${banned(Prisma.sql`m."senderId"`)}
+          OR EXISTS (SELECT 1 FROM "Report" r2 WHERE r2."targetType" = 'message' AND r2."targetId" = m.id AND r2.status = 'ACTIONED')
+          OR EXISTS (SELECT 1 FROM "Media" md WHERE md."messageId" = m.id AND md.status = 'REJECTED')
+          OR (m."broadcastId" IS NOT NULL AND EXISTS (SELECT 1 FROM td WHERE td."senderId" = m."senderId" AND td."broadcastId" = m."broadcastId"))))
       ELSE false END`;
   const conds: Prisma.Sql[] = [Prisma.sql`r.status = ${q.status}::"ReportStatus"`];
   if (q.targetType) conds.push(Prisma.sql`r."targetType" = ${q.targetType}`);
-  const base = Prisma.sql`SELECT r.*, (${removed}) AS "contentRemoved" FROM "Report" r WHERE ${Prisma.join(conds, ' AND ')}`;
+  const where = Prisma.join(conds, ' AND ');
+  const base = Prisma.sql`
+    WITH td AS MATERIALIZED (
+      SELECT s."senderId", s."broadcastId" FROM "Report" r2 JOIN "Message" s ON s.id = r2."targetId"
+        WHERE r2."targetType" = 'message' AND r2.status = 'ACTIONED' AND s."broadcastId" IS NOT NULL
+      UNION
+      SELECT s."senderId", s."broadcastId" FROM "Media" md JOIN "Message" s ON s.id = md."messageId"
+        WHERE md.status = 'REJECTED' AND s."broadcastId" IS NOT NULL
+    )
+    SELECT r.*, (${removed}) AS "contentRemoved" FROM "Report" r WHERE ${where}`;
   const filter = q.contentRemoved === undefined ? Prisma.empty : Prisma.sql`WHERE q."contentRemoved" = ${q.contentRemoved}`;
   const [reports, count] = await Promise.all([
     prisma.$queryRaw<Array<Record<string, unknown> & { contentRemoved: boolean }>>`
       SELECT * FROM (${base}) q ${filter}
       ORDER BY q."contentRemoved" ASC, q."createdAt" ASC, q.id ASC
       LIMIT ${q.limit} OFFSET ${q.offset}`,
-    prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM (${base}) q ${filter}`,
+    // The total needs the flag only when it is a filter.
+    q.contentRemoved === undefined
+      ? prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM "Report" r WHERE ${where}`
+      : prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM (${base}) q ${filter}`,
   ]);
   return { reports, total: Number(count[0]?.n ?? 0) };
 }

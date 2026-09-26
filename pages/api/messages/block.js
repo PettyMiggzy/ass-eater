@@ -1,10 +1,15 @@
 import { getSessionUser } from '../../../lib/session';
-import { setConversationBlocked, DM_ERRORS } from '../../../lib/messages-store';
+import { setConversationBlocked, unblockByHandle, DM_ERRORS } from '../../../lib/messages-store';
 
 /**
  * POST /api/messages/block { userId, blocked: boolean }
  *   -> 200 { ok: true, conversation }   (projection: blockedByMe / blockedByThem)
  *   -> 404 no such account (block), or no conversation with it (unblock)
+ * POST /api/messages/block { blockHandle, blocked: false }
+ *   -> 200 { ok: true, blockHandle }    lifts a block-only row the inbox listed
+ *      by its opaque handle (/api/messages/conversations never sends that
+ *      row's counterpart id, so there is no userId to send)
+ *   -> 404 no such block-only row of the caller's
  *
  * Blocks (or unblocks) the other side of the caller's conversation with
  * `userId`. A block needs no prior conversation (lib/messages-store.js
@@ -17,7 +22,18 @@ export default async function handler(req, res) {
   const user = await getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });
 
-  const { userId, blocked } = req.body && typeof req.body === 'object' ? req.body : {};
+  const { userId, blocked, blockHandle } = req.body && typeof req.body === 'object' ? req.body : {};
+  if (blockHandle !== undefined) {
+    if (typeof blockHandle !== 'string' || blockHandle.length > 64) return res.status(400).json({ error: 'Invalid block handle' });
+    if (blocked !== false) return res.status(400).json({ error: 'A block handle can only be unblocked.' });
+    try {
+      return res.status(200).json(await unblockByHandle(user.id, blockHandle));
+    } catch (err) {
+      if (err.code === DM_ERRORS.CONVERSATION_NOT_FOUND) return res.status(404).json({ error: 'Conversation not found' });
+      console.error('[messages/block] unexpected error:', err);
+      return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    }
+  }
   if ((typeof userId !== 'string' && typeof userId !== 'number') || !String(userId).trim() || String(userId).length > 100) {
     return res.status(400).json({ error: 'Missing userId' });
   }

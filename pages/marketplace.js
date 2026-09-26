@@ -155,6 +155,13 @@ export default function Marketplace({
 }) {
   const router = useRouter();
   const cart = useCart();
+  // The session this page rendered for is authoritative: a cart another
+  // account built on this browser is discarded before it can be added to.
+  const viewerUid = sessionUser?.id != null ? String(sessionUser.id) : null;
+  useEffect(() => {
+    cart.setViewer(viewerUid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewerUid]);
   const [toast, setToast] = useState(null);
   const [reporting, setReporting] = useState(null);
   const [q, setQ] = useState('');

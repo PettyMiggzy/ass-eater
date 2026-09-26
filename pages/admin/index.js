@@ -15,7 +15,7 @@ import {
   dollars,
   describeObligation,
 } from '../../components/admin/adminApi';
-import { draftFrom, fieldsFromDraft, rebaseDraft, fieldName } from '../../components/admin/creatorDraft';
+import { draftFrom, fieldsFromDraft, rebaseDraft, fieldName, changedFrom, EDITABLE_KEYS, foundingWindowOutcome } from '../../components/admin/creatorDraft';
 import { CATEGORIES, MAX_CATEGORIES } from '../../lib/categories';
 import { getMarketplacePaymentConfig } from '../../lib/marketplace-payment-config';
 
@@ -186,6 +186,21 @@ export default function AdminPanel() {
   // was never approved), so the option isn't offered for one.
   const selectedIsPending = !!selected && (selected.status === 'pending' || selectedStatus === 'pending');
 
+  // What saving does to a Founding creator whose 30-day fee-free window has
+  // not started -- foundingWindowOutcome() mirrors the server's stamping
+  // rules. Null when the window already started.
+  const foundingWindowHint = (() => {
+    if (!selected) return null;
+    const o = foundingWindowOutcome(selected, draft.status || selectedStatus);
+    if (o.kind === 'started') return null;
+    if (o.kind === 'revoked') return 'Saving as Banned revokes Founding and frees the slot, whatever this box says.';
+    if (o.kind === 'approval') return 'Slot reserved; the 30-day fee-free window starts the day they are approved (set to Active).';
+    if (o.kind === 'at') {
+      return `The 30-day fee-free window starts when the suspension ends (${new Date(o.at).toLocaleDateString()}${o.fresh ? ', 30 days after this save' : ''}).`;
+    }
+    return 'Saving starts their 30-day fee-free window now.';
+  })();
+
   /** The roster as the server has it now, or null (status already set). */
   const fetchRoster = async () => {
     const { res, data } = await adminGet(adminKey, '/api/admin/creators');
@@ -258,6 +273,24 @@ export default function AdminPanel() {
     }
   };
 
+  // A creator changed by ANOTHER tab of this panel (a takedown request's
+  // enforcement suspending or banning them). The roster always takes the new
+  // copy; the open editor only when it holds no unsaved edits. Overwriting
+  // the draft used to throw away a half-typed bio or payout wallet with no
+  // message. With edits pending, the draft is left alone and saveProfile's
+  // rebase onto a fresh read keeps the edits and stops on any real conflict.
+  const applyCreatorFromElsewhere = (creator) => {
+    if (!creator || creator.id === undefined) return;
+    const dirty = isOpen(creator.id) && !!baseline && EDITABLE_KEYS.some((k) => changedFrom(draft, baseline, k));
+    applyCreator(creator, { resyncDraft: !dirty });
+    if (dirty) {
+      setStatus(
+        `${creator.name || 'This creator'} was changed by that action (now ${effectiveCreatorStatus(creator) || 'active'}). `
+        + 'Your unsaved edits in the creator editor were kept; saving will apply them on top of the current record.',
+      );
+    }
+  };
+
   const saveProfile = async () => {
     if (!baseline) { setStatus('Error: this creator is still loading. Try again in a moment.'); return; }
     if (fieldsFromDraft(draft, baseline).error) { setStatus(`Error: ${fieldsFromDraft(draft, baseline).error}`); return; }
@@ -301,7 +334,9 @@ export default function AdminPanel() {
       if (now && effectiveCreatorStatus(now) === 'suspended' && now.suspendedUntil) {
         notes.push(`Suspended until ${new Date(now.suspendedUntil).toLocaleDateString()}.`);
       }
-      if (built.fields.status === 'banned') notes.push('Their unsold listings are taken down.');
+      if (built.fields.status === 'banned') {
+        notes.push('Their unsold listings are taken down. Any paid order they had not shipped is listed under "Their orders" below -- close each one so its buyer is told.');
+      }
       setStatus(['Saved.', ...notes].join(' '));
     } catch (err) {
       setStatus(`Error: ${err.message}`);
@@ -838,7 +873,7 @@ export default function AdminPanel() {
               adminKey={adminKey}
               creators={creators}
               onSummary={setNciiSummary}
-              onCreatorChanged={(c) => applyCreator(c, { resyncDraft: true })}
+              onCreatorChanged={applyCreatorFromElsewhere}
               alertsConfigured={alertsStatus ? alertsStatus.nciiWebhookConfigured : null}
             />
           ) : page === 'records' ? (
@@ -1155,7 +1190,7 @@ export default function AdminPanel() {
                       Founding Creator — {foundingCount} of {FOUNDING_LIMIT} taken
                       {foundingCapReached && !draft.founding && ' (full)'}
                     </label>
-                    {draft.founding && selected.foundingSince && (
+                    {draft.founding && selected.foundingSince && Date.parse(selected.foundingSince) <= Date.now() && (
                       <p className="basis-full text-xs text-gray-500 -mt-3">
                         Founding since {new Date(selected.foundingSince).toLocaleDateString()} — granting again
                         does not restart the fee-free window.
@@ -1174,12 +1209,8 @@ export default function AdminPanel() {
                         auto-granted again. Tick it to re-grant by hand.
                       </p>
                     )}
-                    {draft.founding && !selected.foundingSince && (
-                      <p className="basis-full text-xs text-gray-500 -mt-3">
-                        {selectedStatus === 'active'
-                          ? 'Slot held, but the fee-free window has not started yet -- it starts the next time they are approved or reinstated to Active.'
-                          : 'Slot reserved; the 30-day fee-free window starts the day they are approved (set to Active).'}
-                      </p>
+                    {draft.founding && foundingWindowHint && (
+                      <p className="basis-full text-xs text-gray-500 -mt-3">{foundingWindowHint}</p>
                     )}
                     {selectedIsPending && !draft.founding && !selected.foundingRevokedAt && (
                       <p className="basis-full text-xs text-gray-500 -mt-3">
@@ -1368,6 +1399,32 @@ export default function AdminPanel() {
                       ))}
                     </div>
                   </div>
+
+                  {/* This creator's orders and listings, found by id rather
+                      than typed in: a ban or delete only reports how MANY
+                      paid orders are unshipped, and a listing an admin finds
+                      themselves had no takedown button short of a ban. */}
+                  <OrdersPanel
+                    key={`orders-${selected.id}`}
+                    adminKey={adminKey}
+                    creators={creators}
+                    fixedCreatorId={String(selected.id)}
+                    title="Their orders"
+                  />
+                  <details className="premium-card p-4">
+                    <summary className="cursor-pointer text-sm font-bold text-white">Take down one of their listings, wall comments or messages</summary>
+                    <div className="mt-3">
+                      <TakedownControl
+                        key={`takedown-${selected.id}`}
+                        adminKey={adminKey}
+                        creators={creators}
+                        initialCreatorId={String(selected.id)}
+                        disabled={busy}
+                        onDone={async (msg) => { setStatus(msg); }}
+                        onError={(msg) => setStatus(`Error: ${msg}`)}
+                      />
+                    </div>
+                  </details>
                 </div>
               )}
             </div>
@@ -2455,9 +2512,13 @@ function lookupAccountLabel(a) {
 }
 
 /**
- * "Take down content" for one TAKE IT DOWN request: removes the one listing,
- * direct message or wall comment the request names
- * (POST /api/admin/content-takedown with nciiReportId). A listing comes down
+ * "Take down content": removes one listing, direct message or wall comment
+ * (POST /api/admin/content-takedown). Inside an open TAKE IT DOWN request it
+ * is recorded against that request (nciiReportId) so the request can be
+ * resolved as removed. With no `report` (the standalone section in ACCOUNTS
+ * and the creator editor) it takes down something an admin found themselves
+ * -- no report or takedown request needed, and none is invented: the item is
+ * still copied and the takedown written to the audit trail. A listing comes down
  * WITH the files buyers paid for. For a POSSIBLE MINOR request the files are
  * always quarantined as evidence first (the server forces it too); for any
  * other request the admin may choose to. Gallery items and profile photos are
@@ -2467,11 +2528,17 @@ function lookupAccountLabel(a) {
  * only in the two participants' inboxes and comment ids are shown nowhere, so
  * the control lists a creator's wall comments, or an account's conversations
  * and then a thread's messages (GET /api/admin/content-lookup), each with its
- * own Take down button. The raw-id inputs stay as a fallback.
+ * own Take down button. A creator's marketplace listings are listed the same
+ * way (kind=listings). The raw-id inputs stay as a fallback.
  */
-function TakedownControl({ adminKey, creators, report, disabled, onDone, onError }) {
+function TakedownControl({ adminKey, creators, report = null, initialCreatorId = '', disabled, onDone, onError }) {
   const minor = report?.category === 'minor';
+  // Every string that names the request; empty in standalone mode.
+  const forReq = report ? ` for request #${String(report.id)}` : '';
   const [type, setType] = useState('listing');
+  // Listing lookup: a creator's listings, each with its own Take down.
+  const [listingCreatorId, setListingCreatorId] = useState(initialCreatorId ? String(initialCreatorId) : '');
+  const [listings, setListings] = useState(null); // { creatorId, listings }
   const [listingId, setListingId] = useState('');
   const [conversationId, setConversationId] = useState('');
   const [messageId, setMessageId] = useState('');
@@ -2480,12 +2547,12 @@ function TakedownControl({ adminKey, creators, report, disabled, onDone, onError
   const [busy, setBusy] = useState(false);
 
   // Wall-comment lookup.
-  const [wallCreatorId, setWallCreatorId] = useState('');
+  const [wallCreatorId, setWallCreatorId] = useState(initialCreatorId ? String(initialCreatorId) : '');
   const [wall, setWall] = useState(null); // { creatorId, posts, nextBefore }
   // DM lookup: by email/username, user id or creator -> conversations -> thread.
   const [dmBy, setDmBy] = useState('login');
   const [dmWho, setDmWho] = useState('');
-  const [dmCreatorId, setDmCreatorId] = useState('');
+  const [dmCreatorId, setDmCreatorId] = useState(initialCreatorId ? String(initialCreatorId) : '');
   const [convos, setConvos] = useState(null); // { account, conversations, nextOffset }
   const [thread, setThread] = useState(null); // { id, participants, messages }
   const [lookupBusy, setLookupBusy] = useState(false);
@@ -2505,6 +2572,20 @@ function TakedownControl({ adminKey, creators, report, disabled, onDone, onError
       const data = await lookup({ kind: 'wall', creatorId: String(cid), ...(more && wall?.nextBefore ? { before: wall.nextBefore } : {}) });
       const posts = Array.isArray(data.posts) ? data.posts : [];
       setWall({ creatorId: String(cid), posts: more ? [...(wall?.posts || []), ...posts] : posts, nextBefore: data.nextBefore || null });
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setLookupBusy(false);
+    }
+  };
+
+  const loadListings = async () => {
+    const cid = listingCreatorId;
+    if (!cid) { onError('Pick the creator whose listing it is.'); return; }
+    setLookupBusy(true);
+    try {
+      const data = await lookup({ kind: 'listings', creatorId: String(cid) });
+      setListings({ creatorId: String(cid), listings: Array.isArray(data.listings) ? data.listings : [] });
     } catch (err) {
       onError(err.message);
     } finally {
@@ -2548,10 +2629,10 @@ function TakedownControl({ adminKey, creators, report, disabled, onDone, onError
     let what;
     const kind = picked?.type || type;
     if (kind === 'listing') {
-      const idv = listingId.trim();
+      const idv = String(picked?.listingId ?? listingId).trim();
       if (!TAKEDOWN_ID_RE.test(idv)) { onError('Enter the listing number (e.g. 12 from /marketplace?listing=12).'); return; }
       target = { type: kind, listingId: idv };
-      what = `marketplace listing #${idv}, INCLUDING the files buyers paid for (they stop receiving it)`;
+      what = `marketplace listing #${idv}${picked?.label ? ` (${picked.label})` : ''}, INCLUDING the files buyers paid for (they stop receiving it)`;
     } else if (kind === 'wall_post') {
       const idv = String(picked?.postId ?? postId).trim();
       if (!TAKEDOWN_ID_RE.test(idv)) { onError('Enter the wall comment number, or find it with "Show comments".'); return; }
@@ -2566,25 +2647,32 @@ function TakedownControl({ adminKey, creators, report, disabled, onDone, onError
     }
     const quarantine = minor || preserve;
     if (!confirm(
-      `Take down ${what} for request #${report.id}?`
+      `Take down ${what}${forReq}?`
       + (quarantine ? ' Its files are QUARANTINED as evidence first (kept, never served, listed in the Evidence tab).' : ' Its files are deleted.')
-      + ' A copy of the item is kept on the request and in the audit trail.',
+      + (report ? ' A copy of the item is kept on the request and in the audit trail.' : ' A copy of the item is kept in the audit trail. No report or takedown request is attached.'),
     )) return;
     setBusy(true);
     try {
       const { res, data } = await adminPost(adminKey, '/api/admin/content-takedown', {
         ...target,
-        nciiReportId: String(report.id),
+        ...(report ? { nciiReportId: String(report.id) } : {}),
         ...(quarantine ? { preserve: true } : {}),
       });
       if (!res.ok) throw new Error(errorFrom(res, data, 'The takedown failed'));
       const short = what.split(',')[0];
       await onDone(data.result === 'removed'
-        ? `Took down ${short} for request #${report.id}${data.preserved ? `; ${data.preserved} file(s) quarantined as evidence` : ''}. It is recorded on the request -- you can now resolve it as removed.`
-        : `Nothing to take down: ${short} was already gone (or that id is wrong). That does NOT count as a removal: check the id and the content location, then take down the right item, or tick "already gone / removed elsewhere" if it really is.`);
+        ? `Took down ${short}${forReq}${data.preserved ? `; ${data.preserved} file(s) quarantined as evidence` : ''}.`
+          + (report ? ' It is recorded on the request -- you can now resolve it as removed.' : ' It is recorded in the audit trail.')
+        : report
+          ? `Nothing to take down: ${short} was already gone (or that id is wrong). That does NOT count as a removal: check the id and the content location, then take down the right item, or tick "already gone / removed elsewhere" if it really is.`
+          : `Nothing to take down: ${short} was already gone (or that id is wrong).`);
       setListingId(''); setConversationId(''); setMessageId(''); setPostId('');
       // The item is gone either way: drop it from the lookup lists.
-      if (target.type === 'wall_post') {
+      if (target.type === 'listing') {
+        if (data.result === 'removed') {
+          setListings((l) => (l ? { ...l, listings: l.listings.map((x) => (String(x.id) === target.listingId ? { ...x, status: 'removed' } : x)) } : l));
+        }
+      } else if (target.type === 'wall_post') {
         setWall((w) => (w ? { ...w, posts: w.posts.filter((p) => String(p.id) !== target.postId) } : w));
       } else if (target.type === 'message') {
         setThread((t) => (t && t.id === target.conversationId ? { ...t, messages: t.messages.filter((x) => x.id !== target.messageId) } : t));
@@ -2636,6 +2724,46 @@ function TakedownControl({ adminKey, creators, report, disabled, onDone, onError
         </button>
       </div>
 
+      {type === 'listing' && (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={listingCreatorId} onChange={(e) => setListingCreatorId(e.target.value)} disabled={lookOff} className={inputCls}>
+              <option value="">Whose listing?</option>
+              {creatorOptions}
+            </select>
+            <button onClick={loadListings} disabled={lookOff || !listingCreatorId} className={linkBtn}>
+              {lookupBusy ? 'Loading…' : 'Show listings'}
+            </button>
+          </div>
+          {listings && (
+            <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
+              {!listings.listings.length ? <p className="text-gray-500">That creator has no listings.</p> : listings.listings.map((l) => {
+                const gone = l.status === 'removed';
+                return (
+                  <div key={l.id} className="flex items-start gap-2 px-2 py-1 rounded bg-black/30 border border-white/5">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] text-gray-500">
+                        #{String(l.id)} · {String(l.status || 'active')} · {l.kind === 'physical' ? 'physical' : 'digital'}
+                        {l.priceCents != null && Number.isFinite(Number(l.priceCents)) ? ` · ${dollars(l.priceCents)}` : ''}
+                        {l.createdAt ? ` · ${new Date(l.createdAt).toLocaleDateString()}` : ''} · {Number(l.mediaCount) || 0} file(s)
+                      </p>
+                      <p className="text-gray-200 break-words">{String(l.title || '(untitled)')}</p>
+                    </div>
+                    <button
+                      onClick={() => submit({ type: 'listing', listingId: String(l.id), label: String(l.title || '').slice(0, 60) })}
+                      disabled={off || gone}
+                      className={smallBtn}
+                    >
+                      {gone ? 'Removed' : report ? `Take down for #${String(report.id)}` : 'Take down'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {type === 'wall_post' && (
         <div className="mt-2 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -2662,7 +2790,7 @@ function TakedownControl({ adminKey, creators, report, disabled, onDone, onError
                     disabled={off}
                     className={smallBtn}
                   >
-                    Take down for #{String(report.id)}
+                    {report ? `Take down for #${String(report.id)}` : 'Take down'}
                   </button>
                 </div>
               ))}
@@ -2745,7 +2873,7 @@ function TakedownControl({ adminKey, creators, report, disabled, onDone, onError
                         disabled={off}
                         className={smallBtn}
                       >
-                        Take down for #{String(report.id)}
+                        {report ? `Take down for #${String(report.id)}` : 'Take down'}
                       </button>
                     </div>
                   );
@@ -2763,8 +2891,9 @@ function TakedownControl({ adminKey, creators, report, disabled, onDone, onError
           : 'Quarantine the files as evidence instead of deleting them.'}
       </label>
       <p className="text-[10px] text-gray-500 mt-1">
-        A gallery item or profile photo is removed from the creator's record in the Creators tab -- enter this request's
-        number (#{String(report.id)}) there so the removal is recorded here.
+        {report
+          ? `A gallery item or profile photo is removed from the creator's record in the Creators tab -- enter this request's number (#${String(report.id)}) there so the removal is recorded here.`
+          : "A gallery item or profile photo is removed from the creator's record in the Creators tab. Use this for content you found yourself; for a TAKE IT DOWN request, take it down from that request instead so it can be resolved."}
       </p>
     </div>
   );
@@ -3181,6 +3310,20 @@ function PayoutsPanel({ adminKey }) {
         ({ res, data } = await adminPost(adminKey, '/api/admin/manual-credit', { ...body, creditFrozen: true }));
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not credit that payment'));
+      // A hash already credited to this same account is answered 200 with
+      // alreadyCredited and a plain message: nothing new was added, so it must
+      // not read as "Credited N" (that looked like a second credit).
+      if (data.alreadyCredited) {
+        setManualMsg(
+          (typeof data.message === 'string' && data.message
+            ? data.message
+            : `This transaction was already credited to ${acct.login} earlier; nothing new was added.`)
+          + (Number(data.creditedCents) > 0 ? ` (It was ${formatCredits(data.creditedCents)}.)` : '')
+          + (data.frozen ? ' The account is suspended or banned, so those credits are frozen until it is reinstated.' : ''),
+        );
+        setManual({ account: '', txHash: '', fromAddress: '' });
+        return;
+      }
       setManualMsg(
         `Credited ${formatCredits(data.creditedCents)} to ${data.creditedUserEmail || acct.login} (user ${acct.userId}).`
         + (data.frozen ? ' The account is suspended or banned, so these credits are frozen until it is reinstated.' : ''),
@@ -4201,12 +4344,25 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
                     </button>
                   )}
                 </div>
+                {/* Their purchases: an unshipped paid order blocks deleting
+                    this account, and this is where its number is found. */}
+                <div className="mt-3">
+                  <OrdersPanel
+                    key={`buyer-orders-${account.userId}`}
+                    adminKey={adminKey}
+                    creators={creators}
+                    fixedBuyerId={String(account.userId)}
+                    title="Their purchases"
+                  />
+                </div>
             </>
           </div>
         )}
       </div>
 
-      <OrderClosePanel adminKey={adminKey} />
+      <OrdersPanel adminKey={adminKey} creators={creators} />
+
+      <StandaloneTakedownPanel adminKey={adminKey} creators={creators} />
 
       <OrderAddressErasePanel adminKey={adminKey} />
 
@@ -4216,48 +4372,167 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
 }
 
 /**
- * A paid physical order whose seller was banned or deleted can never ship,
- * and while it sits in 'pending_shipment' its shipping address can't be erased
- * and its buyer can't delete their account. POST /api/admin/order-close
- * { orderId, reason, eraseAddress? } moves it to 'closed_unfulfilled' (only
- * from pending_shipment; 409 otherwise), keeps the reason on the order and
- * notifies the buyer. No credits move: re-crediting the buyer is a separate,
- * explicit owner decision, not part of this action.
+ * Finding and closing orders (round-9 admin-ui#0). A paid physical order
+ * whose seller was banned or deleted can never ship, and while it sits in
+ * 'pending_shipment' its shipping address can't be erased and its buyer can't
+ * delete their account. Nothing in this panel used to show an order number --
+ * a ban or delete only reported "N paid order(s) not yet shipped" -- so the
+ * close tool could not be used without the buyer emailing the number in.
+ *
+ * GET /api/admin/orders lists orders by seller, buyer or number (never an
+ * address: `hasAddress` only says one is still stored), each with the
+ * seller's standing. POST /api/admin/order-close { orderId, reason,
+ * eraseAddress?, force? } moves one to 'closed_unfulfilled' (only from
+ * pending_shipment; 409 ORDER_NOT_CLOSABLE otherwise), keeps the reason on the
+ * order and notifies the buyer. A seller who is NOT banned or deleted could
+ * still ship it, so the server refuses (409 ORDER_SELLER_ACTIVE, with the
+ * seller) unless the admin explicitly forces it -- recorded on the order. No
+ * credits move: re-crediting the buyer is a separate owner decision.
+ *
+ * `fixedCreatorId` / `fixedBuyerId` pin the list to one seller or buyer (the
+ * creator editor, an account in ACCOUNTS) and load it straight away.
  */
 const MAX_CLOSE_REASON_CHARS = 500;
+const ORDER_STATUS_LABEL = {
+  pending_shipment: 'waiting to ship',
+  shipped: 'shipped',
+  fulfilled: 'fulfilled',
+  delivered: 'delivered',
+  closed_unfulfilled: 'closed, not fulfilled',
+};
 
-function OrderClosePanel({ adminKey }) {
-  const [orderId, setOrderId] = useState('');
+function sellerLabel(seller) {
+  if (!seller) return 'unknown seller';
+  const who = seller.name ? `${String(seller.name)}${seller.handle ? ` (${String(seller.handle)})` : ''}` : `creator #${String(seller.creatorId ?? '?')}`;
+  const standing = seller.status === 'deleted' ? 'DELETED'
+    : seller.status === 'no_login' ? 'NO LOGIN'
+      : String(seller.status || 'unknown').toUpperCase();
+  return `${who} · ${standing}`;
+}
+
+function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId = null, title }) {
+  const fixed = fixedCreatorId != null || fixedBuyerId != null;
+  const [by, setBy] = useState('creator');
+  const [creatorId, setCreatorId] = useState('');
+  const [who, setWho] = useState('');
+  const [statusFilter, setStatusFilter] = useState('pending_shipment');
+  const [orders, setOrders] = useState(null);
+  const [loading, setLoading] = useState(false);
+  // The order whose close form is open, and that form's fields.
+  const [closing, setClosing] = useState(null);
   const [reason, setReason] = useState('');
   const [eraseAddress, setEraseAddress] = useState(false);
+  // ORDER_SELLER_ACTIVE: the seller could still ship; a close now needs force.
+  const [needsForce, setNeedsForce] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const close = async () => {
-    const id = orderId.trim();
+  const query = () => {
+    const params = {};
+    if (fixedCreatorId != null) params.creatorId = String(fixedCreatorId);
+    else if (fixedBuyerId != null) params.buyerId = String(fixedBuyerId);
+    else if (by === 'creator') {
+      if (!creatorId) return { error: 'Pick the seller.' };
+      params.creatorId = creatorId;
+    } else {
+      const v = who.trim();
+      if (by === 'order') {
+        if (!/^[1-9][0-9]{0,17}$/.test(v)) return { error: 'Enter the order number, a plain number like 42.' };
+        params.orderId = v;
+      } else if (by === 'sellerId') {
+        // A DELETED seller is no longer in the creator list above, but their
+        // orders keep the id (a delete's "left behind" message names it).
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(v)) return { error: 'Enter the seller\'s creator number.' };
+        params.creatorId = v;
+      } else {
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(v)) return { error: "Enter the buyer's user id (ACCOUNTS shows it)." };
+        params.buyerId = v;
+      }
+    }
+    // An order number is looked up whatever its status.
+    if (statusFilter && !params.orderId) params.status = statusFilter;
+    return { params };
+  };
+
+  const load = async ({ keepNotice = false } = {}) => {
+    const q = query();
+    setError('');
+    if (!keepNotice) setNotice('');
+    if (q.error) { setError(q.error); return; }
+    setLoading(true);
+    try {
+      const { res, data } = await adminGet(adminKey, `/api/admin/orders?${new URLSearchParams(q.params).toString()}`);
+      if (!res.ok || !Array.isArray(data.orders)) throw new Error(errorFrom(res, data, 'Could not load orders'));
+      setOrders(data.orders);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // A pinned list (one creator / one buyer) loads by itself, and again when
+  // the pinned id or the status filter changes.
+  useEffect(() => {
+    if (!fixed) return;
+    setOrders(null);
+    setClosing(null);
+    setNeedsForce(null);
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixedCreatorId, fixedBuyerId, statusFilter]);
+
+  const startClose = (o) => {
+    setClosing(o);
+    setReason('');
+    setEraseAddress(false);
+    setNeedsForce(null);
+    setError('');
+    setNotice('');
+  };
+
+  const close = async (force = false) => {
+    if (!closing) return;
+    const id = String(closing.id);
     const why = reason.trim();
     setError('');
     setNotice('');
-    if (!/^[1-9][0-9]{0,17}$/.test(id)) { setError('Enter the order number, a plain number like 42.'); return; }
     if (!why) { setError('Give a reason for closing the order. It is kept on the order.'); return; }
     if (reason.length > MAX_CLOSE_REASON_CHARS) { setError(`Keep the reason under ${MAX_CLOSE_REASON_CHARS} characters.`); return; }
+    const seller = needsForce || closing.seller;
     if (!confirm(
-      `Close order #${id} as not fulfilled? The buyer is notified and the seller can no longer ship it. `
-      + 'No credits are returned by this action.'
+      `Close order #${id} ("${String(closing.title || 'untitled')}") as not fulfilled?\n\n`
+      + `Seller: ${sellerLabel(seller)}\nBuyer: user ${String(closing.buyerId ?? '?')}\n\n`
+      + (force
+        ? 'This seller is NOT banned or deleted and could still ship it. Closing anyway is recorded on the order as forced.\n\n'
+        : '')
+      + 'The buyer is notified and the seller can no longer ship it. No credits are returned by this action.'
       + (eraseAddress ? ' The shipping name and address are also erased, permanently.' : ''),
     )) return;
     setBusy(true);
     try {
-      const { res, data } = await adminPost(adminKey, '/api/admin/order-close', { orderId: id, reason: why, eraseAddress });
+      const { res, data } = await adminPost(adminKey, '/api/admin/order-close', {
+        orderId: id,
+        reason: why,
+        eraseAddress,
+        ...(force ? { force: true } : {}),
+      });
       if (res.status === 404) throw new Error(`There is no order #${id}.`);
+      if (res.status === 409 && data.code === 'ORDER_SELLER_ACTIVE' && !force) {
+        setNeedsForce(data.seller || closing.seller || null);
+        setError(`${data.error || 'The seller can still ship this order.'} Nothing was closed.`);
+        return;
+      }
       if (res.status === 409) throw new Error(errorFrom(res, data, `Order #${id} is not a physical order waiting to ship, so it was not closed.`));
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not close the order'));
       const at = data.closedAt ? ` (${new Date(data.closedAt).toLocaleString()})` : '';
-      setNotice(`Order #${id} closed as not fulfilled${at}.${data.erased ? ' Its shipping address was erased.' : ''}`);
-      setOrderId('');
+      setNotice(`Order #${id} closed as not fulfilled${at}${data.forced ? ', recorded as forced' : ''}.${data.erased ? ' Its shipping address was erased.' : ''}`);
+      setClosing(null);
+      setNeedsForce(null);
       setReason('');
       setEraseAddress(false);
+      await load({ keepNotice: true });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -4265,41 +4540,204 @@ function OrderClosePanel({ adminKey }) {
     }
   };
 
+  const eraseAddr = async (o) => {
+    const id = String(o.id);
+    if (!confirm(
+      `Erase the shipping name and address on order #${id}? This cannot be undone. Only do it when no dispute or `
+      + 'legal claim about this order is in progress.',
+    )) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/order-address-erase', { orderId: id });
+      if (res.status === 404) throw new Error(`There is no order #${id}.`);
+      if (res.status === 409) throw new Error(`Order #${id} is still waiting to ship, so its address is still needed and was not erased. If it can never ship, close it first.`);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not erase the address'));
+      setNotice(data.erased ? `Shipping name and address erased from order #${id}.` : `Order #${id} has no shipping address left to erase.`);
+      await load({ keepNotice: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls = 'px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm';
+  const list = Array.isArray(orders) ? orders : null;
+
   return (
     <div className="premium-card p-5">
-      <p className="font-bold text-white mb-1">Close an order that can&apos;t be fulfilled</p>
+      <p className="font-bold text-white mb-1">{title || 'Orders: find, close, erase an address'}</p>
       <p className="text-xs text-gray-500 mb-3">
-        For a paid physical order whose seller was banned or deleted. Works only on an order still waiting to ship.
-        The buyer gets a notice; no credits are returned by this action.
+        Close a paid physical order that can never ship (its seller was banned or deleted). Only an order still waiting
+        to ship can be closed; the buyer gets a notice and no credits are returned by this action. Shipping addresses are
+        never shown here.
       </p>
-      <div className="space-y-2">
-        <input
-          value={orderId}
-          onChange={(e) => setOrderId(e.target.value)}
-          inputMode="numeric"
-          placeholder="Order number"
-          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm w-40"
-        />
-        <textarea
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          maxLength={MAX_CLOSE_REASON_CHARS}
-          rows={2}
-          placeholder="Reason (kept on the order)"
-          className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
-        />
-        <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
-          <input type="checkbox" checked={eraseAddress} onChange={(e) => setEraseAddress(e.target.checked)} />
-          Also erase the shipping name and address (permanent)
-        </label>
-        <button
-          onClick={close}
-          disabled={busy || !orderId.trim() || !reason.trim()}
-          className="text-xs px-3 py-2 rounded-md border border-red-500/60 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50"
-        >
-          {busy ? 'Closing…' : 'Close order…'}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        {!fixed && (
+          <>
+            <select value={by} onChange={(e) => { setBy(['creator', 'sellerId', 'buyer', 'order'].includes(e.target.value) ? e.target.value : 'creator'); setWho(''); }} className={inputCls}>
+              <option value="creator">By seller</option>
+              <option value="sellerId">By seller number (deleted sellers)</option>
+              <option value="buyer">By buyer user id</option>
+              <option value="order">By order number</option>
+            </select>
+            {by === 'creator' ? (
+              <select value={creatorId} onChange={(e) => setCreatorId(e.target.value)} className={inputCls}>
+                <option value="">Which seller?</option>
+                {(Array.isArray(creators) ? creators : []).map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {String(c.name || 'Unnamed')} {c.handle ? `(${String(c.handle)})` : ''} · #{String(c.id)} · {effectiveCreatorStatus(c) || 'active'}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={who}
+                onChange={(e) => setWho(e.target.value.slice(0, 64))}
+                onKeyDown={(e) => e.key === 'Enter' && !loading && load()}
+                inputMode={by === 'order' ? 'numeric' : undefined}
+                placeholder={by === 'order' ? 'Order number' : by === 'sellerId' ? 'Creator number' : 'Buyer user id'}
+                className={`${inputCls} w-44`}
+              />
+            )}
+          </>
+        )}
+        {!(by === 'order' && !fixed) && (
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={inputCls}>
+            <option value="pending_shipment">Waiting to ship</option>
+            <option value="">Any status</option>
+            <option value="shipped">Shipped</option>
+            <option value="closed_unfulfilled">Closed, not fulfilled</option>
+          </select>
+        )}
+        <button onClick={() => load()} disabled={loading || busy} className="text-xs px-3 py-2 rounded-md border border-white/20 text-gray-300 hover:text-white transition disabled:opacity-50">
+          {loading ? 'Loading…' : fixed ? 'Refresh' : 'Find orders'}
         </button>
       </div>
+
+      {list && (
+        !list.length ? (
+          <p className="text-xs text-gray-500">No matching orders.</p>
+        ) : (
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {list.map((o) => {
+              const closable = o.kind === 'physical' && o.status === 'pending_shipment';
+              const erasable = o.hasAddress && o.status !== 'pending_shipment';
+              const open = closing && String(closing.id) === String(o.id);
+              return (
+                <div key={o.id} className={`px-3 py-2 rounded-md bg-black/30 border ${open ? 'border-red-500/50' : 'border-white/5'} text-xs`}>
+                  <div className="flex flex-wrap items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-bold break-words">
+                        Order #{String(o.id)} · {String(o.title || '(untitled)')}
+                      </p>
+                      <p className="text-gray-400">
+                        {o.kind === 'physical' ? 'physical' : 'digital'} · {ORDER_STATUS_LABEL[o.status] || String(o.status || 'unknown')}
+                        {' · '}{dollars(Number(o.priceCents || 0) + Number(o.shippingCents || 0))}
+                        {o.createdAt ? ` · ordered ${new Date(o.createdAt).toLocaleDateString()}` : ''}
+                        {o.closedAt ? ` · closed ${new Date(o.closedAt).toLocaleDateString()}${o.closeForced ? ' (forced)' : ''}` : ''}
+                      </p>
+                      <p className="text-gray-500">
+                        Seller: <span className={o.seller?.unableToFulfil ? 'text-red-300' : 'text-gray-300'}>{sellerLabel(o.seller)}</span>
+                        {' · '}Buyer: user {String(o.buyerId ?? '?')}
+                        {' · '}{o.hasAddress ? 'address stored' : o.addressErasedAt ? 'address erased' : 'no address'}
+                      </p>
+                      {o.closeReason && <p className="text-gray-500 break-words">Close reason: {String(o.closeReason)}</p>}
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {closable && !open && (
+                        <button onClick={() => startClose(o)} disabled={busy} className="text-[11px] px-2 py-1 rounded-md border border-red-500/60 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50">
+                          Close order…
+                        </button>
+                      )}
+                      {erasable && (
+                        <button onClick={() => eraseAddr(o)} disabled={busy} className="text-[11px] px-2 py-1 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50">
+                          Erase address…
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {open && (
+                    <div className="mt-2 space-y-2">
+                      {!o.seller?.unableToFulfil && !needsForce && (
+                        <p className="text-yellow-300/90">
+                          This seller is {String(o.seller?.status || 'not banned')} and could still ship it: closing is only
+                          meant for a banned or deleted seller. The server will ask you to confirm a forced close.
+                        </p>
+                      )}
+                      <textarea
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        maxLength={MAX_CLOSE_REASON_CHARS}
+                        rows={2}
+                        placeholder="Reason (kept on the order, never shown to the buyer or seller)"
+                        className="w-full px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+                      />
+                      <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
+                        <input type="checkbox" checked={eraseAddress} onChange={(e) => setEraseAddress(e.target.checked)} />
+                        Also erase the shipping name and address (permanent)
+                      </label>
+                      {needsForce && (
+                        <p className="text-red-300">
+                          Refused: the seller ({sellerLabel(needsForce)}) is not banned or deleted and could still ship this
+                          order. Only force it if they can&apos;t (unreachable, a long suspension).
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        {!needsForce ? (
+                          <button onClick={() => close(false)} disabled={busy || !reason.trim()} className="text-xs px-3 py-1.5 rounded-md border border-red-500/60 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50">
+                            {busy ? 'Closing…' : 'Close order…'}
+                          </button>
+                        ) : (
+                          <button onClick={() => close(true)} disabled={busy || !reason.trim()} className="text-xs px-3 py-1.5 rounded-md border border-red-500 bg-red-600/20 text-red-200 hover:bg-red-600/30 transition disabled:opacity-50">
+                            {busy ? 'Closing…' : 'Force close anyway…'}
+                          </button>
+                        )}
+                        <button onClick={() => { setClosing(null); setNeedsForce(null); }} disabled={busy} className="text-xs px-3 py-1.5 rounded-md border border-white/15 text-gray-400 hover:text-white transition disabled:opacity-50">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {list.length >= 200 && <p className="text-[10px] text-gray-500">Showing the newest 200. Narrow the filter to see older ones.</p>}
+          </div>
+        )
+      )}
+      {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
+      {notice && <p className="text-sm text-green-400 mt-2">{notice}</p>}
+    </div>
+  );
+}
+
+/**
+ * Takes down one listing, DM or wall comment an admin found themselves --
+ * no user report or TAKE IT DOWN request has to exist first (round-9
+ * admin-ui#1). The same control the takedown requests use, without a
+ * request: POST /api/admin/content-takedown with no nciiReportId, which
+ * still snapshots the item and writes the audit trail. For content named in
+ * a TAKE IT DOWN request, take it down from that request instead, so the
+ * request can be resolved as removed.
+ */
+function StandaloneTakedownPanel({ adminKey, creators }) {
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  return (
+    <div className="premium-card p-5">
+      <p className="font-bold text-white mb-1">Take down content (no report needed)</p>
+      <p className="text-xs text-gray-500 mb-3">
+        For a listing, message or wall comment you found yourself. Only that item is removed -- the creator is not banned.
+      </p>
+      <TakedownControl
+        adminKey={adminKey}
+        creators={creators}
+        onDone={async (msg) => { setError(''); setNotice(msg); }}
+        onError={(msg) => { setNotice(''); setError(msg); }}
+      />
       {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
       {notice && <p className="text-sm text-green-400 mt-2">{notice}</p>}
     </div>
@@ -4312,7 +4750,7 @@ function OrderClosePanel({ adminKey }) {
  * (POST /api/admin/order-address-erase { orderId }). The order record stays;
  * only the address goes, and it cannot be undone. The server refuses (409) an
  * order still waiting to ship -- the creator needs the address to send it
- * (close it first with OrderClosePanel if it never will) -- and answers
+ * (close it first with OrdersPanel if it never will) -- and answers
  * erased:false when there is nothing left to erase. A closed order counts as
  * settled. A fan who deletes their own account has this done for every
  * shipped or closed order already.

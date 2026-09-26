@@ -8,7 +8,7 @@ import {
   isDemoListing,
   listingHasDeliverable,
 } from '../../../../lib/creators-store';
-import { createOrdersFromCredits, ALREADY_OWNED, isCheckoutKeyClaimed } from '../../../../lib/orders-store';
+import { createOrdersFromCredits, ALREADY_OWNED, isCheckoutKeyClaimed, toBuyerOrder } from '../../../../lib/orders-store';
 import { listingMediaBlocked } from '../../../../lib/media-preservation';
 import {
   getBalanceCents,
@@ -230,7 +230,13 @@ export default async function handler(req, res) {
     } catch (balanceErr) {
       console.error('[marketplace/orders/create] balance read after commit failed:', balanceErr);
     }
-    return res.status(200).json({ ok: true, orders, balanceCents: newBalance });
+    // The buyer's allowlisted view, never the stored record: that carries the
+    // seller's feeBps / creatorNetCents (a founding waiver) and both ids.
+    return res.status(200).json({
+      ok: true,
+      orders: orders.map((o) => toBuyerOrder(o, { withAddress: false })),
+      balanceCents: newBalance,
+    });
   } catch (err) {
     if (err.code === INSUFFICIENT_BALANCE) return res.status(402).json({ error: 'Not enough credits' });
     if (err.code === 'LISTING_UNAVAILABLE') return res.status(409).json({ error: err.message, listingId: err.listingId != null ? String(err.listingId) : undefined });
@@ -243,6 +249,9 @@ export default async function handler(req, res) {
     // cart, refresh the balance, send the fan to /orders -- instead of
     // leaving the paid items in the cart under a key a reload would replace.
     if (err.code === 'DUPLICATE_CHECKOUT') return res.status(409).json({ code: 'DUPLICATE_CHECKOUT', error: err.message });
+    // A listing's files kept changing through every retry (lib/orders-store.js
+    // lockListingFiles). Nothing was charged; the same key can be retried.
+    if (err.code === 'MEDIA_LOCK_BUSY') return res.status(409).json({ code: 'MEDIA_LOCK_BUSY', error: err.message });
     if (err.code === ACCOUNT_FROZEN) return res.status(403).json({ error: err.message });
     if (err.code === RECIPIENT_UNAVAILABLE) return res.status(409).json({ error: 'A creator in your cart can’t be paid right now -- remove their item and try again.' });
     console.error('[marketplace/orders/create] unexpected error:', err);

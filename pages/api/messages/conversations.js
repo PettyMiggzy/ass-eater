@@ -2,6 +2,8 @@ import { getVerifiedSessionUserId } from '../../../lib/session';
 import {
   getConversationsForUser,
   projectConversation,
+  isBlockOnlyFor,
+  projectBlockOnlyConversation,
   encodeConversationCursor,
   SUMMARY_MESSAGES,
 } from '../../../lib/messages-store';
@@ -16,6 +18,12 @@ import { getCreatorById } from '../../../lib/creators-store';
  * fetch the full thread from /api/messages/with/<userId>), `lastMessage`,
  * `unreadCount` and `hasMore`. `nextBefore` (an opaque cursor string, null
  * on the last page) is passed back as `before` to continue the list.
+ *
+ * A row that exists only to hold a block the viewer made (a blocked wall
+ * commenter who never messaged) comes back as { id: <blockHandle>,
+ * blockHandle, blockOnly: true, blockedByMe: true, messages: [], other:
+ * { userId: null, name: 'A blocked account', ... } } -- never the
+ * counterpart's account id.
  *
  * This used to return every message of every conversation, so one sender
  * could grow a single conversation until this response blew past the
@@ -38,8 +46,13 @@ export default async function handler(req, res) {
 
     // One row per counterpart, not the whole users table (every bcrypt hash
     // included) on each poll.
+    // Block-only rows (lib/messages-store.js isBlockOnlyFor) are projected
+    // WITHOUT their counterpart: no account id, no name, no "Fan #" label --
+    // for a wall commenter that would name the anonymous "Someone" the wall
+    // is built never to reveal. So their counterpart is never looked up either.
     const otherIds = [...new Set(
       conversations
+        .filter((c) => !isBlockOnlyFor(c, uid))
         .map((c) => (c.participantIds || []).find((id) => String(id) !== String(uid)))
         .filter((id) => id !== undefined && id !== null)
         .map(String),
@@ -65,6 +78,13 @@ export default async function handler(req, res) {
     );
 
     const enriched = conversations.map((c) => {
+      if (isBlockOnlyFor(c, uid)) {
+        // Unblock it with POST /api/messages/block { blockHandle, blocked: false }.
+        return {
+          ...projectBlockOnlyConversation(c, uid),
+          other: { userId: null, name: 'A blocked account', handle: null, img: null, isCreator: false },
+        };
+      }
       const otherId = (c.participantIds || []).find((id) => String(id) !== String(uid));
       const otherUser = others.get(String(otherId));
       const otherCreator = otherUser?.creatorId ? creators.get(String(otherUser.creatorId)) : null;

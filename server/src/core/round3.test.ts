@@ -84,6 +84,7 @@ describe('creator approval gates every new flow of money', () => {
     const other = await makeUser();
     await deposit(other, 10_000);
     await expect(money(prisma, (tx) => placeBid(tx, l.id, other, 2000))).rejects.toThrow('not_available');
+    await prisma.listing.update({ where: { id: l.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
     const r = await money(prisma, (tx) => closeAuction(tx, l.id));
     expect(r.sold).toBe(false);
     expect(await balance(bidder)).toBe(held + 1000n);
@@ -147,6 +148,7 @@ describe('a listing with nothing to deliver is not sold', () => {
     await money(prisma, (tx) => placeBid(tx, l.id, bidder, 1000));
     await prisma.media.update({ where: { id: m.id }, data: { status: 'REJECTED' } });
     const before = await balance(bidder);
+    await prisma.listing.update({ where: { id: l.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
     const r = await money(prisma, (tx) => closeAuction(tx, l.id));
     expect(r.sold).toBe(false);
     expect(await balance(bidder)).toBe(before + 1000n);

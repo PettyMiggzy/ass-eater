@@ -281,7 +281,13 @@ export const admin: FastifyPluginAsync = async (app) => {
     let target: unknown = null;
     if (r.targetType === 'post') {
       const p = await prisma.post.findUnique({ where: { id: r.targetId }, include: { media: { select: MEDIA_SELECT } } });
-      if (p) target = { id: p.id, creatorId: p.creatorId, text: p.text, visibility: p.visibility, priceCents: p.priceCents, removed: p.removed, createdAt: p.createdAt, media: p.media.map(mediaView) };
+      if (p) {
+        // Who owns it, and their standing: the queue lists a banned creator's
+        // other reports as live content, and the admin deciding one needs to
+        // see the ban before choosing suspend_user.
+        const owner = await prisma.user.findUnique({ where: { id: p.creatorId }, select: { id: true, username: true, role: true, status: true } });
+        target = { id: p.id, creatorId: p.creatorId, owner, text: p.text, visibility: p.visibility, priceCents: p.priceCents, removed: p.removed, createdAt: p.createdAt, media: p.media.map(mediaView) };
+      }
     } else if (r.targetType === 'message') {
       const m = await prisma.message.findUnique({ where: { id: r.targetId }, include: { media: { select: MEDIA_SELECT } } });
       if (m) {
@@ -295,7 +301,8 @@ export const admin: FastifyPluginAsync = async (app) => {
         const keys = l.images.filter((k) => k.startsWith('raw/'));
         const images = keys.length ? await prisma.media.findMany({ where: { key: { in: keys } }, select: MEDIA_SELECT }) : [];
         const { media: product, ...fields } = l;
-        target = { ...fields, media: product.map(mediaView), images: images.map(mediaView) };
+        const owner = await prisma.user.findUnique({ where: { id: l.creatorId }, select: { id: true, username: true, role: true, status: true } });
+        target = { ...fields, owner, media: product.map(mediaView), images: images.map(mediaView) };
       }
     } else if (r.targetType === 'user') {
       const u = await prisma.user.findUnique({
@@ -329,6 +336,18 @@ export const admin: FastifyPluginAsync = async (app) => {
         : r.targetType === 'message' ? (await prisma.message.findUnique({ where: { id: r.targetId } }))?.senderId
         : (await prisma.listing.findUnique({ where: { id: r.targetId } }))?.creatorId;
       if (!owner) return reply.code(409).send({ error: 'target_not_found' });
+      // Never LOWER an owner's standing from the queue. A ban settles only
+      // the reports on the item it was decided on; the banned account's
+      // other reports stay OPEN, and suspend_user on one of them used to
+      // rewrite BANNED to SUSPENDED with no warning -- one routine
+      // reactivation away from restoring a banned account. Refused before
+      // the claim, so the report stays OPEN for a remove_content or ban
+      // decision instead. (setStatus below also carries the guard, for a
+      // ban landing between this read and that write.)
+      if (action === 'suspend_user') {
+        const st = await prisma.user.findUnique({ where: { id: owner }, select: { status: true } });
+        if (st?.status === 'BANNED') return reply.code(409).send({ error: 'owner_already_banned', ownerId: owner, ownerStatus: 'BANNED' });
+      }
     }
 
     // CLAIM the report before acting: a guarded OPEN -> final update, so of
@@ -427,7 +446,9 @@ export const admin: FastifyPluginAsync = async (app) => {
             try { await purgeCdnPrefix(new URL(u).pathname); } catch { /* not a URL: nothing cached under it */ }
           }
         }
-        if (action !== 'remove_content') await setStatus(owner!, action === 'ban_user' ? 'BANNED' : 'SUSPENDED');
+        if (action !== 'remove_content') {
+          await applyUserStatus(owner!, action === 'ban_user' ? 'BANNED' : 'SUSPENDED', { log: app.log, noDowngrade: true });
+        }
         // Last, so a failure above reopens this report with the others
         // still OPEN, and the retry settles them all.
         if (settledTargetIds.length) {
@@ -451,7 +472,8 @@ export const admin: FastifyPluginAsync = async (app) => {
       throw err;
     }
     const updated = await prisma.report.findUniqueOrThrow({ where: { id: r.id } });
-    return { ...updated, takedowns, takedownOk: takedowns.every((t) => t.ok), settledReports, openRelatedReports };
+    const ownerStatus = owner ? (await prisma.user.findUnique({ where: { id: owner }, select: { status: true } }))?.status ?? null : null;
+    return { ...updated, takedowns, takedownOk: takedowns.every((t) => t.ok), settledReports, openRelatedReports, ownerId: owner ?? null, ownerStatus };
   });
 
   // Suspend/ban/reactivate, with everything that implies (payout freeze,

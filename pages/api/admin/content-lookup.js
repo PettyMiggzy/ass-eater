@@ -1,4 +1,5 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
+import { query } from '../../../lib/db';
 import {
   resolveLookupAccount,
   lookupWallComments,
@@ -18,6 +19,11 @@ import {
  * GET ?kind=messages&(conversationId=<id> | userA=<id>&userB=<id>)
  *   -> 200 { ok, conversation: { id, participants: [account], messages: [{ id, senderId, text, createdAt, priceCents? }] } }
  *   -> 404 no such conversation
+ * GET ?kind=listings&creatorId=12
+ *   -> 200 { ok, listings: [{ id, title, status, kind, priceCents, createdAt, mediaCount }] }
+ *   A creator's marketplace listings (every status, newest first, at most 200),
+ *   so a specific listing can be taken down without a report or a takedown
+ *   request existing (round-9 admin-ui#1). Never a media src.
  * `account` / `author` / `other` / participants are
  *   { userId, login, role, creatorId, creatorName, creatorHandle } (or { userId, deleted: true }).
  */
@@ -56,7 +62,25 @@ export default async function handler(req, res) {
       if (!conversation) return res.status(404).json({ error: 'No such conversation' });
       return res.status(200).json({ ok: true, conversation });
     }
-    return res.status(400).json({ error: 'kind must be wall, conversations or messages' });
+    if (kind === 'listings') {
+      const creatorId = str(q.creatorId);
+      if (!creatorId || !/^[1-9][0-9]{0,17}$/.test(creatorId.trim())) return res.status(400).json({ error: 'Pick a creator' });
+      const { rows } = await query(
+        `select id, data from listings where data->>'creatorId' = $1 order by id desc limit 200`,
+        [creatorId.trim()],
+      );
+      const listings = rows.map((r) => ({
+        id: String(r.id),
+        title: typeof r.data?.title === 'string' ? r.data.title : null,
+        status: r.data?.status ?? null,
+        kind: r.data?.kind === 'physical' ? 'physical' : 'digital',
+        priceCents: r.data?.priceCents ?? null,
+        createdAt: r.data?.createdAt ?? null,
+        mediaCount: Array.isArray(r.data?.media) ? r.data.media.length : 0,
+      }));
+      return res.status(200).json({ ok: true, listings });
+    }
+    return res.status(400).json({ error: 'kind must be wall, conversations, messages or listings' });
   } catch (err) {
     console.error('[admin/content-lookup] failed:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });

@@ -210,3 +210,41 @@ export function rebaseDraft(draft, baseline, current) {
   }
   return { draft: next, baseline: fresh, conflicts };
 }
+
+// Mirrors pages/api/admin/profile.js's SUSPENSION_MS: a NEW suspension runs
+// 30 days from the save.
+const SUSPENSION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * What saving a Founding grant does to the 30-day fee-free window of a
+ * creator whose window has not started yet -- the same decision
+ * pages/api/admin/profile.js makes when it stamps foundingSince, from the
+ * status the creator has AFTER the save (`resultingStatus`: the draft's
+ * status, which the panel only sends when it changed, so it is the resulting
+ * one either way). The editor's hint is built from this, so it can't promise
+ * a later start than the server gives (round-9 admin-ui#2: it said "has not
+ * started yet" while the save started it immediately).
+ *
+ * Returns
+ *   { kind: 'started' }            the window already started (foundingSince in the past)
+ *   { kind: 'now' }                active after the save: it starts on save
+ *   { kind: 'at', at, fresh }      suspended after the save: it starts when the
+ *                                  suspension ends (`fresh` = a new 30-day one)
+ *   { kind: 'approval' }           pending: it starts at approval
+ *   { kind: 'revoked' }            banned: the save revokes Founding
+ */
+export function foundingWindowOutcome(creator, resultingStatus, now = Date.now()) {
+  const sinceMs = Date.parse(creator?.foundingSince || '');
+  if (Number.isFinite(sinceMs) && sinceMs <= now) return { kind: 'started' };
+  const status = resultingStatus || effectiveCreatorStatus(creator) || 'active';
+  if (status === 'banned') return { kind: 'revoked' };
+  if (status === 'pending') return { kind: 'approval' };
+  if (status === 'suspended') {
+    // An existing suspension keeps its own end date across the save; a new
+    // one (or one whose date already passed) runs 30 days from now.
+    const keep = effectiveCreatorStatus(creator) === 'suspended' ? Date.parse(creator?.suspendedUntil || '') : NaN;
+    if (Number.isFinite(keep) && keep > now) return { kind: 'at', at: keep, fresh: false };
+    return { kind: 'at', at: now + SUSPENSION_MS, fresh: true };
+  }
+  return { kind: 'now' };
+}

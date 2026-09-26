@@ -85,24 +85,34 @@ export default async function handler(req, res) {
   // that credit, not refused: telling the fan it "has not been used" sent
   // them and support chasing a refund for money already in their (frozen)
   // balance (round-8 money#1).
-  if (isFrozenStanding(await accountStanding(uid))) {
-    let prior = null;
-    try {
-      prior = await findPriorDepositCredit(uid, txHash);
-    } catch (err) {
-      console.error('[credits/buy] prior-credit lookup failed:', err);
-    }
-    if (prior) {
-      return res.status(200).json({
-        ok: true,
-        alreadyCredited: true,
-        frozen: true,
-        creditedCents: prior.creditedCents,
-        feeCents: prior.feeCents,
-        balanceCents: prior.balanceCents,
-        note: 'This payment was already credited to your account. Your balance is frozen while the account is suspended or banned.',
-      });
-    }
+  //
+  // The same is true for EVERY account, not only a frozen one (round-9
+  // money#2): a fan retrying a hash whose credit committed but whose response
+  // was lost -- from a phone with no wallet, or with a different wallet
+  // connected -- used to get "verification expired" or "not sent from the
+  // wallet you verified" for money already in their balance. So this
+  // account's own ledger is asked first, before the frozen check, the wallet
+  // proof and the chain lookup. It reads only this uid's own deposit rows, so
+  // it can neither credit nor reveal anything.
+  const frozen = isFrozenStanding(await accountStanding(uid));
+  let prior = null;
+  try {
+    prior = await findPriorDepositCredit(uid, txHash);
+  } catch (err) {
+    console.error('[credits/buy] prior-credit lookup failed:', err);
+  }
+  if (prior) {
+    return res.status(200).json({
+      ok: true,
+      alreadyCredited: true,
+      ...(frozen ? { frozen: true } : {}),
+      creditedCents: prior.creditedCents,
+      feeCents: prior.feeCents,
+      balanceCents: prior.balanceCents,
+      ...(frozen ? { note: 'This payment was already credited to your account. Your balance is frozen while the account is suspended or banned.' } : {}),
+    });
+  }
+  if (frozen) {
     return res.status(403).json({
       code: 'ACCOUNT_FROZEN',
       error: 'This account is suspended or banned, so credits can’t be added to it. If you already sent USDG, contact support with this transaction hash -- it has not been credited to this account.',
