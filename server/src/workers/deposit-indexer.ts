@@ -296,7 +296,13 @@ async function scan() {
     // address (the sweep worker below) is not a fan's deposit, nor is ETH
     // moved between two deposit addresses (workers/sweep-gas.ts isPlatformSender).
     if (TRACK_NATIVE_ETH) {
-      const treasury = treasuryAddress();
+      // The key these workers actually send top-ups from, not the
+      // configured TREASURY_ADDRESS: after a key rotation that left the env
+      // value on the old wallet, every top-up from the new one was credited
+      // to the fan as an ETH deposit. (workers/treasury-guard.ts refuses to
+      // start while the two disagree; this holds even if that is bypassed.)
+      let treasury: string | null;
+      try { treasury = treasuryAccount().address; } catch { treasury = treasuryAddress(); }
       for (let b = from; b <= to; b++) {
         const block = await publicClient.getBlock({ blockNumber: b, includeTransactions: true });
         for (const t of block.transactions) {
@@ -446,10 +452,22 @@ registerWorker(new Worker('sweep', async (job) => {
     // credited deposit queues its own sweep, and a stream of 1-cent deposits
     // (credited in full) used to buy one top-up each until the platform-wide
     // cap refused every sweep for everyone. Done without failing: the balance
-    // waits at the address, and the next deposit's sweep (or, once it
-    // reaches a dollar, the hourly reconciler) moves all of it.
+    // waits at the address, and the next deposit's sweep moves all of it (for
+    // a STABLECOIN also the hourly reconciler, once it reaches a dollar --
+    // reconcileSweeps covers stablecoins only, never $ONLYONE).
+    //
+    // That return is only for a price KNOWN to put the balance under the
+    // floor. An $ONLYONE price that could not be read (oracle or RPC blip)
+    // says nothing about the balance, and nothing re-queues an $ONLYONE
+    // sweep: returning completed the job and left a credited deposit at the
+    // address for good. It is deferred instead, so BullMQ retries with
+    // backoff (SWEEP_OPTS).
     let px = 1;
-    if (asset === 'ONLYONE') { try { px = await getUsdPrice('ONLYONE'); } catch { px = 0; } }
+    if (asset === 'ONLYONE') {
+      try { px = await getUsdPrice('ONLYONE'); } catch (e) {
+        throw new SweepGasDeferred(`sweep deferred: $ONLYONE price unavailable (${(e as Error).message})`);
+      }
+    }
     if (!sweepWorthTopUp(bal, tok.decimals, px)) return;
     // The gas top-up is treasury money leaving on the strength of a Redis job
     // and a DB row, so it is bounded like every other automatic outflow

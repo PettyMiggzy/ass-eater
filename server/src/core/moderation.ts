@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { money } from './ledger.js';
-import { cancelAuction } from './auctions.js';
+import { cancelAuction, dropLead } from './auctions.js';
 import { rooms as liveRooms, livekitConfigured } from './livekit.js';
 
 export type ModerationStatus = 'ACTIVE' | 'SUSPENDED' | 'BANNED';
@@ -20,9 +20,12 @@ type RoomDeleter = { deleteRoom: (name: string) => Promise<unknown> };
  * explicit admin step.
  *
  * `bySite` records that the standing came from the site. Only a suspension
- * the SITE applied is lifted by the site saying the creator is active again
- * (its suspensions expire on their own after 30 days); one an admin applied
- * here stays until an admin lifts it.
+ * or ban the SITE applied is lifted by the site saying the creator is active
+ * again (its suspensions expire on their own after 30 days; a site admin may
+ * reverse its own ban); one an admin applied here stays until an admin lifts
+ * it. Lifting a ban, either way, re-activates the subscriptions the ban
+ * cancelled whose paid period has not ended, and nothing else: payouts stay
+ * frozen and ban takedowns stay down (restoreBanTakedowns).
  *
  * A site-driven change is CONDITIONAL in the database, never a blind write
  * of a status read earlier: every bySite caller (the lapse sweep, a bridge
@@ -30,11 +33,13 @@ type RoomDeleter = { deleteRoom: (name: string) => Promise<unknown> };
  * an admin ban or suspension landing in between used to be overwritten --
  * the lapse sweep flipped a creator banned moments earlier back to ACTIVE.
  * So the site may only:
- *  - lift (ACTIVE) a row that is still SUSPENDED by the site, and whose
+ *  - lift (ACTIVE) a row that is still SUSPENDED or BANNED by the site, and whose
  *    recorded site standings (creator and account) no longer restrict it;
  *  - suspend a row that is still ACTIVE (never downgrade a ban, nor take
  *    over an admin's suspension, which the site could then lift);
- *  - ban anything not already BANNED.
+ *  - ban anything not already BANNED -- but a ban over an admin's
+ *    suspension stays the admin's (statusBySite false), so the site can
+ *    never lift it.
  * An admin's change (bySite unset) always applies -- unless `noDowngrade`
  * is set, when a SUSPENDED never overwrites a row that is already BANNED.
  * The report-resolve route sets it: suspend_user there is a side effect of
@@ -63,11 +68,24 @@ export async function applyUserStatus(
     { OR: [{ siteAccountStatus: null }, { siteAccountStatus: { notIn: RESTRICTIVE } }] },
   ];
   const guard = !opts.bySite ? (opts.noDowngrade && status === 'SUSPENDED' ? { status: { not: 'BANNED' as const } } : {})
-    : status === 'ACTIVE' ? { status: 'SUSPENDED' as const, statusBySite: true, AND: siteNoLongerRestricts }
+    : status === 'ACTIVE' ? { status: { in: ['SUSPENDED' as const, 'BANNED' as const] }, statusBySite: true, AND: siteNoLongerRestricts }
       : status === 'SUSPENDED' ? { status: 'ACTIVE' as const }
         : { status: { not: 'BANNED' as const } };
   const applied = await prisma.$transaction(async (tx) => {
-    const r = await tx.user.updateMany({ where: { id: userId, ...guard }, data: { status, statusBySite: !!opts.bySite } });
+    // The standing this change replaces, read under a row lock so it is
+    // still the prior one when the guarded update below runs (a concurrent
+    // change waits for this transaction).
+    const priorRow = (await tx.$queryRaw<{ status: string; statusBySite: boolean }[]>`SELECT status::text AS status, "statusBySite" FROM "User" WHERE id = ${userId} FOR UPDATE`)[0];
+    const prior = priorRow?.status;
+    // Who owns the restriction afterwards. A site ban may land on a row an
+    // ADMIN suspended (a site ban applies to anything not already BANNED);
+    // it then stays the admin's (statusBySite false). Marking it the site's
+    // let a later site 'active' lift it straight to ACTIVE, erasing the
+    // admin's suspension -- the takeover the rules above forbid for
+    // suspensions, reached through a ban. The site then gets the
+    // needs-server-admin refusal (lib/bridge.ts) instead.
+    const bySite = !!opts.bySite && (status === 'ACTIVE' || !priorRow || priorRow.status === 'ACTIVE' || priorRow.statusBySite);
+    const r = await tx.user.updateMany({ where: { id: userId, ...guard }, data: { status, statusBySite: bySite } });
     if (!r.count) return false;
     await tx.refreshToken.deleteMany({ where: { userId } });
     if (status !== 'ACTIVE') {
@@ -82,6 +100,21 @@ export async function applyUserStatus(
       await tx.tokenLock.updateMany({ where: { fanId: userId, status: 'ACTIVE' }, data: { autoRenew: false } });
     }
     if (status === 'BANNED') await tx.subscription.updateMany({ where: { creatorId: userId }, data: { autoRenew: false, status: 'CANCELLED' } });
+    // Reversing a ban gives the creator's subscribers back the period they
+    // already paid for: the ban CANCELLED every subscription to them (the
+    // only writer of CANCELLED), which cut access at once, and fans get no
+    // refunds -- so without this a reinstated creator's fans had lost the
+    // rest of their month, and re-subscribing charged them a new one. Only
+    // rows still inside their paid period come back, never auto-renewing:
+    // they run to currentPeriodEnd and the renewals worker expires them. A
+    // fan who wants to keep going subscribes again when it ends. Token
+    // locks get the same treatment (nothing cancels them today, but a row
+    // CANCELLED by anything else is likewise a ban's).
+    if (status === 'ACTIVE' && prior === 'BANNED') {
+      const live = { creatorId: userId, status: 'CANCELLED' as const, currentPeriodEnd: { gt: new Date() } };
+      await tx.subscription.updateMany({ where: live, data: { status: 'ACTIVE', autoRenew: false } });
+      await tx.tokenLock.updateMany({ where: live, data: { status: 'ACTIVE', autoRenew: false } });
+    }
     return true;
   });
   if (!applied) return false;
@@ -135,6 +168,24 @@ export async function applyUserStatus(
       }
     }
     await prisma.listing.updateMany({ where: { creatorId: userId, saleType: 'FIXED', status: 'ACTIVE' }, data: { status: 'REMOVED', moderatedAt, moderatedReason: 'BAN' } });
+
+    // ...and as a BIDDER: every auction the banned account leads loses that
+    // lead, with its hold returned, and stays ACTIVE for everyone else. Left
+    // standing, the banned number made legitimate bidders pay over it, and
+    // the close settled the sale to an account that can never open the
+    // order (every route answers 403). closeAuction also refuses a
+    // non-ACTIVE winner, which covers a lead taken between this read and the
+    // ban. A SUSPENDED leader keeps the lead here -- the suspension may lift
+    // before the auction ends -- and loses it at the close only if still
+    // suspended then.
+    const leads = await prisma.listing.findMany({ where: { currentBidderId: userId, saleType: 'AUCTION', status: 'ACTIVE' }, select: { id: true } });
+    for (const a of leads) {
+      try {
+        await money(prisma, (tx) => dropLead(tx, a.id, userId, 'bidder_banned'));
+      } catch (err) {
+        log.error({ err, listingId: a.id, userId }, 'ban: failed to release a leading bid');
+      }
+    }
   }
   return true;
 }

@@ -253,12 +253,13 @@ export async function resolveBridgedUser(claims: BridgeClaims): Promise<BridgeRe
       data.siteCreatorStatus = claims.creatorStatus;
     }
     if (Object.keys(data).length) user = await prisma.user.update({ where: { id: user.id }, data });
-    // A suspension the SITE applied lifts when the site says the account is
-    // active again (its creator suspensions expire by themselves after 30
-    // days) -- unless the site's OTHER standing for this account still
-    // restricts it (siteMayLift). One an admin applied here, and any ban, is
-    // not lifted this way. Payouts stay frozen either way until an admin
-    // unfreezes them (core/moderation.ts).
+    // A suspension or ban the SITE applied lifts when the site says the
+    // account is active again (its creator suspensions expire by themselves
+    // after 30 days; a site admin may reverse a ban) -- unless the site's
+    // OTHER standing for this account still restricts it (siteMayLift). One
+    // a server/ admin applied is not lifted this way. Payouts stay frozen
+    // either way until an admin unfreezes them, and listings a ban took
+    // down stay down until an admin restores them (core/moderation.ts).
     // Conditional in the database (applyUserStatus): `user` was read above,
     // and an admin's ban landing since must not be lifted by it.
     if (standing === 'active' && siteMayLift(user, dim)) {
@@ -290,15 +291,17 @@ const RESTRICTIVE = new Set(['suspended', 'banned']);
 
 /**
  * May a site message in dimension `dim` saying 'active' lift this row's
- * suspension? Only one the site applied (statusBySite), and only while the
- * site's standing in the OTHER dimension, as last recorded here, does not
- * itself restrict the account.
+ * suspension or ban? Only one the site applied (statusBySite) -- a site
+ * reinstatement undoes the site's own ban as well as its suspension, while a
+ * ban or suspension a server/ admin applied is never lifted by the site --
+ * and only while the site's standing in the OTHER dimension, as last
+ * recorded here, does not itself restrict the account.
  */
 export function siteMayLift(
   u: Pick<User, 'status' | 'statusBySite' | 'siteCreatorStatus' | 'siteAccountStatus'>,
   dim: StandingDim,
 ) {
-  if (u.status !== 'SUSPENDED' || !u.statusBySite) return false;
+  if ((u.status !== 'SUSPENDED' && u.status !== 'BANNED') || !u.statusBySite) return false;
   const other = dim === 'creator' ? u.siteAccountStatus : u.siteCreatorStatus;
   return !RESTRICTIVE.has(other ?? '');
 }
@@ -343,8 +346,12 @@ export async function claimStanding(
  * Applies the site's word on a bridged account's standing: 'banned' and
  * 'suspended' run the same effects as an admin action here
  * (core/moderation.ts), marked as coming from the site; 'active' lifts only
- * a suspension the site itself applied. Never touches a system or ADMIN
- * row, and never softens an existing ban. A message older than the last one
+ * a suspension or ban the site itself applied. Never touches a system or
+ * ADMIN row, and never softens a ban or suspension a server/ admin
+ * applied: an 'active' for such a row returns 'ban_needs_server_admin' or
+ * 'suspension_needs_server_admin' (POST /auth/bridge/status answers 409 with
+ * it) so the site's outbox keeps the reinstatement flagged instead of
+ * reporting it delivered. A message older than the last one
  * applied (claimStanding) changes nothing and returns 'stale'.
  *
  * `fan`: the standing is the account (user-moderation) standing, not the
@@ -359,7 +366,7 @@ export async function syncSiteStanding(
   user: User,
   status: SiteCreatorStatus,
   opts: { standingAt?: number; fan?: boolean; suspendedUntil?: number } = {},
-): Promise<'banned' | 'suspended' | 'reactivated' | 'unchanged' | 'stale'> {
+): Promise<'banned' | 'suspended' | 'reactivated' | 'unchanged' | 'stale' | 'ban_needs_server_admin' | 'suspension_needs_server_admin'> {
   if (SYSTEM_IDS.has(user.id) || user.role === 'ADMIN' || !user.siteUid) return 'unchanged';
   const fan = opts.fan ?? (user.role === 'FAN' && user.siteCreatorStatus == null && status !== 'pending');
   if (fan && status === 'pending') return 'unchanged'; // a fan is never 'pending'
@@ -402,8 +409,13 @@ export async function syncSiteStanding(
     if (user.status !== 'ACTIVE') return 'unchanged';
     return (await applyUserStatus(user.id, 'SUSPENDED', { bySite: true })) ? 'suspended' : 'unchanged';
   }
-  if (status === 'active' && siteMayLift(user, dim)) {
-    return (await applyUserStatus(user.id, 'ACTIVE', { bySite: true })) ? 'reactivated' : 'unchanged';
+  if (status === 'active') {
+    if (siteMayLift(user, dim) && await applyUserStatus(user.id, 'ACTIVE', { bySite: true })) return 'reactivated';
+    // `user` may be stale (an admin can ban in between), so decide the
+    // refusal from the row as it is now.
+    const now = await prisma.user.findUnique({ where: { id: user.id }, select: { status: true, statusBySite: true } });
+    if (now?.status === 'BANNED' && !now.statusBySite) return 'ban_needs_server_admin';
+    if (now?.status === 'SUSPENDED' && !now.statusBySite) return 'suspension_needs_server_admin';
   }
   return 'unchanged';
 }

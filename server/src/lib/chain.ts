@@ -57,6 +57,27 @@ export function treasuryAddress(): Address | null {
   try { return treasuryAccount().address; } catch { return null; }
 }
 /**
+ * In a process that holds the treasury key (the workers): why the configured
+ * TREASURY_ADDRESS cannot be trusted, or null. TREASURY_ADDRESS wins over
+ * the key in treasuryAddress(), so after a key rotation that left it on the
+ * old wallet the workers stopped recognising their own gas top-ups (credited
+ * to fans as ETH deposits with TRACK_NATIVE_ETH on) and the API kept
+ * trusting the exposed old wallet. Null when no key is loaded (nothing to
+ * compare) or TREASURY_ADDRESS is unset or matches.
+ */
+export function treasuryAddressMismatch(): string | null {
+  const a = process.env.TREASURY_ADDRESS?.trim();
+  if (!a || !process.env.TREASURY_PRIVATE_KEY) return null;
+  let signer: string;
+  try { signer = treasuryAccount().address; } catch { return null; }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(a)) return 'TREASURY_ADDRESS is set but is not an address';
+  if (a.toLowerCase() !== signer.toLowerCase()) {
+    return `TREASURY_ADDRESS (${a}) is not the address of TREASURY_PRIVATE_KEY (${signer}) -- after a key rotation set TREASURY_ADDRESS in .env to the new wallet's public address and restart onlyone-api and onlyone-workers`;
+  }
+  return null;
+}
+
+/**
  * The wallets whose burns count as the platform's (admin token-burn
  * record): the treasury, plus any comma-separated BURN_SENDER_ADDRESSES
  * (e.g. the founder's own burn wallet, if he burns from one). Invalid

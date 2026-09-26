@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import { effectiveCreatorStatus, MAX_LOCATION_LENGTH } from '../../lib/creator-status';
-import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
+import { FOUNDING_LIMIT, countFounding, isFoundingCreator, foundingAutoGrantEligible } from '../../lib/founding';
 import { sanitizeGateTokens, tokenGateLive } from '../../lib/token-gate';
 import { Icons, SolidIcons } from '../../components/Brand';
 import { formatCredits, DM_PRICE_FLOOR_CENTS } from '../../lib/brand';
@@ -53,6 +53,13 @@ export default function AdminPanel() {
   const [recordOptionsLoading, setRecordOptionsLoading] = useState(false);
   const [alertsStatus, setAlertsStatus] = useState(null);
   const selectSeq = useRef(0);
+  // The draft and baseline as they are NOW, for code that resumes after an
+  // await (selectCreator's re-read) and must not act on the values its
+  // closure captured before the admin typed anything.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const baselineRef = useRef(baseline);
+  baselineRef.current = baseline;
   // The creator open in the editor RIGHT NOW. A save's response compares
   // against this, never against the `selectedId` captured when the save
   // started: the Accounts tab's "Open creator record" can switch creators
@@ -117,7 +124,9 @@ export default function AdminPanel() {
 
   const loadNciiSummary = async (key) => {
     try {
-      const { res, data } = await adminGet(key ?? adminKey, '/api/admin/ncii-reports?status=open');
+      // Its own small query (never the list): a flood of filings that makes
+      // the list slow or fail must not take the 48-hour badge down with it.
+      const { res, data } = await adminGet(key ?? adminKey, '/api/admin/ncii-summary');
       if (res.ok && data.summary) setNciiSummary(data.summary);
     } catch {
       // The badge is a convenience; the TAKEDOWN tab itself shows the real list.
@@ -249,15 +258,46 @@ export default function AdminPanel() {
     const seq = ++selectSeq.current;
     openCreator(id);
     const snap = creators.find((c) => String(c.id) === String(id));
-    if (snap) { setDraft(draftFrom(snap)); setBaseline(draftFrom(snap)); }
+    const snapBaseline = snap ? draftFrom(snap) : null;
+    if (snap) {
+      setDraft(draftFrom(snap));
+      setBaseline(snapBaseline);
+      draftRef.current = draftFrom(snap);
+      baselineRef.current = snapBaseline;
+    } else {
+      // Nothing to show until the re-read lands -- and nothing of the
+      // previously open creator's draft may be rebased onto this one.
+      setDraft({});
+      setBaseline(null);
+      draftRef.current = {};
+      baselineRef.current = null;
+    }
     resetUploadAttestations();
     try {
       const roster = await fetchRoster();
       if (!roster || seq !== selectSeq.current) return;
       const fresh = roster.find((c) => String(c.id) === String(id));
       if (!fresh) { clearSelection(); setStatus('That creator no longer exists.'); return; }
-      setDraft(draftFrom(fresh));
-      setBaseline(draftFrom(fresh));
+      // The editor is usable from the snapshot while this re-read is in
+      // flight. Anything typed meanwhile is rebased onto the fresh copy
+      // (kept unless the stored value also moved), never discarded.
+      const current = draftRef.current;
+      const base = baselineRef.current;
+      const dirty = !!base && EDITABLE_KEYS.some((k) => changedFrom(current, base, k));
+      if (!dirty) {
+        setDraft(draftFrom(fresh));
+        setBaseline(draftFrom(fresh));
+        return;
+      }
+      const rebased = rebaseDraft(current, base, fresh);
+      setDraft(rebased.draft);
+      setBaseline(rebased.baseline);
+      if (rebased.conflicts.length) {
+        setStatus(
+          `The ${rebased.conflicts.map(fieldName).join(', ')} changed on the server while this creator was loading; `
+          + 'the editor now shows the current value in place of what you typed. Check it before saving.',
+        );
+      }
     } catch {
       if (seq === selectSeq.current) setStatus('Error: could not refresh this creator. Reload before saving.');
     }
@@ -770,7 +810,8 @@ export default function AdminPanel() {
   const nciiOldestHours = nciiSummary?.oldestOpenCreatedAt
     ? Math.floor((Date.now() - new Date(nciiSummary.oldestOpenCreatedAt).getTime()) / (1000 * 60 * 60))
     : null;
-  const nciiUrgent = nciiOpen > 0 && nciiOldestHours !== null && nciiOldestHours >= 36;
+  const nciiOpenMinor = Number(nciiSummary?.openMinor) || 0;
+  const nciiUrgent = nciiOpenMinor > 0 || (nciiOpen > 0 && nciiOldestHours !== null && nciiOldestHours >= 36);
 
   const tabs = [
     { key: 'creators', label: 'CREATORS' },
@@ -844,6 +885,7 @@ export default function AdminPanel() {
               }`}
             >
               {nciiOpen} open TAKE IT DOWN request{nciiOpen === 1 ? '' : 's'}
+              {nciiOpenMinor > 0 && `, ${nciiOpenMinor} filed as a POSSIBLE MINOR`}
               {nciiOldestHours !== null && ` -- oldest filed ${nciiOldestHours}h ago`}. Each must be reviewed and, if valid,
               removed within 48 hours of filing.{nciiOldestHours !== null && nciiOldestHours >= 48 ? ' OVERDUE.' : ''}
             </button>
@@ -888,7 +930,16 @@ export default function AdminPanel() {
           )}
 
           {page === 'reports' ? (
-            <ReportsPanel adminKey={adminKey} />
+            <ReportsPanel
+              adminKey={adminKey}
+              onCreatorBanned={async (creatorId) => {
+                // The ban ran server-side in the resolve's own transaction;
+                // re-read so the roster (and an open, unedited editor) shows it.
+                const roster = await fetchRoster();
+                const banned = roster && roster.find((c) => String(c.id) === String(creatorId));
+                if (banned) applyCreatorFromElsewhere(banned);
+              }}
+            />
           ) : page === 'violations' ? (
             <ViolationsPanel adminKey={adminKey} />
           ) : page === 'takedowns' ? (
@@ -1235,10 +1286,21 @@ export default function AdminPanel() {
                     {draft.founding && foundingWindowHint && (
                       <p className="basis-full text-xs text-gray-500 -mt-3">{foundingWindowHint}</p>
                     )}
-                    {selectedIsPending && !draft.founding && !selected.foundingRevokedAt && (
+                    {/* Decided from the STORED record through the same
+                        foundingAutoGrantEligible() pages/api/admin/profile.js
+                        runs on `existing`, so the hint can't promise a badge the
+                        save won't give (a reinstated, once-banned or violating
+                        applicant is never auto-granted). */}
+                    {selectedIsPending && !draft.founding && !selected.foundingRevokedAt && foundingAutoGrantEligible(selected) && (
                       <p className="basis-full text-xs text-gray-500 -mt-3">
                         Approving (Pending → Active) grants Founding automatically if their profile is finished and a slot
                         is free. To approve without it, untick it on a second save afterwards.
+                      </p>
+                    )}
+                    {selectedIsPending && !draft.founding && !selected.foundingRevokedAt && !isFoundingCreator(selected) && !foundingAutoGrantEligible(selected) && (
+                      <p className="basis-full text-xs text-gray-500 -mt-3">
+                        Approving won't grant Founding automatically -- this creator was approved or banned before, or
+                        has a confirmed content violation. Tick it to grant it by hand.
                       </p>
                     )}
                     <label className="flex items-center gap-2 text-sm text-gray-300">
@@ -1573,13 +1635,18 @@ function PerformerAttestation({ name, question, value, onChange, ids, onIds, rec
   );
 }
 
-function ReportsPanel({ adminKey }) {
+function ReportsPanel({ adminKey, onCreatorBanned }) {
   const [statusFilter, setStatusFilter] = useState('open');
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // The list is paged by the server (possible minor, then non-consensual,
+  // then the rest, newest first within each); "Load more" follows nextCursor.
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // Only the latest load may write the list: switching the filter quickly
   // (Open -> Dismissed -> Open) used to let a slower earlier response land
@@ -1588,16 +1655,45 @@ function ReportsPanel({ adminKey }) {
   const load = async (status) => {
     const seq = ++loadSeq.current;
     setLoading(true);
+    setLoadingMore(false);
     setError('');
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/reports?status=${encodeURIComponent(status)}`);
       if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load reports'));
       setReports(Array.isArray(data.reports) ? data.reports : []);
+      setHasMore(!!data.hasMore && typeof data.nextCursor === 'string');
+      setNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
     } catch (err) {
       if (seq === loadSeq.current) setError(err.message);
     } finally {
       if (seq === loadSeq.current) setLoading(false);
+    }
+  };
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    const seq = loadSeq.current;
+    setLoadingMore(true);
+    setError('');
+    try {
+      const { res, data } = await adminGet(
+        adminKey,
+        `/api/admin/reports?status=${encodeURIComponent(statusFilter)}&cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      // The filter changed (or the list reloaded) meanwhile: drop this page.
+      if (seq !== loadSeq.current) return;
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load more reports'));
+      const more = Array.isArray(data.reports) ? data.reports : [];
+      setReports((prev) => {
+        const seen = new Set(prev.map((x) => String(x.id)));
+        return [...prev, ...more.filter((x) => !seen.has(String(x.id)))];
+      });
+      setHasMore(!!data.hasMore && typeof data.nextCursor === 'string');
+      setNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
+    } catch (err) {
+      if (seq === loadSeq.current) setError(err.message);
+    } finally {
+      if (seq === loadSeq.current) setLoadingMore(false);
     }
   };
 
@@ -1620,6 +1716,19 @@ function ReportsPanel({ adminKey }) {
       const keep = serious && !profileMedia ? ' A copy of the text is kept on the report as evidence.' : '';
       const gone = r.target?.exists === false ? ' (It already looks deleted -- this records the report as actioned.)' : '';
       if (!confirm(`Remove the reported content? This will ${what}.${keep}${gone}`)) return;
+    } else if (action === 'remove_and_ban') {
+      // The possible-minor outcome Terms section 8 promises: the reported item
+      // comes down AND the creator who posted it is banned permanently, every
+      // file they have is quarantined as evidence, and ALL their listings come
+      // down -- including files earlier buyers paid for. Irreversible here, so
+      // asked twice. The server decides who the creator is from the stored
+      // report (never this panel) and refuses with no_creator when a fan wrote it.
+      if (!confirm(
+        `Remove the reported content AND PERMANENTLY BAN the creator who posted it?\n\n`
+        + 'Every file they have is quarantined as evidence (kept, never served), and ALL their listings are taken down, '
+        + 'including files earlier buyers paid for. Only do this once you have checked the content.',
+      )) return;
+      if (!confirm(`Last check: ban the creator behind report #${r.id} permanently?`)) return;
     } else if (action === 'dismiss' && serious) {
       // The server refuses to dismiss these without a reason (400
       // reason_required); it is kept on the report and in its history.
@@ -1648,6 +1757,17 @@ function ReportsPanel({ adminKey }) {
         action,
         ...(reason !== null ? { reason: reason.trim() } : {}),
       });
+      if (res.status === 400 && (data?.code === 'not_minor' || data?.code === 'no_creator')) {
+        // Refused before anything was claimed or removed: the report is
+        // untouched and still open.
+        setError(`${errorFrom(res, data, 'That report cannot lead to a ban.')} Nothing was changed.`);
+        return;
+      }
+      if (res.status === 409 && data?.code === 'no_creator') {
+        setError(errorFrom(res, data, 'That creator account no longer exists -- the report is still open.'));
+        await load(statusFilter);
+        return;
+      }
       if (res.status === 409) {
         // already_resolved: someone else (or another tab) resolved it first;
         // not_reopenable: it is no longer dismissed. Either way nothing was
@@ -1659,6 +1779,17 @@ function ReportsPanel({ adminKey }) {
       if (!res.ok) throw new Error(errorFrom(res, data, action === 'reopen' ? 'Could not reopen that report' : 'Failed to resolve report'));
       if (action === 'reopen') {
         setNotice(`Report #${r.id} reopened and back in the open queue.`);
+      } else if (action === 'remove_and_ban') {
+        const n = Number(data.preserved) || 0;
+        setNotice(
+          `Report #${r.id} actioned -- ${data.content === 'already_gone' ? 'the reported item was already gone' : 'the content was removed'}, `
+          + `creator #${String(data.bannedCreatorId ?? '?')} was banned permanently and their listings taken down`
+          + `${n ? `, and ${n} file(s) quarantined as evidence (Evidence tab)` : ''}. `
+          + 'Remember: report it to the NCMEC CyberTipline (report.cybertip.org), using the quarantined copy.',
+        );
+        if (data.bannedCreatorId != null && onCreatorBanned) {
+          try { await onCreatorBanned(String(data.bannedCreatorId)); } catch { /* the roster refreshes on the next load */ }
+        }
       } else if (action === 'remove_content') {
         setNotice(data.content === 'already_gone'
           ? `Report #${r.id} actioned -- the item was already gone.`
@@ -1768,6 +1899,18 @@ function ReportsPanel({ adminKey }) {
                   >
                     Remove Content
                   </button>
+                  {/* Possible-minor reports only (the server refuses any
+                      other with not_minor). It also answers no_creator when a
+                      fan, not a creator, posted the comment or message. */}
+                  {r.category === 'minor' && (
+                    <button
+                      onClick={() => resolve(r, 'remove_and_ban')}
+                      disabled={busyId === r.id}
+                      className="text-xs px-3 py-1.5 rounded-md border border-red-600 bg-red-600/20 text-red-200 font-bold hover:bg-red-600/40 transition disabled:opacity-50"
+                    >
+                      Remove &amp; ban creator…
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-3">
@@ -1775,6 +1918,7 @@ function ReportsPanel({ adminKey }) {
                     {String(r.status ?? '')} by {String(r.resolvedBy ?? 'admin')}
                     {r.resolvedAt ? `, ${new Date(r.resolvedAt).toLocaleString()}` : ''}
                     {r.contentOutcome ? ` (${r.contentOutcome === 'already_gone' ? 'item was already gone' : 'content removed'})` : ''}
+                    {r.bannedCreatorId != null ? ` · creator #${String(r.bannedCreatorId)} banned` : ''}
                   </p>
                   {r.status === 'dismissed' && (
                     <button
@@ -1790,6 +1934,15 @@ function ReportsPanel({ adminKey }) {
             </div>
           ))}
         </div>
+      )}
+      {!loading && hasMore && (
+        <button
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="mt-4 text-sm px-4 py-2 rounded-md border border-white/15 text-gray-300 hover:text-white transition disabled:opacity-50"
+        >
+          {loadingMore ? 'Loading...' : 'Load more'}
+        </button>
       )}
     </div>
   );
@@ -2126,15 +2279,23 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
   // (Open -> Dismissed -> Open) used to let a slower earlier response land
   // last and show one status's rows under another status's label.
   const loadSeq = useRef(0);
+  // The list is paged by the server (possible-minor first, then oldest
+  // first); "Load more" follows nextCursor.
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const load = async (status) => {
     const seq = ++loadSeq.current;
     setLoading(true);
+    setLoadingMore(false);
     setError('');
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/ncii-reports?status=${encodeURIComponent(status)}`);
       if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load takedown requests'));
       setReports(Array.isArray(data.reports) ? data.reports : []);
+      setHasMore(!!data.hasMore && typeof data.nextCursor === 'string');
+      setNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
       if (data.summary) {
         setSummary(data.summary);
         if (onSummary) onSummary(data.summary);
@@ -2143,6 +2304,37 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       if (seq === loadSeq.current) setError(err.message);
     } finally {
       if (seq === loadSeq.current) setLoading(false);
+    }
+  };
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    const seq = loadSeq.current;
+    setLoadingMore(true);
+    setError('');
+    try {
+      const { res, data } = await adminGet(
+        adminKey,
+        `/api/admin/ncii-reports?status=${encodeURIComponent(statusFilter)}&cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      // The filter changed (or the list reloaded) meanwhile: this page
+      // belongs to a list that is no longer on screen.
+      if (seq !== loadSeq.current) return;
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load more takedown requests'));
+      const more = Array.isArray(data.reports) ? data.reports : [];
+      setReports((prev) => {
+        const seen = new Set(prev.map((x) => String(x.id)));
+        return [...prev, ...more.filter((x) => !seen.has(String(x.id)))];
+      });
+      setHasMore(!!data.hasMore && typeof data.nextCursor === 'string');
+      setNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
+      if (data.summary) {
+        setSummary(data.summary);
+        if (onSummary) onSummary(data.summary);
+      }
+    } catch (err) {
+      if (seq === loadSeq.current) setError(err.message);
+    } finally {
+      if (seq === loadSeq.current) setLoadingMore(false);
     }
   };
 
@@ -2307,7 +2499,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
         <p className={`text-sm font-bold mb-4 ${openCount === 0 ? 'text-gray-500' : oldestHours !== null && oldestHours >= 36 ? 'text-red-400' : 'text-yellow-400'}`}>
           {openCount === 0
             ? 'No open takedown requests.'
-            : `${openCount} open${oldestHours !== null ? ` -- oldest filed ${oldestHours}h ago${oldestHours >= 48 ? ' (OVERDUE)' : ''}` : ''}.`}
+            : `${openCount} open${Number(summary.openMinor) > 0 ? ` (${Number(summary.openMinor)} possible minor)` : ''}${oldestHours !== null ? ` -- oldest filed ${oldestHours}h ago${oldestHours >= 48 ? ' (OVERDUE)' : ''}` : ''}.`}
         </p>
       )}
       {notice && <p className="text-sm text-green-400 mb-4">{notice}</p>}
@@ -2461,6 +2653,15 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
             );
           })}
         </div>
+      )}
+      {!loading && hasMore && (
+        <button
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="mt-4 text-sm px-4 py-2 rounded-md border border-white/15 text-gray-300 hover:text-white transition disabled:opacity-50"
+        >
+          {loadingMore ? 'Loading...' : 'Load more'}
+        </button>
       )}
     </div>
   );

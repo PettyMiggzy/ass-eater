@@ -252,7 +252,17 @@ describe('site standing over the bridge', () => {
     expect(u.creator?.payoutsFrozen).toBe(true);
     expect((await prisma.subscription.findFirstOrThrow({ where: { creatorId: id } })).status).toBe('CANCELLED');
     expect((await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } })).status).toBe('REMOVED');
-    // The site saying 'active' later never lifts a ban.
+    // The site saying 'active' later lifts a ban the SITE applied (round 12,
+    // owner decision srv-auth-core#2) -- the subscriber gets back the paid
+    // period the ban cut off, but payouts stay frozen and the listing stays
+    // down. A ban a server admin applied is never lifted this way.
+    expect(await resolveBridgedUser(claims(uid, 'active'))).toMatchObject({ ok: true });
+    const back = await prisma.user.findUniqueOrThrow({ where: { id }, include: { creator: true } });
+    expect(back.status).toBe('ACTIVE');
+    expect(back.creator?.payoutsFrozen).toBe(true);
+    expect(await prisma.subscription.findFirstOrThrow({ where: { creatorId: id } })).toMatchObject({ status: 'ACTIVE', autoRenew: false });
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } })).status).toBe('REMOVED');
+    await applyUserStatus(id, 'BANNED', { rooms: { deleteRoom: async () => {} } });   // an admin's
     expect(await resolveBridgedUser(claims(uid, 'active'))).toMatchObject({ ok: false, error: 'account_banned' });
   });
 

@@ -180,6 +180,10 @@ export default function CartPage({ sessionUser }) {
   const cart = useCart();
   const uid = sessionUser ? String(sessionUser.id) : null;
   const [balanceCents, setBalanceCents] = useState(null);
+  // A suspended or banned account's credits are frozen (/api/credits/balance
+  // says so): the server refuses checkout, so the page says it up front
+  // instead of offering Pay or a "buy credits" prompt.
+  const [frozen, setFrozen] = useState(false);
   // One key per checkout ATTEMPT, reused across retries of the same
   // submission (a network drop, a lost response, a reload) so the server can
   // tell "resending the same attempt" apart from "starting a new one". Held
@@ -244,10 +248,23 @@ export default function CartPage({ sessionUser }) {
     if (viewerConfirmed.current) reloadForSession();
   }, [cart.viewer, uid]);
 
+  // Only a real balance is ever shown. A 401 means this tab's session ended
+  // (logged out elsewhere, revoked): re-render for whoever is signed in now
+  // rather than show "0 credits, you're short". Any other failure keeps the
+  // last known balance -- writing 0 pushed fans to buy credits they had.
   const refreshBalance = () =>
-    fetch('/api/credits/balance')
-      .then((r) => r.json())
-      .then((d) => setBalanceCents(d.balanceCents ?? 0))
+    fetch('/api/credits/balance', { cache: 'no-store' })
+      .then(async (r) => {
+        if (r.status === 401) {
+          reloadForSession();
+          return;
+        }
+        if (!r.ok) return;
+        const d = await r.json().catch(() => null);
+        if (!d) return;
+        if (Number.isFinite(d.balanceCents)) setBalanceCents(d.balanceCents);
+        if (typeof d.frozen === 'boolean') setFrozen(d.frozen);
+      })
       .catch(() => {});
 
   useEffect(() => {
@@ -332,6 +349,7 @@ export default function CartPage({ sessionUser }) {
   const canCheckout =
     !!sessionUser &&
     !viewerMismatch &&
+    !frozen &&
     hasEnough &&
     ageConfirmed &&
     tosAccepted &&
@@ -389,8 +407,12 @@ export default function CartPage({ sessionUser }) {
           throw new Error("We couldn't check on your earlier payment attempt. Try again in a moment, or look in your order history.");
         }
         if (outcome === 'claimed') return; // the notice above the cart explains it
-        if (Date.now() - (stored.uncertainAt || stored.at) < UNCERTAIN_GRACE_MS) {
-          throw new Error("Your earlier payment attempt is still being confirmed. Wait a minute and check your order history before paying for this cart.");
+        const waitMs = UNCERTAIN_GRACE_MS - (Date.now() - (stored.uncertainAt || stored.at));
+        if (waitMs > 0) {
+          const mins = Math.ceil(waitMs / 60000);
+          throw new Error(
+            `Your earlier payment attempt is still being confirmed. Wait ${mins <= 1 ? 'about a minute' : `about ${mins} minutes`} and check your order history before paying for this cart.`
+          );
         }
         endAttempt(); // it can no longer commit: start fresh for this cart
         stored = null;
@@ -405,7 +427,10 @@ export default function CartPage({ sessionUser }) {
       const priorUncertain = !!base.uncertain;
       // Stored as uncertain BEFORE the request goes out: if the tab is closed
       // or reloaded while it runs, it may still commit, and the next load must
-      // ask about it rather than treat it as never sent.
+      // ask about it rather than treat it as never sent. The stamp is this
+      // send's time, so a request whose response (or tab) is lost gets the
+      // full grace from its own send; restoreEarlierUncertain below puts the
+      // earlier stamp back once this request is definitively answered.
       const attempt = { ...base, uncertain: true, uncertainAt: Date.now() };
       writeAttempt(uid, attempt);
       setMemAttempt(attempt);
@@ -442,13 +467,24 @@ export default function CartPage({ sessionUser }) {
           return false;
         }
       };
+      // A definitive refusal of THIS request while an EARLIER one under the
+      // key is still unaccounted for: this request can no longer commit, so
+      // the grace is measured from the earlier one again, not from this
+      // press. Leaving this press's stamp in place pushed the "wait a minute"
+      // block out by the full grace period on every retry.
+      const restoreEarlierUncertain = () => {
+        const rec = { ...attempt, uncertain: true, uncertainAt: base.uncertainAt || base.at };
+        writeAttempt(uid, rec);
+        setMemAttempt(rec);
+      };
       const UNCERTAIN_NOTE =
         ' An earlier payment attempt for this cart may already have gone through -- use "Check payment status" or look in your order history before paying again. Pressing Pay again is safe and won\'t charge you twice for that attempt.';
       // Forget the attempt after a definitive refusal -- unless an earlier
       // request under this key is unaccounted for, in which case keep it
-      // pinned and uncertain.
+      // pinned and uncertain (timed from that earlier request).
       const endIfCertain = () => {
         if (!priorUncertain) endAttempt();
+        else restoreEarlierUncertain();
       };
       let res;
       try {
@@ -524,6 +560,7 @@ export default function CartPage({ sessionUser }) {
         // Rate-limited before anything was claimed or charged. The wait comes
         // from Retry-After when the server sent one.
         if (!priorUncertain) markSettled();
+        else restoreEarlierUncertain();
         const secs = Number(res.headers.get('Retry-After'));
         const wait = Number.isFinite(secs) && secs > 0
           ? ` Try again in ${secs < 60 ? `${Math.ceil(secs)} seconds` : `about ${Math.ceil(secs / 60)} minute${Math.ceil(secs / 60) === 1 ? '' : 's'}`}.`
@@ -555,6 +592,8 @@ export default function CartPage({ sessionUser }) {
           if (await confirmAfterUnknown(rec)) return;
         } else if (!priorUncertain) {
           markSettled();
+        } else {
+          restoreEarlierUncertain();
         }
         throw new Error((data.error || 'Payment could not be confirmed') + (priorUncertain || res.status >= 500 ? UNCERTAIN_NOTE : ''));
       }
@@ -777,7 +816,16 @@ export default function CartPage({ sessionUser }) {
               {/* While an earlier payment's outcome is unknown, "you're short, buy
                   credits" is the wrong prompt: the shortfall may be that payment.
                   The banner above resolves it instead. */}
-              {sessionUser && balanceCents !== null && !hasEnough && !uncertainAttempt && (
+              {sessionUser && frozen && (
+                <div className="mb-4 px-4 py-3 rounded-xl border border-red-500/30 bg-red-500/5 text-xs text-gray-300">
+                  Your account&apos;s credits are frozen while it is suspended or banned, so checkout isn&apos;t
+                  available. Contact{' '}
+                  <a href="mailto:team@onlyone1.fun" className="text-brand-pink underline">team@onlyone1.fun</a> if you
+                  think this is a mistake.
+                </div>
+              )}
+
+              {sessionUser && !frozen && balanceCents !== null && !hasEnough && !uncertainAttempt && (
                 <div className="mb-4 px-4 py-3 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300 flex items-center justify-between gap-3">
                   <span>You're short {formatCredits(cart.totalCents - balanceCents)}.</span>
                   <a href="/credits" className="shrink-0 px-3 py-1.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-white transition">
@@ -795,13 +843,15 @@ export default function CartPage({ sessionUser }) {
                 </p>
               )}
 
-              <button
-                onClick={pay}
-                disabled={!canCheckout || paying || checking}
-                className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50"
-              >
-                {paying ? 'Processing…' : `Pay ${formatCredits(cart.totalCents)}`}
-              </button>
+              {!frozen && (
+                <button
+                  onClick={pay}
+                  disabled={!canCheckout || paying || checking}
+                  className="w-full py-3.5 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-bold text-sm transition disabled:opacity-50"
+                >
+                  {paying ? 'Processing…' : `Pay ${formatCredits(cart.totalCents)}`}
+                </button>
+              )}
             </>
           )}
         </div>

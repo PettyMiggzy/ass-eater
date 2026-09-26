@@ -33,8 +33,11 @@ import { blobPathnameFromSrc } from '../../../../lib/blob-cleanup';
  *
  * Files quarantined as evidence (lib/media-preservation.js) are never served,
  * to buyers either, so they are left out of `items` and counted in `withheld`
- * rather than listed as tiles that 404; when every file is withheld the order
- * reads removed with removedReason 'moderation'.
+ * rather than listed as tiles that 404. A preservation is PERMANENT -- there is
+ * no release action and nothing ever deletes one -- so a withheld file will
+ * not be delivered later. Even when every file is withheld the order stays
+ * removed:false (nothing was deleted, and removedReason is about deletion)
+ * with `withheld` > 0, and the buyer is told those files cannot be delivered.
  *
  * Items the creator removed from the listing AFTER this order was placed
  * (`retainedMedia`, removedAt later than the order) are still delivered; ones
@@ -101,10 +104,12 @@ export default async function handler(req, res) {
       const served = all.filter((m) => !preserved.has(blobPathnameFromSrc(m.src)));
       withheld = all.length - served.length;
       items = served.map((m) => toItem(m, listing));
-      // Every file held for review is NOT a removal: nothing was deleted and
-      // the review may release them, so this stays removed:false with
-      // `withheld` > 0 and the orders page says the files are held back.
-      // 'moderation' is only for a listing whose media was actually deleted.
+      // Files held as evidence are not a deletion, so this stays
+      // removed:false with `withheld` > 0 -- but they are withheld for good:
+      // no code path releases a preservation (round-12 media#0), so the
+      // orders page must say they cannot be delivered, not that a review is
+      // pending. 'moderation' is only for a listing whose media was actually
+      // deleted.
     }
     return res.status(200).json({
       orderId: order.id,

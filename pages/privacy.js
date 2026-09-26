@@ -289,7 +289,11 @@ export default function Privacy() {
                   are handled separately, below). Reports and moderation records are different: they
                   keep a copy of the reported or removed content, including who wrote or sent it (the username or
                   login email that account had at the time), for as long as the report, a legal hold, or a legal
-                  obligation requires — that copy is the evidence, so deleting the account does not remove it. The
+                  obligation requires — that copy is the evidence, so deleting the account does not remove it.
+                  Files taken down after a report that they may show a minor are kept as evidence too: they are moved to
+                  restricted evidence storage (never shown or delivered to other users) instead of being deleted, and
+                  when the account that posted them is banned for it, every file that account still has on the Platform is kept
+                  there too. These evidence files are not deleted on request or when the account is deleted. The
                   content filter records described in Section 1 are moderation records too: text a filter
                   refused stays in them, with the account (or signup IP address) it came from, after the
                   account is deleted. If

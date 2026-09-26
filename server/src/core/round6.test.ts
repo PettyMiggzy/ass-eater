@@ -162,7 +162,9 @@ describe('a site-driven status change never overrides a newer admin decision', (
     if (!r.ok) throw new Error('setup');
     const stale = await prisma.user.update({ where: { id: r.user.id }, data: { status: 'SUSPENDED', statusBySite: true } });
     await applyUserStatus(r.user.id, 'BANNED', { rooms: { deleteRoom: async () => undefined } });   // the admin, meanwhile
-    expect(await syncSiteStanding(stale, 'active', { fan: false })).toBe('unchanged');
+    // Not lifted -- and (round 12) reported as the distinct refusal, so the
+    // site's outbox keeps the reinstatement flagged instead of delivered.
+    expect(await syncSiteStanding(stale, 'active', { fan: false })).toBe('ban_needs_server_admin');
     expect(await syncSiteStanding({ ...stale, status: 'ACTIVE' }, 'suspended', { fan: false })).toBe('unchanged');
     const u = await prisma.user.findUniqueOrThrow({ where: { id: r.user.id } });
     expect([u.status, u.statusBySite]).toEqual(['BANNED', false]);

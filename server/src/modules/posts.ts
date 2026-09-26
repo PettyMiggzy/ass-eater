@@ -64,7 +64,8 @@ export async function unlockPost(fanId: string, post: { id: string; creatorId: s
       // Nothing is sold unless something viewable is behind the paywall --
       // the same rule as a listing's hasDeliverable (core/auctions.ts).
       // Re-read inside the charge's transaction: media can be taken down
-      // (REJECTED) after the post was created.
+      // (REJECTED) after the post was created, and the creator can delete
+      // the post after the route read it.
       if (!(await postHasDeliverable(tx, post.id))) throw Object.assign(new Error('no_deliverable'), { statusCode: 409 });
       await tx.postUnlock.create({ data: { fanId, postId: post.id } });
       const r = await charge(tx, { fanId, creatorId: post.creatorId, grossCents: post.priceCents, type: 'PPV', refId: post.id });
@@ -96,14 +97,18 @@ export async function unlockPost(fanId: string, post: { id: string; creatorId: s
 }
 
 /**
- * Is there something a buyer of this PPV post would actually get? Every
- * attached media item must be READY (canViewMedia refuses anything else, so a
- * buyer of a post with a still-uploading or REJECTED item gets a 403 for it),
- * and a post with no media must have text. A post with neither is refused.
+ * Is there something a buyer of this PPV post would actually get? It must
+ * still be a PPV post that is not removed (canViewPost shows a removed post
+ * to nobody, and the route's own check runs on a row read BEFORE the charge's
+ * transaction -- a creator's DELETE committing in between used to be sold
+ * anyway), every attached media item must be READY (canViewMedia refuses
+ * anything else, so a buyer of a post with a still-uploading or REJECTED item
+ * gets a 403 for it), and a post with no media must have text. A post with
+ * neither is refused.
  */
 export async function postHasDeliverable(tx: Tx, postId: string) {
-  const post = await tx.post.findUnique({ where: { id: postId }, select: { text: true, media: { select: { status: true } } } });
-  if (!post) return false;
+  const post = await tx.post.findUnique({ where: { id: postId }, select: { text: true, removed: true, visibility: true, media: { select: { status: true } } } });
+  if (!post || post.removed || post.visibility !== 'PPV') return false;
   if (post.media.some((m) => m.status !== 'READY')) return false;
   return post.media.length > 0 || post.text.trim().length > 0;
 }

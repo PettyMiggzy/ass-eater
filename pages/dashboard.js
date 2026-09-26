@@ -158,6 +158,11 @@ export default function Dashboard({
   const accountRestricted = accountStatus === 'suspended' || accountStatus === 'banned';
   const isRestricted = creatorStatus === 'suspended' || creatorStatus === 'banned' || accountRestricted;
   const isDemo = !!creator && (creator.seed === true || creator.demo === true);
+  // The content-violation ladder (lib/creators-store.js applyContentViolation)
+  // is only one way to be suspended or banned -- an admin can set either by
+  // hand, for any reason. The banners name a content violation only when the
+  // record's count actually supports it.
+  const violationCount = creator ? Math.max(0, Math.floor(Number(creator.contentViolationCount) || 0)) : 0;
   const walletError = payoutWalletError(draft.walletAddress);
   const walletDirty = String(draft.walletAddress || '').trim() !== String(creator?.walletAddress || '').trim();
 
@@ -167,15 +172,41 @@ export default function Dashboard({
     setOrigin(window.location.origin);
   }, []);
 
+  // 'idle' | 'working' | 'partial' (cookie cleared here, but the session
+  // could not be revoked everywhere -- see pages/api/auth/logout.js).
+  const [logoutState, setLogoutState] = useState('idle');
   const logout = async () => {
+    if (logoutState === 'working') return;
+    setLogoutState('working');
+    let res;
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-    } finally {
-      // Signed out: the cart (lib/cart.js) belongs to this account and must
-      // not be shown to, or paid for by, whoever signs in next on this browser.
-      cart.setViewer(null);
-      router.push('/');
+      res = await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // The request never reached the server, so no Set-Cookie arrived and
+      // this browser is STILL signed in. Say so and stay: navigating away as
+      // if signed out left the next person on a shared computer in this
+      // account.
+      setLogoutState('idle');
+      setStatus("Error: We couldn't reach the server, so you may still be signed in. Check your connection and press Log Out again.");
+      return;
     }
+    // Either way the cookie is gone now (the route clears it first): the
+    // cart (lib/cart.js) belongs to this account and must not be shown to,
+    // or paid for by, whoever signs in next on this browser.
+    cart.setViewer(null);
+    if (res.ok) {
+      router.push('/');
+      return;
+    }
+    // Signed out on this device, but a copied token may still be live. Show
+    // that rather than navigating past it; retrying from here can't help
+    // (this browser no longer has the session), logging in and out again can.
+    const data = await res.json().catch(() => ({}));
+    setLogoutState('partial');
+    setStatus(
+      `Error: ${typeof data.error === 'string' && data.error ? data.error : 'Signed out on this device, but the session could not be ended everywhere.'} ` +
+        'To finish, log in again and log out once more, or contact team@onlyone1.fun.'
+    );
   };
 
   const saveProfile = async () => {
@@ -419,9 +450,19 @@ export default function Dashboard({
             <h1 className="text-3xl font-black premium-title">
               {user.role === 'creator' ? 'Creator Dashboard' : 'Your Account'}
             </h1>
-            <button onClick={logout} className="text-sm px-4 py-2 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition">
-              Log Out
-            </button>
+            {logoutState === 'partial' ? (
+              <a href="/login" className="text-sm px-4 py-2 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition">
+                Log In
+              </a>
+            ) : (
+              <button
+                onClick={logout}
+                disabled={logoutState === 'working'}
+                className="text-sm px-4 py-2 rounded-md border border-brand-purple/30 text-gray-300 hover:bg-white/5 transition disabled:opacity-50"
+              >
+                {logoutState === 'working' ? 'Logging out…' : 'Log Out'}
+              </button>
+            )}
           </div>
 
           {status && (
@@ -502,15 +543,20 @@ export default function Dashboard({
               )}
               {creatorStatus === 'suspended' && (
                 <div className="px-4 py-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-                  Your account is suspended until {formatDate(creator.suspendedUntil)} following a confirmed content
-                  violation. Your profile and listings are hidden, you can&apos;t post, edit or sell, and your balance and
+                  Your account is suspended until {formatDate(creator.suspendedUntil)}{' '}
+                  {violationCount >= 1
+                    ? 'following a confirmed content violation.'
+                    : <>by our moderation team. Contact <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> with any questions.</>}{' '}
+                  Your profile and listings are hidden, you can&apos;t post, edit or sell, and your balance and
                   any pending cash-outs are held until then. You can still ship orders fans have already paid for.
                 </div>
               )}
               {creatorStatus === 'banned' && (
                 <div className="px-4 py-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-                  Your account has been permanently banned following a second confirmed content violation. Your
-                  profile is hidden, you can no longer post, edit or sell, and your balance is frozen and never paid out.
+                  {violationCount >= 2
+                    ? 'Your account has been permanently banned following a second confirmed content violation.'
+                    : <>Your account has been permanently banned by our moderation team. Contact <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> with any questions.</>}{' '}
+                  Your profile is hidden, you can no longer post, edit or sell, and your balance is frozen and never paid out.
                 </div>
               )}
 

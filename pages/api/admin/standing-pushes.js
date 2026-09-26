@@ -6,7 +6,7 @@ import { listPendingStandingPushes, deliverStandingPushes, bridgeConfigured } fr
  * Header x-admin-key.
  *
  * GET  -> 200 { ok, configured, pending: [{ uid, status, role, standingAt, suspendedUntil,
- *                attempts, nextAttemptAt, lastError, queuedAt }] }
+ *                attempts, nextAttemptAt, lastError, needsServerAdmin, queuedAt }] }
  * POST -> 200 { ok, sent, failed, remaining, pending }   retries every queued push now
  *
  * A row here is a ban, suspension, reinstatement or deletion server/ has not
@@ -15,6 +15,14 @@ import { listPendingStandingPushes, deliverStandingPushes, bridgeConfigured } fr
  * daily cron); a row stuck with lastError 'http_404' usually means the
  * server/ droplet runs code without the /auth/bridge/status route and needs
  * a redeploy.
+ *
+ * A row with needsServerAdmin true (lastError 'ban_needs_server_admin' or
+ * 'suspension_needs_server_admin') is a reinstatement server/ received and
+ * refused: that account was banned or suspended by a server/ admin, and the
+ * site may only lift restrictions the site applied. It stays restricted on
+ * server/ (payouts frozen; after a ban, listings down) until someone runs
+ * POST /admin/users/:id/status {"status":"ACTIVE"} there; the row then clears
+ * on its next retry (every 6 hours, or a POST here).
  */
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });

@@ -43,8 +43,9 @@ export const subscriptions: FastifyPluginAsync = async (app) => {
   // currentPeriodEnd because autoRenew is off. Setting CANCELLED here cut
   // access off the moment a fan cancelled, and a re-subscribe then missed the
   // "already subscribed" branch above and charged a whole new month.
-  // (CANCELLED is now only written by an admin ban, which is meant to end
-  // access at once.)
+  // (CANCELLED is now only written by a ban, which is meant to end access at
+  // once; reversing the ban re-activates the rows whose paid period is still
+  // running -- core/moderation.ts.)
   app.delete('/:creatorId', { preHandler: app.auth }, async (req: any) => {
     await prisma.subscription.updateMany({ where: { fanId: req.user.id, creatorId: req.params.creatorId, status: 'ACTIVE' }, data: { autoRenew: false } });
     return { ok: true };

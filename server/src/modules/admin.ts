@@ -506,7 +506,9 @@ export const admin: FastifyPluginAsync = async (app) => {
   // appeal) to clear every BAN stamp of that creator in the same call, or
   // restore one listing with POST /admin/listings/:id/restore. Either way
   // the listings stay REMOVED until the creator relists them, and a REPORT
-  // takedown is never restored.
+  // takedown is never restored. Reactivating a BANNED account also gives
+  // its subscribers back what is left of the period they paid for (the ban
+  // cancelled those subscriptions), without auto-renew.
   app.post('/users/:id/status', async (req: any, reply) => {
     const { status, restoreListings } = z.object({
       status: z.enum(['ACTIVE', 'SUSPENDED', 'BANNED']), restoreListings: z.boolean().optional(),

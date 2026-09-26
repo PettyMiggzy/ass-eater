@@ -191,7 +191,39 @@ export async function cancelAuction(tx: Tx, listingId: string, reason: string) {
   return { released: listing.currentBidderId ? held : 0 };
 }
 
-/** Closes an ended auction: no sale (and a full release) if there were no bids, the reserve wasn't met or the seller is no longer active, otherwise converts the held winning bid into a real order. */
+/**
+ * Withdraws `bidderId`'s standing lead on one auction: returns exactly what
+ * is held from them (in this transaction), clears the lead and leaves the
+ * auction ACTIVE so anyone else can bid again from the starting price. For a
+ * BANNED bidder (core/moderation.ts): a banned account fails app.auth on
+ * every route, so it could never open what it won, and its number kept every
+ * legitimate bidder paying over it until the close settled the sale to it.
+ * Re-read here, inside the transaction, so it no-ops on an auction the
+ * sweep closed or someone else took the lead on since the caller's list.
+ * There is no bid-history re-promotion: the next bid starts afresh.
+ */
+export async function dropLead(tx: Tx, listingId: string, bidderId: string, reason: string) {
+  const listing = await tx.listing.findUniqueOrThrow({ where: { id: listingId } });
+  if (listing.saleType !== 'AUCTION' || listing.status !== 'ACTIVE' || listing.currentBidderId !== bidderId) return { released: 0 };
+  const held = heldNow(listing);
+  if (held > 0) {
+    await post(tx, bidderId, held, 'AUCTION_BID_RELEASE', listingId, { reason }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
+  }
+  await tx.listing.update({
+    where: { id: listingId },
+    data: { currentBidderId: null, currentBidCents: null, currentHoldCents: null, currentHoldWithdrawableCents: null },
+  });
+  return { released: held };
+}
+
+/**
+ * Closes an ended auction: no sale (and a full release) if there were no
+ * bids, the reserve wasn't met, the seller is no longer active, or the
+ * WINNER is no longer active (suspended or banned -- such an account fails
+ * app.auth on every route and could never open the order, and a ban landing
+ * after moderation's lead sweep read its list would otherwise still settle
+ * to it); otherwise converts the held winning bid into a real order.
+ */
 export async function closeAuction(tx: Tx, listingId: string, now: Date = new Date()) {
   const listing = await tx.listing.findUniqueOrThrow({ where: { id: listingId } });
   if (listing.saleType !== 'AUCTION') throw statusCode('not_an_auction', 400);
@@ -210,10 +242,12 @@ export async function closeAuction(tx: Tx, listingId: string, now: Date = new Da
   // Media can be REJECTED (transcode, moderation) after bids were placed:
   // the winner is not charged for an item that can no longer be delivered.
   const deliverable = await hasDeliverable(tx, listing);
-  if (!listing.currentBidderId || !listing.currentBidCents || !meetsReserve || !active || !deliverable) {
+  const winnerActive = !listing.currentBidderId
+    || (await tx.user.findUnique({ where: { id: listing.currentBidderId }, select: { status: true } }))?.status === 'ACTIVE';
+  if (!listing.currentBidderId || !listing.currentBidCents || !meetsReserve || !active || !deliverable || !winnerActive) {
     const held = heldNow(listing);
     if (listing.currentBidderId && held > 0) {
-      await post(tx, listing.currentBidderId, held, 'AUCTION_BID_RELEASE', listingId, { reserveNotMet: !meetsReserve, sellerInactive: !active, noDeliverable: !deliverable }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
+      await post(tx, listing.currentBidderId, held, 'AUCTION_BID_RELEASE', listingId, { reserveNotMet: !meetsReserve, sellerInactive: !active, noDeliverable: !deliverable, winnerInactive: !winnerActive }, 'CREDITS', { withdrawableCents: heldWithdrawableNow(listing) });
     }
     // Clear the lead exactly like cancelAuction: with currentHoldCents null
     // heldNow() falls back to currentBidCents, so leaving the bid set would

@@ -244,14 +244,18 @@ async function processPayoutJob(job: { data: { payoutId: string } }) {
     // Sign, persist the hash, then broadcast -- all under the treasury lock so
     // no other sender (sweep gas top-ups, hedge, burn) takes the same nonce.
     await withTreasuryLock(async () => {
-      // Counted in the outflow journal BEFORE anything is signed: if the
-      // write fails nothing is signed or broadcast (hash stays unset, so the
-      // payout is refunded below -- no money moved), and a crash after it
-      // over-counts, never under-counts.
-      treasuryOutflow.record('payout', Number(p.amountCents), p.id);
       const wallet = treasuryWallet();
       const request = await wallet.prepareTransactionRequest({ to: token.address, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [to, raw] }) });
       const serialized = await wallet.signTransaction(request as any);
+      // Counted in the outflow journal once SIGNED and BEFORE the hash is
+      // kept or anything is broadcast -- the order sendTreasuryTx and the
+      // gas top-ups use. A prepare or sign failure (no ETH for gas, an RPC
+      // error estimating it) is refunded below and never counted: recording
+      // first let every such failed attempt eat PAYOUT_DAILY_MAX_CENTS and
+      // hold every later payout for a day. If the write fails, hash is still
+      // unset and nothing was broadcast, so the payout is refunded; a crash
+      // after it over-counts, never under-counts.
+      treasuryOutflow.record('payout', Number(p.amountCents), p.id);
       hash = keccak256(serialized);
       nonce = request.nonce;
       await prisma.payout.update({ where: { id: p.id }, data: { txHash: hash, nonce, signedAt: new Date(), assetAmount: raw.toString(), priceUsed: px } });

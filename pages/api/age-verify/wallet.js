@@ -13,7 +13,7 @@ import {
   WALLET_NONCE_COOKIE_NAME,
 } from '../../../lib/wallet-auth';
 import { checkRateLimit, clearFailures, clientNetwork, recordFailure } from '../../../lib/rate-limit';
-import { refuseMalformedText } from '../../../lib/field-validation';
+import { findMalformedText } from '../../../lib/unicode-text';
 
 /**
  * Step two of the wallet owner login: check the signature.
@@ -40,13 +40,20 @@ const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES_PER_IP = 10;
 
 export default async function handler(req, res) {
-  // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
-  // database (lib/field-validation.js refuseMalformedText).
-  if (refuseMalformedText(req, res)) return;
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
+  // No owner wallet configured means this door does not exist, and that
+  // check comes FIRST: every answer below it (a wrong method, malformed
+  // text) used to be a distinct 405/400 that confirmed the endpoint is real
+  // on a deployment with no wallet at all (round-12 gates-token#0). Every
+  // refusal here is the same 404 with the same body, like wallet-nonce,
+  // owner and reviewer.
   const owner = ownerWalletAddress();
   if (!owner) return res.status(404).json({ error: 'Not found' });
+  if (req.method !== 'POST') return res.status(404).json({ error: 'Not found' });
+  // NUL / half-an-emoji anywhere in the request: refused, never a 500 from
+  // the database -- but as the same 404, not refuseMalformedText's 400.
+  if (findMalformedText(req.body) !== null || findMalformedText(req.query) !== null) {
+    return res.status(404).json({ error: 'Not found' });
+  }
 
   const bucket = `wallet-access:ip:${clientNetwork(req)}`;
   if (checkRateLimit(bucket, { limit: MAX_FAILURES_PER_IP, windowMs: WINDOW_MS }).limited) {

@@ -41,8 +41,10 @@ function DigitalDelivery({ orderId, mark }) {
         items: Array.isArray(data.items) ? data.items.filter((i) => i && typeof i.src === 'string') : [],
         removed: !!data.removed,
         removedReason: typeof data.removedReason === 'string' ? data.removedReason : null,
-        // Files held back pending a moderation review (preserved/quarantined):
-        // left out of `items`, so they are counted here and said so.
+        // Files withheld after a report (preserved as evidence): left out of
+        // `items`, so they are counted here and said so. The note makes no
+        // promise about a review outcome -- preserved files are never
+        // delivered (lib/media-preservation.js).
         withheld: Number.isInteger(data.withheld) && data.withheld > 0 ? data.withheld : 0,
         error: '',
       });
@@ -83,8 +85,8 @@ function DigitalDelivery({ orderId, mark }) {
   }
   const withheldNote = state.withheld > 0 && (
     <p className="text-[11px] text-gray-400 mt-2">
-      {state.withheld === 1 ? '1 file from this purchase is' : `${state.withheld} files from this purchase are`} held back
-      while our team reviews a report about it. Contact{' '}
+      {state.withheld === 1 ? '1 file from this purchase was' : `${state.withheld} files from this purchase were`} withheld
+      after a report and cannot be delivered. Contact{' '}
       <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> if you need help.
     </p>
   );

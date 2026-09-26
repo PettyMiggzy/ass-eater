@@ -17,6 +17,9 @@ import { deleteWallPost } from '../../../lib/wall-store';
 import { removeConversationMessage } from '../../../lib/messages-store';
 import { preserveMedia, movePreservedToEvidence, reportRef, heldPathsForReport } from '../../../lib/media-preservation';
 import { mediaSrc } from '../../../lib/media';
+import { banCreatorForMinorReportTx, NCII_CREATOR_NOT_FOUND } from '../../../lib/ncii-reports-store';
+import { pushCreatorStatus, deliverFor, reportPushFailure } from '../../../lib/server-api';
+import { deleteMediaQuietly } from '../../../lib/blob-cleanup';
 import { requireAdminKey } from '../../../lib/admin-auth';
 import { query, withTransaction } from '../../../lib/db';
 import { refuseMalformedText } from '../../../lib/field-validation';
@@ -24,6 +27,16 @@ import { refuseMalformedText } from '../../../lib/field-validation';
 /**
  * POST /api/admin/reports-resolve   Header x-admin-key.
  *   { id, action: 'remove_content' }        -> 200 { ok, report, content: 'removed' | 'already_gone', preserved?: number }
+ *   { id, action: 'remove_and_ban' }        -> 200 { ok, report, content, preserved?: number, bannedCreatorId }
+ *        a 'minor' report only (400 { code: 'not_minor' } otherwise), and only
+ *        when the reported content resolves to a CREATOR account (400
+ *        { code: 'no_creator' } for a fan's comment or message, or a creator
+ *        deleted since): does everything remove_content does, then -- in one
+ *        transaction with the status change -- bans that creator outright,
+ *        quarantines every file they have for this report and takes all their
+ *        listings down with no keepPaid (lib/ncii-reports-store.js
+ *        banCreatorForMinorReportTx, the same ban a possible-minor TAKE IT
+ *        DOWN resolve applies)
  *   { id, action: 'dismiss', reason? }      -> 200 { ok, report, content: null }
  *        a dismissal of a 'minor' or 'non_consensual' report REQUIRES a reason
  *        (400 { code: 'reason_required' }); it is stored as report.dismissReason
@@ -51,7 +64,11 @@ import { refuseMalformedText } from '../../../lib/field-validation';
  * (`removedContent`) before it is deleted. Non-consensual reports get the text
  * copy too. Every report also carries the copy taken when it was filed
  * (`reportedContent`). Nothing here bans anyone automatically -- that stays
- * the admin's call.
+ * the admin's call: 'remove_and_ban' is the explicit possible-minor ban
+ * (round-12 legal-journeys#0). It is the ONLY ban that honours Terms section
+ * 8 for an in-product report: the Creators-tab ban keeps paid listings'
+ * files serving (keepPaid, deliberate for bans that are not about content)
+ * and preserves nothing.
  *
  * The report is CLAIMED before anything is removed (a `resolving` stamp set
  * only while it is open and unclaimed), and the final status change is
@@ -94,6 +111,53 @@ async function snapshot(reportId, content, client = null) {
 
 class AlreadyResolved extends Error {}
 
+/**
+ * The creator account behind a report's target, for 'remove_and_ban', or
+ * null when there is none: a listing's seller; the creator whose gallery
+ * item or avatar it is; a message's sender or a wall comment's author only
+ * when that user is (still) a creator account. Read from the database, never
+ * from the admin's request; the filing-time copy (`reportedContent`) is the
+ * fallback for a target already gone.
+ */
+async function reportCreatorId(report) {
+  const tid = normalizeTargetId(report.targetId);
+  const rc = report.reportedContent && typeof report.reportedContent === 'object' ? report.reportedContent : {};
+  let creatorId = null;
+  let authorUserId = null;
+  if (report.targetType === 'listing') {
+    if (tid) {
+      const { rows } = await query(`select data->>'creatorId' as creator_id from listings where id::text = $1`, [tid]);
+      creatorId = rows[0]?.creator_id || null;
+    }
+    if (!creatorId && rc.creatorId) creatorId = String(rc.creatorId);
+  } else if (PROFILE_MEDIA_TARGETS.includes(report.targetType)) {
+    creatorId = tid;
+  } else if (report.targetType === 'message') {
+    authorUserId = rc.senderId || null;
+    if (!authorUserId && typeof report.conversationId === 'string' && typeof report.targetId === 'string') {
+      const { rows } = await query('select data from conversations where id = $1', [report.conversationId]);
+      const m = (Array.isArray(rows[0]?.data?.messages) ? rows[0].data.messages : []).find((x) => x && x.id === report.targetId);
+      authorUserId = m ? m.senderId : null;
+    }
+  } else if (report.targetType === 'wall_post') {
+    authorUserId = rc.authorId || null;
+    if (!authorUserId && tid) {
+      const { rows } = await query(`select data->>'authorId' as author_id from wall_posts where id = $1`, [tid]);
+      authorUserId = rows[0]?.author_id || null;
+    }
+  }
+  if (authorUserId !== null && authorUserId !== undefined && String(authorUserId) !== '') {
+    const { rows } = await query(
+      `select data->>'role' as role, data->>'creatorId' as creator_id from users where id::text = $1`,
+      [String(authorUserId)],
+    );
+    creatorId = rows[0]?.role === 'creator' && rows[0]?.creator_id ? rows[0].creator_id : null;
+  }
+  if (!creatorId) return null;
+  const { rows } = await query('select 1 from creators where id = $1', [String(creatorId)]);
+  return rows.length ? String(creatorId) : null;
+}
+
 export default async function handler(req, res) {
   // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
   // database (lib/field-validation.js refuseMalformedText).
@@ -105,8 +169,8 @@ export default async function handler(req, res) {
   if (!requireAdminKey(req, res)) return;
 
   const { id, action, reason } = req.body || {};
-  if (!normalizeTargetId(id) || !['dismiss', 'remove_content', 'reopen'].includes(action)) {
-    return res.status(400).json({ error: 'Missing report id or invalid action (dismiss | remove_content | reopen)' });
+  if (!normalizeTargetId(id) || !['dismiss', 'remove_content', 'remove_and_ban', 'reopen'].includes(action)) {
+    return res.status(400).json({ error: 'Missing report id or invalid action (dismiss | remove_content | remove_and_ban | reopen)' });
   }
   if (reason !== undefined && reason !== null && typeof reason !== 'string') {
     return res.status(400).json({ error: 'reason must be text' });
@@ -140,15 +204,38 @@ export default async function handler(req, res) {
       return res.status(400).json({ code: 'reason_required', error: 'A reason is required to dismiss a possible-minor or non-consensual report.' });
     }
 
+    // 'remove_and_ban' is decided before anything is claimed or removed: a
+    // report that cannot lead to a ban must not come down half-done.
+    let banCreatorId = null;
+    if (action === 'remove_and_ban') {
+      if (first.category !== 'minor') {
+        return res.status(400).json({ code: 'not_minor', error: 'Remove and ban is only for reports filed as possibly showing someone under 18.' });
+      }
+      banCreatorId = await reportCreatorId(first);
+      if (!banCreatorId) {
+        return res.status(400).json({
+          code: 'no_creator',
+          error: 'This content was not posted by a creator account, so there is no creator to ban. Use Remove Content, and suspend or ban the account from the Accounts tab.',
+        });
+      }
+    }
+    const removing = action === 'remove_content' || action === 'remove_and_ban';
+
     let contentNote = null;
-    let preserved = 0;
+    // Pathnames, not a running count: remove_and_ban preserves the reported
+    // item and then every file of the creator under the same report ref, and
+    // the second preservation returns the first one's files again (it is
+    // idempotent) -- summing the two overstated what was kept.
+    const preservedPaths = new Set();
+    let banFiles = [];
+    let pushUid = null;
     const report = await claimReport(first.id, action);
     if (!report) throw new AlreadyResolved();
     let updated;
     try {
       const keepText = report.category === 'minor' || report.category === 'non_consensual';
 
-      if (action === 'remove_content') {
+      if (removing) {
         if (report.targetType === 'message') {
           if (typeof report.conversationId !== 'string' || typeof report.targetId !== 'string') {
             contentNote = 'already_gone';
@@ -188,7 +275,7 @@ export default async function handler(req, res) {
               }
               : null,
           });
-          preserved = out.preserved.length;
+          for (const p of out.preserved) preservedPaths.add(p);
           contentNote = out.removed ? 'removed' : 'already_gone';
         } else if (PROFILE_MEDIA_TARGETS.includes(report.targetType)) {
           const creatorId = normalizeTargetId(report.targetId);
@@ -197,7 +284,7 @@ export default async function handler(req, res) {
             // The held file (and the reported src) is quarantined first, in
             // its own commit: removing the item below then skips deleting it.
             const held = (await heldPathsForReport(reportRef('report', report.id))).map(mediaSrc);
-            preserved = (await withTransaction(async (c) => {
+            const kept = await withTransaction(async (c) => {
               const out = await preserveMedia([...held, ...(src ? [src] : [])], {
                 reportId: reportRef('report', report.id),
                 reason: `possible minor report (in-product) #${report.id}: ${report.targetType} of creator ${creatorId}`,
@@ -205,7 +292,8 @@ export default async function handler(req, res) {
               });
               await releaseReportHolds(report.id, c);
               return out;
-            })).length;
+            });
+            for (const p of kept) preservedPaths.add(p);
           }
           contentNote = 'already_gone';
           if (creatorId && src) {
@@ -264,10 +352,25 @@ export default async function handler(req, res) {
       }
 
       updated = await withTransaction(async (client) => {
+        // The outright ban commits with the status change: the report reads
+        // 'actioned' only if the ban, the quarantine and the listing takedown
+        // all did. Lock order: creator, files, listing rows, then the report
+        // row (updateReportStatus) -- creator before report, as everywhere.
+        let bannedCreatorId = null;
+        if (banCreatorId) {
+          const ban = await banCreatorForMinorReportTx(client, banCreatorId, {
+            ref: reportRef('report', report.id),
+            label: `possible minor report (in-product) #${report.id}`,
+          });
+          banFiles = ban.files;
+          for (const p of ban.preserved) preservedPaths.add(p);
+          bannedCreatorId = String(ban.creator.id);
+          pushUid = (await pushCreatorStatus(bannedCreatorId, { client })).uid || null;
+        }
         const out = await updateReportStatus(report.id, action === 'dismiss' ? 'dismissed' : 'actioned', 'admin', {
           reason: action === 'dismiss' ? reason : null,
           client,
-          extra: action === 'remove_content' ? { contentOutcome: contentNote } : null,
+          extra: removing ? { contentOutcome: contentNote, ...(bannedCreatorId ? { bannedCreatorId } : {}) } : null,
         });
         if (!out) throw new AlreadyResolved();
         // A dismissal releases the report's file holds (nothing is preserved).
@@ -279,8 +382,20 @@ export default async function handler(req, res) {
       await releaseClaim(report.id);
       throw err;
     }
-    if (preserved) await movePreservedToEvidence({ limit: preserved });
-    return res.status(200).json({ ok: true, report: updated, content: contentNote, ...(preserved ? { preserved } : {}) });
+    // After the commit: deletion cannot be rolled back (deleteMediaQuietly
+    // re-checks and skips anything preserved), and the new standing reaches
+    // server/ now, retried by the cron if this delivery fails.
+    if (banFiles.length) await deleteMediaQuietly(banFiles);
+    const preserved = preservedPaths.size;
+    if (preserved) await movePreservedToEvidence({ limit: Math.min(preserved, 200) });
+    if (pushUid) reportPushFailure(await deliverFor([pushUid]), `report ${report.id} ban`);
+    return res.status(200).json({
+      ok: true,
+      report: updated,
+      content: contentNote,
+      ...(preserved ? { preserved } : {}),
+      ...(banCreatorId ? { bannedCreatorId: banCreatorId } : {}),
+    });
   } catch (err) {
     if (err instanceof AlreadyResolved) {
       return res.status(409).json({ code: 'already_resolved', error: 'Someone else resolved this report first. Reload the queue.' });
@@ -289,6 +404,9 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'This report type cannot be actioned automatically. Dismiss it or handle it by hand.' });
     }
     if (err.code === REPORT_NOT_FOUND) return res.status(404).json({ error: 'Report not found' });
+    if (err.code === NCII_CREATOR_NOT_FOUND) {
+      return res.status(409).json({ code: 'no_creator', error: 'That creator account no longer exists -- the report is still open. Reload and use Remove Content.' });
+    }
     console.error('[admin/reports-resolve] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong -- the report is still open. Please try again.' });
   }

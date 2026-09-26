@@ -1,5 +1,6 @@
 import { addNciiReport, NCII_FIELD_LIMITS, NCII_CATEGORIES } from '../../lib/ncii-reports-store';
-import { consumeNetworkAttempt } from '../../lib/rate-limit';
+import { consumeNetworkAttempt, clientNetwork, clientNetworkCoarse } from '../../lib/rate-limit';
+import { consumeLoginAttempts, releaseLoginAttempts } from '../../lib/login-guard';
 import { sendNciiAlert } from '../../lib/alerts';
 import { refuseMalformedText } from '../../lib/field-validation';
 
@@ -15,6 +16,45 @@ const MAX_REPORTS_PER_IP = 20;
 // the limiter's map. Generous, since a carrier puts many subscribers in one.
 const MAX_REPORTS_PER_NETWORK = MAX_REPORTS_PER_IP * 10;
 const REPORT_WINDOW_MS = 60 * 60 * 1000;
+// The in-memory limit above is per warm serverless instance, so a flood
+// spread over instances got a budget per instance. The same budget is also
+// counted in Postgres (lib/login-guard.js's shared fixed-window counters,
+// under their own 'ncii-report:' keys), which every instance shares: per /64
+// (or IPv4 address) and per /48, over half-hour windows (the counters'
+// housekeeping keeps rows for 30 minutes), i.e. the same 20/200 an hour
+// (round-12 social#0). A database hiccup here fails OPEN -- the in-memory
+// limit still applies, and a victim's filing must not be refused because a
+// counter could not be read.
+const DURABLE_WINDOW_MS = 30 * 60 * 1000;
+const DURABLE_PER_IP = MAX_REPORTS_PER_IP / 2;
+const DURABLE_PER_NETWORK = MAX_REPORTS_PER_NETWORK / 2;
+
+async function durablyLimited(req) {
+  const ip = clientNetwork(req);
+  const net = clientNetworkCoarse(req);
+  const entries = [{ key: `ncii-report:ip:${ip}`, limit: DURABLE_PER_IP }];
+  if (net !== ip) entries.push({ key: `ncii-report:net:${net}`, limit: DURABLE_PER_NETWORK });
+  try {
+    const out = await consumeLoginAttempts(entries, { windowMs: DURABLE_WINDOW_MS });
+    const hit = Object.values(out).find((o) => o.limited);
+    if (!hit) return null;
+    // A refused filing is not counted: the counters stay the number of
+    // filings actually accepted.
+    await releaseLoginAttempts(entries.map((e) => e.key), { windowMs: DURABLE_WINDOW_MS });
+    return hit.retryAfterSeconds;
+  } catch (err) {
+    console.error('[report-content] durable rate limit unavailable; relying on the in-memory limit:', err?.message || err);
+    return null;
+  }
+}
+
+// C0 controls other than tab, newline and carriage return, DEL, and the C1
+// block. Nobody types them into a report, and JSON writes each one as a
+// 6-byte "\u00XX" escape -- a 4,000-character field of them was ~24 KB in
+// the admin list, the cheapest way to inflate the queue (round-12 social#0).
+// Refused, not stripped: stripping would silently change what a reporter
+// submitted.
+const CONTROL_CHAR_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
 
 // Deliberately unauthenticated -- required by the federal TAKE IT DOWN Act's
 // notice-and-removal process, which must be usable by anyone depicted in
@@ -66,6 +106,14 @@ export default async function handler(req, res) {
   if (description !== undefined && description !== null && typeof description !== 'string') {
     return res.status(400).json({ error: 'The description must be text' });
   }
+  for (const [field, value] of Object.entries({ reporterName, reporterContact, contentLocation, description })) {
+    if (typeof value === 'string' && CONTROL_CHAR_RE.test(value)) {
+      return res.status(400).json({
+        error: 'Your report contains an invisible control character. Remove it (retyping the text usually does) and try again, or email team@onlyone1.fun.',
+        field,
+      });
+    }
+  }
   // Too long is refused, never cut: a truncated location list is content
   // that stays up while the reporter was told the report was received.
   const LABELS = { reporterName: 'Your name', reporterContact: 'Your contact details', contentLocation: 'Where the content is', description: 'The details' };
@@ -86,6 +134,16 @@ export default async function handler(req, res) {
   // meant either no report at all or a knowingly false one.
   if (category === 'self' ? consentStatement !== true : goodFaithStatement !== true) {
     return res.status(400).json({ error: 'You must confirm the statement below to submit a report' });
+  }
+
+  // Counted only for a filing that passed validation, like the store insert
+  // it guards.
+  const durableRetry = await durablyLimited(req);
+  if (durableRetry) {
+    res.setHeader('Retry-After', String(durableRetry));
+    return res.status(429).json({
+      error: 'Too many reports from this address in a short time. Please wait and try again — if this is urgent, email team@onlyone1.fun.',
+    });
   }
 
   try {

@@ -184,6 +184,15 @@ export const auth: FastifyPluginAsync = async (app) => {
       suspendedUntil: claims.suspendedUntil,
       ...(claims.role ? { fan: claims.role === 'FAN' } : {}),
     });
+    // A reinstatement this server will not apply -- the account is BANNED
+    // or SUSPENDED by an admin here, and the site may only lift restrictions
+    // the site applied -- is not a delivery: a 2xx would let the site's
+    // outbox drop it and tell the site admin every change had landed. 409
+    // keeps it queued, flagged (lib/standing-outbox.js), until an admin runs
+    // POST /admin/users/:id/status here.
+    if (applied === 'ban_needs_server_admin' || applied === 'suspension_needs_server_admin') {
+      return reply.code(409).send({ ok: false, known: true, applied, error: applied });
+    }
     return { ok: true, known: true, applied };
   });
 

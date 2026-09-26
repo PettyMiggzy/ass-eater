@@ -264,15 +264,25 @@ Check the printed `Deployed commit`, then, once everything is verified,
 **Rotate the treasury key after migrating.** Under the old layout
 `TREASURY_PRIVATE_KEY` sat in the internet-facing API's environment and in
 files the API's user owned; treat it as exposed. Create a new treasury
-wallet, move the funds, put the new key in `.env.workers`, and restart
-`onlyone-workers`.
+wallet, move the funds, put the new key in `.env.workers`, set
+`TREASURY_ADDRESS` in `.env` to the new wallet's PUBLIC address (the API and
+the workers both read it: the API to accept `mark_sent` transfers and burns
+from the treasury, the workers to recognise their own gas top-ups), and
+restart BOTH `onlyone-api` and `onlyone-workers`. Left on the old address,
+the API keeps trusting the exposed wallet and refuses the new one; the
+workers refuse to start while `TREASURY_ADDRESS` disagrees with the key
+they sign with.
 
 ## Treasury outflow journal
 
 `onlyone-workers.service` has `StateDirectory=onlyone-workers`: systemd
 creates `/var/lib/onlyone-workers` (owner `onlyone-workers`, mode 0700) and
 exports it as `$STATE_DIRECTORY`. The workers append every signed treasury
-outflow there (`treasury-outflow.jsonl`) BEFORE broadcasting it, and the
+outflow there (`treasury-outflow.jsonl`) once it is SIGNED and BEFORE
+broadcasting it -- payouts, burns, hedges and gas top-ups alike. An attempt
+that fails before it is signed (the treasury has no ETH for gas, an RPC error
+estimating it) is refunded and never counted, so it cannot use up the daily
+cap. The
 automatic caps -- `PAYOUT_MAX_CENTS` / `PAYOUT_DAILY_MAX_CENTS`,
 `TOKEN_BURN_BATCH_MAX_CENTS` / `TOKEN_BURN_DAILY_MAX_CENTS`,
 `TREASURY_HEDGE_BATCH_MAX_CENTS` / `TREASURY_HEDGE_DAILY_MAX_CENTS` and the

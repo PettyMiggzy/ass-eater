@@ -216,6 +216,11 @@ export default function Search({ q, tag, category = null, creators, listings, al
                         <div className="aspect-square relative">
                           <ListingPreview media={l.media} />
                           {l.demo && <DemoBadge short className="absolute top-2 left-2" />}
+                          {/* Terms §4/§7: AI-generated content is labelled wherever it
+                              shows -- same test as /marketplace and the profile. */}
+                          {(l.aiGenerated || (Array.isArray(l.media) && l.media.some((m) => m && m.aiGenerated))) && (
+                            <span className="absolute top-2 right-2 text-[9px] px-1.5 py-0.5 rounded bg-black/75 text-brand-pink font-bold">AI</span>
+                          )}
                         </div>
                         <div className="p-2">
                           <p className="text-sm font-bold truncate">{l.title}</p>

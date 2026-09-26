@@ -14,8 +14,17 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Not logged in' });
   const uid = user.id;
 
-  const { id } = req.body || {};
-  if (!id) return res.status(400).json({ error: 'Missing comment id' });
+  // A string or number that is a positive integer, and nothing else. An
+  // array like ["123"] stringifies to a valid id and used to reach the
+  // bigint parameter raw, answering 500 (round-12 social#1).
+  const rawId = (req.body || {}).id;
+  if (rawId === undefined || rawId === null || rawId === '') {
+    return res.status(400).json({ error: 'Missing comment id' });
+  }
+  if ((typeof rawId !== 'string' && typeof rawId !== 'number') || !/^[1-9]\d{0,17}$/.test(String(rawId))) {
+    return res.status(400).json({ error: 'Invalid comment id' });
+  }
+  const id = String(rawId);
 
   try {
     // One row, and a malformed id is simply "not found" -- this used to read

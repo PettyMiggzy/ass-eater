@@ -21,12 +21,13 @@ const MAX_PER_IP = 30;
 const MAX_PER_NETWORK = MAX_PER_IP * 10;
 
 export default async function handler(req, res) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-
   // No owner wallet configured means this door does not exist. 404, not 501,
   // for the same reason /api/age-verify/owner 404s on an unset key: the
-  // endpoint must not advertise that a bypass is a thing here.
+  // endpoint must not advertise that a bypass is a thing here. Checked
+  // before the method, and a wrong method is the same 404 -- a distinct 405
+  // was a tell on its own (round-12 gates-token#0).
   if (!ownerWalletAddress()) return res.status(404).json({ error: 'Not found' });
+  if (req.method !== 'GET') return res.status(404).json({ error: 'Not found' });
 
   const { limited } = consumeNetworkAttempt(req, 'wallet-nonce', {
     networkLimit: MAX_PER_NETWORK,

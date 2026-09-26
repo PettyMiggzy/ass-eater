@@ -10,6 +10,9 @@
 // process-guards MUST stay first: it installs the unhandledRejection handler
 // before any worker module starts its loops.
 import './process-guards.js';
+// Before any worker starts: refuses to run while TREASURY_ADDRESS disagrees
+// with the treasury key this process signs with.
+import './treasury-guard.js';
 import { warnSecretShape } from '../lib/chain.js';
 import './deposit-indexer.js'; import './payout-worker.js'; import './treasury-hedge.js';
 // Gated on TOKEN_BURN_AUTOMATIC=true inside the module; importing it is what
