@@ -85,22 +85,25 @@ const routerAbi = parseAbi([
  * undecided -- then this run does nothing else: doubt never re-sends.
  */
 export async function settleInFlightBurn(client = publicClient as any): Promise<boolean> {
-  const inFlight = await prisma.tokenBurn.findFirst({ where: { executedAt: null, pendingTxHash: { not: null } }, select: { pendingTxHash: true, pendingNonce: true } });
+  const inFlight = await prisma.tokenBurn.findFirst({ where: { executedAt: null, pendingTxHash: { not: null } }, select: { pendingTxHash: true, pendingNonce: true, pendingSigner: true } });
   if (!inFlight?.pendingTxHash) return true;
   const hash = inFlight.pendingTxHash as `0x${string}`;
-  const r = await resolveTreasuryTx(hash, inFlight.pendingNonce, client);
+  // Judged against the key that signed it: a swap signed before a treasury
+  // key rotation is never 'dropped' by the new wallet's nonce (it stays in
+  // flight for an admin), or its obligations would be bought again.
+  const r = await resolveTreasuryTx(hash, inFlight.pendingNonce, client, undefined, inFlight.pendingSigner);
   if (r.state === 'success') {
     const burned = onlyOneBurnedIn(r.receipt.logs);
     const done = await prisma.tokenBurn.updateMany({
       where: { executedAt: null, pendingTxHash: hash },
-      data: { executedAt: new Date(), txHash: hash.toLowerCase(), tokensBurned: burned.toString(), pendingTxHash: null, pendingNonce: null, pendingSince: null },
+      data: { executedAt: new Date(), txHash: hash.toLowerCase(), tokensBurned: burned.toString(), pendingTxHash: null, pendingNonce: null, pendingSince: null, pendingSigner: null },
     });
     console.log(`token-burn: settled in-flight swap ${hash} (${done.count} obligations)`);
     return true;
   }
   if (r.state === 'reverted' || r.state === 'dropped') {
     // Nothing was bought: the obligations are owed again, as they were.
-    await prisma.tokenBurn.updateMany({ where: { executedAt: null, pendingTxHash: hash }, data: { pendingTxHash: null, pendingNonce: null, pendingSince: null } });
+    await prisma.tokenBurn.updateMany({ where: { executedAt: null, pendingTxHash: hash }, data: { pendingTxHash: null, pendingNonce: null, pendingSince: null, pendingSigner: null } });
     console.error(`token-burn: in-flight swap ${hash} ${r.state}; obligations back to pending`);
     return true;
   }
@@ -173,18 +176,18 @@ export async function runBurnBatch() {
     }],
   });
   // Persist the hash on exactly these rows BEFORE broadcasting (see header).
-  const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce) => {
+  const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce, signer) => {
     // Counted before the hash is persisted or anything is broadcast; a
     // failure here aborts the send (sendTreasuryTx broadcasts only after
     // this callback returns).
     treasuryOutflow.record('burn', Number(totalCents), h);
     const claimed = await prisma.tokenBurn.updateMany({
       where: { id: { in: ids }, executedAt: null, pendingTxHash: null },
-      data: { pendingTxHash: h, pendingNonce: nonce, pendingSince: new Date() },
+      data: { pendingTxHash: h, pendingNonce: nonce, pendingSince: new Date(), pendingSigner: signer },
     });
     // A manual burn record closed some of them meanwhile: don't buy for those.
     if (claimed.count !== ids.length) {
-      await prisma.tokenBurn.updateMany({ where: { pendingTxHash: h, executedAt: null }, data: { pendingTxHash: null, pendingNonce: null, pendingSince: null } });
+      await prisma.tokenBurn.updateMany({ where: { pendingTxHash: h, executedAt: null }, data: { pendingTxHash: null, pendingNonce: null, pendingSince: null, pendingSigner: null } });
       throw new Error('token-burn: obligations changed while preparing the swap; retrying next run');
     }
   });

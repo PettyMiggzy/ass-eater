@@ -3,6 +3,7 @@ import { consumeNetworkAttempt, clientNetwork, clientNetworkCoarse } from '../..
 import { consumeLoginAttempts, releaseLoginAttempts } from '../../lib/login-guard';
 import { sendNciiAlert } from '../../lib/alerts';
 import { refuseMalformedText } from '../../lib/field-validation';
+import { CONTROL_CHAR_RE } from '../../lib/unicode-text';
 
 // Deliberately generous. This queue is sorted oldest-first and carries a
 // federal 48-hour clock, so burying it under junk filings is a real way to
@@ -48,13 +49,9 @@ async function durablyLimited(req) {
   }
 }
 
-// C0 controls other than tab, newline and carriage return, DEL, and the C1
-// block. Nobody types them into a report, and JSON writes each one as a
-// 6-byte "\u00XX" escape -- a 4,000-character field of them was ~24 KB in
-// the admin list, the cheapest way to inflate the queue (round-12 social#0).
-// Refused, not stripped: stripping would silently change what a reporter
-// submitted.
-const CONTROL_CHAR_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
+// C0/C1 control characters are refused (lib/unicode-text.js CONTROL_CHAR_RE):
+// a 4,000-character field of them was ~24 KB in the admin list, the cheapest
+// way to inflate the queue (round-12 social#0).
 
 // Deliberately unauthenticated -- required by the federal TAKE IT DOWN Act's
 // notice-and-removal process, which must be usable by anyone depicted in

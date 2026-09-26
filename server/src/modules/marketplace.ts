@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { money, lockBalance, post, InsufficientFunds, isVip, postPlatformRevenue } from '../core/ledger.js';
 import { PLATFORM_FEE_BPS, LISTING_FEE_BPS, MARKETPLACE_TOS_VERSION as CURRENT_TOS_VERSION, PHYSICAL_SALES_ENABLED } from '../core/marketplace-fees.js';
-import { placeBid, cancelAuction, statusCode, hasDeliverable, deliverableWhere } from '../core/auctions.js';
+import { placeBid, cancelAuction, relistAuction, statusCode, hasDeliverable, deliverableWhere, MIN_AUCTION_HOURS, MAX_AUCTION_HOURS } from '../core/auctions.js';
 import type { Tx } from '../core/ledger.js';
 import { OPERATING_CREATOR_USER_WHERE, creatorMayBePaidById } from '../core/creator-standing.js';
 import { page } from '../plugins/pagination.js';
@@ -233,9 +233,18 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       status: z.enum(['ACTIVE', 'REMOVED']).optional(), unlimited: z.boolean().optional(),
       kind: z.enum(['DIGITAL', 'PHYSICAL']).optional(), shippingCents: z.number().int().min(0).max(100_000_00).optional(),
       signatureRequired: z.boolean().optional(),
+      // Relisting an auction that ended (or was taken down) unsold -- see
+      // core/auctions.ts relistAuction. Either a new run length, or FIXED to
+      // sell it at priceCents instead. Only valid on the creator's own
+      // REMOVED, unmoderated, lead-less, order-less auction.
+      auctionDurationHours: z.number().int().min(MIN_AUCTION_HOURS).max(MAX_AUCTION_HOURS).optional(),
+      saleType: z.enum(['FIXED', 'AUCTION']).optional(),
     }).parse(req.body);
     if (b.kind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
     if (b.kind === 'PHYSICAL') b.unlimited = false;
+    const { auctionDurationHours, saleType, ...edit } = b;
+    const relist = auctionDurationHours !== undefined || saleType !== undefined;
+    if (relist && edit.status === 'REMOVED') throw statusCode('relist_conflicts_with_remove', 400);
 
     const r = await money(prisma, async (tx) => {
       const l = await tx.listing.findFirst({ where: { id: req.params.id, creatorId: req.user.id, status: { not: 'SOLD' } } });
@@ -248,9 +257,10 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       // WHERE, so a takedown committing mid-request is not overwritten.
       if (l.moderatedAt) throw statusCode('removed_by_moderation', 409);
       const writable = { id: l.id, moderatedAt: null };
-      const write = async (data: typeof b) => {
+      const write = async (data: typeof edit) => {
         if (!(await tx.listing.updateMany({ where: writable, data })).count) throw statusCode('removed_by_moderation', 409);
       };
+      if (relist && l.saleType !== 'AUCTION') throw statusCode('not_an_auction', 400);
       if (b.images) await validListingImages(tx, b.images, req.user.id);
       // Turning an unlimited listing into a one-of-a-kind (or a physical
       // one into digital) is the other way in to selling already-distributed
@@ -275,9 +285,21 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         const moneyTerms = b.priceCents !== undefined || b.kind !== undefined || b.shippingCents !== undefined || b.unlimited !== undefined;
         if (moneyTerms && l.currentBidderId) throw statusCode('auction_has_bids', 409);
         if (b.unlimited) throw statusCode('auction_is_one_of_a_kind', 400);
+        if (relist) {
+          if (nextKind === 'PHYSICAL' && !PHYSICAL_SALES_ENABLED) throw physicalDisabled();
+          // Any ordinary edits land first (same guarded write), so a new
+          // starting price is what the relist's reserve check sees; then the
+          // relist's own guarded updateMany flips it back on sale.
+          const { status: _s, ...rest } = edit;
+          if (Object.keys(rest).length) await write(rest);
+          await relistAuction(tx, l.id, req.user.id, { auctionDurationHours, saleType });
+          return l.id;
+        }
         if (b.status === 'ACTIVE' && l.status !== 'ACTIVE' && (!l.auctionEndsAt || l.auctionEndsAt <= new Date())) {
           // Reactivating an ended auction would let the close sweep sell it
-          // against whatever bid state it was left in.
+          // against whatever bid state it was left in. Putting one back on
+          // sale goes through the relist fields above instead, which reset
+          // the deadline and bid state.
           throw statusCode('auction_ended', 400);
         }
         if (b.status === 'REMOVED' && l.status === 'ACTIVE') {
@@ -287,13 +309,13 @@ export const marketplace: FastifyPluginAsync = async (app) => {
           // seller see the final price and void a sale they didn't like.
           if (l.auctionEndsAt && l.auctionEndsAt <= new Date()) throw statusCode('auction_ended', 409);
           // Same transaction as the removal: the leader gets their hold back.
-          const { status: _s, ...rest } = b;
+          const { status: _s, ...rest } = edit;
           if (Object.keys(rest).length) await write(rest);
           await cancelAuction(tx, l.id, 'removed_by_creator');
           return l.id;
         }
       }
-      await write(b);
+      await write(edit);
       return l.id;
     });
     return r ? { ok: true } : reply.code(404).send({ error: 'not_found' });

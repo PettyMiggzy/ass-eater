@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { formatUnits, parseEther, parseGwei, keccak256 } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, treasuryAccount, treasuryAddress, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
+import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, INDEX_ONLYONE_DEPOSITS, treasuryAccount, treasuryAddress, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
 import { getUsdPrice, rawToUsdCents } from '../lib/price.js';
 import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
@@ -359,10 +359,19 @@ let tokensVerified = false;
 
 /**
  * Reconciliation: re-queue a sweep for any deposit address still holding an
- * accepted stablecoin above dust. Covers every way a sweep can be lost -- a
- * job that exhausted its retries, one enqueued before this code existed, a
- * deposit credited while Redis was being replaced. Only addresses that have
- * ever received a deposit are checked, so the RPC cost tracks real usage.
+ * accepted stablecoin above dust, or (while $ONLYONE deposits are indexed)
+ * any $ONLYONE at all at an address with a credited $ONLYONE deposit. Covers
+ * every way a sweep can be lost -- a job that exhausted its retries (an
+ * $ONLYONE price that could not be read, or a gas-cap refusal: both defer
+ * for far longer than SWEEP_OPTS' ~64-minute retry budget), one enqueued
+ * before this code existed, a deposit credited while Redis was being
+ * replaced. Only addresses that have ever received a deposit are checked, so
+ * the RPC cost tracks real usage.
+ *
+ * $ONLYONE has no fixed dollar floor to check here (its price moves), so any
+ * non-zero balance is re-queued and the sweep worker decides: it defers
+ * again on an unreadable price and returns on one KNOWN to put the balance
+ * under the top-up floor.
  */
 async function reconcileSweeps() {
   const rows = await prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
@@ -376,6 +385,17 @@ async function reconcileSweeps() {
       await enqueueSweep({ derivationIndex: r.derivationIndex, asset: 'STABLE', tokenAddress: s.address },
         `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-${s.address.toLowerCase()}`, 0);
     }
+  }
+  if (!INDEX_ONLYONE_DEPOSITS) return;
+  const tokenRows = await prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
+    SELECT DISTINCT a."derivationIndex", a."address"
+      FROM "DepositAddress" a JOIN "Deposit" d ON d."userId" = a."userId" AND d."chainId" = a."chainId"
+     WHERE a."chainId" = ${CHAIN_ID} AND d."asset" = 'ONLYONE' AND d."pricePending" = false AND d."usdCents" > 0`;
+  for (const r of tokenRows) {
+    const bal = await publicClient.readContract({ address: TOKENS.ONLYONE.address, abi: erc20Abi, functionName: 'balanceOf', args: [r.address as `0x${string}`] });
+    if (bal === 0n) continue;
+    await enqueueSweep({ derivationIndex: r.derivationIndex, asset: 'ONLYONE', tokenAddress: TOKENS.ONLYONE.address },
+      `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-onlyone`, 0);
   }
 }
 
@@ -452,16 +472,18 @@ registerWorker(new Worker('sweep', async (job) => {
     // credited deposit queues its own sweep, and a stream of 1-cent deposits
     // (credited in full) used to buy one top-up each until the platform-wide
     // cap refused every sweep for everyone. Done without failing: the balance
-    // waits at the address, and the next deposit's sweep moves all of it (for
-    // a STABLECOIN also the hourly reconciler, once it reaches a dollar --
-    // reconcileSweeps covers stablecoins only, never $ONLYONE).
+    // waits at the address, and the next deposit's sweep -- or the hourly
+    // reconciler (reconcileSweeps: a stablecoin once it reaches a dollar,
+    // $ONLYONE whenever any is there) -- moves it.
     //
     // That return is only for a price KNOWN to put the balance under the
     // floor. An $ONLYONE price that could not be read (oracle or RPC blip)
-    // says nothing about the balance, and nothing re-queues an $ONLYONE
-    // sweep: returning completed the job and left a credited deposit at the
-    // address for good. It is deferred instead, so BullMQ retries with
-    // backoff (SWEEP_OPTS).
+    // says nothing about the balance: returning completed the job and left
+    // a credited deposit at the address. It is deferred instead, so BullMQ
+    // retries with backoff (SWEEP_OPTS, ~64 minutes); an outage outlasting
+    // that is picked up again by the hourly reconciler, which re-queues any
+    // $ONLYONE balance at an address with a credited $ONLYONE deposit --
+    // the same net that catches a gas-cap refusal (24h windows).
     let px = 1;
     if (asset === 'ONLYONE') {
       try { px = await getUsdPrice('ONLYONE'); } catch (e) {

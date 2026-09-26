@@ -61,9 +61,24 @@ async function stillReconcilable(payoutId: string) {
   return !!row && (row.status === 'PROCESSING' || row.status === 'FAILED');
 }
 
-async function provablyNeverSent(p: { id: string; txHash: string; nonce: number; cancelTxHash: string | null }): Promise<boolean> {
+export async function provablyNeverSent(p: { id: string; txHash: string; nonce: number; cancelTxHash: string | null; signerAddress: string | null }): Promise<boolean> {
   const hash = p.txHash as `0x${string}`;
   const nonce = p.nonce;
+  // `nonce` belongs to the key that SIGNED the payout. After a treasury key
+  // rotation the current wallet's transaction count says nothing about it,
+  // and a zero-value "cancel" signed by the new key at that nonce consumes
+  // the NEW wallet's nonce while the old-key transfer stays valid -- yet it
+  // passed isOwnNonceCancel (a real self-transfer by the current key), and
+  // the creator was refunded while the original could still pay them. So
+  // nothing here is decided for a payout signed by any other key, or with
+  // no recorded signer (a row from before it was stored): held FAILED for an
+  // admin, who settles it against the old wallet (deploy/DEPLOY.md, key
+  // rotation). Checked before the settle sleep: there is nothing to wait for.
+  try {
+    if (!p.signerAddress || p.signerAddress.toLowerCase() !== treasuryAccount().address.toLowerCase()) return false;
+  } catch {
+    return false;
+  }
   try {
     await new Promise(r => setTimeout(r, BROADCAST_SETTLE_MS));
     // The settle sleep is exactly the window the runbook gives an admin to
@@ -229,6 +244,7 @@ async function processPayoutJob(job: { data: { payoutId: string } }) {
   // can settle.
   let hash: `0x${string}` | undefined;
   let nonce: number | undefined;
+  let signer: string | undefined;
   let reverted = false;
   try {
     const px = await getUsdPrice(p.asset);
@@ -258,7 +274,8 @@ async function processPayoutJob(job: { data: { payoutId: string } }) {
       treasuryOutflow.record('payout', Number(p.amountCents), p.id);
       hash = keccak256(serialized);
       nonce = request.nonce;
-      await prisma.payout.update({ where: { id: p.id }, data: { txHash: hash, nonce, signedAt: new Date(), assetAmount: raw.toString(), priceUsed: px } });
+      signer = wallet.account.address;
+      await prisma.payout.update({ where: { id: p.id }, data: { txHash: hash, nonce, signerAddress: signer, signedAt: new Date(), assetAmount: raw.toString(), priceUsed: px } });
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
     });
 
@@ -274,7 +291,7 @@ async function processPayoutJob(job: { data: { payoutId: string } }) {
     // else -- a lost broadcast response, a receipt wait that timed out -- is
     // held FAILED with its hash for the reconciler or an admin. Never
     // double-pay.
-    const refund = !hash || reverted || (nonce !== undefined && await provablyNeverSent({ id: p.id, txHash: hash, nonce, cancelTxHash: null }));
+    const refund = !hash || reverted || (nonce !== undefined && await provablyNeverSent({ id: p.id, txHash: hash, nonce, cancelTxHash: null, signerAddress: signer ?? null }));
     let refunded = false;
     if (refund) {
       refunded = await money(prisma, (tx) => refundPayout(tx, p.id, ['PROCESSING'], String(e.message), { txHash: hash ?? null }));
@@ -381,12 +398,15 @@ export async function reconcilePayouts() {
         }
         continue;
       }
-      if (p.nonce != null && (p.signedAt ?? p.createdAt) >= failedSince && await provablyNeverSent({ id: p.id, txHash: p.txHash, nonce: p.nonce, cancelTxHash: p.cancelTxHash })) {
+      if (p.nonce != null && (p.signedAt ?? p.createdAt) >= failedSince && await provablyNeverSent({ id: p.id, txHash: p.txHash, nonce: p.nonce, cancelTxHash: p.cancelTxHash, signerAddress: p.signerAddress })) {
         await money(prisma, (tx) => refundPayout(tx, p.id, ['PROCESSING', 'FAILED'], 'never broadcast'));
         continue;
       }
       if (p.status === 'PROCESSING') {
-        await prisma.payout.updateMany({ where: { id: p.id, status: 'PROCESSING' }, data: { status: 'FAILED', error: 'interrupted; tx not found -- admin must check on-chain' } });
+        const otherKey = !p.signerAddress || p.signerAddress.toLowerCase() !== treasuryAccount().address.toLowerCase();
+        await prisma.payout.updateMany({ where: { id: p.id, status: 'PROCESSING' }, data: { status: 'FAILED', error: otherKey
+          ? 'interrupted; tx not found and signed by a different (or unrecorded) treasury key -- admin must settle it against that wallet'
+          : 'interrupted; tx not found -- admin must check on-chain' } });
       }
     } catch (e) {
       console.error('payout reconcile', p.id, e);

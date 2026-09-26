@@ -1,5 +1,5 @@
 import { requireCreatorOwner } from '../../../lib/require-creator-owner';
-import { updateCreatorProfile, sanitizeSocials, sanitizeTags, sanitizeAge, sanitizeLocation, UnderageProfile } from '../../../lib/creators-store';
+import { updateCreatorProfile, sanitizeTags, sanitizeAge, sanitizeLocation, UnderageProfile } from '../../../lib/creators-store';
 import { screenPublicText, publicProfileTextEntries, rawTagItems } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
 import { sanitizeGateTokens, refusesUnenforceableGate } from '../../../lib/token-gate';
@@ -18,6 +18,7 @@ import { isHandleConflict, HANDLE_TAKEN_MESSAGE } from '../../../lib/users-store
 import { findCircumventionInTags } from '../../../lib/listings-store';
 import { PAYMENT_CIRCUMVENTION_MESSAGE } from '../../../lib/payment-circumvention-filter';
 import { getAddress } from 'viem';
+import { invalidSocialHandles, sanitizeSocialsKeepingLegacy } from '../../../lib/creator-status';
 import { parseCategoriesInput } from '../../../lib/categories';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
@@ -153,7 +154,16 @@ export default async function handler(req, res) {
     safeFields.dmPriceCents = value;
   }
 
-  if (fields && 'socials' in fields) safeFields.socials = sanitizeSocials(fields.socials);
+  if (fields && 'socials' in fields) {
+    // A handle outside the platforms' own username charset is refused with a
+    // message (sanitizeSocials would silently drop it). An unchanged echo of
+    // a stored legacy value is left alone and kept as stored
+    // (sanitizeSocialsKeepingLegacy), like the handle and wallet above.
+    const stored = ctx.creator.socials && typeof ctx.creator.socials === 'object' ? ctx.creator.socials : {};
+    const bad = invalidSocialHandles(fields.socials).find(({ key }) => String(fields.socials[key]) !== String(stored[key] ?? ''));
+    if (bad) return res.status(400).json({ error: bad.message, field: `social_${bad.key}` });
+    safeFields.socials = sanitizeSocialsKeepingLegacy(fields.socials, stored);
+  }
   if (fields && 'tags' in fields) safeFields.tags = sanitizeTags(fields.tags);
   // Browse categories (lib/categories.js): a closed list of keys, so there is
   // no free text here to screen -- only the type and the 3-pick cap.

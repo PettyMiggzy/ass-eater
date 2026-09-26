@@ -258,14 +258,16 @@ export function resetStableDecimalsCheck() { stableDecimalsCheck = null; }
  */
 export async function sendTreasuryTx(
   req: { to: Address; data: `0x${string}` },
-  persist: (hash: `0x${string}`, nonce: number) => Promise<void>,
+  // `signer` is the address that signed -- persist it with the nonce, which
+  // is only meaningful for that key (resolveTreasuryTx's `signedBy`).
+  persist: (hash: `0x${string}`, nonce: number, signer: Address) => Promise<void>,
 ): Promise<`0x${string}`> {
   return withTreasuryLock(async () => {
     const wallet = treasuryWallet();
     const request = await wallet.prepareTransactionRequest(req as any);
     const serialized = await wallet.signTransaction(request as any);
     const hash = keccak256(serialized);
-    await persist(hash, Number(request.nonce));
+    await persist(hash, Number(request.nonce), wallet.account.address);
     await wallet.sendRawTransaction({ serializedTransaction: serialized });
     return hash;
   });
@@ -284,9 +286,19 @@ type ReceiptClient = {
  *    past it -- exactly one transaction holds a nonce, so it can never land;
  *  - 'unknown': anything else (pending, not yet propagated, an RPC error).
  *    Callers must do nothing on 'unknown' -- doubt never re-sends.
+ *
+ * `signedBy` is the address persisted as having signed it. `nonce` is only
+ * that key's nonce: after a treasury key rotation the current wallet's count
+ * says nothing about it, and reading it as 'dropped' re-bought a burn (or
+ * failed a hedge) whose old-key transaction could still land. So when
+ * `signedBy` is passed, 'dropped' is only ever decided for a transaction the
+ * CURRENT key signed; a different signer -- or null, a row from before the
+ * signer was recorded -- stays 'unknown' for an admin. A receipt is an answer
+ * whoever signed. Omitted, the treasury (or `treasury`) is assumed.
  */
 export async function resolveTreasuryTx(
   hash: `0x${string}`, nonce: number | null, client: ReceiptClient = publicClient as any, treasury?: Address,
+  signedBy?: string | null,
 ): Promise<{ state: 'success' | 'reverted' | 'dropped' | 'unknown'; receipt?: any }> {
   try {
     const receipt = await client.getTransactionReceipt({ hash }).catch((e: unknown) => {
@@ -300,6 +312,7 @@ export async function resolveTreasuryTx(
     });
     if (known || nonce == null) return { state: 'unknown' };
     const me = treasury ?? treasuryAccount().address;
+    if (signedBy !== undefined && (!signedBy || signedBy.toLowerCase() !== me.toLowerCase())) return { state: 'unknown' };
     const confirmed = await client.getTransactionCount({ address: me, blockTag: 'latest' });
     return { state: confirmed > nonce ? 'dropped' : 'unknown' };
   } catch {

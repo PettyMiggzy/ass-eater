@@ -2839,11 +2839,27 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
     }
   };
 
-  const openThread = async (id) => {
+  // A thread comes back a page at a time (newest page first, each page in
+  // chronological order): "Show older messages" asks for the page before
+  // nextBefore and prepends it, so the thread stays oldest-to-newest.
+  const openThread = async (id, older = false) => {
+    if (older && !thread?.nextBefore) return;
     setLookupBusy(true);
     try {
-      const data = await lookup({ kind: 'messages', conversationId: String(id) });
-      setThread(data.conversation || null);
+      const data = await lookup({
+        kind: 'messages',
+        conversationId: String(id),
+        ...(older ? { before: String(thread.nextBefore) } : {}),
+      });
+      const conv = data.conversation || null;
+      if (!conv) { if (!older) setThread(null); return; }
+      const page = Array.isArray(conv.messages) ? conv.messages : [];
+      const next = { ...conv, messages: page, hasMore: !!conv.hasMore && conv.nextBefore != null, nextBefore: conv.nextBefore ?? null };
+      setThread((t) => {
+        if (!older || !t || String(t.id) !== String(conv.id)) return next;
+        const seen = new Set(t.messages.map((m) => String(m.id)));
+        return { ...next, messages: [...page.filter((m) => !seen.has(String(m.id))), ...t.messages] };
+      });
     } catch (err) {
       onError(err.message);
     } finally {
@@ -2902,7 +2918,13 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
       } else if (target.type === 'wall_post') {
         setWall((w) => (w ? { ...w, posts: w.posts.filter((p) => String(p.id) !== target.postId) } : w));
       } else if (target.type === 'message') {
-        setThread((t) => (t && t.id === target.conversationId ? { ...t, messages: t.messages.filter((x) => x.id !== target.messageId) } : t));
+        setThread((t) => {
+          if (!t || String(t.id) !== String(target.conversationId)) return t;
+          const messages = t.messages.filter((x) => String(x.id) !== String(target.messageId));
+          const removed = t.messages.length - messages.length;
+          const count = Number(t.messageCount);
+          return { ...t, messages, ...(Number.isFinite(count) ? { messageCount: Math.max(0, count - removed) } : {}) };
+        });
       }
     } catch (err) {
       onError(err.message);
@@ -3081,9 +3103,15 @@ function TakedownControl({ adminKey, creators, report = null, initialCreatorId =
           {thread && (
             <div className="space-y-1">
               <p className="text-[10px] text-gray-500">
-                Thread {String(thread.id)} between {(thread.participants || []).map(lookupAccountLabel).join(' and ')}:
+                Thread {String(thread.id)} between {(thread.participants || []).map(lookupAccountLabel).join(' and ')}
+                {Number.isFinite(Number(thread.messageCount)) ? ` -- showing ${thread.messages.length} of ${Number(thread.messageCount)} message(s)` : ''}:
               </p>
               <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
+                {thread.hasMore && (
+                  <button onClick={() => openThread(thread.id, true)} disabled={lookupBusy || off} className={smallBtn}>
+                    {lookupBusy ? 'Loading…' : 'Show older messages'}
+                  </button>
+                )}
                 {!thread.messages.length ? <p className="text-gray-500">No stored messages.</p> : thread.messages.map((m) => {
                   const sender = participantById(m.senderId);
                   return (
@@ -5112,11 +5140,26 @@ function OrderAddressErasePanel({ adminKey }) {
   );
 }
 
+// Panel state from a GET/POST /api/admin/standing-pushes body. needsServerAdmin
+// is kept per row: it is what tells a refused reinstatement apart from an
+// ordinary delivery failure.
+function standingState(data) {
+  const pending = Array.isArray(data?.pending) ? data.pending : [];
+  return {
+    configured: data?.configured !== false,
+    pending: pending.map((p) => ({ ...p, needsServerAdmin: p?.needsServerAdmin === true })),
+  };
+}
+
 /**
  * Bans, suspensions, reinstatements and deletions server/ has not confirmed
  * yet (lib/standing-outbox.js via /api/admin/standing-pushes). Each row is
  * an account that may still be renewing subscriptions or taking payouts on
- * server/. Rows retry by themselves; "Retry now" delivers every one at once.
+ * server/. Ordinary failures retry by themselves; "Retry now" delivers every
+ * one at once. A needsServerAdmin row is a reinstatement server/ refused
+ * because a server/ admin applied the ban or suspension: no retry clears it
+ * until an operator ADMIN runs POST /admin/users/:id/status on server/, so
+ * the panel flags it and says exactly that.
  */
 function StandingPushesPanel({ adminKey }) {
   const [state, setState] = useState(null);
@@ -5129,7 +5172,7 @@ function StandingPushesPanel({ adminKey }) {
     try {
       const { res, data } = await adminGet(adminKey, '/api/admin/standing-pushes');
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not load the server/ sync queue'));
-      setState({ configured: data.configured !== false, pending: Array.isArray(data.pending) ? data.pending : [] });
+      setState(standingState(data));
     } catch (err) {
       setError(err.message);
     }
@@ -5144,8 +5187,10 @@ function StandingPushesPanel({ adminKey }) {
     try {
       const { res, data } = await adminPost(adminKey, '/api/admin/standing-pushes', {});
       if (!res.ok) throw new Error(errorFrom(res, data, 'Retry failed'));
-      setState({ configured: data.configured !== false, pending: Array.isArray(data.pending) ? data.pending : [] });
-      setNotice(`Delivered ${Number(data.sent) || 0}, failed ${Number(data.failed) || 0}.`);
+      setState(standingState(data));
+      const stuck = Number(data.needsServerAdmin) || 0;
+      setNotice(`Delivered ${Number(data.sent) || 0}, failed ${Number(data.failed) || 0}.`
+        + (stuck ? ` ${stuck} of those failures ${stuck === 1 ? 'is a reinstatement' : 'are reinstatements'} the backend refused because a server/ admin applied the ban or suspension -- retrying will not clear ${stuck === 1 ? 'it' : 'them'}; see the red rows below.` : ''));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -5154,6 +5199,7 @@ function StandingPushesPanel({ adminKey }) {
   };
 
   const pending = state?.pending || [];
+  const stuckCount = pending.filter((p) => p.needsServerAdmin).length;
   return (
     <div className="premium-card p-5">
       <div className="flex flex-wrap items-center gap-3 mb-1">
@@ -5168,10 +5214,28 @@ function StandingPushesPanel({ adminKey }) {
       </div>
       <p className="text-xs text-gray-500 mb-3">
         A ban, suspension, reinstatement or deletion made on this site that the payments backend has not confirmed yet
-        -- that account may still be renewing subscriptions or taking payouts there. Rows retry on their own (backing
-        off up to 6 hours, plus the daily maintenance run). A row stuck on http_404 usually means the backend needs a
-        redeploy.
+        -- that account may still be renewing subscriptions or taking payouts there. Ordinary delivery failures retry on
+        their own (backing off up to 6 hours, plus the daily maintenance run); a row stuck on http_404 usually means the
+        backend needs a redeploy. Rows marked NEEDS SERVER/ ADMIN are different: they never clear by retrying (see below).
       </p>
+      {stuckCount > 0 && (
+        <div className="text-xs text-red-200 mb-3 px-3 py-2 rounded-md border border-red-500/50 bg-red-900/20 space-y-1">
+          <p className="font-bold">
+            {stuckCount} reinstatement{stuckCount === 1 ? '' : 's'} refused by the backend -- the account is STILL restricted on server/.
+          </p>
+          <p>
+            A server/ admin applied that ban or suspension, and the site is only allowed to lift restrictions the site
+            applied. Until an operator ADMIN lifts it on server/, the account stays restricted there (payouts frozen;
+            after a ban, subscribers cut off and listings down). Retrying from here will not change that.
+          </p>
+          <p>
+            To fix: find the server/ account for the site user id shown (its <span className="font-mono">siteUid</span> equals
+            that id), then, logged in to server/ as an operator ADMIN, call{' '}
+            <span className="font-mono">POST /admin/users/&lt;server id&gt;/status {'{"status":"ACTIVE"}'}</span>. After that, press
+            Retry now (or wait for the next retry) and the row clears.
+          </p>
+        </div>
+      )}
       {state && !state.configured && (
         <p className="text-xs text-yellow-300 mb-2">The link to the backend is not configured, so nothing can be delivered.</p>
       )}
@@ -5184,7 +5248,10 @@ function StandingPushesPanel({ adminKey }) {
       ) : (
         <div className="space-y-1 text-xs text-gray-300">
           {pending.map((p) => (
-            <div key={String(p.uid)} className="flex flex-wrap gap-x-3 gap-y-0.5 px-3 py-2 rounded-md bg-black/30 border border-white/10">
+            <div key={String(p.uid)} className={`flex flex-wrap gap-x-3 gap-y-0.5 px-3 py-2 rounded-md bg-black/30 border ${p.needsServerAdmin ? 'border-red-500/60' : 'border-white/10'}`}>
+              {p.needsServerAdmin && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-600/30 text-red-200 border border-red-500/60">NEEDS SERVER/ ADMIN</span>
+              )}
               <span className="font-mono text-white">user {String(p.uid)}</span>
               <span className="uppercase font-bold">{String(p.status ?? '')}</span>
               {p.role && <span className="text-gray-500">{String(p.role)}</span>}
@@ -5192,6 +5259,14 @@ function StandingPushesPanel({ adminKey }) {
               <span className="text-gray-500">{Number(p.attempts) || 0} attempt(s)</span>
               {p.nextAttemptAt && <span className="text-gray-500">next {new Date(p.nextAttemptAt).toLocaleString()}</span>}
               {p.lastError && <span className="text-red-300">last error: {String(p.lastError)}</span>}
+              {p.needsServerAdmin && (
+                <span className="basis-full text-red-200">
+                  {String(p.lastError) === 'suspension_needs_server_admin' ? 'Suspended' : 'Banned'} by a server/ admin -- still
+                  restricted there. Retries will not clear this: an operator ADMIN must run{' '}
+                  <span className="font-mono">POST /admin/users/&lt;server id of site user {String(p.uid)}&gt;/status {'{"status":"ACTIVE"}'}</span>{' '}
+                  on server/, then Retry now.
+                </span>
+              )}
             </div>
           ))}
         </div>

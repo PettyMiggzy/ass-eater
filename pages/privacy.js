@@ -256,6 +256,12 @@ export default function Privacy() {
                 your personal details is a physical Marketplace order, where the selling creator receives
                 the shipping name and address (Section 1).
               </p>
+              <p className="mt-3">
+                Messages are private between the two people in the conversation, but not hidden from the
+                Platform: administrators can look up a conversation or a wall comment and read it when
+                acting on a report, a takedown request, or a suspected violation of our Terms, and can remove
+                it. A removed item is copied into the moderation record first (Section 7).
+              </p>
             </Section>
 
             <Section title="7. Data Retention & Deletion">

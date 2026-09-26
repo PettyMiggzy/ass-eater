@@ -69,11 +69,21 @@ describe('resolveTreasuryTx', () => {
     expect((await chain.resolveTreasuryTx(h, 5, client({ nonce: 9, known: [h] }), TREASURY)).state).toBe('unknown'); // pending
     expect((await chain.resolveTreasuryTx(h, 5, client({ fail: true }), TREASURY)).state).toBe('unknown');
   });
+
+  it('decides dropped only for a transaction the current key signed', async () => {
+    const h = hash();
+    expect((await chain.resolveTreasuryTx(h, 5, client({ nonce: 6 }), TREASURY, TREASURY.toUpperCase().replace('0X', '0x'))).state).toBe('dropped');
+    expect((await chain.resolveTreasuryTx(h, 5, client({ nonce: 6 }), TREASURY, '0x2222222222222222222222222222222222222222')).state).toBe('unknown');
+    expect((await chain.resolveTreasuryTx(h, 5, client({ nonce: 6 }), TREASURY, null)).state).toBe('unknown');
+    // A receipt settles it whoever signed.
+    expect((await chain.resolveTreasuryTx(h, 5, client({ receipts: { [h]: { status: 'reverted', logs: [] } } }), TREASURY, '0x2222222222222222222222222222222222222222')).state).toBe('reverted');
+  });
 });
 
 describe('automatic burn: an in-flight swap is settled, never repeated', () => {
-  async function obligation(pendingTxHash: string | null, pendingNonce: number | null = 7) {
-    return prisma.tokenBurn.create({ data: { usdCents: 5000n, reason: 'test', pendingTxHash, pendingNonce, pendingSince: pendingTxHash ? new Date() : null } });
+  // Signed by the CURRENT treasury key unless told otherwise (TokenBurn.pendingSigner).
+  async function obligation(pendingTxHash: string | null, pendingNonce: number | null = 7, pendingSigner: string | null = chain.treasuryAccount().address) {
+    return prisma.tokenBurn.create({ data: { usdCents: 5000n, reason: 'test', pendingTxHash, pendingNonce, pendingSince: pendingTxHash ? new Date() : null, pendingSigner } });
   }
   // Isolated from other rows in the shared table by settling one hash at a time.
   it('marks the obligations executed from a successful receipt', async () => {
@@ -101,6 +111,21 @@ describe('automatic burn: an in-flight swap is settled, never repeated', () => {
     expect(r.pendingTxHash).toBeNull();
     expect(r.executedAt).toBeNull();
     await prisma.tokenBurn.delete({ where: { id: row.id } });
+  });
+
+  it('never judges a swap signed by ANOTHER key (a rotated-out treasury) or an unknown signer dropped by the current wallet\'s nonce', async () => {
+    for (const signer of ['0x9999999999999999999999999999999999999999', null]) {
+      const h = hash();
+      const row = await obligation(h, 7, signer);
+      await prisma.tokenBurn.updateMany({ where: { executedAt: null, pendingTxHash: { not: null }, NOT: { id: row.id } }, data: { pendingTxHash: null, pendingNonce: null } });
+      // The new wallet's count is well past 7, and the old-key tx is unknown:
+      // that proves nothing about the OLD key's nonce 7, so it stays in flight.
+      expect(await settleInFlightBurn(client({ nonce: 50 }) as any)).toBe(false);
+      expect((await prisma.tokenBurn.findUniqueOrThrow({ where: { id: row.id } })).pendingTxHash).toBe(h);
+      // A receipt is still an answer, whoever signed.
+      expect(await settleInFlightBurn(client({ receipts: { [h]: { status: 'success', logs: [burnLog(1n)] } } }) as any)).toBe(true);
+      expect((await prisma.tokenBurn.findUniqueOrThrow({ where: { id: row.id } })).executedAt).toBeInstanceOf(Date);
+    }
   });
 
   it('counts address(0) as a burn sink only when asked', () => {
@@ -149,5 +174,16 @@ describe('treasury hedge: a settled swap is applied exactly once', () => {
     await settleInFlightHedge(c);
     expect((await prisma.deposit.findUniqueOrThrow({ where: { id: dep.id } })).hedgedRaw).toBe('1000');
     expect((await prisma.treasuryHedgeBatch.findUniqueOrThrow({ where: { id: batch.id } })).status).toBe('DONE');
+  });
+
+  it('a swap signed by a rotated-out key is never failed by the new wallet\'s nonce; the current key\'s is', async () => {
+    await prisma.treasuryHedgeBatch.updateMany({ where: { status: 'PENDING' }, data: { status: 'FAILED' } });
+    const h = hash();
+    const old = await prisma.treasuryHedgeBatch.create({ data: { depositCount: 0, onlyOneRawIn: '1', usdcRawOut: '1', priceImpactBps: 0, txHash: h, nonce: 3, status: 'PENDING', signerAddress: '0x9999999999999999999999999999999999999999' } });
+    expect(await settleInFlightHedge(client({ nonce: 40 }) as any)).toBe(false);
+    expect((await prisma.treasuryHedgeBatch.findUniqueOrThrow({ where: { id: old.id } })).status).toBe('PENDING');
+    await prisma.treasuryHedgeBatch.update({ where: { id: old.id }, data: { signerAddress: chain.treasuryAccount().address } });
+    expect(await settleInFlightHedge(client({ nonce: 40 }) as any)).toBe(true);
+    expect((await prisma.treasuryHedgeBatch.findUniqueOrThrow({ where: { id: old.id } })).status).toBe('FAILED');
   });
 });

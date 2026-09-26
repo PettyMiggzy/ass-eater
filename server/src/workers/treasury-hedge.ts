@@ -121,7 +121,8 @@ async function applyHedge(batchId: string, amountIn: bigint) {
 export async function settleInFlightHedge(client = publicClient as any): Promise<boolean> {
   const b = await prisma.treasuryHedgeBatch.findFirst({ where: { status: 'PENDING' }, orderBy: { createdAt: 'asc' } });
   if (!b) return true;
-  const r = await resolveTreasuryTx(b.txHash as `0x${string}`, b.nonce, client);
+  // Judged against the key that signed it (see token-burn.ts settleInFlightBurn).
+  const r = await resolveTreasuryTx(b.txHash as `0x${string}`, b.nonce, client, undefined, b.signerAddress);
   if (r.state === 'success') { await applyHedge(b.id, BigInt(b.onlyOneRawIn)); return true; }
   if (r.state === 'reverted' || r.state === 'dropped') {
     await prisma.treasuryHedgeBatch.updateMany({ where: { id: b.id, status: 'PENDING' }, data: { status: 'FAILED', resolvedAt: new Date() } });
@@ -194,12 +195,12 @@ async function sweep() {
   // The batch row exists (PENDING, with the hash) before the swap is
   // broadcast, so a timeout or restart leaves something to settle instead
   // of a swap the next cycle cannot see.
-  const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce) => {
+  const hash = await sendTreasuryTx({ to: ROUTER, data }, async (h, nonce, signer) => {
     // Counted before anything is persisted or broadcast (see above).
     treasuryOutflow.record('hedge', outCents(sized!.amountOut), h);
     treasuryOutflow.record('hedge_tokens', wholeTokensUp(sized!.amountIn, DECIMALS.ONLYONE), h);
     await prisma.treasuryHedgeBatch.create({ data: {
-      depositCount: 0, onlyOneRawIn: sized!.amountIn.toString(), usdcRawOut: sized!.amountOut.toString(), priceImpactBps: Math.round(sized!.impactBps), txHash: h, nonce, status: 'PENDING',
+      depositCount: 0, onlyOneRawIn: sized!.amountIn.toString(), usdcRawOut: sized!.amountOut.toString(), priceImpactBps: Math.round(sized!.impactBps), txHash: h, nonce, signerAddress: signer, status: 'PENDING',
     } });
   });
   await publicClient.waitForTransactionReceipt({ hash }).catch(() => null);

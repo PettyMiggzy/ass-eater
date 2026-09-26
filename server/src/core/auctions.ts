@@ -297,3 +297,68 @@ export async function closeAuction(tx: Tx, listingId: string, now: Date = new Da
 
   return { sold: true as const, order };
 }
+
+/** Same bounds as an auction's duration at creation (modules/marketplace.ts POST /listings). */
+export const MIN_AUCTION_HOURS = 1;
+export const MAX_AUCTION_HOURS = 24 * 30;
+
+/**
+ * Puts an auction that ended (or was taken down) WITHOUT a sale back on
+ * sale: either as a fresh auction running `auctionDurationHours` from now,
+ * or converted to a fixed-price, one-of-a-kind listing at its current
+ * priceCents. Every no-sale close (no bids, reserve not met, an inactive
+ * winner, nothing deliverable at the time) marks the listing REMOVED with
+ * its deadline in the past, and the listing's product media stays attached
+ * to it -- media can only ever be attached to one listing, post or DM -- so
+ * without this the creator could never sell those uploads again.
+ *
+ * Only for the creator's own REMOVED, unmoderated auction with no standing
+ * lead and no orders: a moderator's takedown is not theirs to undo, a lead
+ * means a hold is still out, and an order means it was sold. The status
+ * flip is ONE guarded updateMany re-checking all of that in its WHERE, so a
+ * takedown committing mid-request is not overwritten.
+ */
+export async function relistAuction(
+  tx: Tx, listingId: string, creatorId: string,
+  opts: { auctionDurationHours?: number; saleType?: 'FIXED' | 'AUCTION' },
+  now: Date = new Date(),
+) {
+  const l = await tx.listing.findFirst({ where: { id: listingId, creatorId } });
+  if (!l) throw statusCode('not_found', 404);
+  if (l.saleType !== 'AUCTION') throw statusCode('not_an_auction', 400);
+  if (l.moderatedAt) throw statusCode('removed_by_moderation', 409);
+  if (l.status !== 'REMOVED' || l.currentBidderId) throw statusCode('not_relistable', 409);
+  if ((await tx.listingOrder.count({ where: { listingId } })) > 0) throw statusCode('listing_has_orders', 409);
+  if (!(await sellerActive(tx, creatorId))) throw statusCode('not_available', 400);
+
+  const toFixed = opts.saleType === 'FIXED';
+  let data: Record<string, unknown>;
+  if (toFixed) {
+    // A fixed-price listing has no deadline, reserve or bid state; clear all
+    // of it so nothing auction-shaped is left for the close sweep to find.
+    data = {
+      status: 'ACTIVE', saleType: 'FIXED', unlimited: false, auctionEndsAt: null, reserveCents: null, minBidIncrementCents: null,
+      currentBidCents: null, currentBidderId: null, currentHoldCents: null, currentHoldWithdrawableCents: null,
+    };
+  } else {
+    const h = opts.auctionDurationHours;
+    if (!Number.isInteger(h) || (h as number) < MIN_AUCTION_HOURS || (h as number) > MAX_AUCTION_HOURS) {
+      throw statusCode('auctionDurationHours is required to relist an auction', 400);
+    }
+    // Same rule as creation: the hidden reserve can never sit below the
+    // starting bid (a price edit in the same request has already landed).
+    if (l.reserveCents != null && l.reserveCents < l.priceCents) {
+      throw statusCode('reserveCents cannot be below the starting bid (priceCents)', 400);
+    }
+    data = {
+      status: 'ACTIVE', auctionEndsAt: new Date(now.getTime() + (h as number) * 3_600_000),
+      currentBidCents: null, currentBidderId: null, currentHoldCents: null, currentHoldWithdrawableCents: null,
+    };
+  }
+  const r = await tx.listing.updateMany({
+    where: { id: listingId, creatorId, saleType: 'AUCTION', status: 'REMOVED', moderatedAt: null, currentBidderId: null },
+    data,
+  });
+  if (!r.count) throw statusCode('not_relistable', 409);
+  return tx.listing.findUniqueOrThrow({ where: { id: listingId } });
+}

@@ -628,6 +628,12 @@ model TokenBurn {
   pendingTxHash String?
   pendingNonce  Int?
   pendingSince  DateTime?
+  // The treasury address that signed pendingTxHash. pendingNonce is THAT
+  // key's nonce: after a treasury key rotation, the new wallet's nonce says
+  // nothing about it, so a swap signed by any other key is never judged
+  // 'dropped' (and bought again) automatically. Null = signed before this
+  // column existed; treated the same way (left for an admin).
+  pendingSigner String?
 
   @@index([executedAt])
   @@index([pendingTxHash])
@@ -716,6 +722,8 @@ model TreasuryHedgeBatch {
   // the same deposits twice. Rows from before this column existed are DONE.
   status         String    @default("DONE")
   nonce          Int?
+  // The treasury address that signed txHash (see TokenBurn.pendingSigner).
+  signerAddress  String?
   resolvedAt     DateTime?
   createdAt      DateTime  @default(now())
 
@@ -742,6 +750,13 @@ model Payout {
   // is measured from this, not from createdAt (the REQUEST time -- a payout
   // held for days before signing was otherwise never auto-settled).
   signedAt    DateTime?
+  // The treasury address that signed txHash; `nonce` is that key's nonce.
+  // After a treasury key rotation the reconciler must not judge an old-key
+  // transaction by the NEW wallet's nonce (or sign a "cancel" for it from
+  // the new key, which cancels nothing): a payout signed by any other key --
+  // or before this column existed (null) -- is never refunded as
+  // never-sent automatically, only settled by a receipt or by an admin.
+  signerAddress String?
   // The worker's own zero-value nonce-cancel for txHash, persisted before it
   // is broadcast. A never-sent payout is only refunded automatically when
   // THIS transaction is what consumed the nonce -- a nonce consumed by

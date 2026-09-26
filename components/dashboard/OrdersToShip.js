@@ -30,6 +30,12 @@ export default function OrdersToShip() {
   const [shipForm, setShipForm] = useState({}); // orderId -> { carrier, trackingNumber }
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
+  // Shipped orders whose "Edit tracking" form is open (orderId -> true). The
+  // ship route accepts an order already 'shipped' as a carrier/tracking
+  // correction (lib/orders-store.js markOrderShipped) -- it keeps the original
+  // shippedAt and stamps trackingUpdatedAt -- and this is the only control
+  // that reaches it (round-13 dashboard#0).
+  const [editing, setEditing] = useState({});
 
   const load = async () => {
     setLoading(true);
@@ -50,6 +56,8 @@ export default function OrdersToShip() {
 
   useEffect(() => { load(); }, []);
 
+  // Used both to ship a pending order and to correct the tracking of one
+  // already shipped: same route, same body.
   const markShipped = async (orderId) => {
     const { carrier, trackingNumber } = shipForm[orderId] || {};
     if (!carrier?.trim() || !trackingNumber?.trim()) { setError('Enter a carrier and tracking number first.'); return; }
@@ -69,8 +77,11 @@ export default function OrdersToShip() {
         await load();
         return;
       }
-      if (!res.ok || !data?.order) throw new Error(responseErrorMessage(res.status, data, 'Failed to mark shipped'));
+      // ADDRESS_UNREADABLE (409, pending orders only) and 404 'Order not
+      // found' carry their own readable message; responseErrorMessage shows it.
+      if (!res.ok || !data?.order) throw new Error(responseErrorMessage(res.status, data, 'Failed to save the tracking details'));
       setOrders((list) => list.map((o) => (o.id === orderId ? data.order : o)));
+      setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -80,6 +91,23 @@ export default function OrdersToShip() {
 
   const pending = orders.filter((o) => o.status === 'pending_shipment');
   const shipped = orders.filter((o) => o.status === 'shipped');
+
+  const openEdit = (o) => {
+    setError('');
+    setShipForm((f) => ({
+      ...f,
+      [o.id]: {
+        carrier: typeof o.carrier === 'string' ? o.carrier : '',
+        trackingNumber: typeof o.trackingNumber === 'string' ? o.trackingNumber : '',
+      },
+    }));
+    setEditing((m) => ({ ...m, [o.id]: true }));
+  };
+  const closeEdit = (orderId) => setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
+  const fmtDate = (iso) => {
+    const d = typeof iso === 'string' ? new Date(iso) : null;
+    return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString() : '';
+  };
   // Closed by an admin as never fulfillable (lib/orders-store.js
   // closeUnfulfilledOrder -- e.g. the seller was banned before shipping).
   // Nothing to ship, and the address is no longer shared (toCreatorOrder
@@ -167,10 +195,66 @@ export default function OrdersToShip() {
           {shipped.length > 0 && (
             <details className="text-xs text-gray-500">
               <summary className="cursor-pointer">Shipped ({shipped.length})</summary>
-              <div className="mt-2 space-y-1">
-                {shipped.map((o) => (
-                  <p key={o.id}>Order #{o.id} — <OrderItem o={o} /> — {o.carrier} {o.trackingNumber}</p>
-                ))}
+              <div className="mt-2 space-y-2">
+                {shipped.map((o) => {
+                  // No address and no unreadable-address gate here: the parcel
+                  // has already gone, the address is no longer shared
+                  // (toCreatorOrder), and it may have been erased on purpose.
+                  const form = shipForm[o.id] || { carrier: '', trackingNumber: '' };
+                  const shippedOn = fmtDate(o.shippedAt);
+                  const updatedOn = fmtDate(o.trackingUpdatedAt);
+                  return (
+                    <div key={o.id}>
+                      <p>
+                        Order #{o.id} — <OrderItem o={o} /> — {o.carrier} {o.trackingNumber}
+                        {shippedOn ? ` · shipped ${shippedOn}` : ''}
+                        {updatedOn ? ` · tracking updated ${updatedOn}` : ''}
+                        {!editing[o.id] && (
+                          <>
+                            {' '}
+                            <button type="button" onClick={() => openEdit(o)} className="underline text-gray-300">Edit tracking</button>
+                          </>
+                        )}
+                      </p>
+                      {editing[o.id] && (
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          <input
+                            value={form.carrier}
+                            maxLength={100}
+                            onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, carrier: e.target.value } })}
+                            placeholder="Carrier (e.g. USPS)"
+                            aria-label={`Carrier for order ${o.id}`}
+                            className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
+                          />
+                          <input
+                            value={form.trackingNumber}
+                            maxLength={100}
+                            onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, trackingNumber: e.target.value } })}
+                            placeholder="Tracking number"
+                            aria-label={`Tracking number for order ${o.id}`}
+                            className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => markShipped(o.id)}
+                            disabled={busyId === o.id}
+                            className="premium-button text-xs px-4 disabled:opacity-50"
+                          >
+                            Save tracking
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => closeEdit(o.id)}
+                            disabled={busyId === o.id}
+                            className="text-xs underline text-gray-400 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </details>
           )}

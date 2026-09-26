@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { money, post, PLATFORM_ID } from './ledger';
-import { placeBid, closeAuction, cancelAuction, minIncrement } from './auctions';
+import { placeBid, closeAuction, cancelAuction, minIncrement, relistAuction } from './auctions';
 
 const prisma = new PrismaClient();
 
@@ -334,5 +334,79 @@ describe('auctions closeAuction', () => {
     const listing = await makeAuctionListing(creatorId, { endsInMs: -1000 });
     await money(prisma, (tx) => closeAuction(tx, listing.id)); // first close: REMOVED (no bids)
     await expect(money(prisma, (tx) => closeAuction(tx, listing.id))).rejects.toThrow('wrong_status');
+  });
+});
+
+describe('auctions relistAuction (an unsold auction can go back on sale)', () => {
+  it('restarts an auction that closed with the reserve unmet, with a fresh deadline and no bid state, and it can then sell', async () => {
+    const creatorId = await makeCreator();
+    const bidderId = await makeUser();
+    await fund(bidderId, 10_000);
+    const listing = await makeAuctionListing(creatorId, { startingBidCents: 1000, reserveCents: 5000, endsInMs: 1000 });
+    await money(prisma, (tx) => placeBid(tx, listing.id, bidderId, 4000));
+    await prisma.listing.update({ where: { id: listing.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
+    expect((await money(prisma, (tx) => closeAuction(tx, listing.id))).sold).toBe(false);
+    const mediaBefore = await prisma.media.findMany({ where: { listingId: listing.id } });
+    expect(mediaBefore.length).toBe(1);
+
+    const before = Date.now();
+    const relisted = await money(prisma, (tx) => relistAuction(tx, listing.id, creatorId, { auctionDurationHours: 24 }));
+    expect(relisted.status).toBe('ACTIVE');
+    expect(relisted.saleType).toBe('AUCTION');
+    expect(relisted.currentBidderId).toBeNull();
+    expect(relisted.currentBidCents).toBeNull();
+    expect(relisted.auctionEndsAt!.getTime()).toBeGreaterThanOrEqual(before + 24 * 3_600_000 - 1000);
+    // Same media, still attached -- nothing had to be uploaded again.
+    expect((await prisma.media.findMany({ where: { listingId: listing.id } })).map((m) => m.id)).toEqual(mediaBefore.map((m) => m.id));
+
+    // The rerun works end to end: a bid meeting the reserve sells.
+    await money(prisma, (tx) => placeBid(tx, listing.id, bidderId, 5000));
+    await prisma.listing.update({ where: { id: listing.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
+    expect((await money(prisma, (tx) => closeAuction(tx, listing.id))).sold).toBe(true);
+    expect(await balanceOf(bidderId)).toBe(5000n);
+  });
+
+  it('converts an unsold auction into a fixed-price one-of-a-kind listing with every auction field cleared', async () => {
+    const creatorId = await makeCreator();
+    const listing = await makeAuctionListing(creatorId, { endsInMs: -1000, reserveCents: 2000, minBidIncrementCents: 50 });
+    await money(prisma, (tx) => closeAuction(tx, listing.id));
+    const fixed = await money(prisma, (tx) => relistAuction(tx, listing.id, creatorId, { saleType: 'FIXED' }));
+    expect(fixed).toMatchObject({ status: 'ACTIVE', saleType: 'FIXED', unlimited: false, auctionEndsAt: null, reserveCents: null, minBidIncrementCents: null });
+  });
+
+  it('refuses without a duration, on a live auction, on a moderated takedown, on a sold one, and for anyone but the creator', async () => {
+    const creatorId = await makeCreator();
+    const other = await makeCreator();
+    const ended = await makeAuctionListing(creatorId, { endsInMs: -1000 });
+    await money(prisma, (tx) => closeAuction(tx, ended.id));
+    await expect(money(prisma, (tx) => relistAuction(tx, ended.id, creatorId, {}))).rejects.toThrow(/auctionDurationHours/);
+    await expect(money(prisma, (tx) => relistAuction(tx, ended.id, creatorId, { auctionDurationHours: 0 }))).rejects.toThrow(/auctionDurationHours/);
+    await expect(money(prisma, (tx) => relistAuction(tx, ended.id, other, { auctionDurationHours: 24 }))).rejects.toThrow('not_found');
+
+    const live = await makeAuctionListing(creatorId, { endsInMs: 3_600_000 });
+    await expect(money(prisma, (tx) => relistAuction(tx, live.id, creatorId, { auctionDurationHours: 24 }))).rejects.toThrow('not_relistable');
+
+    const takenDown = await makeAuctionListing(creatorId, { endsInMs: -1000 });
+    await prisma.listing.update({ where: { id: takenDown.id }, data: { status: 'REMOVED', moderatedAt: new Date(), moderatedReason: 'REPORT' } });
+    await expect(money(prisma, (tx) => relistAuction(tx, takenDown.id, creatorId, { auctionDurationHours: 24 }))).rejects.toThrow('removed_by_moderation');
+
+    const bidderId = await makeUser();
+    await fund(bidderId, 10_000);
+    const sold = await makeAuctionListing(creatorId, { endsInMs: 1000 });
+    await money(prisma, (tx) => placeBid(tx, sold.id, bidderId, 1000));
+    await prisma.listing.update({ where: { id: sold.id }, data: { auctionEndsAt: new Date(Date.now() - 1000) } });
+    await money(prisma, (tx) => closeAuction(tx, sold.id));
+    await expect(money(prisma, (tx) => relistAuction(tx, sold.id, creatorId, { auctionDurationHours: 24 }))).rejects.toThrow('not_relistable');
+  });
+
+  it('refuses a relist whose reserve would sit below the starting price', async () => {
+    const creatorId = await makeCreator();
+    const listing = await makeAuctionListing(creatorId, { endsInMs: -1000, startingBidCents: 1000, reserveCents: 1500 });
+    await money(prisma, (tx) => closeAuction(tx, listing.id));
+    await expect(money(prisma, async (tx) => {
+      await tx.listing.update({ where: { id: listing.id }, data: { priceCents: 3000 } });
+      return relistAuction(tx, listing.id, creatorId, { auctionDurationHours: 24 });
+    })).rejects.toThrow(/reserveCents/);
+    expect((await prisma.listing.findUniqueOrThrow({ where: { id: listing.id } })).status).toBe('REMOVED');
   });
 });

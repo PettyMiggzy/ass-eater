@@ -1,6 +1,7 @@
 import { getSessionUser } from '../../../lib/session';
 import { displayNameFor, findUserByCreatorId } from '../../../lib/users-store';
-import { addWallPost, toPublicWallPost, MAX_TEXT_LENGTH, WALL_DAILY_CAP_MESSAGE } from '../../../lib/wall-store';
+import { addWallPost, toPublicWallPost, MAX_TEXT_LENGTH, WALL_DAILY_CAP_MESSAGE, WALL_CONTROL_CHARS_MESSAGE } from '../../../lib/wall-store';
+import { hasControlChars } from '../../../lib/unicode-text';
 import { getCreatorById } from '../../../lib/creators-store';
 import { isPubliclyVisible, effectiveCreatorStatus } from '../../../lib/creator-status';
 import { restrictionMessageFor, blockBetween, isWallBlocked } from '../../../lib/messages-store';
@@ -40,6 +41,8 @@ export default async function handler(req, res) {
   if (text.trim().length > MAX_TEXT_LENGTH) {
     return res.status(400).json({ error: `That post is too long (${MAX_TEXT_LENGTH} characters maximum).` });
   }
+
+  if (hasControlChars(text)) return res.status(400).json({ error: WALL_CONTROL_CHARS_MESSAGE });
 
   const { limited, retryAfterSeconds } = consumeAttempt(`wall:user:${uid}`, {
     limit: MAX_POSTS,
@@ -138,6 +141,7 @@ export default async function handler(req, res) {
   } catch (err) {
     if (err.message === 'Comment cannot be empty') return res.status(400).json({ error: err.message });
     if (err.code === 'WALL_DAILY_CAP') return res.status(429).json({ error: WALL_DAILY_CAP_MESSAGE });
+    if (err.code === 'WALL_CONTROL_CHARS') return res.status(400).json({ error: WALL_CONTROL_CHARS_MESSAGE });
     console.error('[wall/post] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }

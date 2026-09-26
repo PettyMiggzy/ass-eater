@@ -263,8 +263,28 @@ Check the printed `Deployed commit`, then, once everything is verified,
 
 **Rotate the treasury key after migrating.** Under the old layout
 `TREASURY_PRIVATE_KEY` sat in the internet-facing API's environment and in
-files the API's user owned; treat it as exposed. Create a new treasury
-wallet, move the funds, put the new key in `.env.workers`, set
+files the API's user owned; treat it as exposed.
+
+Settle everything the old key signed FIRST. A signed transaction stays valid
+for the old wallet's nonce until something consumes it, and after the switch
+the workers can no longer judge it (they record which key signed each payout,
+burn and hedge, and never refund or re-buy one signed by another key -- it
+just sits FAILED/in flight for you), so:
+
+1. `systemctl stop onlyone-workers`.
+2. Every payout in PROCESSING or FAILED: look its `txHash` up on the explorer
+   and settle it with `POST /admin/payouts/:id/resolve` (mark it sent if it
+   landed, otherwise hold it and settle by hand). None may be left
+   PROCESSING/FAILED with a hash nobody has checked.
+3. No `TokenBurn` with `pendingTxHash` set and no `TreasuryHedgeBatch` in
+   `PENDING`: wait for each to have a receipt (start the workers again and
+   let them settle, then stop them), or confirm on the explorer.
+4. Move ALL of the old wallet's USDG **and** ETH to the new wallet, and keep
+   it empty. With no ETH for gas and no tokens, no old-signed transaction can
+   ever land -- whoever else holds the exposed key included.
+
+Then create the new treasury wallet (if not done in step 4), put the new key
+in `.env.workers`, set
 `TREASURY_ADDRESS` in `.env` to the new wallet's PUBLIC address (the API and
 the workers both read it: the API to accept `mark_sent` transfers and burns
 from the treasury, the workers to recognise their own gas top-ups), and

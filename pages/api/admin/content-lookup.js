@@ -17,8 +17,11 @@ import {
  * GET ?kind=conversations&(userId=<id> | login=<email or username> | creatorId=<id>)[&offset=N]
  *   -> 200 { ok, account, conversations: [{ id, other, messageCount, lastMessage, updatedAt }], hasMore, nextOffset }
  *   -> 404 no such account
- * GET ?kind=messages&(conversationId=<id> | userA=<id>&userB=<id>)
- *   -> 200 { ok, conversation: { id, participants: [account], messages: [{ id, senderId, text, createdAt, priceCents? }] } }
+ * GET ?kind=messages&(conversationId=<id> | userA=<id>&userB=<id>)[&before=<message id>][&limit=N]
+ *   -> 200 { ok, conversation: { id, participants: [account], messageCount,
+ *            messages: [{ id, senderId, text, createdAt, priceCents? }], hasMore, nextBefore } }
+ *   Paged: the newest 100 (limit, at most 100) messages older than `before`,
+ *   oldest first within the page; page back with before=nextBefore.
  *   -> 404 no such conversation
  * GET ?kind=listings&creatorId=12
  *   -> 200 { ok, listings: [{ id, title, status, kind, priceCents, createdAt, mediaCount }] }
@@ -61,6 +64,8 @@ export default async function handler(req, res) {
         conversationId: str(q.conversationId),
         userA: str(q.userA),
         userB: str(q.userB),
+        before: str(q.before) || null,
+        limit: str(q.limit) || undefined,
       });
       if (!conversation) return res.status(404).json({ error: 'No such conversation' });
       return res.status(200).json({ ok: true, conversation });
