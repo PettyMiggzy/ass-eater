@@ -11,12 +11,19 @@ import { useState } from 'react';
  *
  * `source` is recorded with the signup so it is possible to tell which
  * page actually convinced someone.
+ *
+ * Every blurb, success message and footer here states ONE purpose, the one
+ * Privacy Policy §1 discloses: we email when we open (creator signups, for a
+ * creator) and, for someone whose gated US state we recorded, when that state
+ * opens. Don't promise anything else on a calling page (priority entry,
+ * "spots running out" alerts) without adding it to the Privacy Policy and
+ * actually building it.
  */
 export default function WaitlistForm({
   source,
   defaultRole = 'fan',
   title = 'Get notified when we launch',
-  blurb = 'Drop your email and we’ll tell you the moment OnlyOne opens. Nothing else, ever.',
+  blurb = 'Drop your email and we’ll tell you the moment OnlyOne opens.',
   className = '',
 }) {
   const [email, setEmail] = useState('');
@@ -55,7 +62,8 @@ export default function WaitlistForm({
         <p className="text-brand-pink font-bold tracking-wide">You’re on the list.</p>
         <p className="mt-2 text-sm text-gray-400">
           We’ll email <span className="text-gray-200">{email}</span> when we open
-          {role === 'creator' ? ' creator signups' : ''}. Nothing else.
+          {role === 'creator' ? ' creator signups' : ''} — and, if you’re in a US state we currently
+          gate, when that state opens. Nothing else.
         </p>
       </div>
     );
@@ -123,7 +131,8 @@ export default function WaitlistForm({
       {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
 
       <p className="mt-3 text-[10px] text-gray-600 leading-relaxed">
-        Only used to tell you about the launch. Never sold or shared, and you can ask us to take
+        Only used to tell you when we open (and, if you’re in a US state we currently gate, when
+        that state opens). Never sold or shared, and you can ask us to take
         you off at any time — <a href="mailto:team@onlyone1.fun" className="underline hover:text-brand-pink">team@onlyone1.fun</a>.
         See our <a href="/privacy" className="underline hover:text-brand-pink">Privacy Policy</a>.
       </p>

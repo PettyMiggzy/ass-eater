@@ -1,6 +1,6 @@
-import { getVerifiedSessionUserId } from '../../../lib/session';
+import { getSessionUser } from '../../../lib/session';
 import { ageVerificationSecret } from '../../../lib/age-verification';
-import { createWalletNonce, NONCE_TTL_SECONDS, depositProofMessage, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
+import { createWalletNonce, NONCE_TTL_SECONDS, depositProofMessage, depositAccountLabel, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
 import { consumeAttempt } from '../../../lib/rate-limit';
 import { accountStanding, isFrozenStanding, FROZEN_BUY_MESSAGE } from '../../../lib/credits-store';
 
@@ -16,7 +16,8 @@ const MAX_PER_USER = 30;
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  const uid = await getVerifiedSessionUserId(req);
+  const user = await getSessionUser(req);
+  const uid = user ? user.id : null;
   if (!uid) return res.status(401).json({ error: 'Log in first' });
 
   // A suspended or banned creator's balance can't be spent or cashed out, so
@@ -35,7 +36,10 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'Too many attempts. Please wait a few minutes and try again.' });
   }
 
-  const { nonce, token } = await createWalletNonce(ageVerificationSecret());
+  // Bound to this account (round-22 money#0): verify-wallet.js and buy.js
+  // refuse the challenge from any other session, and the signed text names
+  // the account so the signer can see what they are binding.
+  const { nonce, token } = await createWalletNonce(ageVerificationSecret(), { uid });
   const host = req.headers.host || 'joinonlyone.com';
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   res.setHeader(
@@ -43,5 +47,5 @@ export default async function handler(req, res) {
     `${DEPOSIT_NONCE_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${NONCE_TTL_SECONDS}${secure}`,
   );
   res.setHeader('Cache-Control', 'no-store');
-  return res.status(200).json({ message: depositProofMessage({ host, nonce }) });
+  return res.status(200).json({ message: depositProofMessage({ host, nonce, account: depositAccountLabel(user) }) });
 }

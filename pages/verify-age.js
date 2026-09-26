@@ -40,7 +40,7 @@ function afterVerifyPath(search) {
 
 export default function VerifyAge() {
   const router = useRouter();
-  const [status, setStatus] = useState('idle'); // idle | verifying | error
+  const [status, setStatus] = useState('idle'); // idle | verifying | pending | retry | error
   const [error, setError] = useState('');
   // The Pages Router hands out a NEW router object on re-renders (e.g. the
   // query-hydration replace for /verify-age?next=...), so the widget setup
@@ -51,6 +51,72 @@ export default function VerifyAge() {
   const routerRef = useRef(router);
   routerRef.current = router;
   const verificationUuid = useRef(null);
+  // One confirm at a time: onclosed and the "Check again" button share it.
+  const confirming = useRef(false);
+
+  // Posts the verification in progress to the server-side check. The page's
+  // wording follows the route's stable `code` (round-22 legal-journeys#0):
+  //   'denied'  -> AgeChecker refused it; the only case that states the 21+ bar
+  //   'pending' -> still under AgeChecker's review (photo ID, signature); the
+  //                uuid is KEPT so "Check again" confirms the same verification
+  //                rather than making the visitor start (and pay for) a new one
+  //   'used'    -> already spent; a new verification is needed
+  // A transient failure (rate limit, network, the service being unreachable)
+  // also keeps the uuid, since nothing was decided about it.
+  const confirmVerification = async () => {
+    const uuid = verificationUuid.current;
+    if (!uuid || confirming.current) return;
+    confirming.current = true;
+    setStatus('verifying');
+    setError('');
+    try {
+      let res;
+      try {
+        res = await fetch('/api/age-verify/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid }),
+        });
+      } catch {
+        setStatus('retry');
+        setError('Could not reach the server. Your verification is saved — press Check again.');
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const destination = afterVerifyPath(window.location.search);
+        // A host root is whatever proxy.js rewrites it to on THIS host
+        // (the marketplace on the shop domains), so load it as a real
+        // request rather than a client-side transition to the index page.
+        if (destination.split(/[?#]/)[0] === '/') window.location.assign(destination);
+        else routerRef.current.push(destination);
+        return;
+      }
+      const base = typeof data.error === 'string' && data.error ? data.error : 'Verification could not be confirmed.';
+      if (data.code === 'pending') {
+        setStatus('pending');
+        setError(base);
+        return;
+      }
+      if (res.status === 429 || res.status >= 500) {
+        setStatus('retry');
+        setError(base);
+        return;
+      }
+      // A final answer about this uuid: cleared so backing out of a retry
+      // isn't confirmed against the same spent/denied uuid. AgeChecker's own
+      // status/reason is never shown; only a real denial names the age bar.
+      verificationUuid.current = null;
+      setStatus('error');
+      setError(data.code === 'denied'
+        ? `${base} This check requires you to be ${VERIFIED_MIN_AGE} or older.`
+        : base);
+    } finally {
+      confirming.current = false;
+    }
+  };
+  const confirmRef = useRef(confirmVerification);
+  confirmRef.current = confirmVerification;
 
   useEffect(() => {
     if (!API_KEY) return undefined;
@@ -74,36 +140,8 @@ export default function VerifyAge() {
             if (typeof done === 'function') done();
             return;
           }
-          setStatus('verifying');
-          setError('');
           try {
-            const res = await fetch('/api/age-verify/confirm', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ uuid: verificationUuid.current }),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-              const base = typeof data.error === 'string' && data.error ? data.error : 'Verification could not be confirmed.';
-              // A denial ("not accepted") is most often the age bar itself;
-              // say what it is. AgeChecker's own status/reason is never shown.
-              const denied = data.code === 'not_accepted' || base === 'Age verification was not accepted.';
-              throw new Error(denied
-                ? `${base} This check requires you to be ${VERIFIED_MIN_AGE} or older.`
-                : base);
-            }
-            const destination = afterVerifyPath(window.location.search);
-            // A host root is whatever proxy.js rewrites it to on THIS host
-            // (the marketplace on the shop domains), so load it as a real
-            // request rather than a client-side transition to the index page.
-            if (destination.split(/[?#]/)[0] === '/') window.location.assign(destination);
-            else routerRef.current.push(destination);
-          } catch (err) {
-            setStatus('error');
-            setError(err.message);
-            // Cleared so backing out of a retry isn't confirmed against the
-            // same spent uuid.
-            verificationUuid.current = null;
+            await confirmRef.current();
           } finally {
             if (typeof done === 'function') done();
           }
@@ -155,6 +193,18 @@ export default function VerifyAge() {
                 confirms you're {VERIFIED_MIN_AGE} or older.
               </p>
               {status === 'error' && <p className="text-sm text-red-400 mb-4">{error}</p>}
+              {(status === 'pending' || status === 'retry') && (
+                <div className="mb-4">
+                  <p className={`text-sm mb-3 ${status === 'pending' ? 'text-gray-300' : 'text-red-400'}`}>{error}</p>
+                  <button
+                    type="button"
+                    onClick={() => confirmVerification()}
+                    className="w-full py-2 rounded-full border border-white/20 text-sm font-semibold hover:bg-white/10 transition"
+                  >
+                    Check again
+                  </button>
+                </div>
+              )}
               <button id="verify-age-btn" className="premium-button inline-block w-full" disabled={status === 'verifying'}>
                 {status === 'verifying' ? 'Confirming…' : 'Verify Age & Continue'}
               </button>

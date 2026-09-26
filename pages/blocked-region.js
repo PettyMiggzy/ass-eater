@@ -3,9 +3,11 @@ import Head from 'next/head';
 import { Lockup } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 
-// Served by proxy.js's rewrite when a visitor's US state has an enacted
-// age-verification law (see BLOCKED_STATE_CODES there), or when Vercel could
-// not tell which state they are in (the gate fails closed). Real
+// Served by proxy.js's rewrite when a visitor is outside the US (a blanket
+// platform policy, not a per-country legal finding -- the copy must not claim
+// the visitor's own country requires this), when their US state has an
+// enacted age-verification law (see BLOCKED_STATE_CODES there), or when
+// Vercel could not tell where they are (the gate fails closed). Real
 // verification IS live -- the button below is the AgeChecker flow on
 // /verify-age -- so this page says so plainly. It used to say verification
 // "isn't live yet" directly above the button that is the verification,
@@ -52,9 +54,10 @@ export default function BlockedRegion() {
           <Lockup className="h-12 justify-center mb-6" />
           <h1 className="text-2xl font-black premium-title mb-3">Verify Your Age to Continue</h1>
           <p className="text-gray-400 text-sm mb-4">
-            Where you are requires identity-based age verification before an adult site can let you
-            in — not just an age checkbox. (If we couldn&apos;t tell where you&apos;re visiting from, we
-            ask for the same check, to be safe.)
+            We require identity-based age verification — not just an age checkbox — for visitors
+            outside the US and in US states with an age-verification law. Some places require it by
+            law; outside the US we apply it everywhere as our own policy. (If we couldn&apos;t tell
+            where you&apos;re visiting from, we ask for the same check, to be safe.)
           </p>
           <p className="text-gray-400 text-sm mb-6">
             Verify once — it takes about a minute — and you&apos;re in on this browser.

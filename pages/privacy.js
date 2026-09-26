@@ -106,8 +106,9 @@ export default function Privacy() {
                   tell — the US state you were in, so we can tell you when your state opens, since some
                   states are currently blocked entirely. Those four things are all we record with the
                   signup: we do not record your country, or any region outside the US, so we cannot tell
-                  anyone outside the US when rules where they are change. That list is used for nothing but telling you about the
-                  launch. We never sell or share it, and you can be removed at any time by emailing{' '}
+                  anyone outside the US when rules where they are change. That list is used for nothing but telling you when we open
+                  (for creators, when creator signups open) and, if we recorded your US state, when that
+                  state opens. We never sell or share it, and you can be removed at any time by emailing{' '}
                   <a href="mailto:team@onlyone1.fun" className="text-brand-gold underline">team@onlyone1.fun</a>.
                   You do not need an account to sign up, and signing up does not create one.
                 </li>

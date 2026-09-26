@@ -198,18 +198,37 @@ export default function Dashboard({
       setStatus("Error: We couldn't reach the server, so you may still be signed in. Check your connection and press Log Out again.");
       return;
     }
-    // Either way the cookie is gone now (the route clears it first): the
-    // cart (lib/cart.js) belongs to this account and must not be shown to,
-    // or paid for by, whoever signs in next on this browser.
-    cart.setViewer(null);
     if (res.ok) {
+      // The cookie is gone: the cart (lib/cart.js) belongs to this account
+      // and must not be shown to, or paid for by, whoever signs in next on
+      // this browser.
+      cart.setViewer(null);
       router.push('/');
       return;
     }
+    const data = await res.json().catch(() => ({}));
+    // Only the route's own post-clear failure means the cookie is gone
+    // (round-22 gates-token#1): logout.js clears the cookie and THEN answers
+    // 500 with its "Signed out on this device..." body when the everywhere-
+    // revocation fails. Anything else -- a 403 cross-site refusal (sent before
+    // the cookie is touched), proxy.js's 451 age check or 403 preview gate
+    // (the route never ran), a 429 -- left this browser SIGNED IN, so the
+    // Log Out button stays and the page says the sign-out did not happen.
+    const cookieCleared = res.status === 500 && (
+      data?.code === 'revoke_failed'
+      || (typeof data?.error === 'string' && data.error.startsWith('Signed out on this device'))
+    );
+    if (!cookieCleared) {
+      setLogoutState('idle');
+      setStatus(res.status === 451
+        ? "Error: You weren't signed out — this browser needs to verify its age again first. Verify your age, then press Log Out again."
+        : "Error: You weren't signed out, so this browser is still signed in. Reload the page and press Log Out again.");
+      return;
+    }
+    cart.setViewer(null);
     // Signed out on this device, but a copied token may still be live. Show
     // that rather than navigating past it; retrying from here can't help
     // (this browser no longer has the session), logging in and out again can.
-    const data = await res.json().catch(() => ({}));
     setLogoutState('partial');
     setStatus(
       `Error: ${typeof data.error === 'string' && data.error ? data.error : 'Signed out on this device, but the session could not be ended everywhere.'} ` +

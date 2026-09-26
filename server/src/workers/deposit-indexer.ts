@@ -11,6 +11,7 @@ import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, depositPricePe
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
 import { forEachPricedPending, settleRepriced, drainSweepRequeues } from './reprice-scan.js';
+import { ConsecutiveFailureBreaker, walkWithBreaker, shortError } from './reconcile-breaker.js';
 
 const BATCH = 1000n;
 // Deposit addresses per eth_getLogs `to` filter (geth caps a position at 1000).
@@ -420,16 +421,22 @@ async function reconcileSweeps() {
   // loaded whole), and each address is checked in its own try/catch: one RPC
   // timeout or 5xx used to throw out of the whole pass and leave every
   // address after it unchecked until the next hour. A refusal of one asset's
-  // walk does not stop the others.
-  let failures = 0;
+  // walk does not stop the others -- but consecutive failures do: past
+  // RECONCILE_BREAKER_LIMIT in a row the RPC itself is taken to be down or
+  // rate-limiting, and the rest of the pass (this walk and every later one)
+  // is left for the next hour instead of hammering it once per address
+  // (workers/reconcile-breaker.ts).
+  const breaker = new ConsecutiveFailureBreaker(envInt('RECONCILE_BREAKER_LIMIT', 5, 1));
   const each = async (asset: 'STABLE' | 'ETH' | 'ONLYONE', fn: (r: { derivationIndex: number; address: string }) => Promise<void>) => {
+    if (breaker.tripped) return;
     try {
-      for await (const r of sweepCandidates(CHAIN_ID, asset)) {
-        try { await fn(r); } catch (e) { failures++; console.error(`indexer: sweep reconcile of ${asset} at index ${r.derivationIndex} failed`, e); }
-      }
+      await walkWithBreaker(sweepCandidates(CHAIN_ID, asset), fn, breaker, (r, e, log) => {
+        if (log) console.error(`indexer: sweep reconcile of ${asset} at index ${r.derivationIndex} failed: ${shortError(e)}`);
+      });
+      if (breaker.tripped) console.error(`indexer: ${breaker.limit} consecutive sweep-reconcile failures during ${asset} -- RPC appears down, aborting this reconcile pass; remaining addresses are retried next hour`);
     } catch (e) {
       if (e instanceof TooManyDepositAddresses) console.error(e.message);
-      else console.error(`indexer: sweep reconcile of ${asset} aborted`, e);
+      else console.error(`indexer: sweep reconcile of ${asset} aborted: ${shortError(e)}`);
     }
   };
   await each('STABLE', async (r) => {
@@ -463,7 +470,7 @@ async function reconcileSweeps() {
         `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-onlyone`, 0);
     });
   }
-  if (failures) console.error(`indexer: sweep reconcile finished with ${failures} address failure(s); those are retried next pass`);
+  if (breaker.failures) console.error(`indexer: sweep reconcile finished with ${breaker.failures} address failure(s); those are retried next pass`);
 }
 
 (async function repriceLoop() {

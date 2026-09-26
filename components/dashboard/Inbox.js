@@ -116,6 +116,8 @@ export default function Inbox({ currentUserId, isCreator }) {
   const [threadLoading, setThreadLoading] = useState(false);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  // Mirrors `sending` for handlers that must see it synchronously.
+  const sendingRef = useRef(false);
   const [sendError, setSendError] = useState('');
   const [sendNote, setSendNote] = useState('');
   const pendingIdRef = useRef(null);
@@ -170,6 +172,16 @@ export default function Inbox({ currentUserId, isCreator }) {
       const { res, data } = await getJson(`/api/messages/with/${encodeURIComponent(current.other.userId)}`);
       if (!res.ok) return;
       if (threadRequest.current !== requestAtStart || openRef.current?.conversationId !== target) return;
+      // A price that moved under an open thread is said out loud, not just
+      // swapped into the Send label (the round-22 public-pages#0 rule): the
+      // Send button carries the price, and only a press of it confirms one.
+      const shownPrice = openRef.current?.dmPriceCents;
+      if (Number.isInteger(data?.dmPriceCents) && Number.isInteger(shownPrice) && data.dmPriceCents !== shownPrice) {
+        const name = openRef.current?.other?.name || 'this creator';
+        setSendNote(data.dmPriceCents > 0
+          ? `The price to message ${name} is now ${formatCredits(data.dmPriceCents)}.`
+          : `Messaging ${name} is now free.`);
+      }
       const latest = Array.isArray(data?.conversation?.messages) ? data.conversation.messages : [];
       setOpen((prev) => {
         if (!prev || prev.conversationId !== target) return prev;
@@ -238,6 +250,14 @@ export default function Inbox({ currentUserId, isCreator }) {
   const openThread = async (conversation, { before = null } = {}) => {
     const other = conversation.other;
     if (!other?.userId) return;
+    // No switching threads while a send is in flight (round-22 dashboard#1):
+    // opening another thread clears the draft and the clientMessageId, so a
+    // refusal or dropped response for the message being sent would have
+    // nowhere to show and the retry-safe id would be gone -- a retyped paid
+    // message then went out under a new id and could be charged twice. The
+    // list buttons are disabled for the same window; loading earlier
+    // messages of the SAME thread keeps the draft, so it stays allowed.
+    if (!before && sendingRef.current) return;
     const id = ++threadRequest.current;
     setThreadLoading(true);
     if (!before) {
@@ -316,6 +336,7 @@ export default function Inbox({ currentUserId, isCreator }) {
     const target = open.conversationId;
     const targetName = open.other?.name;
     const stillOpen = () => openRef.current?.conversationId === target;
+    sendingRef.current = true;
     setSending(true);
     setSendError('');
     setSendNote('');
@@ -329,11 +350,9 @@ export default function Inbox({ currentUserId, isCreator }) {
         expectedPriceCents: open.dmPriceCents,
       });
       if (!stillOpen()) {
-        // Sent (or refused) for a thread that is no longer on screen. Its
-        // price, page and errors belong to that thread, not this one; the
-        // list reload shows where it landed, and reopening it shows the rest.
-        // The draft and clientMessageId now belong to the thread on screen,
-        // which openThread() already reset.
+        // Defensive only: openThread() refuses to switch threads while a send
+        // is in flight, so the thread should still be on screen. If it is
+        // not, nothing below may touch another thread's pane or draft.
         loadFirstPage({ quiet: true });
         return;
       }
@@ -371,6 +390,7 @@ export default function Inbox({ currentUserId, isCreator }) {
     } catch {
       if (stillOpen()) setSendError('Could not reach the server. Your message may not have sent — press Send again to retry safely.');
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -483,7 +503,9 @@ export default function Inbox({ currentUserId, isCreator }) {
               <button
                 key={c.id}
                 onClick={() => openThread(c)}
-                className={`w-full flex items-center gap-2 p-2 rounded-md text-left transition ${
+                disabled={sending}
+                title={sending ? 'Wait for your message to finish sending' : undefined}
+                className={`w-full flex items-center gap-2 p-2 rounded-md text-left transition disabled:cursor-wait ${
                   open?.conversationId === c.id ? 'bg-brand-purple/20' : 'hover:bg-white/5'
                 }`}
               >

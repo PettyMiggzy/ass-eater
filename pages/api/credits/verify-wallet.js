@@ -1,7 +1,7 @@
 import { createPublicClient, http, isAddress, getAddress, recoverMessageAddress } from 'viem';
-import { getVerifiedSessionUserId } from '../../../lib/session';
+import { getSessionUser } from '../../../lib/session';
 import { ageVerificationSecret } from '../../../lib/age-verification';
-import { readWalletNonce, depositProofMessage, sameAddress, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
+import { readWalletNonce, depositProofMessage, depositAccountLabel, sameAddress, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
 import { createDepositWalletToken, DEPOSIT_WALLET_COOKIE_NAME, DEPOSIT_WALLET_TTL_SECONDS } from '../../../lib/deposit';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import { consumeAttempt } from '../../../lib/rate-limit';
@@ -38,7 +38,8 @@ export default async function handler(req, res) {
     return res.status(501).json({ error: 'Buying credits is not configured yet.' });
   }
 
-  const uid = await getVerifiedSessionUserId(req);
+  const user = await getSessionUser(req);
+  const uid = user ? user.id : null;
   if (!uid) return res.status(401).json({ error: 'Log in first' });
 
   // Refused BEFORE the fan sends anything: a suspended or banned creator's
@@ -62,13 +63,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing wallet signature.' });
   }
 
-  const nonce = await readWalletNonce(ageVerificationSecret(), req.cookies?.[DEPOSIT_NONCE_COOKIE_NAME]);
+  // Only a challenge minted for THIS account (round-22 money#0): a nonce
+  // cookie from another session -- with a signature phished to match it --
+  // must not bind that wallet here.
+  const nonce = await readWalletNonce(ageVerificationSecret(), req.cookies?.[DEPOSIT_NONCE_COOKIE_NAME], { uid });
   if (!nonce) {
     return res.status(400).json({ error: 'Wallet verification expired. Please verify your wallet again -- nothing has been sent.' });
   }
-  // Rebuilt from the server's own host and its own nonce -- never from text
-  // the client supplies.
-  const message = depositProofMessage({ host: req.headers.host || 'joinonlyone.com', nonce });
+  // Rebuilt from the server's own host, its own nonce and the session's own
+  // account -- never from text the client supplies.
+  const message = depositProofMessage({ host: req.headers.host || 'joinonlyone.com', nonce, account: depositAccountLabel(user) });
 
   let ok = false;
   try {

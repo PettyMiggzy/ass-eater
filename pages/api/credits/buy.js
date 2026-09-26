@@ -1,5 +1,5 @@
 import { recoverMessageAddress } from 'viem';
-import { getVerifiedSessionUserId } from '../../../lib/session';
+import { getSessionUser } from '../../../lib/session';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import {
   creditDepositFromChain,
@@ -12,7 +12,7 @@ import {
   findPriorDepositCredit,
 } from '../../../lib/deposit';
 import { ageVerificationSecret } from '../../../lib/age-verification';
-import { readWalletNonce, depositProofMessage, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
+import { readWalletNonce, depositProofMessage, depositAccountLabel, DEPOSIT_NONCE_COOKIE_NAME } from '../../../lib/wallet-auth';
 import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
 import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
 import { refuseMalformedText } from '../../../lib/field-validation';
@@ -50,7 +50,8 @@ export default async function handler(req, res) {
     return res.status(501).json({ error: 'Buying credits is not configured yet.' });
   }
 
-  const uid = await getVerifiedSessionUserId(req);
+  const user = await getSessionUser(req);
+  const uid = user ? user.id : null;
   if (!uid) return res.status(401).json({ error: 'Log in to buy credits' });
 
   // Every call here does a real on-chain RPC lookup, unlike most rate-limited
@@ -129,11 +130,13 @@ export default async function handler(req, res) {
   // a wallet-nonce challenge, for a page loaded before this changed.
   let expectedFrom = readDepositWalletToken(ageVerificationSecret(), req.cookies?.[DEPOSIT_WALLET_COOKIE_NAME], uid);
   if (!expectedFrom && typeof signature === 'string' && /^0x[0-9a-fA-F]+$/.test(signature)) {
-    const nonce = await readWalletNonce(ageVerificationSecret(), req.cookies?.[DEPOSIT_NONCE_COOKIE_NAME]);
+    // Only a challenge minted for THIS account (round-22 money#0).
+    const nonce = await readWalletNonce(ageVerificationSecret(), req.cookies?.[DEPOSIT_NONCE_COOKIE_NAME], { uid });
     if (nonce) {
-      // Rebuilt from the server's own host and its own nonce -- the client
-      // sends ONLY a signature, never the message it claims to have signed.
-      const message = depositProofMessage({ host: req.headers.host || 'joinonlyone.com', nonce });
+      // Rebuilt from the server's own host, its own nonce and the session's
+      // own account -- the client sends ONLY a signature, never the message
+      // it claims to have signed.
+      const message = depositProofMessage({ host: req.headers.host || 'joinonlyone.com', nonce, account: depositAccountLabel(user) });
       try {
         expectedFrom = await recoverMessageAddress({ message, signature });
       } catch {

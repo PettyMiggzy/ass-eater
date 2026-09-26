@@ -17,7 +17,8 @@ import { subscribeChannel } from '../lib/redis.js';
  *
  * The server answers {"type":"ready"} once subscribed, then relays events.
  * Close codes: 4001 unauthorized / auth timeout / token expired,
- * 4003 account not active, 4004 nothing to subscribe to.
+ * 4003 account not active or entitlement lapsed (access_expired),
+ * 4004 nothing to subscribe to.
  *
  * Keepalive: a protocol ping every PING_MS. nginx drops an upgraded
  * connection after proxy_read_timeout (75s) of silence, and browsers cannot
@@ -32,11 +33,19 @@ const AUTH_TIMEOUT_MS = 5_000;
 const PING_MS = 30_000;
 
 type SocketUser = { id: string; role: Role; exp?: number };
+/**
+ * A channel name, null (refused), or a channel with an entitlement expiry:
+ * the socket is closed at the EARLIER of the access token's expiry and
+ * `expiresAt` (e.g. a per-minute live viewer's paid time), so access that
+ * lapses mid-connection ends the feed rather than lasting until the JWT
+ * does. The client reconnects and the grant is decided afresh.
+ */
+type ChannelGrant = string | null | { channel: string; expiresAt: Date | null };
 
 export function serveRealtimeChannel(
   app: FastifyInstance,
   socket: any,
-  channelFor: (user: SocketUser) => string | null | Promise<string | null>,
+  channelFor: (user: SocketUser) => ChannelGrant | Promise<ChannelGrant>,
 ) {
   let closed = false;
   let release: (() => Promise<void>) | null = null;
@@ -74,8 +83,11 @@ export function serveRealtimeChannel(
     try {
       const row = await prisma.user.findUnique({ where: { id: user.id }, select: { status: true } });
       if (row?.status !== 'ACTIVE') return socket.close(4003, 'forbidden');
-      const channel = await channelFor(user);
-      if (!channel) return socket.close(4004, 'not_found');
+      const grant = await channelFor(user);
+      if (!grant) return socket.close(4004, 'not_found');
+      const channel = typeof grant === 'string' ? grant : grant.channel;
+      const grantEnds = typeof grant === 'string' ? null : grant.expiresAt;
+      if (grantEnds && grantEnds.getTime() <= Date.now()) return socket.close(4003, 'access_expired');
       if (closed) return;
 
       const unsubscribe = await subscribeChannel(channel, (msg) => {
@@ -85,9 +97,14 @@ export function serveRealtimeChannel(
       if (closed) { await unsubscribe(); return; }
       release = unsubscribe;
 
-      if (typeof user.exp === 'number') {
-        const ms = user.exp * 1000 - Date.now();
-        expiryTimer = setTimeout(() => socket.close(4001, 'token_expired'), Math.max(0, ms));
+      const tokenMs = typeof user.exp === 'number' ? user.exp * 1000 - Date.now() : Infinity;
+      const grantMs = grantEnds ? grantEnds.getTime() - Date.now() : Infinity;
+      if (Number.isFinite(tokenMs) || Number.isFinite(grantMs)) {
+        const lapsed = grantMs < tokenMs;
+        expiryTimer = setTimeout(
+          () => socket.close(lapsed ? 4003 : 4001, lapsed ? 'access_expired' : 'token_expired'),
+          Math.max(0, Math.min(tokenMs, grantMs)),
+        );
       }
       socket.send(JSON.stringify({ type: 'ready' }));
     } catch (err) {

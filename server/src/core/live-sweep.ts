@@ -159,6 +159,37 @@ export async function entitledViewers(
   return ok;
 }
 
+/**
+ * May `userId` receive stream `s`'s tip-overlay feed (GET /live/:id/events)
+ * right now, and until when? null = refused.
+ *
+ * The same rule as the room (entitledViewers), so the socket, /join and the
+ * sweep cannot disagree: the overlay used to admit anyone holding ANY
+ * LiveMinute row on the stream, so one 5-cent minute bought the tip feed --
+ * amounts, notes, opted-in tipper names -- for the rest of a multi-hour
+ * stream. On a per-minute stream the answer also carries an expiry at the
+ * viewer's paid time plus PAY_GRACE_MS; the socket closes then, and the
+ * reconnect is re-checked here after the client has bought the next minute.
+ * The creator always gets the feed for their own stream (no expiry).
+ */
+export async function overlayAccess(
+  s: { id: string; creatorId: string; ticketPriceCents: number; perMinuteCents: number },
+  userId: string,
+  now = new Date(),
+): Promise<{ expiresAt: Date | null } | null> {
+  if (s.creatorId === userId) return { expiresAt: null };
+  const creator = await prisma.user.findUnique({ where: { id: s.creatorId }, select: { status: true } });
+  if (creator?.status !== 'ACTIVE') return null;
+  if (!(await entitledViewers(s, [userId], now)).has(userId)) return null;
+  if (s.perMinuteCents <= 0) return { expiresAt: null };
+  const last = await prisma.liveMinute.findFirst({
+    where: { fanId: userId, streamId: s.id }, orderBy: { minuteIndex: 'desc' }, select: { paidThrough: true, createdAt: true },
+  });
+  if (!last) return null;
+  const through = last.paidThrough ?? new Date(last.createdAt.getTime() + MINUTE_MS);
+  return { expiresAt: new Date(through.getTime() + PAY_GRACE_MS) };
+}
+
 /** Should viewer `userId` be removed from stream `s` right now? (entitledViewers, for one viewer.) */
 async function lacksEntitlement(s: { id: string; creatorId: string; ticketPriceCents: number; perMinuteCents: number }, userId: string, now: Date) {
   return !(await entitledViewers(s, [userId], now)).has(userId);

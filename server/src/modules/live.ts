@@ -8,7 +8,7 @@ import { isSubscribedForLive, creatorIsActive } from '../core/access.js';
 import { serveRealtimeChannel } from '../plugins/realtime.js';
 import { LK, rooms } from '../core/livekit.js';
 import { ensureMinutePaid, payNextMinute } from '../core/live-billing.js';
-import { startLiveStream, checkViewerOnJoin, viewerTokenTtlSeconds, hasTicket, minuteRefusal } from '../core/live-sweep.js';
+import { startLiveStream, checkViewerOnJoin, viewerTokenTtlSeconds, minuteRefusal, overlayAccess } from '../core/live-sweep.js';
 import { withProfileImageUrls } from '../core/public-images.js';
 import { assertCleanText } from '../lib/text-screen.js';
 import { viewerIdentity } from '../core/live-identity.js';
@@ -193,22 +193,18 @@ export const live: FastifyPluginAsync = async (app) => {
   app.get('/:id/events', { websocket: true }, (socket: any, req: any) => {
     const id = String(req.params.id ?? '');
     // publish() prefixes with "u:" — tips.ts publishes to `stream:<id>`
-    // Only someone who could watch the stream gets its overlay feed -- the
-    // same entitlement /join applies: the creator; on a ticketed stream a
-    // ticket holder (and nobody else, subscribers included, since /join
-    // charges them the ticket too); otherwise a subscriber, or a viewer with
-    // paid minutes on a per-minute stream.
+    // Only someone who could watch the stream gets its overlay feed, by the
+    // SAME rule the room uses (core/live-sweep.ts overlayAccess ->
+    // entitledViewers): the creator; on a ticketed stream a ticket holder; a
+    // subscriber on a subscriber-only stream; on a per-minute stream a viewer
+    // whose paid time has not lapsed -- and their socket closes when it does
+    // (plugins/realtime.ts), so one paid minute is not the whole stream's feed.
     serveRealtimeChannel(app, socket, async (user) => {
       if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
       const s = await prisma.liveStream.findUnique({ where: { id }, select: { id: true, creatorId: true, ticketPriceCents: true, perMinuteCents: true } });
       if (!s) return null;
-      if (s.creatorId === user.id) return `u:stream:${id}`;
-      if (!(await creatorIsActive(s.creatorId))) return null;
-      let ok: boolean;
-      if (s.ticketPriceCents > 0) ok = await hasTicket(user.id, s.id);
-      else ok = (await isSubscribedForLive(user.id, s.creatorId))
-        || (s.perMinuteCents > 0 && !!(await prisma.liveMinute.findFirst({ where: { fanId: user.id, streamId: s.id }, select: { minuteIndex: true } })));
-      return ok ? `u:stream:${id}` : null;
+      const access = await overlayAccess(s, user.id);
+      return access ? { channel: `u:stream:${id}`, expiresAt: access.expiresAt } : null;
     });
   });
 };

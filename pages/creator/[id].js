@@ -1004,12 +1004,22 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
   const [reportingMessage, setReportingMessage] = useState(null);
   // Reused across retries of the SAME text, replaced once a send lands.
   const attemptId = useRef(null);
-  // Set when a send came back 409 dm_price_changed: the new price is only
-  // accepted by a deliberate press of the Send button (which shows it), never
-  // by Enter -- an auto-repeated or stray Return must not confirm a price the
-  // fan has not read (round-21 public-pages#1). Cleared by editing the text
-  // or by a button send.
-  const priceJustChanged = useRef(false);
+  // The price the fan has CONFIRMED: the load quote, then whatever was on
+  // the Send button the last time they pressed it. A price that moves after
+  // that -- a 409 dm_price_changed, or a re-quote after block/unblock -- is
+  // only accepted by a deliberate press of the Send button (which shows it),
+  // never by Enter, and editing the text does not re-arm Enter (round-21
+  // public-pages#1, round-22 public-pages#0): Enter and every non-button
+  // submit are refused while priceCents !== confirmedPriceCents.
+  const [confirmedPriceCents, setConfirmedPriceCents] = useState(initialPriceCents || 0);
+  const priceConfirmed = priceCents === confirmedPriceCents;
+  // Set by the Send button's click, which fires before its submit event: the
+  // fallback where SubmitEvent.submitter is not supported.
+  const sendButtonPressed = useRef(false);
+  const sendButtonRef = useRef(null);
+  // The latest shown price, for re-quotes that outlive their render.
+  const priceRef = useRef(priceCents);
+  priceRef.current = priceCents;
 
   const applyConversation = (conversation) => {
     if (!conversation || typeof conversation !== 'object') return;
@@ -1053,7 +1063,16 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
       const data = await readJson(res);
       if (!res.ok) return;
       applyConversation(data.conversation);
-      if (Number.isInteger(data.dmPriceCents)) setPriceCents(data.dmPriceCents);
+      if (Number.isInteger(data.dmPriceCents) && data.dmPriceCents !== priceRef.current) {
+        // A new price is shown and said out loud, but NOT confirmed: only a
+        // press of the Send button (which carries it) accepts it.
+        setPriceCents(data.dmPriceCents);
+        setNotice(
+          data.dmPriceCents > 0
+            ? `${otherName}'s message price is now ${formatCredits(data.dmPriceCents)}. Press Send to send at the new price.`
+            : `Messaging ${otherName} is now free.`,
+        );
+      }
       setCanSend(data.canSend !== false);
       setCannotSendReason(data.canSend === false && typeof data.cannotSendReason === 'string' ? data.cannotSendReason : '');
     } catch {
@@ -1085,7 +1104,12 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
           // Exactly the quoted price -- not max(page price, quote): the value
           // shown is the value sent as expectedPriceCents, and the server
           // refuses a paid send whose expected price is not the real one.
-          if (Number.isInteger(data.dmPriceCents)) setPriceCents(data.dmPriceCents);
+          // The load quote is the first price the fan sees in the panel, so
+          // it is the confirmed one until it changes.
+          if (Number.isInteger(data.dmPriceCents)) {
+            setPriceCents(data.dmPriceCents);
+            setConfirmedPriceCents(data.dmPriceCents);
+          }
           if (data.canSend === false) {
             setCanSend(false);
             setCannotSendReason(typeof data.cannotSendReason === 'string' ? data.cannotSendReason : '');
@@ -1113,10 +1137,15 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
   const send = async (e) => {
     e.preventDefault();
     const body = text.trim();
+    const submitter = e.nativeEvent?.submitter;
+    const fromButton = sendButtonPressed.current || (!!submitter && submitter === sendButtonRef.current);
+    sendButtonPressed.current = false;
     if (!body || !sendAllowed) return;
-    // Only the Send button reaches this while a price change is pending
-    // (Enter is refused below), so pressing it is the confirmation.
-    priceJustChanged.current = false;
+    // A press of the Send button confirms the price it shows. Any other
+    // submit (Enter's requestSubmit, anything scripted) is refused while the
+    // shown price has not been confirmed.
+    if (fromButton) setConfirmedPriceCents(priceCents);
+    else if (!priceConfirmed) return;
     if (body.length > MAX_DM_LENGTH) {
       setError(`That message is too long (${MAX_DM_LENGTH} characters maximum).`);
       return;
@@ -1142,8 +1171,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
       const data = await readJson(res);
       if (res.status === 409 && data.code === 'dm_price_changed' && Number.isInteger(data.currentPriceCents)) {
         // Nothing was charged. Show the new price; the next press of the
-        // Send button (not Enter) confirms it.
-        priceJustChanged.current = true;
+        // Send button (not Enter, and not Enter after an edit) confirms it.
         setPriceCents(data.currentPriceCents);
         setNotice(
           data.currentPriceCents > 0
@@ -1274,8 +1302,10 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
             With a mouse/trackpad (fine pointer), Enter sends and Shift+Enter
             adds a new line; on touch devices Return is always a new line and
             only the button sends. Enter never sends on key auto-repeat, during
-            IME composition, while the button would be disabled, or right
-            after a price change (round-21 public-pages#1). */}
+            IME composition, while the button would be disabled, or while a
+            changed price has not been confirmed with the button -- editing
+            the text does not re-arm it (round-21 public-pages#1, round-22
+            public-pages#0). */}
         <form onSubmit={send} className="p-3 border-t border-white/10">
           <div className="flex gap-2 items-end">
             <textarea
@@ -1283,7 +1313,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
               onChange={(e) => {
                 setText(e.target.value);
                 attemptId.current = null; // different text = a new attempt
-                priceJustChanged.current = false;
+                // Editing never confirms a changed price (round-22 public-pages#0).
               }}
               onKeyDown={(e) => {
                 if (e.key !== 'Enter' || e.shiftKey) return;
@@ -1293,7 +1323,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
                   && window.matchMedia('(pointer: fine)').matches;
                 if (!finePointer) return; // touch keyboards: Return is a new line
                 e.preventDefault();
-                if (e.repeat || priceJustChanged.current || !sendAllowed) return;
+                if (e.repeat || !priceConfirmed || !sendAllowed) return;
                 e.currentTarget.form?.requestSubmit();
               }}
               rows={2}
@@ -1301,7 +1331,12 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, fee
               aria-invalid={dmOverLimit}
               className="flex-1 px-3 py-2 rounded-md bg-black/40 border border-white/10 text-white text-sm resize-none"
             />
-            <button type="submit" disabled={!sendAllowed} className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
+            <button
+              ref={sendButtonRef}
+              type="submit"
+              onClick={() => { sendButtonPressed.current = true; }}
+              disabled={!sendAllowed}
+              className="rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold transition py-2 px-4 text-sm disabled:opacity-50">
               {sending ? 'Sending…' : priceCents > 0 ? `Send · $${(priceCents / 100).toFixed(2)}` : 'Send'}
             </button>
           </div>

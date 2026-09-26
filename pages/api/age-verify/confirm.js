@@ -7,6 +7,7 @@ import {
 import { claimAgeVerificationUuid } from '../../../lib/age-verification-uses';
 import { consumeNetworkAttempt } from '../../../lib/rate-limit';
 import { refuseMalformedText } from '../../../lib/field-validation';
+import { refuseCrossSite } from '../../../lib/same-origin';
 
 // The client-side AgeChecker popup (pages/verify-age.js) reports "accepted"
 // via a JS callback, but that alone is bypassable -- anyone can fake the
@@ -41,6 +42,13 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+  // This route MINTS the oa_age_verified cookie with no session involved, so
+  // a cross-site top-level form POST could plant it in a visitor's browser
+  // with a uuid someone else got accepted (round-22 gates-token#0). Refused
+  // before the uuid parse, the limiter and the outbound AgeChecker call, so
+  // a cross-site POST burns no budget either. The only real caller,
+  // pages/verify-age.js, is a same-origin application/json fetch.
+  if (refuseCrossSite(req, res)) return;
 
   const { uuid } = req.body || {};
   if (!uuid || typeof uuid !== 'string' || !uuid.trim() || uuid.length > MAX_UUID_LENGTH) {
@@ -85,8 +93,22 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Verification does not belong to this site.' });
   }
 
+  // A stable `code` per status group (round-22 legal-journeys#0), so the page
+  // can tell a real denial from a verification AgeChecker is still working on
+  // (a photo ID under review, a signature still needed). Only 'denied' is a
+  // refusal; anything else that is not 'accepted' is pending, and the page
+  // keeps the uuid so the visitor can confirm the SAME verification again
+  // rather than pay for a second one. The uuid is only claimed on 'accepted'
+  // (below), so re-checking a pending one is safe. AgeChecker's own reason
+  // text is never relayed.
+  if (data.status === 'denied') {
+    return res.status(400).json({ error: 'Age verification was not accepted.', code: 'denied' });
+  }
   if (data.status !== 'accepted') {
-    return res.status(400).json({ error: 'Age verification was not accepted.' });
+    return res.status(409).json({
+      error: 'Your verification is still being reviewed. Try confirming again in a moment.',
+      code: 'pending',
+    });
   }
 
   // Claimed only after AgeChecker says "accepted", so random or pending
@@ -100,7 +122,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
   if (!claimed) {
-    return res.status(409).json({ error: 'This verification has already been used. Please verify again.' });
+    return res.status(409).json({ error: 'This verification has already been used. Please verify again.', code: 'used' });
   }
 
   const token = await createAgeVerificationToken(ageVerificationSecret(), { uuid: uuid.trim() });

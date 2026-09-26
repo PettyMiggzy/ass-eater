@@ -35,13 +35,27 @@ export default function NotificationBell() {
   // Guards against a slow fetch from an earlier open/close resolving after
   // a later one and overwriting it with stale data.
   const requestId = useRef(0);
+  // Every write to the badge bumps this (round-22 dashboard#0). A minute poll
+  // records it when it starts and applies its count only if nothing wrote
+  // the badge since: a GET served before a mark committed must never land
+  // after that mark's response and put the old, higher count back.
+  const badgeSeq = useRef(0);
+  const setBadge = (n) => {
+    badgeSeq.current += 1;
+    setUnread(n);
+  };
 
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
+      const seq = badgeSeq.current;
       fetch('/api/notifications')
         .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .then((d) => { if (!cancelled) setUnread(d.unreadCount || 0); })
+        .then((d) => {
+          if (cancelled || seq !== badgeSeq.current) return; // a newer write won
+          badgeSeq.current += 1;
+          setUnread(Math.max(0, Number(d.unreadCount) || 0));
+        })
         .catch(() => {});
     };
     refresh();
@@ -99,7 +113,7 @@ export default function NotificationBell() {
       // The badge follows the server's count; it drops only once the mark
       // below has succeeded (round-21 dashboard#1). Lowering it first left a
       // silently undercounted badge whenever that POST failed.
-      setUnread(Math.max(0, Number(data.unreadCount) || 0));
+      setBadge(Math.max(0, Number(data.unreadCount) || 0));
       if (shownUnreadIds.length > 0) {
         // Only the unread rows that were displayed (at most 200 + 30 < 500).
         const r = await fetch('/api/notifications/read', {
@@ -109,7 +123,7 @@ export default function NotificationBell() {
         }).catch(() => null);
         const d = r && r.ok ? await r.json().catch(() => null) : null;
         if (id === requestId.current && d && Number.isFinite(d.unreadCount)) {
-          setUnread(d.unreadCount);
+          setBadge(Math.max(0, d.unreadCount));
           setListUnread(Math.max(0, d.unreadCount));
           const marked = new Set(shownUnreadIds);
           setItems((prev) => (Array.isArray(prev)
@@ -141,7 +155,7 @@ export default function NotificationBell() {
       });
       if (!r.ok) throw new Error('bad response');
       const d = await r.json();
-      setUnread(Number.isFinite(d.unreadCount) ? d.unreadCount : 0);
+      setBadge(Number.isFinite(d.unreadCount) ? Math.max(0, d.unreadCount) : 0);
       setListUnread(0);
       setMarkError(false);
       setItems((prev) => (Array.isArray(prev) ? prev.map((n) => ({ ...n, read: true })) : prev));
