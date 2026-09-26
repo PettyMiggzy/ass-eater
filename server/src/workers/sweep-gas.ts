@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import { envInt } from '../lib/chain.js';
+import { envInt, treasurySigningPaused } from '../lib/chain.js';
 import type { OutflowJournal } from '../lib/outflow-journal.js';
 
 /**
@@ -47,6 +47,21 @@ export const SWEEP_GAS_PER_ADDRESS_DAILY = envInt('SWEEP_GAS_PER_ADDRESS_DAILY',
 const DAY_MS = 24 * 60 * 60_000;
 
 export class SweepGasDeferred extends Error {}
+
+/**
+ * Deposit sweeps pause during a treasury key rotation (TREASURY_SETTLE_ONLY).
+ * The deposit keys sign a sweep, not the treasury key, but every sweep sends
+ * its funds TO the treasury address -- during a rotation that is still the
+ * old, exposed wallet, and a native-ETH sweep would even fund its gas. So the
+ * 'sweep' worker calls this before resolving a signer or sending anything:
+ * the job is deferred (BullMQ retries with backoff, and the hourly reconciler
+ * re-queues once the retries run out) and the funds wait at the deposit
+ * addresses until the new key and TREASURY_ADDRESS are in place.
+ */
+export function assertSweepsUnpaused() {
+  const paused = treasurySigningPaused();
+  if (paused) throw new SweepGasDeferred(`sweep deferred: treasury signing paused (${paused})`);
+}
 
 /** The journal ref of a top-up to one deposit address -- also the per-address key. */
 export const gasTopUpRef = (chainId: number, derivationIndex: number) => `sweep-${chainId}-${derivationIndex}`;

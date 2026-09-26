@@ -571,9 +571,16 @@ export const admin: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  app.post('/users/:id/kyc', async (req: any) => {
+  app.post('/users/:id/kyc', async (req: any, reply) => {
     const { status } = z.object({ status: z.enum(['APPROVED', 'REJECTED', 'PENDING']) }).parse(req.body);
-    return prisma.user.update({ where: { id: req.params.id }, data: { kycStatus: status } });
+    const id = String(req.params.id ?? '');
+    // updateMany + an explicit select: the plain update returned the whole
+    // User row -- passwordHash, login email, siteUid, kycRef -- to the admin
+    // client and whatever logs its responses. An unknown id is a 404, the
+    // same as /users/:id/status.
+    const r = await prisma.user.updateMany({ where: { id }, data: { kycStatus: status } });
+    if (r.count === 0) return reply.code(404).send({ error: 'not_found' });
+    return prisma.user.findUniqueOrThrow({ where: { id }, select: { id: true, username: true, role: true, status: true, kycStatus: true } });
   });
 
   /**

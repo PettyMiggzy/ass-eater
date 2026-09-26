@@ -77,7 +77,9 @@ export const wallet: FastifyPluginAsync = async (app) => {
 
   app.get('/deposits', { preHandler: app.auth }, async (req) => {
     const rows = await prisma.deposit.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' }, take: 50 });
-    return rows.map(r => ({ ...r, usdCents: Number(r.usdCents) }));
+    // Both money columns are BigInt: feeCents (the 2% buy-credits fee) was
+    // once left raw and 500'd this route for every fan with a deposit.
+    return rows.map(r => ({ ...r, usdCents: Number(r.usdCents), feeCents: Number(r.feeCents) }));
   });
 
   // Each price resolves on its own and is null when its oracle isn't

@@ -184,6 +184,11 @@ export default function CartPage({ sessionUser }) {
   // says so): the server refuses checkout, so the page says it up front
   // instead of offering Pay or a "buy credits" prompt.
   const [frozen, setFrozen] = useState(false);
+  // The last balance load failed (non-OK, unparseable, or no network). Only
+  // shown while no balance is known yet: Pay is disabled then, and without
+  // this the page said "Balance: …" forever with no reason and no retry
+  // (round-15 money#2; /credits got the same state in round 14).
+  const [balanceError, setBalanceError] = useState(false);
   // One key per checkout ATTEMPT, reused across retries of the same
   // submission (a network drop, a lost response, a reload) so the server can
   // tell "resending the same attempt" apart from "starting a new one". Held
@@ -251,21 +256,31 @@ export default function CartPage({ sessionUser }) {
   // Only a real balance is ever shown. A 401 means this tab's session ended
   // (logged out elsewhere, revoked): re-render for whoever is signed in now
   // rather than show "0 credits, you're short". Any other failure keeps the
-  // last known balance -- writing 0 pushed fans to buy credits they had.
-  const refreshBalance = () =>
-    fetch('/api/credits/balance', { cache: 'no-store' })
+  // last known balance -- writing 0 pushed fans to buy credits they had --
+  // and flags balanceError so a page with no balance yet says so and offers
+  // a retry.
+  const refreshBalance = () => {
+    setBalanceError(false);
+    return fetch('/api/credits/balance', { cache: 'no-store' })
       .then(async (r) => {
         if (r.status === 401) {
           reloadForSession();
           return;
         }
-        if (!r.ok) return;
+        if (!r.ok) {
+          setBalanceError(true);
+          return;
+        }
         const d = await r.json().catch(() => null);
-        if (!d) return;
-        if (Number.isFinite(d.balanceCents)) setBalanceCents(d.balanceCents);
+        if (!d || !Number.isFinite(d.balanceCents)) {
+          setBalanceError(true);
+          return;
+        }
+        setBalanceCents(d.balanceCents);
         if (typeof d.frozen === 'boolean') setFrozen(d.frozen);
       })
-      .catch(() => {});
+      .catch(() => { setBalanceError(true); });
+  };
 
   useEffect(() => {
     if (!sessionUser) return;
@@ -689,7 +704,7 @@ export default function CartPage({ sessionUser }) {
               <div className="flex items-center gap-4">
                 <a href="/orders" className="text-xs text-gray-400 hover:text-brand-pink transition">Order history</a>
                 <a href="/credits" className="text-xs text-gray-400 hover:text-brand-pink transition">
-                  Balance: <span className="font-bold text-white">{balanceCents === null ? '…' : formatCredits(balanceCents)}</span>
+                  Balance: <span className="font-bold text-white">{balanceCents === null ? (balanceError ? 'Unavailable' : '…') : formatCredits(balanceCents)}</span>
                 </a>
               </div>
             )}
@@ -832,6 +847,13 @@ export default function CartPage({ sessionUser }) {
                     Buy credits
                   </a>
                 </div>
+              )}
+
+              {sessionUser && !frozen && balanceCents === null && balanceError && (
+                <p role="alert" className="text-xs text-red-400 text-center mb-3">
+                  Couldn&apos;t load your balance, so Pay is unavailable for now.{' '}
+                  <button type="button" onClick={refreshBalance} className="underline text-gray-300">Try again</button>
+                </p>
               )}
 
               {payError && (

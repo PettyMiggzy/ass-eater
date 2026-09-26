@@ -7,6 +7,7 @@ import rateLimit from '@fastify/rate-limit';
 import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
 import { authPlugin } from './plugins/auth.js';
+import { serializeReply } from './lib/json-reply.js';
 import * as m from './modules/index.js';
 
 // Never log a credential that arrives in a URL. The realtime sockets used to
@@ -49,6 +50,10 @@ const app = Fastify({
   // the left-most entry, which the client writes itself.
   trustProxy: 'loopback',
 });
+// BigInt-safe replies for every route (lib/json-reply.ts): the default
+// JSON.stringify throws on the BigInt money columns and turned any route that
+// forgot to map one into a 500.
+app.setReplySerializer(serializeReply);
 await app.register(cors, { origin: process.env.WEB_ORIGIN, credentials: true });
 // ws defaults maxPayload to 100 MiB, and both realtime routes accept an
 // anonymous upgrade (they authenticate with their first message, see

@@ -103,17 +103,42 @@ export class TreasurySigningPausedError extends Error {
 }
 
 /**
+ * Reads TREASURY_SETTLE_ONLY leniently: trimmed, a trailing ' # comment'
+ * stripped (systemd's EnvironmentFile= keeps one as part of the value),
+ * true/1/yes and false/0/no case-insensitively. Anything else set is
+ * 'invalid' -- and an invalid value is treated as ON by treasurySigningPaused
+ * and refused at worker boot (workers/settle-only-guard.ts): this switch
+ * exists to stop an exposed key signing, so a typo must fail closed. The old
+ * exact-'true' check left 'TRUE', '1' or 'true # rotation' signing with the
+ * key being rotated out, with nothing logged.
+ */
+export function settleOnlyMode(raw: string | undefined = process.env.TREASURY_SETTLE_ONLY): 'on' | 'off' | 'invalid' {
+  if (raw === undefined) return 'off';
+  const v = raw.replace(/\s#.*$/, '').trim().replace(/^(["'])(.*)\1$/, '$2').trim().toLowerCase();
+  if (v === '' || v === 'false' || v === '0' || v === 'no') return 'off';
+  if (v === 'true' || v === '1' || v === 'yes') return 'on';
+  return 'invalid';
+}
+
+/**
  * Why the treasury key may not sign anything NEW right now, or null.
  * TREASURY_SETTLE_ONLY=true is the key-rotation switch (deploy/DEPLOY.md
  * "Rotate the treasury key"): the workers run only to settle what is
  * already in flight -- payout receipts, a hedge or burn swap's receipt --
  * and never sign a payout, a swap, an approval, a nonce-cancel or a sweep
- * gas top-up. Restarting the workers to "let them settle" used to sign
- * fresh old-key transactions in the same pass, rebuilding exactly the
- * state the rotation had to drain first.
+ * gas top-up. Deposit sweeps pause too, although the deposit keys sign them:
+ * they would move fan funds INTO the old, exposed treasury address, so the
+ * funds wait at the deposit addresses until the new key and TREASURY_ADDRESS
+ * are in place (workers/sweep-gas.ts assertSweepsUnpaused). Restarting the
+ * workers to "let them settle" used to sign fresh old-key transactions in
+ * the same pass, rebuilding exactly the state the rotation had to drain
+ * first. An unrecognised value counts as paused (see settleOnlyMode).
  */
 export function treasurySigningPaused(): string | null {
-  return process.env.TREASURY_SETTLE_ONLY === 'true' ? 'TREASURY_SETTLE_ONLY=true' : null;
+  const mode = settleOnlyMode();
+  if (mode === 'on') return 'TREASURY_SETTLE_ONLY';
+  if (mode === 'invalid') return 'TREASURY_SETTLE_ONLY has an unrecognised value (treated as on)';
+  return null;
 }
 
 /**
@@ -476,7 +501,7 @@ export function warnLegacyEnv(log: (msg: string) => void = console.warn) {
   // systemd's EnvironmentFile= keeps a trailing '# comment' as part of the
   // value. Only names this template defines are checked, so a secret that
   // legitimately contains ' #' is never echoed.
-  const commented = Object.keys(process.env).filter((k) => /^(ONLYONE_|USDG_|STABLECOINS$|CHAIN|RPC_URL$|CONFIRMATIONS$|INDEXER_|SWEEP_|TRACK_NATIVE_ETH$|INDEX_ONLYONE_DEPOSITS$|CHAINLINK_|UNISWAP_|TREASURY_HEDGE_|TOKEN_BURN_|PAYOUT_|AUCTION_|LIVE_SWEEP_)/.test(k) && /\s#/.test(process.env[k] ?? ''));
+  const commented = Object.keys(process.env).filter((k) => /^(ONLYONE_|USDG_|STABLECOINS$|CHAIN|RPC_URL$|CONFIRMATIONS$|INDEXER_|SWEEP_|TRACK_NATIVE_ETH$|INDEX_ONLYONE_DEPOSITS$|CHAINLINK_|UNISWAP_|TREASURY_HEDGE_|TOKEN_BURN_|PAYOUT_|AUCTION_|LIVE_SWEEP_|TREASURY_SETTLE_ONLY$)/.test(k) && /\s#/.test(process.env[k] ?? ''));
   if (commented.length) {
     log(`env vars with an inline '# comment' in their value (systemd keeps it as part of the value -- move the comment to its own line): ${commented.join(', ')}`);
   }

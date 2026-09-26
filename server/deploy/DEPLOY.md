@@ -279,12 +279,22 @@ settle: the payout worker signs queued payouts, and the burn and hedge loops
 sign a new swap in the same pass that settles the old one -- all with the old
 key, rebuilding what this procedure drains. So:
 
-1. Add `TREASURY_SETTLE_ONLY=true` to `.env.workers`, then
-   `systemctl restart onlyone-workers`. In this mode the workers only
+1. Add `TREASURY_SETTLE_ONLY=true` to `.env.workers` (on a line of its own,
+   no inline `# comment`; `true`, `1` and `yes` are accepted in any case,
+   and any value the workers do not recognise makes them refuse to start),
+   then `systemctl restart onlyone-workers`. In this mode the workers only
    settle: they read receipts and close what is in flight, and sign nothing
    -- no payout (PENDING ones stay PENDING and are re-queued later), no
-   swap, no approval, no nonce-cancel, no sweep gas top-up. **Keep it set
-   until step 5 is finished.**
+   swap, no approval, no nonce-cancel, no sweep gas top-up. **Deposit sweeps
+   pause too**: a sweep would send fan funds to the old, exposed treasury
+   address, so deposits are still credited but the funds wait at the
+   deposit addresses (the sweep jobs retry, and the hourly reconciler
+   re-queues them) until the new key and `TREASURY_ADDRESS` are in place.
+   **Before going on, confirm the mode is really on**:
+   `journalctl -u onlyone-workers -n 50 | grep 'TREASURY SIGNING PAUSED'`
+   must print `TREASURY SIGNING PAUSED (settle-only)`. If it prints nothing,
+   the switch was not read -- fix `.env.workers` and restart; do not
+   continue. **Keep it set until step 5 is finished.**
 2. Every payout in PROCESSING or FAILED: look its `txHash` up on the explorer
    and settle it with `POST /admin/payouts/:id/resolve` (mark it sent if it
    landed -- a transfer the recorded `signerAddress` sent is accepted for the
@@ -324,6 +334,41 @@ remove `TREASURY_SETTLE_ONLY` from `.env.workers`, and restart BOTH
 the API keeps trusting the exposed wallet and refuses the new one; the
 workers refuse to start while `TREASURY_ADDRESS` disagrees with the key
 they sign with.
+Deposit sweeps resume with that restart and now go to the new wallet;
+check `journalctl -u onlyone-workers` shows `treasury signing mode: normal`.
+
+**Rotate the deposit mnemonic too, if a real one was ever in `.env`.**
+`DEPOSIT_MNEMONIC` derives the private key of EVERY fan deposit address, and
+deposits sit at those addresses until a sweep moves them. If a real mnemonic
+sat in `.env` under the old layout, it is exactly as exposed as the treasury
+key: whoever holds it can take any deposit before the platform's sweep does.
+(If `DEPOSIT_MNEMONIC` was still a placeholder, or never set, until
+`.env.workers` existed -- the case on the droplet as of 2026-09 -- there is
+nothing to rotate; skip this.) Rotating it:
+
+1. Generate a new mnemonic OFFLINE and derive its `DEPOSIT_XPUB`
+   (`sudo -u onlyone node dist/scripts/derive-deposit-xpub.js < /dev/tty`).
+   Do not install either yet.
+2. With the OLD mnemonic still in `.env.workers` and the workers running
+   normally, drain every existing deposit address: every `DepositAddress`
+   row must hold no USDG, no $ONLYONE and at most dust ETH (check on the
+   explorer; the hourly reconciler re-queues sweeps of anything a dollar or
+   more). Do this after the treasury rotation above, so the sweeps land in
+   the NEW treasury.
+3. Stop handing out addresses under the old mnemonic. **This needs a code or
+   schema decision before it can be done**: today `POST /wallet/deposit-address`
+   returns a user's existing row forever, and the indexer checks every row
+   against the one `DEPOSIT_MNEMONIC` (a mismatch disables sweeping), so the
+   old rows cannot simply coexist with a new mnemonic. The options -- retire
+   the old rows (e.g. a `retiredAt` column the indexer stops watching once
+   they are swept, and the API skips when issuing) and give every user a new
+   address under the new xpub, or move to a new `CHAIN_ID`-scoped key
+   generation -- are an owner/ops call, not something to improvise mid-
+   rotation.
+4. Once that exists: install the new `DEPOSIT_XPUB` in `.env` and the new
+   `DEPOSIT_MNEMONIC` in `.env.workers`, restart both units, and tell users
+   their deposit address has changed -- anything sent to an old address
+   afterwards is at the mercy of whoever holds the old mnemonic.
 
 ## Treasury outflow journal
 

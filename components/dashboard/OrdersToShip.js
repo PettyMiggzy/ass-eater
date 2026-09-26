@@ -1,6 +1,47 @@
 import { useEffect, useState } from 'react';
 import { getJson, postJson } from './media-upload';
 import { responseErrorMessage, retryAfterHint } from './helpers';
+import { SHIPPING_CARRIERS, TRACKING_FORMAT_HINTS, normalizeCarrier } from '../../lib/tracking-rules';
+
+// Round 15: the carrier is one of a fixed list and the tracking number must
+// fit that carrier's format (lib/tracking-rules.js -- the ship route enforces
+// the same rules). The select offers only the list, and the format line under
+// the tracking input says what the server will accept for the chosen carrier.
+function TrackingFields({ orderId, form, disabled, onChange, borderFor, orderError, labelled }) {
+  const hint = form.carrier && TRACKING_FORMAT_HINTS[form.carrier];
+  return (
+    <>
+      <select
+        value={form.carrier}
+        disabled={disabled}
+        aria-invalid={orderError?.orderId === orderId && orderError.field === 'carrier'}
+        aria-label={labelled ? `Carrier for order ${orderId}` : 'Carrier'}
+        onChange={(e) => onChange({ ...form, carrier: e.target.value })}
+        className={`px-3 py-2 rounded-md bg-black/40 border ${borderFor('carrier')} text-white text-xs disabled:opacity-50`}
+      >
+        <option value="">Carrier…</option>
+        {SHIPPING_CARRIERS.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <div className="flex flex-col">
+        <input
+          value={form.trackingNumber}
+          disabled={disabled}
+          aria-invalid={orderError?.orderId === orderId && orderError.field === 'trackingNumber'}
+          aria-label={labelled ? `Tracking number for order ${orderId}` : 'Tracking number'}
+          aria-describedby={`tracking-hint-${orderId}`}
+          onChange={(e) => onChange({ ...form, trackingNumber: e.target.value })}
+          placeholder="Tracking number"
+          className={`px-3 py-2 rounded-md bg-black/40 border ${borderFor('trackingNumber')} text-white text-xs disabled:opacity-50`}
+        />
+        <span id={`tracking-hint-${orderId}`} className="text-[11px] text-gray-500 mt-1 max-w-xs">
+          {hint
+            ? `${form.carrier}: ${hint}.`
+            : 'Pick the carrier first. Not listed? Choose Other and enter the digits-only or international (AB123456785CD) number.'}
+        </span>
+      </div>
+    </>
+  );
+}
 
 /**
  * A creator's physical-order queue. Deliberately shown to suspended (and
@@ -38,9 +79,9 @@ export default function OrdersToShip() {
   const [editing, setEditing] = useState({});
   // The ship route's refusals, shown next to the order they belong to rather
   // than only in the shared banner (round 14): { orderId, field, message }.
-  // `field` is 'carrier' | 'trackingNumber' when the server names one (the
-  // payment/contact screen, the charset check, "not an app" for a carrier,
-  // "at least one number" for a tracking number) and that input is outlined.
+  // `field` is 'carrier' | 'trackingNumber' when the server names one (a
+  // carrier not on the list, a tracking number not in that carrier's format or
+  // with a wrong check digit) and that input is outlined.
   const [orderError, setOrderError] = useState(null);
 
   const load = async () => {
@@ -66,9 +107,9 @@ export default function OrdersToShip() {
   // already shipped: same route, same body.
   const markShipped = async (orderId) => {
     const { carrier, trackingNumber } = shipForm[orderId] || {};
-    if (!carrier?.trim() || !trackingNumber?.trim()) {
+    if (!carrier || !trackingNumber?.trim()) {
       setError('');
-      setOrderError({ orderId, field: !carrier?.trim() ? 'carrier' : 'trackingNumber', message: 'Enter a carrier and tracking number first.' });
+      setOrderError({ orderId, field: !carrier ? 'carrier' : 'trackingNumber', message: !carrier ? 'Pick a carrier first.' : 'Enter the tracking number first.' });
       return;
     }
     setBusyId(orderId);
@@ -77,7 +118,7 @@ export default function OrdersToShip() {
     try {
       const { res, data } = await postJson('/api/marketplace/orders/ship', {
         orderId,
-        carrier: carrier.trim(),
+        carrier,
         trackingNumber: trackingNumber.trim(),
       });
       if (res.status === 409 && data?.code === 'ORDER_CLOSED') {
@@ -99,7 +140,11 @@ export default function OrdersToShip() {
       if (res.status === 409 && data?.code === 'TRACKING_EDIT_LIMIT') {
         // Corrections are capped per order (lib/orders-store.js); the form is
         // closed so it stops offering a save the server will refuse.
-        setOrderError({ orderId, field: '', message: responseErrorMessage(res.status, data, 'This order’s tracking has been corrected too many times. Contact team@onlyone1.fun to change it again.') });
+        // It also covers tracking erased at the buyer's request. The order's
+        // trackingCorrectionsLeft is zeroed locally so the Edit control stays
+        // hidden and this explanation stays on screen.
+        setOrderError({ orderId, field: '', code: 'TRACKING_EDIT_LIMIT', message: responseErrorMessage(res.status, data, 'This order’s tracking has been corrected too many times. Contact team@onlyone1.fun to change it again.') });
+        setOrders((list) => list.map((o) => (o.id === orderId ? { ...o, trackingCorrectionsLeft: 0 } : o)));
         setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
         return;
       }
@@ -129,11 +174,15 @@ export default function OrdersToShip() {
 
   const openEdit = (o) => {
     setError('');
-    setOrderError(null);
+    // Clear only a stale error for THIS order; a limit refusal is never
+    // cleared here (the Edit control is hidden once no corrections remain).
+    setOrderError((e) => (e && e.orderId === o.id && e.code !== 'TRACKING_EDIT_LIMIT' ? null : e));
     setShipForm((f) => ({
       ...f,
       [o.id]: {
-        carrier: typeof o.carrier === 'string' ? o.carrier : '',
+        // A stored carrier is canonical since round 15; an older free-text one
+        // that is not on the list starts blank so the creator must pick one.
+        carrier: normalizeCarrier(o.carrier) || '',
         trackingNumber: typeof o.trackingNumber === 'string' ? o.trackingNumber : '',
       },
     }));
@@ -143,6 +192,11 @@ export default function OrdersToShip() {
     setOrderError((e) => (e && e.orderId === orderId ? null : e));
     setEditing((m) => { const next = { ...m }; delete next[orderId]; return next; });
   };
+  // Corrections remaining for a shipped order (lib/orders-store.js
+  // toCreatorOrder derives it; 0 once the cap is used or tracking was erased).
+  // An older payload without the field counts as none known, not unlimited.
+  const correctionsLeft = (o) => (Number.isInteger(o.trackingCorrectionsLeft) && o.trackingCorrectionsLeft > 0 ? o.trackingCorrectionsLeft : 0);
+  const canCorrect = (o) => !o.trackingErasedAt && correctionsLeft(o) > 0;
   const fmtDate = (iso) => {
     const d = typeof iso === 'string' ? new Date(iso) : null;
     return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString() : '';
@@ -204,21 +258,13 @@ export default function OrdersToShip() {
                   </>
                 )}
                 <div className="flex flex-wrap gap-2 mt-3">
-                  <input
-                    value={form.carrier}
+                  <TrackingFields
+                    orderId={o.id}
+                    form={form}
                     disabled={unreadable}
-                    aria-invalid={orderError?.orderId === o.id && orderError.field === 'carrier'}
-                    onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, carrier: e.target.value } })}
-                    placeholder="Carrier (e.g. USPS)"
-                    className={`px-3 py-2 rounded-md bg-black/40 border ${inputBorder(o.id, 'carrier')} text-white text-xs disabled:opacity-50`}
-                  />
-                  <input
-                    value={form.trackingNumber}
-                    disabled={unreadable}
-                    aria-invalid={orderError?.orderId === o.id && orderError.field === 'trackingNumber'}
-                    onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, trackingNumber: e.target.value } })}
-                    placeholder="Tracking number"
-                    className={`px-3 py-2 rounded-md bg-black/40 border ${inputBorder(o.id, 'trackingNumber')} text-white text-xs disabled:opacity-50`}
+                    onChange={(next) => setShipForm((f) => ({ ...f, [o.id]: next }))}
+                    borderFor={(field) => inputBorder(o.id, field)}
+                    orderError={orderError}
                   />
                   <button
                     onClick={() => markShipped(o.id)}
@@ -249,30 +295,32 @@ export default function OrdersToShip() {
                         Order #{o.id} — <OrderItem o={o} /> — {o.carrier} {o.trackingNumber}
                         {shippedOn ? ` · shipped ${shippedOn}` : ''}
                         {updatedOn ? ` · tracking updated ${updatedOn}` : ''}
-                        {!editing[o.id] && (
+                        {!editing[o.id] && canCorrect(o) && (
                           <>
                             {' '}
                             <button type="button" onClick={() => openEdit(o)} className="underline text-gray-300">Edit tracking</button>
+                            {' '}<span className="text-gray-600">({correctionsLeft(o)} correction{correctionsLeft(o) === 1 ? '' : 's'} left)</span>
                           </>
                         )}
                       </p>
+                      {!canCorrect(o) && !(orderError && orderError.orderId === o.id) && (
+                        <p className="text-[11px] text-gray-500">
+                          {o.trackingErasedAt
+                            ? 'Tracking details were erased at the buyer’s request and can’t be changed.'
+                            : 'No tracking corrections left for this order.'}{' '}
+                          Contact <a href="mailto:team@onlyone1.fun" className="underline">team@onlyone1.fun</a> if it needs changing.
+                        </p>
+                      )}
                       {editing[o.id] && (
                         <div className="flex flex-wrap gap-2 mt-1">
-                          <input
-                            value={form.carrier}
-                            aria-invalid={orderError?.orderId === o.id && orderError.field === 'carrier'}
-                            onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, carrier: e.target.value } })}
-                            placeholder="Carrier (e.g. USPS)"
-                            aria-label={`Carrier for order ${o.id}`}
-                            className={`px-3 py-2 rounded-md bg-black/40 border ${inputBorder(o.id, 'carrier')} text-white text-xs`}
-                          />
-                          <input
-                            value={form.trackingNumber}
-                            aria-invalid={orderError?.orderId === o.id && orderError.field === 'trackingNumber'}
-                            onChange={(e) => setShipForm({ ...shipForm, [o.id]: { ...form, trackingNumber: e.target.value } })}
-                            placeholder="Tracking number"
-                            aria-label={`Tracking number for order ${o.id}`}
-                            className={`px-3 py-2 rounded-md bg-black/40 border ${inputBorder(o.id, 'trackingNumber')} text-white text-xs`}
+                          <TrackingFields
+                            orderId={o.id}
+                            form={form}
+                            disabled={false}
+                            onChange={(next) => setShipForm((f) => ({ ...f, [o.id]: next }))}
+                            borderFor={(field) => inputBorder(o.id, field)}
+                            orderError={orderError}
+                            labelled
                           />
                           <button
                             type="button"

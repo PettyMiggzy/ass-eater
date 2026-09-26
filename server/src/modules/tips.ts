@@ -90,12 +90,16 @@ export const tips: FastifyPluginAsync = async (app) => {
     return { ok: true, tipId, ...r.charged };
   });
 
-  app.get('/received', { preHandler: app.creatorOk }, async (req: any) =>
-    prisma.ledgerEntry.findMany({
+  app.get('/received', { preHandler: app.creatorOk }, async (req: any) => {
+    const rows = await prisma.ledgerEntry.findMany({
       // Both types, or a creator's tip history silently loses everything
       // earned while they were live -- which is likely to be most of it.
       where: { userId: req.user.id, type: { in: ['TIP', 'LIVE_TIP'] }, amountCents: { gt: 0 } },
       orderBy: { createdAt: 'desc' },
       take: 100,
-    }));
+    });
+    // amountCents is BigInt; returned raw it 500'd this route for every
+    // creator who had ever been tipped.
+    return rows.map((r) => ({ ...r, amountCents: Number(r.amountCents) }));
+  });
 };

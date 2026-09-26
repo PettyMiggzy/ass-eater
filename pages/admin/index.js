@@ -2088,6 +2088,13 @@ const CONTEXT_LABELS = {
   listing_title: 'Listing title',
   listing_description: 'Listing description',
   listing_tags: 'Listing tags',
+  // Order shipping fields (pages/api/marketplace/orders/ship.js): an app named
+  // as the carrier, or a tracking number shaped like a phone number / handle.
+  order_carrier: 'Order carrier',
+  order_tracking_shape: 'Order tracking number (phone/handle shape)',
+  // Logged by the round-14 free-text screening, before the fixed carrier list.
+  order_tracking_number: 'Order tracking number',
+  order_tracking: 'Order tracking details',
 };
 
 /** Auto-flagged, blocked sends -- see lib/payment-circumvention-filter.js. The flagged message/post itself was never stored, only this record of who tried and why. */
@@ -2347,6 +2354,15 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
   // clock running (round-14 admin-ui#1). These keep the loaded depth instead.
   const reportsRef = useRef(reports);
   reportsRef.current = reports;
+  // The filter on screen NOW. An action's refresh/patch runs from the render
+  // in which it was clicked, so its own `statusFilter` is the filter it
+  // started under; if the admin has switched filters since, load() for the new
+  // filter owns the list and the action must not touch it (round-15
+  // admin-ui#0: it used to void that load -- leaving 'Loading...' forever --
+  // or show the old filter's rows under the new filter's label). Also set in
+  // the <select>'s onChange so it is current before the next render.
+  const statusFilterRef = useRef(statusFilter);
+  statusFilterRef.current = statusFilter;
   const refreshSummary = async () => {
     try {
       const { res, data } = await adminGet(adminKey, '/api/admin/ncii-summary');
@@ -2356,14 +2372,25 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       }
     } catch { /* the badge's own poll catches up */ }
   };
-  // Re-read the queue from the top down to at least as many rows as are on
-  // screen now, without the Loading state (which would unmount every row's
-  // takedown control). Rows keep their keys, so their controls stay mounted.
-  const refreshKeepingDepth = async () => {
-    const seq = ++loadSeq.current;
+  // Re-read the queue from the top down until every request on screen now is
+  // back in the list, without the Loading state (which would unmount every
+  // row's takedown control). Rows keep their keys, so their controls stay
+  // mounted. Depth is kept by ID, not by row count (round-15 admin-ui#1): a
+  // new possible-minor filing sorts to the top and pushes every row down one,
+  // so "as many rows as before" could stop one short and drop the request
+  // being worked on. A request that has left the filter (resolved elsewhere,
+  // or `dropId`) never comes back, so the loop still ends on the last page or
+  // the page cap.
+  const refreshKeepingDepth = async ({ dropId = null } = {}) => {
     const status = statusFilter;
-    const want = Math.max(reportsRef.current.length, 1);
+    if (status !== statusFilterRef.current) { await refreshSummary(); return; }
+    const seq = ++loadSeq.current;
+    // Taking the sequence voids any load in flight, whose finally will then
+    // not clear the Loading state: this refresh owns it now.
+    setLoading(false);
     setLoadingMore(false);
+    const want = new Set(reportsRef.current.map((r) => String(r.id)));
+    if (dropId !== null && dropId !== undefined) want.delete(String(dropId));
     try {
       const rows = [];
       const seen = new Set();
@@ -2379,11 +2406,12 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
         if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to refresh takedown requests'));
         for (const r of Array.isArray(data.reports) ? data.reports : []) {
           if (!seen.has(String(r.id))) { seen.add(String(r.id)); rows.push(r); }
+          want.delete(String(r.id));
         }
         if (data.summary) summaryOut = data.summary;
         more = !!data.hasMore && typeof data.nextCursor === 'string';
         cursor = more ? data.nextCursor : null;
-        if (!more || rows.length >= want) break;
+        if (!more || want.size === 0) break;
       }
       setReports(rows);
       setHasMore(more);
@@ -2400,6 +2428,9 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
   // response): kept if it still matches the filter, dropped if it no longer
   // does. Any list load still in flight is voided so it cannot overwrite this.
   const patchReport = async (fresh) => {
+    // Started under another filter than the one on screen: the new filter's
+    // own load owns the list (admin-ui#0). Only the summary is refreshed.
+    if (statusFilter !== statusFilterRef.current) { await refreshSummary(); return; }
     if (!fresh || fresh.id === undefined || fresh.id === null) { await refreshKeepingDepth(); return; }
     loadSeq.current += 1;
     setLoading(false);
@@ -2491,7 +2522,7 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       if (res.status === 409) {
         // Someone else resolved it first -- re-read rather than keep a stale row.
         setNotice(errorFrom(res, data, 'That report was already resolved.'));
-        await refreshKeepingDepth();
+        await refreshKeepingDepth({ dropId: id });
         return;
       }
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to resolve report'));
@@ -2575,10 +2606,14 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
       )}
       {notice && <p className="text-sm text-green-400 mb-4">{notice}</p>}
       <div className="flex items-center gap-3 mb-4">
+        {/* Not while a resolve/reopen is in flight (its result belongs to this
+            filter's list); a takedown in flight is covered by the
+            statusFilterRef check instead. */}
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm"
+          onChange={(e) => { statusFilterRef.current = e.target.value; setStatusFilter(e.target.value); }}
+          disabled={busyId !== null}
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm disabled:opacity-50"
         >
           <option value="open">Open</option>
           <option value="dismiss">Dismissed</option>
@@ -4971,7 +5006,7 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
   const eraseAddr = async (o) => {
     const id = String(o.id);
     if (!confirm(
-      `Erase the shipping name and address on order #${id}? This cannot be undone. Only do it when no dispute or `
+      `Erase the shipping name and address, and the tracking numbers, on order #${id}? This cannot be undone, and the seller can no longer change the tracking afterwards. Only do it when no dispute or `
       + 'legal claim about this order is in progress.',
     )) return;
     setBusy(true);
@@ -4982,7 +5017,7 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
       if (res.status === 404) throw new Error(`There is no order #${id}.`);
       if (res.status === 409) throw new Error(`Order #${id} is still waiting to ship, so its address is still needed and was not erased. If it can never ship, close it first.`);
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not erase the address'));
-      setNotice(data.erased ? `Shipping name and address erased from order #${id}.` : `Order #${id} has no shipping address left to erase.`);
+      setNotice(data.erased ? `Shipping name, address and tracking numbers erased from order #${id}.` : `Order #${id} has no shipping address or tracking number left to erase.`);
       await load({ keepNotice: true });
     } catch (err) {
       setError(err.message);
@@ -5052,7 +5087,11 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {list.map((o) => {
               const closable = o.kind === 'physical' && o.status === 'pending_shipment';
-              const erasable = o.hasAddress && o.status !== 'pending_shipment';
+              // Also an order whose address went before tracking numbers were
+              // erased with it (lib/orders-store.js ERASABLE_SHIPPING_WHERE_SQL).
+              const hasTrackingNumbers = (typeof o.trackingNumber === 'string' && o.trackingNumber !== '')
+                || (Array.isArray(o.trackingHistory) && o.trackingHistory.some((h) => h && h.trackingNumber));
+              const erasable = (o.hasAddress || hasTrackingNumbers) && o.status !== 'pending_shipment';
               const open = closing && String(closing.id) === String(o.id);
               return (
                 <div key={o.id} className={`px-3 py-2 rounded-md bg-black/30 border ${open ? 'border-red-500/50' : 'border-white/5'} text-xs`}>
@@ -5071,6 +5110,7 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
                         Seller: <span className={o.seller?.unableToFulfil ? 'text-red-300' : 'text-gray-300'}>{sellerLabel(o.seller)}</span>
                         {' · '}Buyer: user {String(o.buyerId ?? '?')}
                         {' · '}{o.hasAddress ? 'address stored' : o.addressErasedAt ? 'address erased' : 'no address'}
+                        {o.trackingErasedAt ? ' · tracking numbers erased' : ''}
                       </p>
                       {o.closeReason && <p className="text-gray-500 break-words">Close reason: {String(o.closeReason)}</p>}
                       {(typeof o.trackingNumber === 'string' && o.trackingNumber) && (
@@ -5084,7 +5124,7 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
                         <ul className="text-[11px] text-gray-600 break-words">
                           {o.trackingHistory.map((h, i) => (
                             <li key={i}>
-                              Replaced: {String(h?.carrier || '')} {String(h?.trackingNumber || '')}
+                              Replaced: {String(h?.carrier || '')} {h?.trackingNumber ? String(h.trackingNumber) : o.trackingErasedAt ? '(number erased)' : ''}
                               {h?.replacedAt ? ` · ${new Date(h.replacedAt).toLocaleString()}` : ''}
                             </li>
                           ))}
@@ -5099,7 +5139,7 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
                       )}
                       {erasable && (
                         <button onClick={() => eraseAddr(o)} disabled={busy} className="text-[11px] px-2 py-1 rounded-md border border-red-500/40 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50">
-                          Erase address…
+                          {o.hasAddress ? 'Erase address…' : 'Erase tracking…'}
                         </button>
                       )}
                     </div>
@@ -5212,7 +5252,7 @@ function OrderAddressErasePanel({ adminKey }) {
     setNotice('');
     if (!/^[1-9][0-9]{0,17}$/.test(id)) { setError('Enter the order number, a plain number like 42.'); return; }
     if (!confirm(
-      `Erase the shipping name and address on order #${id}? This cannot be undone. Only do it when no dispute or `
+      `Erase the shipping name and address, and the tracking numbers, on order #${id}? This cannot be undone, and the seller can no longer change the tracking afterwards. Only do it when no dispute or `
       + 'legal claim about this order is in progress.',
     )) return;
     setBusy(true);
@@ -5223,8 +5263,8 @@ function OrderAddressErasePanel({ adminKey }) {
       if (!res.ok) throw new Error(errorFrom(res, data, 'Could not erase the address'));
       const at = data.addressErasedAt ? ` (erased ${new Date(data.addressErasedAt).toLocaleString()})` : '';
       setNotice(data.erased
-        ? `Shipping name and address erased from order #${id}${at}.`
-        : `Order #${id} has no shipping address left to erase${at}.`);
+        ? `Shipping name, address and tracking numbers erased from order #${id}${at}.`
+        : `Order #${id} has no shipping address or tracking number left to erase${at}.`);
       setOrderId('');
     } catch (err) {
       setError(err.message);

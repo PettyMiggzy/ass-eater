@@ -205,9 +205,16 @@ describe('frozen creators are listable', () => {
     await prisma.account.upsert({ where: { userId: creator }, create: { userId: creator, balanceCents: 5000n, withdrawableCents: 3000n }, update: { balanceCents: 5000n, withdrawableCents: 3000n } });
     const notFrozen = await makeCreator();
     const app = await adminApp();
-    const res = await app.inject({ method: 'GET', url: '/admin/creators/frozen?limit=200' });
-    expect(res.statusCode).toBe(200);
-    const rows = res.json() as any[];
+    // Page through the whole list: the shared test database keeps rows from
+    // earlier runs, so the new creator is not always on the first page.
+    const rows: any[] = [];
+    for (let offset = 0; ; offset += 200) {
+      const res = await app.inject({ method: 'GET', url: `/admin/creators/frozen?limit=200&offset=${offset}` });
+      expect(res.statusCode).toBe(200);
+      const page = res.json() as any[];
+      rows.push(...page);
+      if (page.length < 200) break;
+    }
     const row = rows.find((x) => x.userId === creator);
     expect(row).toMatchObject({ activeButFrozen: true, balanceCents: 5000, withdrawableCents: 3000 });
     expect(row.user.status).toBe('ACTIVE');

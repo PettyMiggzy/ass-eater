@@ -1,15 +1,22 @@
 import { getSessionUser } from '../../../../lib/session';
 import { getCreatorById, effectiveCreatorStatus } from '../../../../lib/creators-store';
-import { markOrderShipped, trackingFieldsError, ORDER_CLOSED, TRACKING_EDIT_LIMIT } from '../../../../lib/orders-store';
+import {
+  markOrderShipped, trackingFieldsError, normalizeTracking, getOrderShipState, ORDER_CLOSED, TRACKING_EDIT_LIMIT,
+} from '../../../../lib/orders-store';
 import { refuseMalformedText } from '../../../../lib/field-validation';
-import { screenPublicText } from '../../../../lib/prohibited-terms';
 import { addViolation } from '../../../../lib/violations-store';
 import { consumeAttempt } from '../../../../lib/rate-limit';
 
-// Ships and tracking corrections per creator per hour (round-14
-// public-pages#0: corrections are allowed now, so the route is no longer
-// write-once).
-const SHIP_LIMIT = 30;
+// Round 15 (money#1 / dashboard#0): the round-14 limit counted EVERY call --
+// first shipments, refused attempts and same-value re-saves -- so a creator
+// marking a 45-order drop shipped was locked out after the 30th. Now:
+//   - tracking CORRECTIONS of an already-shipped order are capped per creator
+//     per hour (each order also allows only MAX_TRACKING_CORRECTIONS in the
+//     database), and only a correction that will actually be written counts;
+//   - everything else shares a generous per-creator abuse cap far above any
+//     realistic batch of first shipments.
+const CORRECTION_LIMIT = 30;
+const SHIP_ABUSE_LIMIT = 600;
 const SHIP_WINDOW_MS = 60 * 60 * 1000;
 
 // Own auth rather than requireCreatorOwner, for the same reason as
@@ -32,9 +39,9 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: 'This account has been permanently banned.' });
   }
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`ship-order:creator:${creator.id}`, { limit: SHIP_LIMIT, windowMs: SHIP_WINDOW_MS });
-  if (limited) {
-    res.setHeader('Retry-After', String(retryAfterSeconds));
+  const abuse = consumeAttempt(`ship-order:creator:${creator.id}`, { limit: SHIP_ABUSE_LIMIT, windowMs: SHIP_WINDOW_MS });
+  if (abuse.limited) {
+    res.setHeader('Retry-After', String(abuse.retryAfterSeconds));
     return res.status(429).json({ error: 'Too many shipping updates recently. Please wait a while and try again.' });
   }
 
@@ -43,29 +50,42 @@ export default async function handler(req, res) {
   if (!idOk || typeof carrier !== 'string' || !carrier.trim() || typeof trackingNumber !== 'string' || !trackingNumber.trim()) {
     return res.status(400).json({ error: 'Missing order id, carrier, or tracking number' });
   }
-  const fields = { carrier: carrier.trim().replace(/\s+/g, ' '), trackingNumber: trackingNumber.trim().replace(/\s+/g, ' ') };
 
-  // Round 14 (public-pages#0): the carrier and tracking number are shown on
-  // the buyer's /orders page, so they are creator-to-buyer text like a DM:
-  // screened for fee-dodging and prohibited terms (and logged to the
-  // violations queue on a hit) BEFORE the charset check, so an attempt is
-  // recorded even when the charset alone would have refused it.
-  // Each field, and the two together as the buyer reads them ("text" +
-  // "617 555 1234" is a phone handover only when joined).
-  const screens = [
-    ['carrier', 'order_carrier', fields.carrier],
-    ['trackingNumber', 'order_tracking_number', fields.trackingNumber],
-    ['trackingNumber', 'order_tracking', `${fields.carrier} ${fields.trackingNumber}`],
-  ];
-  for (const [field, context, value] of screens) {
-    const hit = screenPublicText(value);
-    if (hit) {
-      await addViolation({ userId: user.id, context, reasons: hit.reasons, snippet: value });
-      return res.status(400).json({ error: hit.message, field });
+  // Round 15 (money#0, public-pages#0, legal-journeys#1): the carrier and
+  // tracking number are shown on the buyer's /orders page, and screening them
+  // as free text kept missing handovers ("UPS" + "whatsapp 44 7700 900123",
+  // "USPS" + "617 555 1234"). They are not free text any more: the carrier is
+  // one of a fixed list and the tracking number must fit that carrier's format
+  // (lib/tracking-rules.js), which leaves no room for a handle or a phone
+  // number. A refusal that looks like a handover rather than a typo (an app
+  // named as the carrier, a phone number or an app name in the tracking
+  // field) is still logged to the violations queue.
+  const fieldError = trackingFieldsError({ carrier, trackingNumber });
+  if (fieldError) {
+    if (fieldError.suspicious) {
+      await addViolation({
+        userId: user.id,
+        context: fieldError.field === 'carrier' ? 'order_carrier' : 'order_tracking_shape',
+        reasons: [fieldError.message],
+        snippet: `${carrier.trim().slice(0, 60)} ${trackingNumber.trim().slice(0, 60)}`,
+      });
+    }
+    return res.status(400).json({ error: fieldError.message, field: fieldError.field });
+  }
+  const fields = normalizeTracking({ carrier, trackingNumber });
+
+  // Only a correction that will be written counts toward the correction cap:
+  // a first shipment, a same-value re-save and a correction the per-order cap
+  // will refuse (409) do not.
+  const state = await getOrderShipState(orderId, creator.id);
+  if (state && state.status === 'shipped' && state.correctionsLeft > 0
+    && (state.carrier !== fields.carrier || state.trackingNumber !== fields.trackingNumber)) {
+    const { limited, retryAfterSeconds } = consumeAttempt(`ship-correction:creator:${creator.id}`, { limit: CORRECTION_LIMIT, windowMs: SHIP_WINDOW_MS });
+    if (limited) {
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({ error: 'Too many tracking corrections recently. Please wait a while and try again.' });
     }
   }
-  const fieldError = trackingFieldsError(fields);
-  if (fieldError) return res.status(400).json({ error: fieldError.message, field: fieldError.field });
 
   try {
     // markOrderShipped only matches an order whose creatorId equals creator.id --

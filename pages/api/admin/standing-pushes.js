@@ -20,9 +20,11 @@ import { listPendingStandingPushes, deliverStandingPushes, bridgeConfigured } fr
  * 'suspension_needs_server_admin') is a reinstatement server/ received and
  * refused: that account was banned or suspended by a server/ admin, and the
  * site may only lift restrictions the site applied. It stays restricted on
- * server/ (payouts frozen; after a ban, listings down) until someone runs
- * POST /admin/users/:id/status {"status":"ACTIVE"} there; the row then clears
- * on its next retry (every 6 hours, or a POST here).
+ * server/ (payouts frozen; after a ban, listings down) until someone on
+ * server/ first runs GET /admin/users/by-site-uid/<uid> (the row's site uid)
+ * to get that account's server id, then POST /admin/users/<that server id>/status
+ * {"status":"ACTIVE"} -- the site uid itself answers 404 there. The row then
+ * clears on its next retry (every 6 hours, or a POST here).
  */
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });

@@ -54,7 +54,8 @@ export default function Privacy() {
                 </li>
                 <li>
                   <strong>Content filter records.</strong> Every message, wall comment, profile field (name,
-                  handle, bio, tags, location, social links), listing, and signup username is checked by
+                  handle, bio, tags, location, social links), listing, signup username, and the carrier and
+                  tracking number a creator enters when shipping an order is checked by
                   automatic filters for payment details that route around the Platform (phone numbers, email
                   addresses, outside payment apps) and for prohibited content. When one refuses what you
                   wrote, the text is not sent or published, but we keep a moderation record of it for
@@ -75,8 +76,13 @@ export default function Privacy() {
                   If you buy a physical item, we collect the recipient&apos;s full name and shipping
                   address. That name and address are encrypted at rest and are{' '}
                   <strong>disclosed to the creator who sold you the item</strong> so they can ship it —
-                  they are not shown to anyone else. We also record your age confirmation and acceptance
-                  of the Marketplace terms against each order.
+                  they are not shown to anyone else. When the creator ships it, the order also records the
+                  carrier and tracking number they enter, which you see on your orders page; if the creator
+                  corrects them later, each earlier carrier and tracking number is kept on the order too
+                  (visible only to Platform administrators, for resolving delivery disputes). A tracking
+                  number can be looked up with the carrier, which shows roughly where the parcel was
+                  delivered, so we treat it like the address (Section 7). We also record your age
+                  confirmation and acceptance of the Marketplace terms against each order.
                 </li>
                 <li>
                   <strong>Wallet addresses and on-chain activity.</strong> If you connect a wallet — to buy
@@ -313,9 +319,11 @@ export default function Privacy() {
                   can fulfil it. Once the order has shipped — or has been closed because the seller could not
                   fulfil it — you can ask us to delete them (email team@onlyone1.fun with the order), unless we
                   need them for a dispute or legal claim already in progress; the order record itself stays,
-                  without them. Deleting your account from the Settings page deletes the shipping name and
-                  address from every one of your orders that has already shipped or been closed, at the same
-                  time.
+                  without them. Deleting them also deletes the order&apos;s tracking number and every earlier
+                  tracking number kept for it (the carrier name and dates stay), and the tracking can no longer
+                  be changed after that. Deleting your account from the Settings page deletes the shipping
+                  name and address, and the tracking numbers, from every one of your orders that has already
+                  shipped or been closed, at the same time.
                 </li>
                 <li>We may retain limited data where necessary to investigate fraud, abuse, or a legal claim already in progress.</li>
               </ul>

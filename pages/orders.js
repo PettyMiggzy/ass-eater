@@ -209,7 +209,7 @@ export default function OrdersPage({ sessionUser, viewerMark }) {
                   )}
                   {o.kind === 'physical' && o.status === 'shipped' && (o.carrier || o.trackingNumber) && (
                     <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-white/10">
-                      {o.carrier ? `${o.carrier} — ` : ''}{o.trackingNumber || 'No tracking number provided'}
+                      {o.carrier ? `${o.carrier} — ` : ''}{o.trackingNumber || (o.trackingErasedAt ? 'Tracking number erased at your request' : 'No tracking number provided')}
                       {/* Set when the seller corrected the carrier/tracking
                           after shipping (the ship date itself is kept). */}
                       {typeof o.trackingUpdatedAt === 'string' && !Number.isNaN(new Date(o.trackingUpdatedAt).getTime())

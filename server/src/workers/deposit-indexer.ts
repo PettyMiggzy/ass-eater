@@ -1,13 +1,13 @@
 import { Worker } from 'bullmq';
 import { formatUnits, parseEther, parseGwei, keccak256 } from 'viem';
 import { prisma } from '../lib/prisma.js';
-import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, INDEX_ONLYONE_DEPOSITS, treasuryAccount, treasuryAddress, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError, treasurySigningPaused } from '../lib/chain.js';
+import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, INDEX_ONLYONE_DEPOSITS, treasuryAccount, treasuryAddress, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
 import { getUsdPrice, rawToUsdCents } from '../lib/price.js';
 import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
 import { registerWorker } from './process-guards.js';
 import { chunk } from './indexer-chunks.js';
-import { claimGasTopUp, depositCreditedFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
+import { assertSweepsUnpaused, claimGasTopUp, depositCreditedFor, gasTopUpRefusal, gasTopUpRef, isPlatformSender, sweepWorthTopUp, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
 import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
 
@@ -386,6 +386,22 @@ async function reconcileSweeps() {
         `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-${s.address.toLowerCase()}`, 0);
     }
   }
+  // Native ETH deposits too (TRACK_NATIVE_ETH): an ETH sweep deferred past
+  // its retries -- a key rotation (TREASURY_SETTLE_ONLY) lasting hours, an
+  // RPC outage -- used to wait for that fan's next ETH deposit. The floor
+  // sits well above the 0.00005 ETH gas top-up an ERC-20 sweep leaves
+  // behind, so leftover top-up gas alone never queues a job.
+  if (TRACK_NATIVE_ETH) {
+    const ethRows = await prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
+      SELECT DISTINCT a."derivationIndex", a."address"
+        FROM "DepositAddress" a JOIN "Deposit" d ON d."userId" = a."userId" AND d."chainId" = a."chainId"
+       WHERE a."chainId" = ${CHAIN_ID} AND d."asset" = 'ETH'`;
+    for (const r of ethRows) {
+      const bal = await publicClient.getBalance({ address: r.address as `0x${string}` });
+      if (bal < parseEther('0.0005')) continue;
+      await enqueueSweep({ derivationIndex: r.derivationIndex, asset: 'ETH' }, `sweep-recon-${CHAIN_ID}-${r.derivationIndex}-eth`, 0);
+    }
+  }
   if (!INDEX_ONLYONE_DEPOSITS) return;
   const tokenRows = await prisma.$queryRaw<{ derivationIndex: number; address: string }[]>`
     SELECT DISTINCT a."derivationIndex", a."address"
@@ -453,6 +469,9 @@ let sweepsDisabled: string | null = null;
 registerWorker(new Worker('sweep', async (job) => {
   const { derivationIndex, asset, tokenAddress } = job.data as SweepJob;
   if (sweepsDisabled) throw new DepositKeyMismatchError(sweepsDisabled);
+  // Key rotation: nothing moves into the (old, exposed) treasury address --
+  // not the ETH path, not an ERC-20 that already has gas, not a top-up.
+  assertSweepsUnpaused();
   const wc = await expectedDepositSigner(derivationIndex); const me = wc.account.address;
   const treasuryAddress = treasuryAccount().address;
   if (asset === 'ETH') {
@@ -508,10 +527,9 @@ registerWorker(new Worker('sweep', async (job) => {
     // throws for a treasury with no ETH or an RPC error, and a record made
     // before that let failed retries fill the daily cap with nothing sent.
     const ref = gasTopUpRef(CHAIN_ID, derivationIndex);
-    // Key rotation: no top-up is signed with the treasury key; the sweep
-    // retries later like any other deferred top-up.
-    const paused = treasurySigningPaused();
-    if (paused) throw new SweepGasDeferred(`sweep gas top-up deferred: treasury signing paused (${paused})`);
+    // Key rotation: re-checked right before the treasury signs, in case the
+    // mode was switched on while this job was reading balances.
+    assertSweepsUnpaused();
     const h = await withTreasuryLock(async () => {
       const why = gasTopUpRefusal(treasuryOutflow, undefined, undefined, ref);
       if (why) throw new SweepGasDeferred(`sweep gas top-up deferred: ${why}`);
