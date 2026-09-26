@@ -330,6 +330,14 @@ export const marketplace: FastifyPluginAsync = async (app) => {
 
     return money(prisma, async (tx) => {
       const l = await tx.listing.findUniqueOrThrow({ where: { id: req.params.id } });
+      // The buyer's own earlier purchase answers first, for EVERY listing:
+      // a one-of-a-kind item is SOLD by the very purchase whose response the
+      // buyer may have lost (or whose double-click money() re-runs after a
+      // serialization failure), so the status gate below told the person
+      // who had just paid for it 'not_available'. Charges nothing, so it
+      // bypasses nothing.
+      const already = await tx.listingOrder.findFirst({ where: { listingId: l.id, buyerId: req.user.id } });
+      if (already) return { ok: true, already: true, order: already };
       if (l.status !== 'ACTIVE') throw Object.assign(new Error('not_available'), { statusCode: 400 });
       // Hiding it from the list is presentation; this is the actual gate. A
       // listing id is guessable and shareable, so without this a non-VIP who
@@ -348,11 +356,6 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       // its media, and with none READY the buyer would be charged for an
       // empty item (fans get no refunds).
       if (!(await hasDeliverable(tx, l))) throw Object.assign(new Error('no_deliverable'), { statusCode: 409 });
-
-      if (l.unlimited) {
-        const already = await tx.listingOrder.findFirst({ where: { listingId: l.id, buyerId: req.user.id } });
-        if (already) return { ok: true, already: true, order: already };
-      }
 
       // Nothing discounts a marketplace purchase -- not a subscription, not
       // a token-lock, not VIP. The platform keeps a flat cut (2026-09-18).

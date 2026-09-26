@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { getSessionUser } from '../../../lib/session';
 import { displayNameFor, findUserByCreatorId } from '../../../lib/users-store';
 import { addWallPost, toPublicWallPost, MAX_TEXT_LENGTH, WALL_DAILY_CAP_MESSAGE } from '../../../lib/wall-store';
@@ -102,8 +103,16 @@ export default async function handler(req, res) {
             userId: String(ownerUser.id),
             type: 'wall_comment',
             message: `${authorName} commented on your wall`,
-            meta: { creatorId: String(wallCreator.id) },
-            coalesceKey: 'creatorId',
+            // Coalesced per (wall, AUTHOR), not per wall: the text names one
+            // person, and folding everyone's comments into the first unread
+            // row told the creator "Alice commented" when Bob (possibly a
+            // harasser) did. The author is keyed by a digest rather than the
+            // raw account id, which the wall deliberately never exposes.
+            meta: {
+              creatorId: String(wallCreator.id),
+              wallAuthorKey: `${wallCreator.id}:${crypto.createHash('sha256').update(`wall-author:${uid}`).digest('hex').slice(0, 24)}`,
+            },
+            coalesceKey: 'wallAuthorKey',
           });
         }
       } catch (err) {

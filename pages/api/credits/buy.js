@@ -7,6 +7,7 @@ import {
   DEPOSIT_WALLET_COOKIE_NAME,
   TX_ALREADY_USED,
   ACCOUNT_GONE,
+  ACCOUNT_FROZEN,
   BELOW_MINIMUM,
 } from '../../../lib/deposit';
 import { ageVerificationSecret } from '../../../lib/age-verification';
@@ -69,7 +70,10 @@ export default async function handler(req, res) {
   // put real money where it can never be spent or withdrawn. Refused WITHOUT
   // claiming the hash: if USDG was already sent (the earlier steps refuse
   // first, so only a hand-sent transfer or a ban landing mid-purchase gets
-  // here), the hash stays unused. Support can credit it later from the admin
+  // here), the hash stays unused. This early check saves a pointless RPC
+  // round trip; the one that matters runs INSIDE the crediting transaction
+  // (lib/deposit.js recordDepositCredit), because a ban can land during the
+  // up-to-a-minute receipt wait below. Support can credit it later from the admin
   // panel if the account is reinstated (/api/admin/manual-credit refuses a
   // frozen account unless explicitly overridden). There is NO tool that
   // sends USDG back: a refund is a manual on-chain transfer from the payout
@@ -113,9 +117,23 @@ export default async function handler(req, res) {
 
   try {
     const result = await creditDepositFromChain({ userId: uid, txHash, expectedFrom, config });
-    return res.status(200).json({ ok: true, creditedCents: result.creditedCents, feeCents: result.feeCents, balanceCents: result.balanceCents });
+    // alreadyCredited: this hash was already credited to THIS account (a
+    // retry after a lost response) -- a success, not "already used".
+    return res.status(200).json({
+      ok: true,
+      alreadyCredited: !!result.alreadyCredited,
+      creditedCents: result.creditedCents,
+      feeCents: result.feeCents,
+      balanceCents: result.balanceCents,
+    });
   } catch (err) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
+    if (err.code === ACCOUNT_FROZEN) {
+      return res.status(403).json({
+        code: 'ACCOUNT_FROZEN',
+        error: 'This account is suspended or banned, so credits can’t be added to it. If you already sent USDG, contact support with this transaction hash -- it has not been used.',
+      });
+    }
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });
     if (err.code === ACCOUNT_GONE) return res.status(410).json({ error: err.message, code: err.code });
     if (err.code === 'SENDER_MISMATCH') return res.status(402).json({ error: err.message, code: err.code });

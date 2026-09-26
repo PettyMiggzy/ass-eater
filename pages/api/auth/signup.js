@@ -12,6 +12,7 @@ import {
   isEmailIdentifier,
   USERNAME_RE,
   EMAIL_IDENTIFIER_MAX,
+  PASSWORD_MAX,
   looksLikePhoneNumber,
   PHONE_NAME_MESSAGE,
   isReservedName,
@@ -66,6 +67,9 @@ export default async function handler(req, res) {
 
   if (!email || email.length < 3 || typeof password !== 'string' || password.length < 6) {
     return res.status(400).json({ error: 'An email or username (3+ characters) and a password (6+ characters) are required' });
+  }
+  if (password.length > PASSWORD_MAX) {
+    return res.status(400).json({ error: `Password must be ${PASSWORD_MAX} characters or fewer` });
   }
   // A username (no "@") is shown publicly as this account's name on wall
   // comments and DMs (lib/users-store.js displayNameFor), so it is public

@@ -129,9 +129,9 @@ export default async function handler(req, res) {
     if (!listingHasDeliverable(listing)) {
       return res.status(409).json({ error: `"${listing.title}" isn't available yet -- the creator hasn't attached its files.`, listingId: String(listingId) });
     }
-    // Files quarantined as evidence or held by an open possible-minor report
-    // are never served, so the listing is not sold (re-checked on the locked
-    // row inside createOrdersFromCredits).
+    // Files quarantined as evidence are never served, so the listing is not
+    // sold (re-checked on the locked row inside createOrdersFromCredits). A
+    // report HOLD alone does not stop a sale -- see listingMediaBlocked.
     if (await listingMediaBlocked(listing)) {
       return res.status(404).json({ error: `A listing in your cart is no longer available (#${listingId})`, listingId: String(listingId) });
     }

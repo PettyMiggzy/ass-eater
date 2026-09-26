@@ -4,7 +4,7 @@ import Head from 'next/head';
 // describe what the code actually collects and sets; when a feature adds a
 // field, a cookie, or a new recipient of someone's data, this file changes
 // in the same release.
-const LAST_UPDATED = 'September 25, 2026';
+const LAST_UPDATED = 'September 26, 2026';
 
 export default function Privacy() {
   return (
@@ -204,9 +204,14 @@ export default function Privacy() {
                 </li>
               </ul>
               <p className="mt-3">
-                We also store two things in your browser&apos;s local storage, which never leave your device
-                unless you check out: that you dismissed the 18+ notice, and the contents of your
-                Marketplace cart.
+                We also store three things in your browser&apos;s local storage, which never leave your device
+                unless you check out: that you dismissed the 18+ notice; the contents of your Marketplace cart;
+                and, while a Marketplace checkout is in progress, a record of that checkout attempt. The
+                checkout record holds your account ID, a one-time checkout key and a fingerprint of the cart,
+                and it is what stops a retried or interrupted checkout from charging you twice. It is removed
+                once the checkout settles; if the connection dropped before we could confirm whether a payment
+                went through, it stays (including after you sign out) until the site can check that for you, so
+                it may remain on a shared device until you sign back in there or clear the site&apos;s data.
               </p>
               <p className="mt-3">
                 We don&apos;t run third-party advertising trackers or analytics cookies on the Platform.
@@ -263,7 +268,8 @@ export default function Privacy() {
                 <li>
                   Credit, sale, order, and payout records are kept as financial records and are not deleted on
                   request while we are required to keep them; once the account is deleted they are no longer
-                  linked to a login, email address or username. Reports and moderation records are different: they
+                  linked to a login, email address or username (a physical order&apos;s shipping name and address
+                  are handled separately, below). Reports and moderation records are different: they
                   keep a copy of the reported or removed content, including who wrote or sent it (the username or
                   login email that account had at the time), for as long as the report, a legal hold, or a legal
                   obligation requires — that copy is the evidence, so deleting the account does not remove it. If
@@ -274,8 +280,11 @@ export default function Privacy() {
                 </li>
                 <li>
                   A physical order&apos;s shipping name and address stay with the order record so the creator
-                  can fulfil it; once the order has shipped you can ask us to delete them, unless we need
-                  them for a dispute or legal claim already in progress.
+                  can fulfil it. Once the order has shipped you can ask us to delete them (email
+                  team@onlyone1.fun with the order), unless we need them for a dispute or legal claim already in
+                  progress; the order record itself stays, without them. Deleting your account from the Settings
+                  page deletes the shipping name and address from every one of your orders that has already
+                  shipped, at the same time.
                 </li>
                 <li>We may retain limited data where necessary to investigate fraud, abuse, or a legal claim already in progress.</li>
               </ul>

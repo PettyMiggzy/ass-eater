@@ -17,6 +17,16 @@ import * as m from './modules/index.js';
 const SECRET_QUERY_PARAMS = /([?&](?:token|access|refresh|key)=)[^&#]*/gi;
 const redactUrl = (url: string) => url.replace(SECRET_QUERY_PARAMS, '$1[redacted]');
 
+// The internet-facing API never holds a signing secret: its unit loads .env
+// only, and lib/chain.ts builds the treasury and deposit signers lazily for
+// the key-holding workers alone. With either in this environment (a box
+// migrated with its old .env, see deploy/DEPLOY.md) it REFUSES to start
+// rather than logging and serving the internet with the key loaded.
+if (process.env.TREASURY_PRIVATE_KEY || process.env.DEPOSIT_MNEMONIC) {
+  console.error('SECURITY: REFUSING TO START. TREASURY_PRIVATE_KEY / DEPOSIT_MNEMONIC are set in the API process. They belong only in .env.workers, loaded only by onlyone-workers.service (see deploy/DEPLOY.md).');
+  process.exit(1);
+}
+
 const app = Fastify({
   logger: {
     serializers: {

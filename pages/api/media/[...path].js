@@ -10,6 +10,7 @@ import {
   buyerFirstDigitalOrderAt,
   canViewGatedCreatorMedia,
 } from '../../../lib/media';
+import { isMediaReaped } from '../../../lib/media-refs';
 
 /**
  * GET /api/media/<pathname> -- the only way any uploaded file is served.
@@ -75,7 +76,14 @@ export default async function handler(req, res) {
       const user = await getSessionUser(req);
       const creator = await getCreatorById(parsed.creatorId);
       const owner = !!creator && !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id);
-      if (owner) return await sendMedia(req, res, parsed.pathname);
+      if (owner) {
+        // The owner is served any file in their prefix without a reference
+        // check (an upload in progress, a removed item), so a file this app
+        // already DELETED is refused explicitly: an upload token can outlive
+        // its file and re-create it, and such a re-upload is recorded nowhere.
+        if (await isMediaReaped(parsed.pathname)) return notFound(res);
+        return await sendMedia(req, res, parsed.pathname);
+      }
       if (listing.mediaDeletedAt || !user) return notFound(res);
       const firstOrderAt = await buyerFirstDigitalOrderAt(user.id, listing.id);
       if (firstOrderAt === null) return notFound(res);
@@ -94,6 +102,10 @@ export default async function handler(req, res) {
 
     const user = admin ? null : await getSessionUser(req);
     const owner = !!user && user.role === 'creator' && String(user.creatorId) === String(creator.id);
+
+    // Same rule as the listing branch: an owner is never served a file this
+    // app has deleted (a token-replayed re-upload nothing records).
+    if (owner && !admin && (await isMediaReaped(parsed.pathname))) return notFound(res);
 
     let allowed = admin || owner;
     if (!allowed) {

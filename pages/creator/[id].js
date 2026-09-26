@@ -139,7 +139,7 @@ function formatWallDate(value) {
 // answers no-store with a freshly presigned redirect, so nothing could be
 // reused: one serverless call (plus a holder check for a gated creator) and
 // a full re-download per tile, per state change.
-function GalleryTile({ item, badge, locked, creatorImg, mark, onOpen, onReport }) {
+function GalleryTile({ item, badge, locked, creatorImg, mark, onOpen, onReport, reportHref }) {
   const isLocked = locked || !!item?.locked || !item?.src;
   return (
     <div className="relative aspect-square rounded-xl overflow-hidden bg-white/5 border border-white/5">
@@ -185,6 +185,9 @@ function GalleryTile({ item, badge, locked, creatorImg, mark, onOpen, onReport }
       {/* Only an item this viewer can actually see (it has a src) can be
           reported -- the server checks the src against the creator's
           current gallery. */}
+      {/* Signed out (reportHref): /api/creator/report-media needs an
+          account and signups may be closed, so the flag goes straight to the
+          no-account takedown form, prefilled with this item. */}
       {!isLocked && onReport && (
         <button
           type="button"
@@ -195,6 +198,16 @@ function GalleryTile({ item, badge, locked, creatorImg, mark, onOpen, onReport }
         >
           <Icons.flag className="h-3.5 w-3.5" />
         </button>
+      )}
+      {!isLocked && !onReport && reportHref && (
+        <a
+          href={reportHref(item)}
+          title="Report this"
+          aria-label="Report this photo or video"
+          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 text-white/80 hover:text-brand-pink flex items-center justify-center transition"
+        >
+          <Icons.flag className="h-3.5 w-3.5" />
+        </a>
       )}
     </div>
   );
@@ -370,10 +383,22 @@ export default function CreatorProfile({
     }
   };
 
-  const tileProps = { locked, creatorImg: creator.img, mark: overlayMark, onOpen: setViewing, onReport: isOwner ? null : reportGalleryItem };
   // What the takedown form's "where is the content" field is prefilled with
   // when a reporter follows the link out of the report dialog or the sidebar.
   const profileLocation = `Creator profile ${creator.handle || ''} (#${creator.id}) -- /creator/${creator.id}`;
+  // In-product reports (ReportModal -> /api/creator/report-media) need a
+  // signed-in account; a signed-out visitor is sent to the no-account
+  // takedown form instead, prefilled with the item -- the same split
+  // marketplace.js makes.
+  const signedOut = !viewerId;
+  const tileProps = {
+    locked,
+    creatorImg: creator.img,
+    mark: overlayMark,
+    onOpen: setViewing,
+    onReport: isOwner || signedOut ? null : reportGalleryItem,
+    reportHref: signedOut ? (item) => takedownFormHref({ content: `Gallery item ${item.src} on ${profileLocation}` }) : null,
+  };
 
   const markNotice = (
     <p className="mt-4 text-[11px] text-gray-500 text-center">
@@ -442,7 +467,10 @@ export default function CreatorProfile({
               <Icons.arrowLeft className="h-5 w-5" />
             </button>
             <div className="absolute top-4 right-5 text-right">
-              <Tagline>{pickTagline(creator.handle)}</Tagline>
+              {/* A demo persona is AI-generated and the banner above says it
+                  isn't a real person, so its cover never gets the rotation's
+                  "Real People" line -- only the neutral one. */}
+              <Tagline>{demo ? 'You’re Not Alone Here' : pickTagline(creator.handle)}</Tagline>
             </div>
           </div>
 
@@ -600,7 +628,14 @@ export default function CreatorProfile({
                   {mediaReportNotice && <p className="text-gray-400">{mediaReportNotice}</p>}
                   <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <Icons.flag className="h-3.5 w-3.5 shrink-0" />
-                    {creator.img && (
+                    {creator.img && (signedOut ? (
+                      <a
+                        href={takedownFormHref({ content: `Profile photo ${creator.img} on ${profileLocation}` })}
+                        className="hover:text-brand-pink underline"
+                      >
+                        Report profile photo
+                      </a>
+                    ) : (
                       <button
                         type="button"
                         onClick={() => setReportingMedia({ targetType: 'avatar', src: creator.img, label: 'this profile photo' })}
@@ -608,7 +643,7 @@ export default function CreatorProfile({
                       >
                         Report profile photo
                       </button>
-                    )}
+                    ))}
                     <a href={takedownFormHref({ content: profileLocation })} className="hover:text-brand-pink underline">
                       Takedown request
                     </a>
@@ -904,8 +939,8 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
   const [cannotSendReason, setCannotSendReason] = useState('');
   const [notice, setNotice] = useState('');
   // Per-conversation block (POST /api/messages/block) and per-message report
-  // (POST /api/messages/report). Blocking needs an existing conversation --
-  // the endpoint 404s otherwise -- so the control only shows once there is one.
+  // (POST /api/messages/report). The endpoint can block an account with no
+  // conversation yet, so the control shows once the thread has loaded.
   const [hasConversation, setHasConversation] = useState(false);
   const [blockedByMe, setBlockedByMe] = useState(false);
   const [blockedByThem, setBlockedByThem] = useState(false);
@@ -935,7 +970,8 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
       });
       const data = await readJson(res);
       if (!res.ok) throw new Error(data.error || 'Could not update the block.');
-      applyConversation(data.conversation);
+      if (data.conversation && typeof data.conversation === 'object') applyConversation(data.conversation);
+      else setBlockedByMe(next);
       setNotice(next ? `${otherName} is blocked.` : `${otherName} is unblocked.`);
       // canSend / the price were quoted under the old block state; re-read
       // them so Send isn't left disabled (or wrongly enabled) after this.
@@ -1073,7 +1109,7 @@ function MessagePanel({ otherUserId, otherName, otherImg, initialPriceCents, onC
         <div className="flex items-center gap-3 p-4 border-b border-white/10">
           {otherImg && <img src={otherImg} alt={otherName} className="w-9 h-9 rounded-full object-cover object-top" />}
           <p className="font-bold text-white flex-1 truncate">{otherName}</p>
-          {hasConversation && (
+          {!loading && (
             <button
               onClick={toggleBlock}
               disabled={blockBusy}
@@ -1199,6 +1235,12 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
   const [error, setError] = useState('');
   const [reporting, setReporting] = useState(null);
   const [reportNotice, setReportNotice] = useState('');
+  // Wall owner only: block the author of a comment (POST /api/wall/block,
+  // by comment id -- the public wall never carries the author's account id).
+  // Keyed by comment id; the list endpoint does not report block state, so
+  // this only knows about blocks made on this page view.
+  const [blockedPosts, setBlockedPosts] = useState({});
+  const [blockBusyId, setBlockBusyId] = useState(null);
 
   const submitReport = async ({ reason, category }) => {
     await postReport('/api/wall/report', { postId: reporting.id, reason, category });
@@ -1265,6 +1307,31 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
     }
   };
 
+  const toggleBlockAuthor = async (post) => {
+    if (blockBusyId != null) return;
+    const key = String(post.id);
+    const next = !blockedPosts[key];
+    if (next && typeof window !== 'undefined'
+      && !window.confirm(`Block ${post.authorName || 'this person'}? They won't be able to comment on your wall or message you until you unblock them.`)) return;
+    setBlockBusyId(key);
+    setError('');
+    try {
+      const res = await fetch('/api/wall/block', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: key, blocked: next }),
+      });
+      const data = await readJson(res);
+      if (!res.ok) throw new Error(data.error || 'Could not update the block.');
+      setBlockedPosts((prev) => ({ ...prev, [key]: data.blocked === true }));
+      setReportNotice(data.blocked ? `${post.authorName || 'That person'} is blocked.` : `${post.authorName || 'That person'} is unblocked.`);
+    } catch (err) {
+      setError(err.message || 'Could not update the block.');
+    } finally {
+      setBlockBusyId(null);
+    }
+  };
+
   const remove = async (id) => {
     try {
       const res = await fetch('/api/wall/delete', {
@@ -1323,6 +1390,16 @@ function Wall({ creatorId, viewerId, initialPosts, initialNextBefore, isWallOwne
                   {viewerId && !p.mine && (
                     <button onClick={() => setReporting(p)} className="text-xs text-gray-600 hover:text-brand-pink transition" title="Report">
                       <Icons.flag className="h-4 w-4" />
+                    </button>
+                  )}
+                  {isWallOwner && !p.mine && (
+                    <button
+                      onClick={() => toggleBlockAuthor(p)}
+                      disabled={blockBusyId != null}
+                      className="text-[11px] px-2 py-0.5 rounded-full border border-white/10 text-gray-500 hover:text-white hover:border-white/30 transition disabled:opacity-50"
+                      title={blockedPosts[String(p.id)] ? 'Unblock this commenter' : 'Block this commenter'}
+                    >
+                      {blockedPosts[String(p.id)] ? 'Unblock' : 'Block'}
                     </button>
                   )}
                   {(isWallOwner || p.mine) && (

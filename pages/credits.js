@@ -170,7 +170,8 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
         expectedFrom: proven,
       });
       const data = await submitPayment(sentHash);
-      setBalanceCents(data.balanceCents);
+      if (Number.isFinite(data.balanceCents)) setBalanceCents(data.balanceCents);
+      if (data.alreadyCredited) loadBalance();
       setResult(data);
     } catch (err) {
       if (sentHash) {
@@ -202,7 +203,11 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
       }
       await proveWallet();
       const data = await submitPayment(recoverHash.trim());
-      setBalanceCents(data.balanceCents);
+      // alreadyCredited: this hash was credited to this account before (a
+      // retry after a lost response). That is a success -- show it as one
+      // and re-read the balance, which may have moved since.
+      if (Number.isFinite(data.balanceCents)) setBalanceCents(data.balanceCents);
+      if (data.alreadyCredited) loadBalance();
       setResult(data);
       setShowRecovery(false);
     } catch (err) {
@@ -248,8 +253,16 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
 
           {result ? (
             <div className="text-center py-10">
-              <p className="text-lg font-bold mb-2">Credited {formatCredits(result.creditedCents)}</p>
-              <p className="text-xs text-gray-500 mb-2">(${(result.feeCents / 100).toFixed(2)} kept as the {FEES.DEPOSIT_BPS / 100}% deposit fee)</p>
+              <p className="text-lg font-bold mb-2">
+                {result.alreadyCredited ? 'Already credited: ' : 'Credited '}
+                {formatCredits(Number(result.creditedCents) || 0)}
+              </p>
+              {result.alreadyCredited && (
+                <p className="text-xs text-gray-400 mb-2">
+                  This payment was added to your account earlier, so nothing more was added now. Your balance has been refreshed.
+                </p>
+              )}
+              <p className="text-xs text-gray-500 mb-2">(${((Number(result.feeCents) || 0) / 100).toFixed(2)} kept as the {FEES.DEPOSIT_BPS / 100}% deposit fee)</p>
               <p className="text-xs text-gray-500 mb-6">
                 Credits are final: they don&apos;t expire, and they can&apos;t be refunded or cashed out.
               </p>

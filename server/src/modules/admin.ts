@@ -121,16 +121,45 @@ export const admin: FastifyPluginAsync = async (app) => {
   // The takedown itself (see the comment on DELETE /media/:id below); shared with
   // /reports/:id/resolve, which takes down a reported post's, message's or
   // listing's media the same way.
+  //
+  // Cost is bounded per ROOT, not per copy: a mass DM writes one media copy
+  // row per subscriber, and this used to list and CDN-purge the watermark
+  // prefix of every copy one after another (and the report route called it
+  // once per copy on top), so a drop to 1,000 fans meant ~1M sequential
+  // storage and CDN calls and the resolve never finished. Watermarked copies
+  // are now cached under the ROOT's id (media.ts / lib/watermark.ts), so one
+  // prefix covers every viewer of every copy; per-copy prefixes can only
+  // hold caches written before that change, and are cleaned in the
+  // background with bounded concurrency (the rows are already REJECTED, so
+  // nothing is served from them meanwhile).
   const takedownMedia = async (mediaId: string, log: { error: (o: unknown, m?: string) => void }) => {
     const target = await prisma.media.findUniqueOrThrow({ where: { id: mediaId } });
     const root = target.sourceMediaId
       ? (await prisma.media.findUnique({ where: { id: target.sourceMediaId } })) ?? target
       : target;
+    const REJECT = { status: 'REJECTED' as const, hlsKey: null, previewKey: null };
+    // The root first, in its own statement, THEN every copy in a second one.
+    // A mass DM still delivering writes each new copy in a transaction that
+    // holds the source row FOR SHARE and refuses a source that is no longer
+    // READY (workers/broadcast.ts). So either that copy committed before the
+    // root's update could take its row lock -- and the second statement,
+    // started after, sees it -- or the worker sees the root REJECTED and
+    // stops. One combined statement could miss a copy committed while it
+    // waited on the lock (its snapshot predates it).
+    const first = [...new Set([root.id, target.id])];
+    const rootRejected = await prisma.media.updateMany({ where: { id: { in: first } }, data: REJECT });
+    const copiesRejected = await prisma.media.updateMany({ where: { sourceMediaId: root.id, id: { notIn: first } }, data: REJECT });
     const copies = await prisma.media.findMany({ where: { sourceMediaId: root.id }, select: { id: true } });
-    const ids = [root.id, target.id, ...copies.map((c) => c.id)];
-    const rejected = await prisma.media.updateMany({
-      where: { id: { in: [...new Set(ids)] } },
-      data: { status: 'REJECTED', hlsKey: null, previewKey: null },
+
+    // Every message carrying this content goes too: its text blanked and its
+    // price zeroed -- nothing is left to sell, and for a mass DM the copies
+    // are one row per subscriber (core/reports.ts). A message has no
+    // "removed" flag. Copies the broadcast worker would write later are
+    // refused by it (the source is no longer READY) and it blanks the whole
+    // drop itself.
+    await prisma.message.updateMany({
+      where: { media: { some: { OR: [{ id: root.id }, { sourceMediaId: root.id }] } } },
+      data: { text: '', priceCents: 0 },
     });
 
     const errors: string[] = [];
@@ -140,14 +169,57 @@ export const admin: FastifyPluginAsync = async (app) => {
     const outputPrefix = `media/${root.ownerId}/${root.id}/`;
     await attempt('raw object', () => deleteObject(storageKeyOf(root.key)));
     await attempt('transcode output', () => deletePrefix(outputPrefix));
-    for (const id of new Set(ids)) await attempt(`watermarked copies of ${id}`, () => deletePrefix(wmPrefix(id)));
+    await attempt('watermarked copies', () => deletePrefix(wmPrefix(root.id)));
 
     const purged: boolean[] = [];
     purged.push(await purgeCdnPrefix(`/${storageKeyOf(root.key)}`));
     purged.push(await purgeCdnPrefix(`/${outputPrefix}`));
-    for (const id of new Set(ids)) purged.push(await purgeCdnPrefix(`/${wmPrefix(id)}`));
+    purged.push(await purgeCdnPrefix(`/${wmPrefix(root.id)}`));
 
-    return { ok: errors.length === 0, rootMediaId: root.id, rejected: rejected.count, storageErrors: errors, cdnPurged: purged.every(Boolean) };
+    const legacy = [...new Set([target.id, ...copies.map((c) => c.id)])].filter((id) => id !== root.id);
+    if (legacy.length) void cleanupLegacyWatermarks(root.id, legacy, log);
+
+    return {
+      ok: errors.length === 0, rootMediaId: root.id, rejected: rootRejected.count + copiesRejected.count,
+      storageErrors: errors, cdnPurged: purged.every(Boolean),
+      legacyCopyCachesCleanedInBackground: legacy.length,
+    };
+  };
+
+  /**
+   * Deletes (and CDN-purges) per-copy watermark prefixes left by the old
+   * per-copy cache layout. Background, bounded to a few calls in flight, and
+   * logged per failure: it must not hold up the takedown's response (nginx
+   * times out at 75s), and every row it concerns is already REJECTED.
+   */
+  const cleanupLegacyWatermarks = async (rootId: string, ids: string[], log: { error: (o: unknown, m?: string) => void }) => {
+    const queue = [...ids];
+    const workerLoop = async () => {
+      for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        try { await deletePrefix(wmPrefix(id)); } catch (e) { log.error({ err: e, mediaId: id, rootMediaId: rootId }, 'takedown: legacy watermarked copies failed'); }
+        try { await purgeCdnPrefix(`/${wmPrefix(id)}`); } catch (e) { log.error({ err: e, mediaId: id, rootMediaId: rootId }, 'takedown: legacy watermark purge failed'); }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(8, queue.length) }, workerLoop)).catch(() => {});
+  };
+
+  /**
+   * Takes down the given media rows, once per distinct ROOT: one
+   * takedownMedia call already covers a root and every copy of it, so
+   * calling it per copy row repeated all of that work for every subscriber.
+   */
+  const takedownRoots = async (mediaIds: string[], log: { error: (o: unknown, m?: string) => void }) => {
+    if (!mediaIds.length) return [];
+    const rows = await prisma.media.findMany({ where: { id: { in: mediaIds } }, select: { id: true, sourceMediaId: true } });
+    const seen = new Set<string>();
+    const out: Awaited<ReturnType<typeof takedownMedia>>[] = [];
+    for (const r of rows) {
+      const rootId = r.sourceMediaId ?? r.id;
+      if (seen.has(rootId)) continue;
+      seen.add(rootId);
+      out.push(await takedownMedia(r.id, log));
+    }
+    return out;
   };
 
   app.get('/reports', async (req: any) =>
@@ -262,7 +334,7 @@ export const admin: FastifyPluginAsync = async (app) => {
           // holding the id. Taken down like the message and listing branches.
           await prisma.post.update({ where: { id: r.targetId }, data: { removed: true } });
           const media = await prisma.media.findMany({ where: { postId: r.targetId }, select: { id: true } });
-          for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
+          takedowns.push(...(await takedownRoots(media.map((m) => m.id), req.log)));
         } else if (r.targetType === 'message') {
           // The message's media is taken down like any NCII takedown (storage,
           // copies, CDN), and its text blanked -- a message has no "removed"
@@ -282,10 +354,18 @@ export const admin: FastifyPluginAsync = async (app) => {
           // this report ACTIONED, blanks every copy and stops
           // (core/reports.ts broadcastTakenDown), and the route refuses to
           // queue the same requestId again.
+          //
+          // Blanked FIRST, with every copy's media rejected in the same
+          // transaction, so the removed text and media stop being served
+          // before any storage/CDN work starts; then one takedown per
+          // distinct root (a drop to N subscribers is N copies of ONE root).
           const ids = await messageAndBroadcastSiblings(r.targetId);
+          await prisma.$transaction([
+            prisma.message.updateMany({ where: { id: { in: ids } }, data: { text: '', priceCents: 0 } }),
+            prisma.media.updateMany({ where: { messageId: { in: ids } }, data: { status: 'REJECTED', hlsKey: null, previewKey: null } }),
+          ]);
           const media = await prisma.media.findMany({ where: { messageId: { in: ids } }, select: { id: true } });
-          for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
-          await prisma.message.updateMany({ where: { id: { in: ids } }, data: { text: '', priceCents: 0 } });
+          takedowns.push(...(await takedownRoots(media.map((m) => m.id), req.log)));
         } else if (r.targetType === 'listing') {
           const l = await prisma.listing.findUniqueOrThrow({ where: { id: r.targetId }, select: { saleType: true, status: true } });
           // A live auction is cancelled with the leader's hold returned; a
@@ -294,7 +374,7 @@ export const admin: FastifyPluginAsync = async (app) => {
           if (l.saleType === 'AUCTION' && l.status === 'ACTIVE') await money(prisma, (tx) => cancelAuction(tx, r.targetId, 'removed_by_admin'));
           else await prisma.listing.updateMany({ where: { id: r.targetId, status: 'ACTIVE' }, data: { status: 'REMOVED' } });
           const media = await prisma.media.findMany({ where: { listingId: r.targetId }, select: { id: true } });
-          for (const m of media) takedowns.push(await takedownMedia(m.id, req.log));
+          takedowns.push(...(await takedownRoots(media.map((m) => m.id), req.log)));
           // Its free preview photos too: past buyers can still open the
           // listing page (GET /marketplace/listings/:id), which returns them.
           // They are storage keys of the creator's own uploaded images
@@ -306,7 +386,7 @@ export const admin: FastifyPluginAsync = async (app) => {
           await prisma.listing.update({ where: { id: r.targetId }, data: { images: [] } });
           const keys = (imgs?.images ?? []).filter((k) => k.startsWith('raw/'));
           const imageMedia = keys.length ? await prisma.media.findMany({ where: { key: { in: keys } }, select: { id: true } }) : [];
-          for (const m of imageMedia) takedowns.push(await takedownMedia(m.id, req.log));
+          takedowns.push(...(await takedownRoots(imageMedia.map((m) => m.id), req.log)));
           for (const u of (imgs?.images ?? []).filter((k) => !k.startsWith('raw/'))) {
             try { await purgeCdnPrefix(new URL(u).pathname); } catch { /* not a URL: nothing cached under it */ }
           }
@@ -390,9 +470,16 @@ export const admin: FastifyPluginAsync = async (app) => {
    *  - Storage: the raw object, the whole transcode output prefix
    *    (media/<owner>/<id>/ -- HLS playlists, segments, preview.jpg) and every
    *    per-viewer watermarked copy (wm/<mediaId>/) of the source and of each
-   *    copy. Previously only the raw object went.
+   *    copy (watermarks are cached under the root's id; per-copy prefixes
+   *    from the older layout are cleaned in the background). Previously only
+   *    the raw object went.
    *  - The CDN edge is purged for the same paths (needs BUNNY_API_KEY); the
    *    response says whether that happened.
+   *  - Every message carrying the content (each subscriber's copy of a mass
+   *    DM included) has its text blanked and its price zeroed, and a mass DM
+   *    still DELIVERING stops: the broadcast worker refuses to write a copy
+   *    of a source that is no longer READY and blanks the whole drop. No
+   *    Report row is needed for that -- this route writes none.
    *
    * Rows are rejected first, so nothing is served while storage is cleaned.
    * Storage failures are reported, not swallowed: a takedown that silently
@@ -450,6 +537,9 @@ export const admin: FastifyPluginAsync = async (app) => {
    *    /creators/:id/freeze) is its own explicit step -- and refused for a
    *    HELD payout that carries a txHash (held out of FAILED: a signed
    *    transfer may still land, so only mark_sent or refund may settle it).
+   *    A payout HELD for a treasury outflow limit (PAYOUT_MAX_CENTS /
+   *    PAYOUT_DAILY_MAX_CENTS, workers/payout-worker.ts) is held again by the
+   *    worker until it fits; over the per-payout cap, settle it by hand.
    */
   app.post('/payouts/:id/resolve', async (req: any, reply) => {
     const b = z.discriminatedUnion('action', [

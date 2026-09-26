@@ -59,11 +59,20 @@ export async function messageAndBroadcastSiblings(messageId: string): Promise<st
  * actioned report row itself is that durable marker (no Redis key to expire
  * or lose, no schema change).
  */
+//
+// A media takedown with no report (DELETE /admin/media/:id, the direct NCII /
+// TAKE IT DOWN route) counts too: it REJECTs the source and every copy, and a
+// copy of a broadcast is never REJECTED for any other reason (copies are not
+// transcoded; they are written READY from their source), so a REJECTED media
+// row on any copy is the same durable marker.
 export async function broadcastTakenDown(senderId: string, broadcastId: string): Promise<boolean> {
   const rows = await prisma.$queryRaw<{ one: number }[]>`
     SELECT 1 AS one FROM "Report" r JOIN "Message" m ON m.id = r."targetId"
     WHERE r."targetType" = 'message' AND r.status = 'ACTIONED'
       AND m."senderId" = ${senderId} AND m."broadcastId" = ${broadcastId}
+    UNION ALL
+    SELECT 1 AS one FROM "Media" md JOIN "Message" m ON m.id = md."messageId"
+    WHERE md.status = 'REJECTED' AND m."senderId" = ${senderId} AND m."broadcastId" = ${broadcastId}
     LIMIT 1`;
   return rows.length > 0;
 }
@@ -81,6 +90,6 @@ export async function blankBroadcast(senderId: string, broadcastId: string) {
   if (!ids.length) return;
   await prisma.$transaction([
     prisma.message.updateMany({ where: { id: { in: ids } }, data: { text: '', priceCents: 0 } }),
-    prisma.media.updateMany({ where: { messageId: { in: ids } }, data: { status: 'REJECTED' } }),
+    prisma.media.updateMany({ where: { messageId: { in: ids } }, data: { status: 'REJECTED', hlsKey: null, previewKey: null } }),
   ]);
 }

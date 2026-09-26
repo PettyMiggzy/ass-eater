@@ -225,9 +225,30 @@ git clone <your repo url> /opt/onlyone/app
 cp -p /opt/onlyone/server.old/.env /opt/onlyone/app/server/.env
 [ -f /opt/onlyone/server.old/.env.workers ] && cp -p /opt/onlyone/server.old/.env.workers /opt/onlyone/app/server/.env.workers
 ln -s /opt/onlyone/app/server /opt/onlyone/server
+```
+
+**Before running `app-setup.sh`, take the signing secrets out of `.env`.** A
+box set up by the older runbook has `TREASURY_PRIVATE_KEY` (and possibly
+`DEPOSIT_MNEMONIC`) in `.env`, which the internet-facing API and the media
+workers (ffmpeg/libvips over untrusted uploads) both load. `app-setup.sh`
+refuses to install or restart anything while either is there, and the API
+and media workers refuse to start with either in their environment. Move
+them (as root, still in the same shell):
+
+```bash
+cd /opt/onlyone/server
+touch .env.workers && chown root:root .env.workers && chmod 600 .env.workers
+grep -E '^[[:space:]]*(export[[:space:]]+)?(TREASURY_PRIVATE_KEY|DEPOSIT_MNEMONIC)[[:space:]]*=' .env >> .env.workers
+sed -i -E '/^[[:space:]]*(export[[:space:]]+)?(TREASURY_PRIVATE_KEY|DEPOSIT_MNEMONIC)[[:space:]]*=/d' .env
+grep -cE '^(TREASURY_PRIVATE_KEY|DEPOSIT_MNEMONIC)=' .env.workers   # the lines are there now
 bash /opt/onlyone/server/deploy/app-setup.sh
 curl https://api.joinonlyone.com/health
 ```
+
+If a `DEPOSIT_MNEMONIC` was moved, the API now derives deposit addresses from
+`DEPOSIT_XPUB` instead: derive it once the build exists and add it to `.env`
+(steps in "Moving the signing secrets out of .env" below), then
+`systemctl restart onlyone-api`.
 
 Check the printed `Deployed commit`, then, once everything is verified,
 `rm -rf /opt/onlyone/server.old` (it contains secrets -- do not leave it
@@ -249,10 +270,12 @@ In the LiveKit project's webhook settings, point it at
 `room_finished` and `participant_joined`. `participant_joined` is what
 removes a per-minute viewer who reconnects without paid time.
 
-## One-time: moving an existing box to the split env files
+## Moving the signing secrets out of .env
 
-A droplet set up before `.env.workers` existed has the treasury key and the
-mnemonic in `.env`, which the API loads. To move them:
+(One-time, for a droplet set up before `.env.workers` existed.) Such a box
+has the treasury key and the mnemonic in `.env`, which the API and the media
+workers load; `app-setup.sh` refuses to deploy until they are moved, and the
+API and media workers refuse to start with either set. To move them:
 
 ```bash
 cd /opt/onlyone/server

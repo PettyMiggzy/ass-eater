@@ -118,12 +118,60 @@ async function provablyNeverSent(p: { id: string; txHash: string; nonce: number;
 }
 
 /**
+ * Treasury outflow limits, read from THIS process's environment -- never from
+ * the database. Every other check before signing (the payout row, the
+ * creator's standing, the ledger) lives in Postgres, and Postgres is
+ * writable by every process that loads .env -- including the media workers,
+ * which run ffmpeg/libvips over untrusted uploads. A parser exploit there
+ * could INSERT a PENDING payout to its own address for any approved creator
+ * and this worker, the only process holding the key, would sign it (a ledger
+ * cross-check would not help: the same access can forge the ledger). So
+ * what DB access alone can move is bounded here:
+ *  - PAYOUT_MAX_CENTS (default $5,000): a larger payout is HELD, to be
+ *    settled by hand (hold + mark_sent, POST /admin/payouts/:id/resolve);
+ *  - PAYOUT_DAILY_MAX_CENTS (default $20,000): rolling 24h outflow. A payout
+ *    that would cross it is HELD; release it once the window has room.
+ * The 24h total is the larger of what this process itself signed (kept in
+ * memory, which a database writer cannot rewrite) and what the Payout table
+ * records as signed; an attacker can only make the DB figure smaller, and
+ * the in-memory figure still counts. A restart resets the in-memory figure,
+ * so the per-payout cap is the bound that always holds.
+ */
+const MAX_PAYOUT_CENTS = envInt('PAYOUT_MAX_CENTS', 500_000, 100);
+const DAILY_MAX_CENTS = envInt('PAYOUT_DAILY_MAX_CENTS', 2_000_000, 100);
+const DAY_MS = 24 * 60 * 60_000;
+const signedHere: { at: number; cents: number }[] = [];
+
+/** Records an outflow this process has signed (called before broadcasting). */
+function noteSigned(cents: number) {
+  const cutoff = Date.now() - DAY_MS;
+  while (signedHere.length && signedHere[0].at < cutoff) signedHere.shift();
+  signedHere.push({ at: Date.now(), cents });
+}
+
+/** Why this payout may not be signed automatically, or null. Exported for tests. */
+export async function outflowLimitReason(payoutId: string, amountCents: number): Promise<string | null> {
+  if (!Number.isFinite(amountCents) || amountCents <= 0) return 'held: invalid amount';
+  if (amountCents > MAX_PAYOUT_CENTS) return `held: over the per-payout limit (PAYOUT_MAX_CENTS) -- settle by hand`;
+  const since = Date.now() - DAY_MS;
+  const here = signedHere.filter((e) => e.at >= since).reduce((a, e) => a + e.cents, 0);
+  const agg = await prisma.payout.aggregate({
+    _sum: { amountCents: true },
+    where: { id: { not: payoutId }, signedAt: { gte: new Date(since) }, status: { in: ['PROCESSING', 'SENT', 'FAILED', 'HELD'] } },
+  });
+  const recorded = Number(agg._sum.amountCents ?? 0n);
+  if (Math.max(here, recorded) + amountCents > DAILY_MAX_CENTS) return 'held: daily payout limit reached (PAYOUT_DAILY_MAX_CENTS) -- release it later';
+  return null;
+}
+
+/**
  * Claims PENDING -> PROCESSING with a guarded update (only one run can own a
  * payout) and then checks the creator may still be paid. A creator frozen,
  * suspended, banned or no longer approved (KYC / site standing) after requesting -- a moderation action while the
  * queue was busy with another payout's receipt wait -- is NOT paid: the
  * payout is HELD, money still reserved, for an admin to release or refund.
  * Refunding automatically would hand a banned creator their balance back.
+ * So is one over the treasury outflow limits (outflowLimitReason above).
  */
 async function claimPayout(payoutId: string) {
   const claimed = await prisma.payout.updateMany({ where: { id: payoutId, status: 'PENDING' }, data: { status: 'PROCESSING' } });
@@ -137,10 +185,12 @@ async function claimPayout(payoutId: string) {
   // withdrawn without a suspension -- KYC set to REJECTED, or the site moving
   // the creator back to 'pending' -- while the payout sat in the queue.
   const approved = creatorMayBePaid(p.creator.user);
-  if (p.creator.payoutsFrozen || !approved || p.asset !== 'STABLE') {
+  const overLimit = approved && !p.creator.payoutsFrozen && p.asset === 'STABLE' ? await outflowLimitReason(p.id, Number(p.amountCents)) : null;
+  if (p.creator.payoutsFrozen || !approved || p.asset !== 'STABLE' || overLimit) {
     const why = p.asset !== 'STABLE' ? 'held: payouts are USDG only'
       : p.creator.payoutsFrozen || p.creator.user.status !== 'ACTIVE' ? 'held: creator frozen or not active'
-        : 'held: creator not approved';
+        : !approved ? 'held: creator not approved'
+          : overLimit!;
     await prisma.payout.updateMany({ where: { id: p.id, status: 'PROCESSING', txHash: null }, data: { status: 'HELD', error: why } });
     await publish(p.creatorId, { type: 'payout', status: 'HELD' });
     return null;
@@ -148,7 +198,7 @@ async function claimPayout(payoutId: string) {
   return p;
 }
 
-registerWorker(new Worker('payout', async (job) => {
+async function processPayoutJob(job: { data: { payoutId: string } }) {
   // Never sign on an unverified scale. The payout amount is converted with
   // HEDGE_STABLE.decimals from configuration; a typo there (6 -> 2) sends a
   // ten-thousandth of what is owed, the transfer succeeds, and the row is
@@ -190,6 +240,7 @@ registerWorker(new Worker('payout', async (job) => {
       const serialized = await wallet.signTransaction(request as any);
       hash = keccak256(serialized);
       nonce = request.nonce;
+      noteSigned(Number(p.amountCents));
       await prisma.payout.update({ where: { id: p.id }, data: { txHash: hash, nonce, signedAt: new Date(), assetAmount: raw.toString(), priceUsed: px } });
       await wallet.sendRawTransaction({ serializedTransaction: serialized });
     });
@@ -215,7 +266,10 @@ registerWorker(new Worker('payout', async (job) => {
     }
     await publish(p.creatorId, { type: 'payout', status: refunded ? 'REFUNDED' : 'FAILED', refunded });
   }
-}, { ...connection, concurrency: 1 }));
+}
+// Not started under the test runner, which imports this module for
+// outflowLimitReason only (the same guard as token-burn.ts).
+if (process.env.NODE_ENV !== 'test') registerWorker(new Worker('payout', processPayoutJob, { ...connection, concurrency: 1 }));
 
 /**
  * Settles payouts nothing else will ever touch again.
@@ -329,6 +383,8 @@ const tick = async () => {
   reconciling = true;
   try { await reconcilePayouts(); } catch (e) { console.error('payout reconcile', e); } finally { reconciling = false; }
 };
-const timer = setInterval(tick, RECONCILE_EVERY_MS);
-onStop(() => clearInterval(timer));
-setTimeout(tick, 30_000);
+if (process.env.NODE_ENV !== 'test') {
+  const timer = setInterval(tick, RECONCILE_EVERY_MS);
+  onStop(() => clearInterval(timer));
+  setTimeout(tick, 30_000);
+}

@@ -180,6 +180,10 @@ export default function OrdersPage({ sessionUser, viewerMark }) {
                       <p className="text-xs text-gray-500 mt-0.5">
                         {o.createdAt ? new Date(o.createdAt).toLocaleDateString() : ''} · {o.kind === 'physical' ? 'Ships to you' : 'Digital'}
                       </p>
+                      {/* The number support asks for -- a shipping-address
+                          erasure request (Privacy §7) or any order question
+                          quotes it. */}
+                      {o.id != null && <p className="text-[11px] text-gray-500 mt-0.5">Order #{String(o.id)}</p>}
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-bold text-sm">${(((o.priceCents || 0) + (o.shippingCents || 0)) / 100).toFixed(2)}</p>

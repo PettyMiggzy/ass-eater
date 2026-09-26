@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import { sweepOrphanedMedia, blobConfigured, pendingDeletionCounts } from '../../../lib/media';
 import { movePreservedToEvidence } from '../../../lib/media-preservation';
 import { deliverStandingPushes } from '../../../lib/standing-outbox';
+import { lapsedAccountSuspensionCreatorIds } from '../../../lib/users-store';
+import { pushCreatorStatus } from '../../../lib/server-api';
 
 /**
  * GET /api/cron/maintenance -- the scheduled job (vercel.json "crons").
@@ -18,7 +20,11 @@ import { deliverStandingPushes } from '../../../lib/standing-outbox';
  *     deletions are retried here, against a 48-hour legal clock;
  *   - moving preserved evidence into the evidence/ prefix
  *     (lib/media-preservation.js);
- *   - undelivered site -> server/ standing pushes (lib/standing-outbox.js).
+ *   - undelivered site -> server/ standing pushes (lib/standing-outbox.js),
+ *     and a fresh push for every creator account whose ACCOUNT suspension
+ *     lapsed recently: an unapproved creator's account suspension is sent to
+ *     server/ with no end (lib/users-store.js combinedCreatorPushStanding), so
+ *     nothing else would ever tell server/ it is over.
  * Each step is independent: one failing does not stop the others.
  *
  * proxy.js must let /api/cron/ through the geoblock and preview gate (the
@@ -55,6 +61,14 @@ export default async function handler(req, res) {
       out.ok = false;
       console.error('[cron/maintenance] evidence move failed:', err);
     }
+  }
+  try {
+    const lapsed = await lapsedAccountSuspensionCreatorIds();
+    for (const cid of lapsed) await pushCreatorStatus(cid);
+    out.lapsedSuspensionsRepushed = lapsed.length;
+  } catch (err) {
+    out.ok = false;
+    console.error('[cron/maintenance] lapsed-suspension re-push failed:', err);
   }
   try {
     out.standing = await deliverStandingPushes({ limit: 100 });

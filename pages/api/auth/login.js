@@ -2,6 +2,7 @@ import { findUserByEmail, verifyPassword } from '../../../lib/users-store';
 import { createSessionToken, setSessionCookie } from '../../../lib/session';
 import { checkRateLimit, clearFailures, clientIp, consumeAttempt, recordFailure, refundAttempt } from '../../../lib/rate-limit';
 import { effectiveUserStatus } from '../../../lib/user-moderation';
+import { EMAIL_IDENTIFIER_MAX, PASSWORD_MAX } from '../../../lib/field-validation';
 
 // Two brakes, and both of them are aimed at the host doing the guessing
 // rather than at the account being guessed at:
@@ -46,6 +47,16 @@ export default async function handler(req, res) {
   const password = String(req.body?.password || '');
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required' });
+  }
+  // Bounded BEFORE anything below sees them. The identifier is embedded in
+  // two in-memory rate-limit keys (and the limiter's map is capped by key
+  // COUNT, not bytes), then looked up in the database and, with the password,
+  // run through bcrypt -- so an unbounded one let a spray of megabyte
+  // identifiers from rotating addresses exhaust an instance's memory. Nothing
+  // longer can exist: signup refuses both past these same limits (a username
+  // is shorter still).
+  if (email.length > EMAIL_IDENTIFIER_MAX || password.length > PASSWORD_MAX) {
+    return res.status(400).json({ error: 'Invalid email or password' });
   }
 
   const ip = clientIp(req);

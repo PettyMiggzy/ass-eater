@@ -14,6 +14,14 @@ EnvironmentFile=/opt/onlyone/server/.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure
 RestartSec=3
+# Contain an overrun to this unit: the droplet has 2 GB shared with
+# Postgres, Redis and the two worker units, and an API memory spike must get
+# the API restarted, not get the kernel OOM killer to take Postgres. The one
+# heavy thing this process does is per-viewer watermarking, which is bounded
+# to fit well inside this (lib/watermark.ts: one generation at a time,
+# downscaled to a 2560px long edge / 20M animated pixels).
+MemoryHigh=550M
+MemoryMax=750M
 NoNewPrivileges=true
 PrivateTmp=true
 # The code and .env are read-only to this process whatever the file modes

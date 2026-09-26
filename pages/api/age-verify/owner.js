@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { checkRateLimit, clearFailures, clientIp, recordFailure } from '../../../lib/rate-limit';
+import { checkRateLimit, clearFailures, clientNetwork, recordFailure } from '../../../lib/rate-limit';
+import { consumeBypassAttempt, refundBypassAttempt } from '../../../lib/bypass-guard';
 import {
   AGE_VERIFIED_COOKIE_NAME,
   ageVerificationSecret,
@@ -58,12 +59,19 @@ import { safeRedirectPath } from '../../../lib/safe-redirect';
 // than 43 random characters. Same honest caveat as lib/rate-limit.js's own
 // header: these counters live in one serverless instance's memory, so this is
 // a speed bump against cheap guessing from one host, NOT a hard lockout. It
-// does not make a weak key safe; it makes a moderate key defensible.
+// does not make a weak key safe; it makes a moderate key defensible. The
+// per-client bucket is the /64 for IPv6 (one customer's whole routed prefix),
+// not the exact address.
+//
+// The bound that actually holds is the GLOBAL budget in lib/bypass-guard.js:
+// shared across every instance and every client address, and while it is
+// spent all attempts are refused, the right key included. So the most keys
+// anyone on the internet can try is BYPASS_GLOBAL_BUDGET per window.
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES_PER_IP = 8;
 
 export default async function handler(req, res) {
-  const bucket = `owner-access:ip:${clientIp(req)}`;
+  const bucket = `owner-access:net:${clientNetwork(req)}`;
   const { limited } = checkRateLimit(bucket, { limit: MAX_FAILURES_PER_IP, windowMs: WINDOW_MS });
   if (limited) {
     // Still a 404, for the same reason every other failure here is: the
@@ -86,6 +94,15 @@ export default async function handler(req, res) {
     return res.status(404).json({ error: 'Not found' });
   }
 
+  // The GLOBAL budget (lib/bypass-guard.js), shared across instances and
+  // client addresses. Counted before the key is compared, and while it is
+  // spent even the right key is refused -- otherwise it would still be an
+  // oracle, just a slower one.
+  const { allowed } = await consumeBypassAttempt('owner');
+  if (!allowed) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
   // Hashed to a fixed length before comparing: timingSafeEqual throws on
   // mismatched sizes, and the key's length is itself not worth leaking.
   const digest = (value) => crypto.createHash('sha256').update(String(value), 'utf8').digest();
@@ -100,6 +117,7 @@ export default async function handler(req, res) {
   // A correct key clears the budget, so the owner mistyping it a few times on
   // a phone never locks himself out of his own site.
   clearFailures(bucket);
+  await refundBypassAttempt('owner');
 
   // `via` records how this cookie was obtained, so a future reader of a
   // decoded token can tell an owner bypass from a real AgeChecker pass, and

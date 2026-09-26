@@ -51,8 +51,9 @@ export default async function handler(req, res) {
     // report now. A POSSIBLE MINOR report also puts those files on HOLD in the
     // same transaction (lib/media-preservation.js): the seller can no longer
     // delete them before an admin looks -- 18 U.S.C. 2258A needs them kept if
-    // the report is confirmed. A hold does not take the listing down (an
-    // unverified report must not be a one-click takedown); reports-resolve
+    // the report is confirmed. A hold does not take the listing down and does
+    // not stop it selling (an unverified report must not be a one-click
+    // takedown -- checkout ignores holds, see listingMediaBlocked); reports-resolve
     // turns it into a preservation on removal and releases it on dismissal.
     const reportedContent = snapshotListing(rows[0].data);
     const report = await addReport({

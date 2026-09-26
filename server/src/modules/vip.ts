@@ -22,8 +22,18 @@ export const vip: FastifyPluginAsync = async (app) => {
   // (GET /vip/status reports it); a mismatch is a 409 price_changed, never a
   // charge at a price they didn't see. Extends from the current expiry when
   // there is one, so paying early never burns the remainder.
+  //
+  // It also carries the VIP expiry the fan was shown (GET /vip/status's
+  // vipUntil, null when they have never had VIP), REQUIRED: a double-tap or a
+  // retry after a lost response arrives with the expiry from before the
+  // first purchase, and is answered with the current status and
+  // `already: true` instead of charging a second month (core/vip.ts).
   app.post('/subscribe', { preHandler: app.auth }, async (req) => {
-    const { expectedPriceCents } = z.object({ expectedPriceCents: z.number().int().min(1) }).parse(req.body ?? {});
-    return money(prisma, (tx) => subscribeVip(tx, req.user.id, expectedPriceCents));
+    const { expectedPriceCents, expectedVipUntil } = z.object({
+      expectedPriceCents: z.number().int().min(1),
+      expectedVipUntil: z.string().datetime({ offset: true }).nullable(),
+    }).parse(req.body ?? {});
+    const expected = expectedVipUntil === null ? null : new Date(expectedVipUntil);
+    return money(prisma, (tx) => subscribeVip(tx, req.user.id, expectedPriceCents, expected));
   });
 };

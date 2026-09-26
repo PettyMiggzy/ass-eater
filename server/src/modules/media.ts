@@ -94,6 +94,12 @@ export const media: FastifyPluginAsync = async (app) => {
       ? await prisma.user.findUnique({ where: { id: userId }, select: { username: true } })
       : null;
 
+    // A mass-DM copy is the same content as its source (sourceMediaId): the
+    // trace code and the watermark cache are keyed by the ROOT, so one image
+    // is generated per viewer however many copies reach them, and a takedown
+    // clears one prefix (modules/admin.ts).
+    const rootId = m.sourceMediaId ?? m.id;
+
     if (m.hlsKey) {
       const dir = m.hlsKey.slice(0, m.hlsKey.lastIndexOf('/') + 1);
       // No per-viewer mark baked into the HLS segments (that needs a per-viewer
@@ -101,7 +107,7 @@ export const media: FastifyPluginAsync = async (app) => {
       // as a repositioning on-screen overlay during playback as a deterrent.
       return {
         type: 'hls', url: cdnSignedUrl(`/${m.hlsKey}`, 900, `/${dir}`), expiresIn: 900,
-        watermark: viewer ? { label: viewer.username, code: traceCode(m.id, userId!) } : null,
+        watermark: viewer ? { label: viewer.username, code: traceCode(rootId, userId!) } : null,
       };
     }
 
@@ -109,7 +115,15 @@ export const media: FastifyPluginAsync = async (app) => {
     // the source's (core/media-key.ts).
     const objectKey = storageKeyOf(m.key);
     if (viewer) {
-      const key = await getOrCreateWatermarkedUrl(m.id, objectKey, userId!, viewer.username, m.mime);
+      let key: string;
+      try {
+        key = await getOrCreateWatermarkedUrl(rootId, objectKey, userId!, viewer.username, m.mime);
+      } catch (err: any) {
+        // The API's watermark queue is full (lib/watermark.ts): refuse
+        // rather than pile more decodes into this process. Retryable.
+        if (err?.message === 'watermark_busy') return reply.code(503).header('Retry-After', '2').send({ error: 'busy_retry' });
+        throw err;
+      }
       return { type: 'image', url: cdnSignedUrl(`/${key}`, 900), expiresIn: 900 };
     }
     return { type: 'image', url: cdnSignedUrl(`/${objectKey}`, 900), expiresIn: 900 };

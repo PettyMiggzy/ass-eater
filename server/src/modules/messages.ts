@@ -22,6 +22,43 @@ const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, b
 export const broadcastIdFor = (creatorId: string, requestId: string) =>
   createHash('sha256').update(`broadcast\0${creatorId}\0${requestId}`).digest('hex').slice(0, 32);
 
+/** What a broadcast says: text, price and (order-free) attachments. */
+export const broadcastContentHash = (c: { text: string; priceCents: number; mediaIds: string[] }) =>
+  createHash('sha256').update(JSON.stringify([c.text, c.priceCents, [...new Set(c.mediaIds)].sort()])).digest('hex');
+
+/**
+ * Is this broadcastId (i.e. this creator's requestId) already in use for
+ * DIFFERENT content? A requestId identifies one intended drop, reused only
+ * for retries of it -- the same contract as a DM's requestId and a tip's
+ * idempotency key, both of which refuse a reused key with different
+ * content. Checks the live queued job (an add under an existing jobId is
+ * silently ignored by BullMQ, so an edited drop would never go out) and the
+ * copies already delivered (jobs are removed on completion, and a re-run
+ * skips every fan already reached, so an edited drop would reach only the
+ * fans the first one missed).
+ */
+export async function broadcastReuseConflict(
+  queue: { getJob: (id: string) => Promise<{ data?: any } | null | undefined> },
+  creatorId: string, broadcastId: string, contentHash: string,
+): Promise<boolean> {
+  const job = await queue.getJob(`broadcast-${broadcastId}`);
+  if (job) {
+    const d = job.data ?? {};
+    const h = typeof d.contentHash === 'string' ? d.contentHash
+      : broadcastContentHash({ text: String(d.text ?? ''), priceCents: Number(d.priceCents ?? 0), mediaIds: Array.isArray(d.mediaIds) ? d.mediaIds : [] });
+    if (h !== contentHash) return true;
+  }
+  const sent = await prisma.message.findFirst({
+    where: { senderId: creatorId, broadcastId },
+    select: { text: true, priceCents: true, media: { select: { sourceMediaId: true } } },
+  });
+  if (sent) {
+    const h = broadcastContentHash({ text: sent.text, priceCents: sent.priceCents, mediaIds: sent.media.map((m) => m.sourceMediaId).filter((x): x is string => !!x) });
+    if (h !== contentHash) return true;
+  }
+  return false;
+}
+
 /**
  * Charges a fan for a priced message and records the unlock. Exported (not
  * inlined in the route) so the double-click race below is directly
@@ -403,10 +440,17 @@ export const messages: FastifyPluginAsync = async (app) => {
     // A drop an admin already took down is never re-queued under the same
     // request (the worker refuses it too -- workers/broadcast.ts).
     if (await broadcastTakenDown(req.user.id, broadcastId)) return reply.code(409).send({ error: 'broadcast_removed' });
-    await broadcastQueue.add('broadcast', { creatorId: req.user.id, broadcastId, ...content }, {
+    // A requestId reused for an EDITED drop is refused, never answered
+    // queued:true while the edit is dropped or half-delivered. Checked again
+    // after the add: two concurrent requests with different content both
+    // pass the first check, and BullMQ keeps only the first add.
+    const contentHash = broadcastContentHash(content);
+    if (await broadcastReuseConflict(broadcastQueue, req.user.id, broadcastId, contentHash)) return reply.code(409).send({ error: 'request_id_reused' });
+    await broadcastQueue.add('broadcast', { creatorId: req.user.id, broadcastId, ...content, contentHash }, {
       jobId: `broadcast-${broadcastId}`, attempts: 5, backoff: { type: 'exponential', delay: 10_000 },
       removeOnComplete: true, removeOnFail: true,
     });
+    if (await broadcastReuseConflict(broadcastQueue, req.user.id, broadcastId, contentHash)) return reply.code(409).send({ error: 'request_id_reused' });
     return { queued: true, broadcastId };
   });
 

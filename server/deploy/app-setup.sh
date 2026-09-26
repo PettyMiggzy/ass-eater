@@ -141,9 +141,19 @@ if [[ -f "$APP_DIR/.env.workers" ]]; then
   chown root:root "$APP_DIR/.env.workers"
   chmod 600 "$APP_DIR/.env.workers"
 fi
-if grep -Eq '^(TREASURY_PRIVATE_KEY|DEPOSIT_MNEMONIC)=.+' "$APP_DIR/.env"; then
-  echo "WARNING: TREASURY_PRIVATE_KEY / DEPOSIT_MNEMONIC are set in .env, which the API and media workers load." >&2
-  echo "         Move them to $APP_DIR/.env.workers and set DEPOSIT_XPUB in .env (see DEPLOY.md)." >&2
+# A REFUSAL, not a warning, and before anything is installed or restarted:
+# the API and the media workers (ffmpeg/libvips over untrusted uploads) both
+# load .env, so a signing secret there puts the treasury key in exactly the
+# processes the env split exists to keep it out of. A warning used to scroll
+# past among the npm/prisma output, "Done" printed, and every unit restarted
+# with the key loaded (both processes also refuse to start with it now).
+# Matches an optional `export ` and surrounding spaces, as systemd does.
+SECRET_IN_ENV_RE='^[[:space:]]*(export[[:space:]]+)?(TREASURY_PRIVATE_KEY|DEPOSIT_MNEMONIC)[[:space:]]*=[[:space:]]*["'"'"']?[^"'"'"'[:space:]#]'
+if grep -Eq "$SECRET_IN_ENV_RE" "$APP_DIR/.env"; then
+  echo "ERROR: TREASURY_PRIVATE_KEY / DEPOSIT_MNEMONIC are set in $APP_DIR/.env, which the API and the media workers load." >&2
+  echo "       Nothing was installed or restarted. Move both lines to $APP_DIR/.env.workers (root:root, 600)" >&2
+  echo "       and set DEPOSIT_XPUB in .env -- DEPLOY.md, 'Moving the signing secrets out of .env' -- then re-run this." >&2
+  exit 1
 fi
 if grep -Eq '^(ONLYASS_[A-Z0-9_]+|USDC_ADDRESS)=' "$APP_DIR/.env"; then
   echo "WARNING: .env still uses pre-rename names (ONLYASS_*, USDC_ADDRESS) that nothing reads." >&2

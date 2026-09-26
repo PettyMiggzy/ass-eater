@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { checkRateLimit, clearFailures, clientIp, recordFailure } from '../../../lib/rate-limit';
+import { checkRateLimit, clearFailures, clientNetwork, recordFailure } from '../../../lib/rate-limit';
+import { consumeBypassAttempt, refundBypassAttempt } from '../../../lib/bypass-guard';
 import {
   AGE_VERIFIED_COOKIE_NAME,
   ageVerificationSecret,
@@ -51,7 +52,7 @@ const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES_PER_IP = 8;
 
 export default async function handler(req, res) {
-  const bucket = `reviewer-access:ip:${clientIp(req)}`;
+  const bucket = `reviewer-access:net:${clientNetwork(req)}`;
   const { limited } = checkRateLimit(bucket, { limit: MAX_FAILURES_PER_IP, windowMs: WINDOW_MS });
   if (limited) {
     return res.status(404).json({ error: 'Not found' });
@@ -71,6 +72,15 @@ export default async function handler(req, res) {
     return res.status(404).json({ error: 'Not found' });
   }
 
+  // The GLOBAL budget (lib/bypass-guard.js), shared across instances and
+  // client addresses. Counted before the key is compared, and while it is
+  // spent even the right key is refused -- otherwise it would still be an
+  // oracle, just a slower one.
+  const { allowed } = await consumeBypassAttempt('reviewer');
+  if (!allowed) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
   const digest = (value) => crypto.createHash('sha256').update(String(value), 'utf8').digest();
   if (!crypto.timingSafeEqual(digest(provided), digest(expected))) {
     console.warn(`[reviewer-access] rejected bypass attempt from ${req.headers['x-forwarded-for'] || 'unknown'}`);
@@ -79,6 +89,7 @@ export default async function handler(req, res) {
   }
 
   clearFailures(bucket);
+  await refundBypassAttempt('reviewer');
 
   const token = await createBypassAgeVerificationToken(ageVerificationSecret(), 'reviewer');
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';

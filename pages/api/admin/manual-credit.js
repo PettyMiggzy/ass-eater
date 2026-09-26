@@ -1,5 +1,5 @@
 import { requireAdminKey } from '../../../lib/admin-auth';
-import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM, ACCOUNT_GONE } from '../../../lib/deposit';
+import { creditDepositFromChain, TX_ALREADY_USED, BELOW_MINIMUM, ACCOUNT_GONE, ACCOUNT_FROZEN } from '../../../lib/deposit';
 import { getMarketplaceVerificationConfig, marketplaceVerificationLive } from '../../../lib/marketplace-payment-config';
 import { findUserById } from '../../../lib/users-store';
 import { accountStanding, isFrozenStanding } from '../../../lib/credits-store';
@@ -108,11 +108,26 @@ export default async function handler(req, res) {
       });
     }
 
-    const result = await creditDepositFromChain({ userId: String(userId), txHash, expectedFrom: fromAddress, config });
+    // allowFrozen only on the admin's explicit override: the standing is
+    // checked again INSIDE the crediting transaction (lib/deposit.js), so an
+    // account banned during the receipt wait is refused there too.
+    const result = await creditDepositFromChain({
+      userId: String(userId),
+      txHash,
+      expectedFrom: fromAddress,
+      config,
+      allowFrozen: creditFrozen === true,
+    });
     return res.status(200).json({ ok: true, ...result, creditedUserEmail: user.email, frozen: isFrozenStanding(standing) });
   } catch (err) {
     if (err.code === TX_ALREADY_USED) return res.status(409).json({ error: err.message });
     if (err.code === BELOW_MINIMUM) return res.status(400).json({ error: err.message });
+    if (err.code === ACCOUNT_FROZEN) {
+      return res.status(409).json({
+        code: 'ACCOUNT_FROZEN',
+        error: 'That account was suspended or banned while the transaction was being checked, so nothing was credited and the transaction is still unused. Re-send with creditFrozen: true only if you have decided to credit a frozen account anyway.',
+      });
+    }
     if (err.code === ACCOUNT_GONE) return res.status(404).json({ error: 'That account no longer exists -- nothing was credited and the transaction is still unused.', code: err.code });
     if (err.code === 'SENDER_MISMATCH') return res.status(400).json({ error: `That transaction was not sent from ${fromAddress}.` });
     // Same fix as pages/api/credits/buy.js: enumerate the actual known-safe

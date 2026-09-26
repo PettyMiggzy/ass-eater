@@ -14,6 +14,11 @@ import sharp from 'sharp';
  *  - the whole animation, sized to fit the workers' memory cap (decoded RGBA
  *    is ~4 bytes/pixel: 100M pixels is ~400 MB, and the media unit runs two
  *    transcodes at once under MemoryMax=1200M).
+ *
+ * These are DECODE limits for the media worker. The API's per-viewer
+ * watermarking (lib/watermark.ts) runs in the internet-facing process and
+ * scales down to a much smaller output budget before compositing, one
+ * generation at a time -- do not size anything in the API off these.
  */
 export const MAX_FRAME_PIXELS = 50_000_000;
 export const MAX_FRAMES = 1_000;

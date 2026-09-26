@@ -52,6 +52,16 @@ export default function AdminPanel() {
   const [recordOptionsLoading, setRecordOptionsLoading] = useState(false);
   const [alertsStatus, setAlertsStatus] = useState(null);
   const selectSeq = useRef(0);
+  // The creator open in the editor RIGHT NOW. A save's response compares
+  // against this, never against the `selectedId` captured when the save
+  // started: the Accounts tab's "Open creator record" can switch creators
+  // mid-save, and a stale comparison loaded A's fields into B's editor.
+  const selectedIdRef = useRef(null);
+  const openCreator = (id) => {
+    selectedIdRef.current = id;
+    setSelectedId(id);
+  };
+  const isOpen = (id) => selectedIdRef.current !== null && String(selectedIdRef.current) === String(id);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [page, setPage] = useState('creators');
@@ -205,7 +215,7 @@ export default function AdminPanel() {
   /** Closes the editor (the creator is gone or the panel is locking). */
   const clearSelection = () => {
     selectSeq.current += 1;
-    setSelectedId(null);
+    openCreator(null);
     setDraft({});
     setBaseline(null);
     resetUploadAttestations();
@@ -217,7 +227,7 @@ export default function AdminPanel() {
   // is exactly what used to write those values back.
   const selectCreator = async (id) => {
     const seq = ++selectSeq.current;
-    setSelectedId(id);
+    openCreator(id);
     const snap = creators.find((c) => String(c.id) === String(id));
     if (snap) { setDraft(draftFrom(snap)); setBaseline(draftFrom(snap)); }
     resetUploadAttestations();
@@ -237,7 +247,7 @@ export default function AdminPanel() {
   const applyCreator = (creator, { resyncDraft = false } = {}) => {
     if (!creator || creator.id === undefined) return;
     setCreators((prev) => prev.map((c) => (String(c.id) === String(creator.id) ? creator : c)));
-    if (resyncDraft && String(creator.id) === String(selectedId)) {
+    if (resyncDraft && isOpen(creator.id)) {
       setDraft(draftFrom(creator));
       setBaseline(draftFrom(creator));
     }
@@ -246,6 +256,7 @@ export default function AdminPanel() {
   const saveProfile = async () => {
     if (!baseline) { setStatus('Error: this creator is still loading. Try again in a moment.'); return; }
     if (fieldsFromDraft(draft, baseline).error) { setStatus(`Error: ${fieldsFromDraft(draft, baseline).error}`); return; }
+    const savingId = selectedId;
     setBusy(true);
     setStatus('Saving...');
     try {
@@ -255,7 +266,10 @@ export default function AdminPanel() {
       // DID touch is stopped and shown instead of silently replaced.
       const roster = await fetchRoster();
       if (!roster) return;
-      const current = roster.find((c) => String(c.id) === String(selectedId));
+      // Another creator was opened while the roster loaded: this draft is no
+      // longer the one on screen, so nothing is rebased into it or sent.
+      if (!isOpen(savingId)) { setStatus('Nothing was saved -- another creator was opened before the save went out.'); return; }
+      const current = roster.find((c) => String(c.id) === String(savingId));
       if (!current) { clearSelection(); setStatus('Error: that creator no longer exists. Nothing was saved.'); return; }
       const rebased = rebaseDraft(draft, baseline, current);
       setBaseline(rebased.baseline);
@@ -270,7 +284,7 @@ export default function AdminPanel() {
       const built = fieldsFromDraft(rebased.draft, rebased.baseline);
       if (built.error) throw new Error(built.error);
       if (!Object.keys(built.fields).length) { setStatus('Nothing to save -- no field was changed.'); return; }
-      const { res, data } = await adminPost(adminKey, '/api/admin/profile', { creatorId: selectedId, fields: built.fields });
+      const { res, data } = await adminPost(adminKey, '/api/admin/profile', { creatorId: savingId, fields: built.fields });
       // A ban whose listing takedown failed comes back 500 WITH the saved
       // creator: the ban stands, so the roster and draft must show it.
       if (data.creator) applyCreator(data.creator, { resyncDraft: true });
@@ -479,6 +493,11 @@ export default function AdminPanel() {
     if (!preserveFor && requestId && !confirm(
       `Remove this item for takedown request #${requestId}? The file is deleted (quarantined instead if that request was filed as a possible minor), and the removal is recorded on the request.`,
     )) return;
+    // An ordinary removal confirms too (as removeAvatar does): it deletes the
+    // file from storage and nothing can undo it.
+    if (!requestId && !confirm(
+      'Remove this item from the creator\'s gallery? The file is deleted from storage and this cannot be undone.',
+    )) return;
     setBusy(true);
     setStatus('Removing...');
     try {
@@ -514,7 +533,7 @@ export default function AdminPanel() {
       setCreators((prev) => [...prev, data.creator]);
       selectSeq.current += 1;
       resetUploadAttestations();
-      setSelectedId(data.creator.id);
+      openCreator(data.creator.id);
       setDraft(draftFrom(data.creator));
       setBaseline(draftFrom(data.creator));
       setStatus(
@@ -558,7 +577,7 @@ export default function AdminPanel() {
         }
         if (!res.ok || !Array.isArray(data.creators)) throw new Error(errorFrom(res, data, 'Delete failed'));
         setCreators(data.creators);
-        if (String(selectedId) === String(id)) clearSelection();
+        if (isOpen(id)) clearSelection();
         const stranded = Array.isArray(data.stranded) ? data.stranded : [];
         setStatus(
           stranded.length
@@ -1332,7 +1351,11 @@ export default function AdminPanel() {
                             onClick={() => deleteGalleryItem(item, i)}
                             disabled={busy}
                             title="Remove (also deletes the file)"
-                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 focus:opacity-100 transition disabled:opacity-30"
+                            // Always visible on devices without hover: an
+                            // opacity-0 button still takes taps, and a phone
+                            // tap near a thumbnail's corner used to delete it
+                            // unseen. deleteGalleryItem also always confirms.
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus:opacity-100 transition disabled:opacity-30"
                           >
                             <Icons.close className="h-3.5 w-3.5 mx-auto" />
                           </button>
@@ -1470,17 +1493,23 @@ function ReportsPanel({ adminKey }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
+  // Only the latest load may write the list: switching the filter quickly
+  // (Open -> Dismissed -> Open) used to let a slower earlier response land
+  // last and show one status's rows under another status's label.
+  const loadSeq = useRef(0);
   const load = async (status) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/reports?status=${encodeURIComponent(status)}`);
+      if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load reports'));
       setReports(Array.isArray(data.reports) ? data.reports : []);
     } catch (err) {
-      setError(err.message);
+      if (seq === loadSeq.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
@@ -1828,17 +1857,23 @@ function ViolationsPanel({ adminKey }) {
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
 
+  // Only the latest load may write the list: switching the filter quickly
+  // (Open -> Dismissed -> Open) used to let a slower earlier response land
+  // last and show one status's rows under another status's label.
+  const loadSeq = useRef(0);
   const load = async (status) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/violations?status=${encodeURIComponent(status)}`);
+      if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load violations'));
       setViolations(Array.isArray(data.violations) ? data.violations : []);
     } catch (err) {
-      setError(err.message);
+      if (seq === loadSeq.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
@@ -1999,11 +2034,17 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
   // removed elsewhere" acknowledgement (sent as contentGone).
   const [goneAck, setGoneAck] = useState({});
 
+  // Only the latest load may write the list: switching the filter quickly
+  // (Open -> Dismissed -> Open) used to let a slower earlier response land
+  // last and show one status's rows under another status's label.
+  const loadSeq = useRef(0);
   const load = async (status) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/ncii-reports?status=${encodeURIComponent(status)}`);
+      if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load takedown requests'));
       setReports(Array.isArray(data.reports) ? data.reports : []);
       if (data.summary) {
@@ -2011,9 +2052,9 @@ function NciiReportsPanel({ adminKey, creators, onSummary, onCreatorChanged, ale
         if (onSummary) onSummary(data.summary);
       }
     } catch (err) {
-      setError(err.message);
+      if (seq === loadSeq.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
@@ -3870,6 +3911,8 @@ function PerformerRecordsPanel({ adminKey, creators }) {
  *    API refuses suspend/ban for one (400) but 'clear' works on every account.
  *  - Delete a fan account on request (POST /api/admin/delete-user; Privacy
  *    Policy section 7).
+ *  - Erase a shipped order's shipping address on request (Privacy Policy
+ *    section 7; /api/admin/order-address-erase).
  *  - Undelivered standing messages to server/ (/api/admin/standing-pushes).
  */
 function AccountsPanel({ adminKey, creators, onOpenCreator }) {
@@ -4153,7 +4196,81 @@ function AccountsPanel({ adminKey, creators, onOpenCreator }) {
         )}
       </div>
 
+      <OrderAddressErasePanel adminKey={adminKey} />
+
       <StandingPushesPanel adminKey={adminKey} />
+    </div>
+  );
+}
+
+/**
+ * Privacy Policy section 7: once a physical order has shipped, the buyer can
+ * ask for its shipping name and address to be deleted
+ * (POST /api/admin/order-address-erase { orderId }). The order record stays;
+ * only the address goes, and it cannot be undone. The server refuses (409) an
+ * order still waiting to ship -- the creator needs the address to send it --
+ * and answers erased:false when there is nothing left to erase. A fan who
+ * deletes their own account has this done for every shipped order already.
+ */
+function OrderAddressErasePanel({ adminKey }) {
+  const [orderId, setOrderId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const erase = async () => {
+    const id = orderId.trim();
+    setError('');
+    setNotice('');
+    if (!/^[1-9][0-9]{0,17}$/.test(id)) { setError('Enter the order number, a plain number like 42.'); return; }
+    if (!confirm(
+      `Erase the shipping name and address on order #${id}? This cannot be undone. Only do it when no dispute or `
+      + 'legal claim about this order is in progress.',
+    )) return;
+    setBusy(true);
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/order-address-erase', { orderId: id });
+      if (res.status === 404) throw new Error(`There is no order #${id}.`);
+      if (res.status === 409) throw new Error(`Order #${id} has not shipped yet, so its address is still needed and was not erased.`);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Could not erase the address'));
+      const at = data.addressErasedAt ? ` (erased ${new Date(data.addressErasedAt).toLocaleString()})` : '';
+      setNotice(data.erased
+        ? `Shipping name and address erased from order #${id}${at}.`
+        : `Order #${id} has no shipping address left to erase${at}.`);
+      setOrderId('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="premium-card p-5">
+      <p className="font-bold text-white mb-1">Erase a shipped order&apos;s shipping address</p>
+      <p className="text-xs text-gray-500 mb-3">
+        For a buyer&apos;s request under Privacy Policy section 7. Works only on an order that has already shipped; the
+        order itself is kept. Permanent.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={orderId}
+          onChange={(e) => setOrderId(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && !busy && erase()}
+          inputMode="numeric"
+          placeholder="Order number"
+          className="px-3 py-2 rounded-md bg-black/40 border border-brand-purple/30 text-white text-sm w-40"
+        />
+        <button
+          onClick={erase}
+          disabled={busy || !orderId.trim()}
+          className="text-xs px-3 py-2 rounded-md border border-red-500/60 text-red-300 hover:bg-red-500/10 transition disabled:opacity-50"
+        >
+          {busy ? 'Erasing…' : 'Erase address…'}
+        </button>
+      </div>
+      {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
+      {notice && <p className="text-sm text-green-400 mt-2">{notice}</p>}
     </div>
   );
 }

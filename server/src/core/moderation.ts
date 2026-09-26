@@ -30,7 +30,8 @@ type RoomDeleter = { deleteRoom: (name: string) => Promise<unknown> };
  * an admin ban or suspension landing in between used to be overwritten --
  * the lapse sweep flipped a creator banned moments earlier back to ACTIVE.
  * So the site may only:
- *  - lift (ACTIVE) a row that is still SUSPENDED by the site;
+ *  - lift (ACTIVE) a row that is still SUSPENDED by the site, and whose
+ *    recorded site standings (creator and account) no longer restrict it;
  *  - suspend a row that is still ACTIVE (never downgrade a ban, nor take
  *    over an admin's suspension, which the site could then lift);
  *  - ban anything not already BANNED.
@@ -43,8 +44,21 @@ export async function applyUserStatus(
   opts: { bySite?: boolean; log?: Log; rooms?: RoomDeleter } = {},
 ): Promise<boolean> {
   const log = opts.log ?? { error: (o: unknown, m?: string) => console.error(m ?? 'moderation', o) };
+  // A site LIFT also requires, in the same statement, that neither recorded
+  // site standing restricts the account any more. Callers decide to lift
+  // from a row they read earlier (the lapse sweep claims its row first), and
+  // a new site suspension recorded in between -- syncSiteStanding writes
+  // siteCreatorStatus='suspended' and then applies nothing, because the row
+  // is still SUSPENDED -- used to be erased by the stale lift: ACTIVE here
+  // while the site considered the creator suspended. NULL (never set) does
+  // not restrict; Prisma's notIn excludes NULLs, hence the OR.
+  const RESTRICTIVE = ['suspended', 'banned'];
+  const siteNoLongerRestricts = [
+    { OR: [{ siteCreatorStatus: null }, { siteCreatorStatus: { notIn: RESTRICTIVE } }] },
+    { OR: [{ siteAccountStatus: null }, { siteAccountStatus: { notIn: RESTRICTIVE } }] },
+  ];
   const guard = !opts.bySite ? {}
-    : status === 'ACTIVE' ? { status: 'SUSPENDED' as const, statusBySite: true }
+    : status === 'ACTIVE' ? { status: 'SUSPENDED' as const, statusBySite: true, AND: siteNoLongerRestricts }
       : status === 'SUSPENDED' ? { status: 'ACTIVE' as const }
         : { status: { not: 'BANNED' as const } };
   const applied = await prisma.$transaction(async (tx) => {

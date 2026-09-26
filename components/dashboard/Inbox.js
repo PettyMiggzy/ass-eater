@@ -4,6 +4,18 @@ import { getJson, postJson } from './media-upload';
 import { responseErrorMessage } from './helpers';
 import ReportModal, { postReport } from '../public/ReportModal';
 
+// The other side's avatar, falling back to the plain placeholder circle when
+// there is none OR it fails to load: /api/media serves a creator's avatar to
+// others only while that creator is publicly visible, so a suspended, banned
+// or pending counterpart's img 404s and would otherwise render as a broken
+// image. `failed` is reset when the src changes.
+function ThreadAvatar({ src }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  if (!src || failed) return <div className="w-8 h-8 rounded-full bg-brand-purple/30 shrink-0" />;
+  return <img src={src} alt="" onError={() => setFailed(true)} className="w-8 h-8 rounded-full object-cover object-top shrink-0" />;
+}
+
 // Mirrors MAX_MESSAGE_LENGTH in lib/messages-store.js (not imported: that
 // module pulls in the Postgres driver, which must never reach a client
 // bundle). The server enforces the limit either way; this just stops the
@@ -402,11 +414,7 @@ export default function Inbox({ currentUserId, isCreator }) {
                   open?.conversationId === c.id ? 'bg-brand-purple/20' : 'hover:bg-white/5'
                 }`}
               >
-                {c.other?.img ? (
-                  <img src={c.other.img} alt="" className="w-8 h-8 rounded-full object-cover object-top" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-brand-purple/30" />
-                )}
+                <ThreadAvatar src={c.other?.img} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-white truncate">{c.other?.name || 'Unknown'}</p>
                   <p className="text-xs text-gray-500 truncate">{c.lastMessage?.text || ''}</p>

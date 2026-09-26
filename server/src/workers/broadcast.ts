@@ -9,6 +9,9 @@ import { assertNotPublicImages } from '../core/public-images.js';
 
 const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, bId: x });
 
+/** A source media row of this drop is no longer READY (taken down, or otherwise gone). */
+class SourceTakenDown extends Error {}
+
 /**
  * Mass PPV drop: one message + its media, fanned out to every active subscriber.
  *
@@ -23,16 +26,20 @@ const pair = (x: string, y: string) => (x < y ? { aId: x, bId: y } : { aId: y, b
  * conversation, so a retried job skips fans it already reached.
  *
  * Stoppable: once an admin takes the drop down (a report on any copy,
- * resolved with any action but dismiss), the job stops sending and blanks
- * whatever copies it had written -- see core/reports.ts broadcastTakenDown.
+ * resolved with any action but dismiss, or a direct media takedown), the job
+ * stops sending and blanks whatever copies it had written -- see
+ * core/reports.ts broadcastTakenDown and the per-copy source check below.
  */
-registerWorker(new Worker('broadcast', async (job) => {
-  const { creatorId, text, mediaIds, priceCents } = job.data as {
-    creatorId: string; text: string; mediaIds: string[]; priceCents: number; broadcastId?: string;
-  };
+export type BroadcastJobData = {
+  creatorId: string; text: string; mediaIds: string[]; priceCents: number; broadcastId?: string; contentHash?: string;
+};
+
+/** One broadcast job (exported so the takedown interplay is testable without BullMQ). */
+export async function processBroadcast(data: BroadcastJobData, jobId: string | undefined) {
+  const { creatorId, text, mediaIds, priceCents } = data;
   // Jobs queued before broadcastId existed fall back to the BullMQ job id,
   // which is stable across that job's retries.
-  const broadcastId = (job.data as { broadcastId?: string }).broadcastId ?? `job:${job.id}`;
+  const broadcastId = data.broadcastId ?? `job:${jobId}`;
 
   // A creator suspended or banned between queueing and sending sends nothing.
   const creator = await prisma.user.findUnique({ where: { id: creatorId }, select: { status: true } });
@@ -72,10 +79,25 @@ registerWorker(new Worker('broadcast', async (job) => {
     select: { fanId: true },
   });
 
+  const sourceIds = sourceMedia.map((s) => s.id);
   for (const { fanId } of subs) {
     let msg;
     try {
       msg = await prisma.$transaction(async (tx) => {
+        // The source is re-checked for EVERY copy, holding its rows FOR
+        // SHARE until this copy commits. sourceMedia above is a snapshot
+        // from the start of the job, and a takedown with no Report (DELETE
+        // /admin/media/:id) used to go unnoticed: every copy written after
+        // it was created READY and priced, pointing at deleted objects, and
+        // sold. The lock orders this against the takedown (modules/admin.ts
+        // rejects the root first, then the copies in a later statement): a
+        // copy committed first is caught by that later statement, and a
+        // takedown committed first is seen here.
+        if (sourceIds.length) {
+          const live = await tx.$queryRaw<{ id: string }[]>`
+            SELECT id FROM "Media" WHERE id IN (${Prisma.join(sourceIds)}) AND status = 'READY' FOR SHARE`;
+          if (live.length !== sourceIds.length) throw new SourceTakenDown();
+        }
         const conv = await tx.conversation.upsert({
           where: { aId_bId: pair(creatorId, fanId) },
           create: pair(creatorId, fanId),
@@ -93,6 +115,10 @@ registerWorker(new Worker('broadcast', async (job) => {
         return m;
       });
     } catch (e) {
+      if (e instanceof SourceTakenDown) {
+        await blankBroadcast(creatorId, broadcastId);
+        return { stopped: 'source_taken_down' };
+      }
       // Already sent to this fan by an earlier attempt of this same job.
       // Only the (conversationId, broadcastId) index means that; any other
       // conflict is thrown so the job retries and resumes from here.
@@ -115,4 +141,9 @@ registerWorker(new Worker('broadcast', async (job) => {
     const locked = msg.priceCents > 0;
     await publish(fanId, { type: 'message', message: { ...msg, text: locked ? '' : msg.text, locked } });
   }
-}, { ...connection, concurrency: 1 }));
+  return { sent: true };
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  registerWorker(new Worker('broadcast', (job) => processBroadcast(job.data as BroadcastJobData, job.id), { ...connection, concurrency: 1 }));
+}

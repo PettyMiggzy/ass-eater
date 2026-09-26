@@ -55,7 +55,7 @@ export async function getVipStatus(tx: Tx, userId: string) {
  * the money and never buys the tokens -- the one failure here that nobody
  * would ever notice, because the fan still gets their badge.
  */
-export async function subscribeVip(tx: Tx, userId: string, expectedPriceCents?: number) {
+export async function subscribeVip(tx: Tx, userId: string, expectedPriceCents?: number, expectedVipUntil?: Date | null) {
   const { priceCents } = await getVipConfig(tx);
   // The price the fan was shown, checked against the one read inside this
   // transaction: an admin can move vipPriceCents at any time (PATCH
@@ -67,18 +67,32 @@ export async function subscribeVip(tx: Tx, userId: string, expectedPriceCents?: 
   }
 
   const bal = await lockBalance(tx, userId);
+
+  // Idempotency: the expiry the fan saw (GET /vip/status), checked against
+  // the one read here, after lockBalance has locked their account row. A
+  // double-tap, or a retry after a lost response, arrives with the expiry
+  // from BEFORE the first purchase; that purchase has since moved it, so the
+  // repeat is answered with the current status and charges nothing. Only a
+  // purchase moves vipUntil, so a mismatch always means "already bought".
+  // (Optional here only for internal callers and tests; the route requires
+  // it.)
+  const current = await tx.account.findUnique({ where: { userId }, select: { vipUntil: true } });
+  if (expectedVipUntil !== undefined && (current?.vipUntil?.getTime() ?? null) !== (expectedVipUntil?.getTime() ?? null)) {
+    const until = current?.vipUntil ?? null;
+    return { isVip: !!until && until.getTime() > Date.now(), vipUntil: until, priceCents, committedToBurnCents: 0, already: true as const };
+  }
+
   if (bal < BigInt(priceCents)) throw new InsufficientFunds();
 
   await post(tx, userId, -priceCents, 'SUBSCRIPTION', undefined, { kind: 'vip', priceCents });
   // Records the burn obligation too -- see postPlatformRevenue.
   const { burnCents } = await postPlatformRevenue(tx, priceCents, userId, { source: 'vip', fanId: userId, priceCents });
 
-  const account = await tx.account.findUnique({ where: { userId }, select: { vipUntil: true } });
-  const from = Math.max(account?.vipUntil?.getTime() ?? 0, Date.now());
+  const from = Math.max(current?.vipUntil?.getTime() ?? 0, Date.now());
   const vipUntil = new Date(from + VIP_PERIOD_MS);
   await tx.account.update({ where: { userId }, data: { vipUntil } });
 
-  return { isVip: true, vipUntil, priceCents, committedToBurnCents: Number(burnCents) };
+  return { isVip: true, vipUntil, priceCents, committedToBurnCents: Number(burnCents), already: false as const };
 }
 
 /** What the platform owes the supply but hasn't destroyed yet. */

@@ -1673,12 +1673,12 @@ function MarketplaceSection({
         )}
       </div>
 
-      {listings.some((l) => l.kind === 'physical') && (
-        <>
-          <hr className="border-brand-purple/20 my-6" />
-          <OrdersToShip />
-        </>
-      )}
+      {/* Always shown, not only while a physical listing exists: the queue
+          is paid ORDERS, and a listing edited to digital (or removed) after
+          selling still leaves its pending_shipment orders to ship. The
+          component says "No physical orders yet" when there are none. */}
+      <hr className="border-brand-purple/20 my-6" />
+      <OrdersToShip />
     </div>
   );
 }
