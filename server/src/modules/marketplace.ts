@@ -84,6 +84,16 @@ const activeSeller = { creator: { user: OPERATING_CREATOR_USER_WHERE } };
 const deliverable = deliverableWhere;
 
 /**
+ * A listing a moderator took down (moderatedAt: a report takedown or the
+ * seller's ban) is not served to anyone but its creator -- not by id, not to
+ * past buyers (its media is REJECTED anyway; the reported title and
+ * description are what would still show), and not in its bid history.
+ * Browse already lists only ACTIVE listings, and a moderated one can never
+ * be made ACTIVE again by its creator (PATCH /listings/:id).
+ */
+const notModerated = { moderatedAt: null };
+
+/**
  * `images` are free public preview photos, served to signed-out browsers by
  * GET /listings. They used to be any strings at all (a third-party tracking
  * pixel, a javascript: URL, a ~1 MB string), then https URLs under the
@@ -217,6 +227,17 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     const r = await money(prisma, async (tx) => {
       const l = await tx.listing.findFirst({ where: { id: req.params.id, creatorId: req.user.id, status: { not: 'SOLD' } } });
       if (!l) return null;
+      // A listing a moderator took down (a report takedown or a ban --
+      // moderatedAt, see schema.prisma) is not the creator's to relist or
+      // edit: REMOVED is also what their own unlist writes, so one PATCH
+      // {status:'ACTIVE'} used to undo the takedown with the reported text
+      // and fresh preview images. Checked here and again in each write's own
+      // WHERE, so a takedown committing mid-request is not overwritten.
+      if (l.moderatedAt) throw statusCode('removed_by_moderation', 409);
+      const writable = { id: l.id, moderatedAt: null };
+      const write = async (data: typeof b) => {
+        if (!(await tx.listing.updateMany({ where: writable, data })).count) throw statusCode('removed_by_moderation', 409);
+      };
       if (b.images) await validListingImages(tx, b.images, req.user.id);
       // Turning an unlimited listing into a one-of-a-kind (or a physical
       // one into digital) is the other way in to selling already-distributed
@@ -254,12 +275,12 @@ export const marketplace: FastifyPluginAsync = async (app) => {
           if (l.auctionEndsAt && l.auctionEndsAt <= new Date()) throw statusCode('auction_ended', 409);
           // Same transaction as the removal: the leader gets their hold back.
           const { status: _s, ...rest } = b;
-          if (Object.keys(rest).length) await tx.listing.update({ where: { id: l.id }, data: rest });
+          if (Object.keys(rest).length) await write(rest);
           await cancelAuction(tx, l.id, 'removed_by_creator');
           return l.id;
         }
       }
-      await tx.listing.update({ where: { id: l.id }, data: b });
+      await write(b);
       return l.id;
     });
     return r ? { ok: true } : reply.code(404).send({ error: 'not_found' });
@@ -310,10 +331,10 @@ export const marketplace: FastifyPluginAsync = async (app) => {
         ...(viewerId
           ? { OR: [
             { creatorId: viewerId },
-            { AND: [vip, activeSeller, deliverable] },
-            { AND: [{ creator: { user: { status: 'ACTIVE' as const } } }, { orders: { some: { buyerId: viewerId } } }] },
+            { AND: [notModerated, vip, activeSeller, deliverable] },
+            { AND: [notModerated, { creator: { user: { status: 'ACTIVE' as const } } }, { orders: { some: { buyerId: viewerId } } }] },
           ] }
-          : { AND: [vip, activeSeller, deliverable] }),
+          : { AND: [notModerated, vip, activeSeller, deliverable] }),
       },
       select: { ...LISTING_SELECT, media: { select: { id: true, mime: true, previewKey: true } } },
     });
@@ -425,8 +446,11 @@ export const marketplace: FastifyPluginAsync = async (app) => {
       const l = await prisma.listing.findUnique({ where: { id: req.params.id }, select: { kind: true } });
       if (l?.kind === 'PHYSICAL') throw physicalDisabled();
     }
-    const bid = await money(prisma, (tx) => placeBid(tx, req.params.id, req.user.id, amountCents, { ageConfirmedAt: new Date(), tosVersion: CURRENT_TOS_VERSION }));
-    return { ok: true, bid };
+    const placed = await money(prisma, (tx) => placeBid(tx, req.params.id, req.user.id, amountCents, { ageConfirmedAt: new Date(), tosVersion: CURRENT_TOS_VERSION }));
+    // already: an identical retry from the current leader (core/auctions.ts
+    // placeBid) -- the standing bid, nothing charged or held again.
+    const { already, ...bid } = placed as typeof placed & { already?: true };
+    return already ? { ok: true, already: true, bid } : { ok: true, bid };
   });
 
   // Bid history, without outing bidders. Tying a username to a bid on an
@@ -443,7 +467,7 @@ export const marketplace: FastifyPluginAsync = async (app) => {
     const l = await prisma.listing.findFirst({
       where: {
         id: req.params.id,
-        ...(viewerId ? { OR: [{ creatorId: viewerId }, { AND: [vip, activeSeller] }] } : { AND: [vip, activeSeller] }),
+        ...(viewerId ? { OR: [{ creatorId: viewerId }, { AND: [notModerated, vip, activeSeller] }] } : { AND: [notModerated, vip, activeSeller] }),
       },
       select: { creatorId: true },
     });

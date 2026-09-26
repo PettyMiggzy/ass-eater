@@ -11,7 +11,7 @@ import {
   holderCookieHeader,
   HOLDER_TTL_SECONDS,
 } from '../../../lib/holder-access';
-import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
+import { consumeNetworkAttempt } from '../../../lib/rate-limit';
 
 /**
  * POST /api/token-gate/verify { address, signature }
@@ -29,6 +29,10 @@ import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
  */
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_PER_IP = 20;
+// Per IPv6 /48 (round-10 gates-token#1): one routed allocation is 65,536
+// /64s, and without this each could mint its own budget -- and its own key in
+// the limiter's map. Generous, since a carrier puts many subscribers in one.
+const MAX_PER_NETWORK = MAX_PER_IP * 10;
 // ERC-6492 wrapped-signature suffix (a counterfactual smart-wallet signature).
 const ERC6492_MAGIC = '6492649264926492649264926492649264926492649264926492649264926492';
 
@@ -42,7 +46,8 @@ export default async function handler(req, res) {
     return res.status(501).json({ error: 'Token-gate verification is not available yet.' });
   }
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`token-gate-verify:ip:${clientNetwork(req)}`, {
+  const { limited, retryAfterSeconds } = consumeNetworkAttempt(req, 'token-gate-verify', {
+    networkLimit: MAX_PER_NETWORK,
     limit: MAX_PER_IP,
     windowMs: WINDOW_MS,
   });

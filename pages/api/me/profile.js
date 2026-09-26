@@ -163,6 +163,12 @@ export default async function handler(req, res) {
   // lib/token-gate.js gateEnforceable).
   const gateRefusal = refusesUnenforceableGate(ctx.creator, safeFields);
   if (gateRefusal) return res.status(400).json({ error: gateRefusal });
+  // Refused past the stored limit rather than silently cut (and a location
+  // with half an emoji in it is refused, not a 500) -- round-10 accounts#0.
+  if (fields && 'location' in fields) {
+    const badLocation = validateTextFields({ location: fields.location }, ['location']);
+    if (badLocation) return res.status(400).json({ error: badLocation });
+  }
   if (fields && 'location' in fields) safeFields.location = sanitizeLocation(fields.location);
   if (fields && 'age' in fields) {
     try {

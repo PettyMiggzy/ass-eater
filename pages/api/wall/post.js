@@ -4,7 +4,7 @@ import { displayNameFor, findUserByCreatorId } from '../../../lib/users-store';
 import { addWallPost, toPublicWallPost, MAX_TEXT_LENGTH, WALL_DAILY_CAP_MESSAGE } from '../../../lib/wall-store';
 import { getCreatorById } from '../../../lib/creators-store';
 import { isPubliclyVisible, effectiveCreatorStatus } from '../../../lib/creator-status';
-import { restrictionMessageFor, blockBetween } from '../../../lib/messages-store';
+import { restrictionMessageFor, blockBetween, isWallBlocked } from '../../../lib/messages-store';
 import { createNotification } from '../../../lib/notifications-store';
 import { screenPublicText } from '../../../lib/prohibited-terms';
 import { addViolation } from '../../../lib/violations-store';
@@ -83,7 +83,10 @@ export default async function handler(req, res) {
     if (!isOwner) {
       ownerUser = await findUserByCreatorId(wallCreator.id);
       const block = ownerUser ? await blockBetween(uid, ownerUser.id) : null;
-      if (block === 'them') return res.status(403).json({ error: "This creator isn't accepting comments from you." });
+      // ...and the owner's WALL block of this author (pages/api/wall/block.js),
+      // which is kept apart from DM blocks (lib/messages-store.js setWallBlocked).
+      const wallBlocked = ownerUser ? await isWallBlocked(ownerUser.id, uid) : false;
+      if (block === 'them' || wallBlocked) return res.status(403).json({ error: "This creator isn't accepting comments from you." });
       if (block === 'me') return res.status(403).json({ error: 'You blocked this creator. Unblock them to comment on their wall.' });
     }
 

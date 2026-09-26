@@ -1,6 +1,6 @@
 import { getSessionUser } from '../../../lib/session';
 import { getWallPostById, wallPostIdsByAuthor } from '../../../lib/wall-store';
-import { setConversationBlocked, accountsBlockedBy, DM_ERRORS } from '../../../lib/messages-store';
+import { setWallBlocked, DM_ERRORS } from '../../../lib/messages-store';
 import { consumeAttempt } from '../../../lib/rate-limit';
 
 /**
@@ -16,9 +16,11 @@ import { consumeAttempt } from '../../../lib/rate-limit';
  *   -> 403 not the owner of the wall this comment is on
  *   -> 404 no such comment (or its author's account is gone)
  *
- * Lets a creator block the author of a comment on their OWN wall. A block
- * (lib/messages-store.js setConversationBlocked) stops that account
- * commenting on this wall and messaging the creator, in both directions.
+ * Lets a creator block the author of a comment on their OWN wall. A wall
+ * block (lib/messages-store.js setWallBlocked) stops that account commenting
+ * on this wall and messaging the creator. It is kept apart from DM blocks and
+ * never reported on a DM thread, so it cannot name the commenter; the inbox
+ * lists it only as an opaque row that can be unblocked.
  *
  * Why it goes through a comment id: the public wall deliberately never
  * carries a commenter's account id (lib/wall-store.js toPublicWallPost), so
@@ -54,9 +56,13 @@ export default async function handler(req, res) {
     if (!post.authorId || String(post.authorId) === String(user.id)) {
       return res.status(400).json({ error: 'You cannot block yourself.' });
     }
-    const wasBlocked = (await accountsBlockedBy(user.id, [String(post.authorId)])).has(String(post.authorId));
-    if (wasBlocked === blocked) return res.status(200).json({ ok: true, blocked, postIds: [] });
-    await setConversationBlocked(user.id, String(post.authorId), blocked);
+    // A WALL block (lib/messages-store.js setWallBlocked), its own record --
+    // never the DM block on the pair row. Only a wall block is read back here,
+    // so a DM block the owner made by user id can't be used to test which
+    // anonymous comments belong to that account, and a wall block never shows
+    // up on a named DM thread (round-10 social#0).
+    const { changed } = await setWallBlocked(user.id, String(post.authorId), blocked);
+    if (!changed) return res.status(200).json({ ok: true, blocked, postIds: [] });
     // The block itself is done; failing to list the author's other comments
     // only means the page flips this one, so it never fails the request.
     const postIds = await wallPostIdsByAuthor(post.creatorId, post.authorId).catch((err) => {
@@ -65,8 +71,8 @@ export default async function handler(req, res) {
     });
     return res.status(200).json({ ok: true, blocked, postIds });
   } catch (err) {
-    if (err.code === DM_ERRORS.RECIPIENT_NOT_FOUND || err.code === DM_ERRORS.CONVERSATION_NOT_FOUND) {
-      // Unblocking someone never blocked, or an author whose account is gone.
+    if (err.code === DM_ERRORS.RECIPIENT_NOT_FOUND) {
+      // An author whose account is gone.
       return res.status(blocked ? 404 : 200).json(blocked ? { error: 'That account no longer exists.' } : { ok: true, blocked: false });
     }
     if (err.code === DM_ERRORS.SELF) return res.status(400).json({ error: 'You cannot block yourself.' });

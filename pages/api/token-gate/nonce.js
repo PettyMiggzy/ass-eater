@@ -2,7 +2,7 @@ import { ageVerificationSecret } from '../../../lib/age-verification';
 import { createWalletNonce, NONCE_TTL_SECONDS } from '../../../lib/wallet-auth';
 import { holderProofMessage, HOLDER_NONCE_COOKIE_NAME } from '../../../lib/token-gate';
 import { holderVerificationLive } from '../../../lib/holder-access';
-import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
+import { consumeNetworkAttempt } from '../../../lib/rate-limit';
 
 /**
  * GET /api/token-gate/nonce -- step one of proving a $ONLYONE holding.
@@ -20,6 +20,10 @@ import { consumeAttempt, clientNetwork } from '../../../lib/rate-limit';
  */
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_PER_IP = 60;
+// Per IPv6 /48 (round-10 gates-token#1): one routed allocation is 65,536
+// /64s, and without this each could mint its own budget -- and its own key in
+// the limiter's map. Generous, since a carrier puts many subscribers in one.
+const MAX_PER_NETWORK = MAX_PER_IP * 10;
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -31,7 +35,8 @@ export default async function handler(req, res) {
     return res.status(501).json({ error: 'Token-gate verification is not available yet.' });
   }
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`token-gate-nonce:ip:${clientNetwork(req)}`, {
+  const { limited, retryAfterSeconds } = consumeNetworkAttempt(req, 'token-gate-nonce', {
+    networkLimit: MAX_PER_NETWORK,
     limit: MAX_PER_IP,
     windowMs: WINDOW_MS,
   });

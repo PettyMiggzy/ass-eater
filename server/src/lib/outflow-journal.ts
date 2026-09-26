@@ -6,12 +6,13 @@ import path from 'node:path';
  * database cannot reach it.
  *
  * Every automatic treasury outflow (a creator payout, an automatic token-burn
- * swap, a treasury-hedge sale) is driven by rows in Postgres, and Postgres is
+ * swap, a treasury-hedge sale, a deposit sweep's gas top-up) is driven by
+ * rows in Postgres (or, for the sweep, jobs in a localhost Redis), and Postgres is
  * writable by every process that loads .env -- including the media workers,
  * which run ffmpeg/libvips over untrusted uploads. The outflow caps in
  * workers/payout-worker.ts, workers/token-burn.ts and
  * workers/treasury-hedge.ts therefore cannot be computed from the database
- * alone: a DB writer can null out `signedAt`, mark its payouts REFUNDED, or
+ * alone (workers/sweep-gas.ts for the gas top-ups): a DB writer can null out `signedAt`, mark its payouts REFUNDED, or
  * delete rows, and make the recorded 24h total as small as it likes.
  *
  * They used to fall back to an in-memory list, which every restart of the
@@ -30,13 +31,14 @@ import path from 'node:path';
  * every use throws OutflowJournalUnavailable and callers refuse to sign.
  */
 
-export type OutflowKind = 'payout' | 'burn' | 'hedge' | 'hedge_tokens';
-const KINDS: readonly OutflowKind[] = ['payout', 'burn', 'hedge', 'hedge_tokens'];
+export type OutflowKind = 'payout' | 'burn' | 'hedge' | 'hedge_tokens' | 'gas';
+const KINDS: readonly OutflowKind[] = ['payout', 'burn', 'hedge', 'hedge_tokens', 'gas'];
 
 // `cents` is the amount in the kind's own unit: US cents for payout, burn and
 // hedge (the stablecoin side), and WHOLE $ONLYONE tokens (rounded up) for
 // hedge_tokens -- what a hedge sale takes out of the treasury, capped
 // separately because its dollar value comes from the very pool it sells into.
+// For 'gas' (a deposit sweep's ETH top-up, workers/sweep-gas.ts) it is GWEI.
 export type OutflowEntry = { at: number; kind: OutflowKind; cents: number; ref: string };
 
 export class OutflowJournalUnavailable extends Error {}

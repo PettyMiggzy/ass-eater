@@ -14,10 +14,12 @@ import {
   getBalanceCents,
   accountStanding,
   isFrozenStanding,
+  canReceiveStanding,
   INSUFFICIENT_BALANCE,
   ACCOUNT_FROZEN,
   RECIPIENT_UNAVAILABLE,
 } from '../../../../lib/credits-store';
+import { sliceText } from '../../../../lib/unicode-text';
 
 // Bounds how long a checkout request can run. pages/cart.js relies on this:
 // an uncertain attempt whose key is still unclaimed after its
@@ -51,6 +53,14 @@ function isIntOrNull(v) {
  * charged; the cart updates itself and asks the fan to confirm again.
  * A digital listing the fan already bought: 409 { code: 'ALREADY_OWNED',
  * listingId, error } and nothing is charged.
+ *
+ * `expectedBuyerId` (required) is the account id the /cart page was rendered
+ * for. A tab left open across a sign-out still holds the previous account's
+ * cart; if someone else then signs in on the same browser, that tab would
+ * otherwise pay for it with the new session. Anything but the session's own
+ * id is refused with 409 { code: 'SESSION_CHANGED' } and nothing is charged;
+ * the cart reloads so its account, balance and cart all belong to whoever is
+ * signed in now.
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -60,7 +70,18 @@ export default async function handler(req, res) {
   const uid = await getVerifiedSessionUserId(req);
   if (!uid) return res.status(401).json({ error: 'Log in to place an order' });
 
-  const { items: cartItems, shippingAddress, ageConfirmed, tosAccepted, idempotencyKey } = req.body || {};
+  const { items: cartItems, shippingAddress, ageConfirmed, tosAccepted, idempotencyKey, expectedBuyerId } = req.body || {};
+  // Checked before anything else, the idempotency lookup included: a request
+  // built for a different account is not this account's checkout at all.
+  if (
+    !((typeof expectedBuyerId === 'string' && expectedBuyerId) || Number.isSafeInteger(expectedBuyerId)) ||
+    String(expectedBuyerId) !== String(uid)
+  ) {
+    return res.status(409).json({
+      code: 'SESSION_CHANGED',
+      error: 'You signed in or out in another tab. Reload the page to see the cart for the account you are signed in as now.',
+    });
+  }
   // A retry of a checkout that already committed is answered as such before
   // any precheck can refuse it for a reason the first attempt itself caused.
   if (await isCheckoutKeyClaimed(idempotencyKey, uid)) {
@@ -145,6 +166,12 @@ export default async function handler(req, res) {
     if (String(creatorUser.id) === String(uid)) {
       return res.status(400).json({ error: `"${listing.title}" is your own listing -- you can't buy it.`, listingId: String(listingId) });
     }
+    // The same standing transferWithFee checks inside the transaction, so an
+    // account-level ban on the seller's LOGIN (not only their profile) is
+    // caught here, with the listing id the cart needs to drop the item.
+    if (!canReceiveStanding(await accountStanding(creatorUser.id))) {
+      return res.status(404).json({ error: `A listing in your cart is no longer available (#${listingId})`, listingId: String(listingId) });
+    }
 
     const kind = listing.kind === 'physical' ? 'physical' : 'digital';
     const priceCents = Number(listing.priceCents);
@@ -187,7 +214,7 @@ export default async function handler(req, res) {
       if (v !== undefined && v !== null && typeof v !== 'string') {
         return res.status(400).json({ error: `Shipping address ${field} is invalid` });
       }
-      cleanAddress[field] = String(v || '').trim().slice(0, MAX_ADDRESS_FIELD);
+      cleanAddress[field] = sliceText(String(v || '').trim(), MAX_ADDRESS_FIELD);
     }
     for (const field of REQUIRED_ADDRESS_FIELDS) {
       if (!cleanAddress[field]) {
@@ -253,7 +280,19 @@ export default async function handler(req, res) {
     // lockListingFiles). Nothing was charged; the same key can be retried.
     if (err.code === 'MEDIA_LOCK_BUSY') return res.status(409).json({ code: 'MEDIA_LOCK_BUSY', error: err.message });
     if (err.code === ACCOUNT_FROZEN) return res.status(403).json({ error: err.message });
-    if (err.code === RECIPIENT_UNAVAILABLE) return res.status(409).json({ error: 'A creator in your cart can’t be paid right now -- remove their item and try again.' });
+    // A seller who stopped being payable between the checks above and the
+    // locked charge (lib/orders-store.js attaches the listing id). With the
+    // id, the cart drops that item; without one there is nothing to point at.
+    if (err.code === RECIPIENT_UNAVAILABLE) {
+      if (err.listingId != null) {
+        return res.status(409).json({
+          code: RECIPIENT_UNAVAILABLE,
+          error: 'A creator in your cart can’t be paid right now',
+          listingId: String(err.listingId),
+        });
+      }
+      return res.status(409).json({ error: 'A creator in your cart can’t be paid right now -- remove their item and try again.' });
+    }
     console.error('[marketplace/orders/create] unexpected error:', err);
     return res.status(500).json({ error: 'Something went wrong placing your order. Check your order history before trying again.' });
   }

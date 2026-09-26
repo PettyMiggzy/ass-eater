@@ -5,6 +5,7 @@ import {
   isBlockOnlyFor,
   projectBlockOnlyConversation,
   encodeConversationCursor,
+  listWallBlocksFor,
   SUMMARY_MESSAGES,
 } from '../../../lib/messages-store';
 import { inboxNameFor, findUserById } from '../../../lib/users-store';
@@ -19,11 +20,16 @@ import { getCreatorById } from '../../../lib/creators-store';
  * `unreadCount` and `hasMore`. `nextBefore` (an opaque cursor string, null
  * on the last page) is passed back as `before` to continue the list.
  *
- * A row that exists only to hold a block the viewer made (a blocked wall
- * commenter who never messaged) comes back as { id: <blockHandle>,
- * blockHandle, blockOnly: true, blockedByMe: true, messages: [], other:
- * { userId: null, name: 'A blocked account', ... } } -- never the
- * counterpart's account id.
+ * The viewer's WALL blocks (lib/messages-store.js setWallBlocked) are appended
+ * to the FIRST page only (no `before`), after its threads, as { id:
+ * <blockHandle>, blockHandle, blockOnly: true, wallBlock: true, blockedByMe:
+ * true, messages: [], other: { userId: null, name: 'A blocked account', ... } }
+ * -- never the counterpart's account id. They are not threads and take no
+ * part in paging; unblock one with POST /api/messages/block { blockHandle,
+ * blocked: false }. A named thread never shows a wall block (blockedByMe
+ * reflects DM blocks made by user id only), so a wall block cannot name the
+ * anonymous commenter behind it (round-10 social#0). A legacy block-only row
+ * is projected the same opaque way.
  *
  * This used to return every message of every conversation, so one sender
  * could grow a single conversation until this response blew past the
@@ -100,9 +106,12 @@ export default async function handler(req, res) {
       };
     });
 
+    const blockedAccount = { userId: null, name: 'A blocked account', handle: null, img: null, isCreator: false };
+    const wallBlocks = before ? [] : (await listWallBlocksFor(uid)).map((row) => ({ ...row, other: blockedAccount }));
+
     const last = conversations[conversations.length - 1];
     return res.status(200).json({
-      conversations: enriched,
+      conversations: [...enriched, ...wallBlocks],
       nextBefore: conversations.length === limit ? encodeConversationCursor(last) : null,
     });
   } catch (err) {

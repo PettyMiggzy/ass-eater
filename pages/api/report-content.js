@@ -1,5 +1,5 @@
 import { addNciiReport, NCII_FIELD_LIMITS, NCII_CATEGORIES } from '../../lib/ncii-reports-store';
-import { consumeAttempt, clientNetwork } from '../../lib/rate-limit';
+import { consumeNetworkAttempt } from '../../lib/rate-limit';
 import { sendNciiAlert } from '../../lib/alerts';
 
 // Deliberately generous. This queue is sorted oldest-first and carries a
@@ -9,6 +9,10 @@ import { sendNciiAlert } from '../../lib/alerts';
 // one address in an hour is far past any honest use and far below anything a
 // person reporting themselves would hit.
 const MAX_REPORTS_PER_IP = 20;
+// Per IPv6 /48 (round-10 gates-token#1): one routed allocation is 65,536
+// /64s, and without this each could mint its own budget -- and its own key in
+// the limiter's map. Generous, since a carrier puts many subscribers in one.
+const MAX_REPORTS_PER_NETWORK = MAX_REPORTS_PER_IP * 10;
 const REPORT_WINDOW_MS = 60 * 60 * 1000;
 
 // Deliberately unauthenticated -- required by the federal TAKE IT DOWN Act's
@@ -20,7 +24,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`ncii-report:ip:${clientNetwork(req)}`, {
+  const { limited, retryAfterSeconds } = consumeNetworkAttempt(req, 'ncii-report', {
+    networkLimit: MAX_REPORTS_PER_NETWORK,
     limit: MAX_REPORTS_PER_IP,
     windowMs: REPORT_WINDOW_MS,
   });

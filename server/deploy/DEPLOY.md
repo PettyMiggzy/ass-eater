@@ -277,7 +277,10 @@ automatic caps -- `PAYOUT_MAX_CENTS` / `PAYOUT_DAILY_MAX_CENTS`,
 `TOKEN_BURN_BATCH_MAX_CENTS` / `TOKEN_BURN_DAILY_MAX_CENTS`,
 `TREASURY_HEDGE_BATCH_MAX_CENTS` / `TREASURY_HEDGE_DAILY_MAX_CENTS` and the
 hedge's token-side caps `TREASURY_HEDGE_BATCH_MAX_TOKENS` /
-`TREASURY_HEDGE_DAILY_MAX_TOKENS` (whole $ONLYONE sold) -- are
+`TREASURY_HEDGE_DAILY_MAX_TOKENS` (whole $ONLYONE sold), and the deposit
+sweep's gas top-ups `SWEEP_GAS_DAILY_MAX_GWEI` (default 5,000,000 gwei =
+0.005 ETH, 100 top-ups of 0.00005 ETH; a sweep over it fails and retries,
+and the hourly reconciler re-queues leftover stablecoin) -- are
 counted from it, so a restart or redeploy no longer reopens the 24h window
 and nothing that can only write the database can shrink the count. If the
 journal is missing, unreadable or corrupt, payouts are HELD (`treasury
@@ -309,8 +312,14 @@ in the future; the journal pulls them back to "now" at load (the log says
 `OUTFLOW JOURNAL: … in the FUTURE`) so they still count, but only for one
 full 24h window. Automatic payouts, burns and hedges may therefore stay
 HELD/deferred for up to 24h after a clock correction -- expected, not a
-fault. Keep NTP (`timedatectl`) enabled on the droplet; release held
-payouts by hand if they cannot wait.
+fault. Keep NTP (`timedatectl`) enabled on the droplet. Do NOT `release` a
+payout held by `daily payout limit reached` during that window: the worker
+re-checks the same journal, the clamped entries still count, and it is held
+again within seconds. A payout that cannot wait is settled by hand as in
+"Settling a payout by hand" above -- it is already HELD, so send it from the
+treasury yourself, then `mark_sent` with the hash. Otherwise wait for the
+24h window to pass, then release. Never remove journal entries to make room:
+that raises the cap by exactly the money those entries represent.
 
 The deposit indexer also refuses (logs an error, credits nothing) if the
 `DepositAddress` table for the chain holds more than `DEPOSIT_ADDRESS_MAX`

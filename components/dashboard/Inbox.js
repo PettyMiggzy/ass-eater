@@ -66,9 +66,18 @@ function mergeOther(fallback, fromThread) {
   };
 }
 
+// Wall-block rows (blockOnly: an opaque blockHandle, no counterpart) come only
+// with the FIRST page and are not threads: they always sit after every
+// thread, however many older pages are loaded, and the first page is the
+// whole truth about them -- one lifted in another tab or device is dropped
+// on the next refresh instead of lingering.
+function orderRows(rows) {
+  return [...rows.filter((c) => !c.blockOnly), ...rows.filter((c) => c.blockOnly)];
+}
+
 function mergeConversations(firstPage, current) {
   const ids = new Set(firstPage.map((c) => c.id));
-  return [...firstPage, ...current.filter((c) => !ids.has(c.id))];
+  return orderRows([...firstPage, ...current.filter((c) => !ids.has(c.id) && !c.blockOnly)]);
 }
 
 /**
@@ -76,7 +85,9 @@ function mergeConversations(firstPage, current) {
  *   GET /api/messages/conversations?limit&before=<opaque nextBefore>
  *     (a row with blockOnly: true is a wall commenter the viewer blocked:
  *     no counterpart id, only an opaque blockHandle, lifted with
- *     POST /api/messages/block { blockHandle, blocked: false })
+ *     POST /api/messages/block { blockHandle, blocked: false }. A wall block
+ *     is never shown on a named thread -- blockedByMe there is a DM block
+ *     made by user id -- so it cannot name the anonymous commenter.)
  *   GET /api/messages/with/<userId>?before=<messageId>  (marks the thread read)
  *   POST /api/messages/send { toUserId, text, clientMessageId, expectedPriceCents }
  *
@@ -128,7 +139,7 @@ export default function Inbox({ currentUserId, isCreator }) {
       }
       setLoadError('');
       const page = Array.isArray(data?.conversations) ? data.conversations : [];
-      setConversations((current) => (quiet ? mergeConversations(page, current) : page));
+      setConversations((current) => (quiet ? mergeConversations(page, current) : orderRows(page)));
       if (!quiet) setNextBefore(typeof data?.nextBefore === 'string' ? data.nextBefore : null);
     } catch {
       if (!quiet) setLoadError('Could not load your messages. Check your connection.');
@@ -210,7 +221,7 @@ export default function Inbox({ currentUserId, isCreator }) {
       const page = Array.isArray(data?.conversations) ? data.conversations : [];
       setConversations((current) => {
         const ids = new Set(current.map((c) => c.id));
-        return [...current, ...page.filter((c) => !ids.has(c.id))];
+        return orderRows([...current, ...page.filter((c) => !ids.has(c.id))]);
       });
       setNextBefore(typeof data?.nextBefore === 'string' ? data.nextBefore : null);
     } catch {
@@ -389,8 +400,9 @@ export default function Inbox({ currentUserId, isCreator }) {
     }
   };
 
-  // A block-only row (a wall commenter blocked from the wall, who never
-  // messaged) carries no counterpart id -- /api/messages/conversations sends
+  // A block-only row (a wall commenter blocked from the wall -- whether or not
+  // they have also messaged; the wall block is never shown on their named
+  // thread) carries no counterpart id -- /api/messages/conversations sends
   // only an opaque blockHandle, so the block that de-anonymised nobody on the
   // wall does not do it here either. It has no thread to open; it is lifted
   // by that handle, and once lifted the row no longer exists.

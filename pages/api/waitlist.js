@@ -1,11 +1,15 @@
 import { addToWaitlist, isValidWaitlistEmail, normalizeWaitlistRole } from '../../lib/waitlist-store';
-import { consumeAttempt, clientNetwork } from '../../lib/rate-limit';
+import { consumeNetworkAttempt } from '../../lib/rate-limit';
 
 // Enough that a household or an office behind one address can all sign up,
 // low enough that scripting thousands of junk addresses into the list costs
 // something. A repeat signup from the same person folds into their existing
 // row rather than adding one, so honest use barely touches this.
 const MAX_SIGNUPS_PER_IP = 10;
+// Per IPv6 /48 (round-10 gates-token#1): one routed allocation is 65,536
+// /64s, and without this each could mint its own budget -- and its own key in
+// the limiter's map. Generous, since a carrier puts many subscribers in one.
+const MAX_SIGNUPS_PER_NETWORK = MAX_SIGNUPS_PER_IP * 10;
 const SIGNUP_WINDOW_MS = 60 * 60 * 1000;
 
 /**
@@ -31,7 +35,8 @@ export default async function handler(req, res) {
   // teaches whoever wrote it to stop filling that field in.
   if (website) return res.status(200).json({ ok: true });
 
-  const { limited, retryAfterSeconds } = consumeAttempt(`waitlist:ip:${clientNetwork(req)}`, {
+  const { limited, retryAfterSeconds } = consumeNetworkAttempt(req, 'waitlist', {
+    networkLimit: MAX_SIGNUPS_PER_NETWORK,
     limit: MAX_SIGNUPS_PER_IP,
     windowMs: SIGNUP_WINDOW_MS,
   });

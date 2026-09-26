@@ -172,6 +172,12 @@ export default async function handler(req, res) {
   // over files anyone can load directly (lib/token-gate.js gateEnforceable).
   const gateRefusal = refusesUnenforceableGate(existing, safeFields);
   if (gateRefusal) return res.status(400).json({ error: gateRefusal });
+  // Refused past the stored limit rather than silently cut (and a location
+  // with half an emoji in it is refused, not a 500) -- round-10 accounts#0.
+  if (fields && 'location' in fields) {
+    const badLocation = validateTextFields({ location: fields.location }, ['location']);
+    if (badLocation) return res.status(400).json({ error: badLocation });
+  }
   if ('location' in fields) safeFields.location = sanitizeLocation(fields.location);
   if ('age' in fields) {
     // Same refusal as the creator's own editor: an admin must not be able to

@@ -1,5 +1,5 @@
 import { Worker } from 'bullmq';
-import { formatUnits, parseEther } from 'viem';
+import { formatUnits, parseEther, parseGwei } from 'viem';
 import { prisma } from '../lib/prisma.js';
 import { publicClient, CHAIN_ID, CONFIRMATIONS, TOKENS, ACCEPTED_STABLES, ADDR_TO_ASSET, TRANSFER_EVENT, DECIMALS, WATCHED_TOKENS, STABLECOINS, depositWalletClient, treasuryAccount, treasuryWallet, withTreasuryLock, erc20Abi, envInt, assertTokenDecimals, TokenDecimalsMismatchError } from '../lib/chain.js';
 import { getUsdPrice, rawToUsdCents } from '../lib/price.js';
@@ -7,6 +7,8 @@ import { money, post, creditDeposit, type Tx } from '../core/ledger.js';
 import { publish, sweepQueue, connection } from '../lib/redis.js';
 import { registerWorker } from './process-guards.js';
 import { chunk } from './indexer-chunks.js';
+import { claimGasTopUp, depositCreditedFor, SweepGasDeferred, SWEEP_GAS_TOPUP_GWEI } from './sweep-gas.js';
+import { treasuryOutflow } from '../lib/outflow-journal.js';
 import { initialCursorBlock, parseStartBlock } from './deposit-cursor.js';
 
 const BATCH = 1000n;
@@ -436,9 +438,21 @@ registerWorker(new Worker('sweep', async (job) => {
   if (bal === 0n) return;
   const gasBal = await publicClient.getBalance({ address: me });
   if (gasBal < parseEther('0.00002')) {
-    // The gas top-up is a treasury send, so it queues behind payouts, the
-    // hedge and the burn rather than racing them for a nonce.
-    const h = await withTreasuryLock(() => treasuryWallet().sendTransaction({ to: me, value: parseEther('0.00005') }));
+    // The gas top-up is treasury money leaving on the strength of a Redis job
+    // and a DB row, so it is bounded like every other automatic outflow
+    // (workers/sweep-gas.ts): only for an address with a credited deposit of
+    // this asset, counted in the outflow journal before signing, and refused
+    // past the daily cap -- the job then fails and retries later.
+    if (!(await depositCreditedFor(CHAIN_ID, derivationIndex, asset))) {
+      throw new SweepGasDeferred(`sweep gas top-up refused: no credited ${asset} deposit for deposit index ${derivationIndex}`);
+    }
+    // A treasury send, so it queues behind payouts, the hedge and the burn
+    // rather than racing them for a nonce; the cap check and the journal
+    // write happen under the same lock, so two top-ups cannot both fit.
+    const h = await withTreasuryLock(async () => {
+      claimGasTopUp(treasuryOutflow, `sweep-${CHAIN_ID}-${derivationIndex}`);
+      return treasuryWallet().sendTransaction({ to: me, value: parseGwei(String(SWEEP_GAS_TOPUP_GWEI)) });
+    });
     await publicClient.waitForTransactionReceipt({ hash: h });
   }
   const h = await wc.writeContract({ address: tok.address, abi: erc20Abi, functionName: 'transfer', args: [treasuryAddress, bal] });

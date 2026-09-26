@@ -115,7 +115,11 @@ export type ReportListQuery = {
  * The moderation queue, paged, each report marked `contentRemoved` when what
  * it points at is already down (nobody is served it any more):
  *  - a post that is removed, or whose creator is BANNED;
- *  - a listing that is REMOVED, or whose creator is BANNED;
+ *  - a listing a MODERATOR took down (moderatedAt set -- a report takedown
+ *    or the seller's ban), or whose creator is BANNED. REMOVED status alone
+ *    does not count: a creator's own unlist writes it too, and the creator
+ *    can relist such a listing at will, so a report on it still needs a
+ *    decision;
  *  - a BANNED user;
  *  - a message whose sender is BANNED, that has an ACTIONED report or a
  *    REJECTED media row of its own (a single DM taken down through DELETE
@@ -144,7 +148,7 @@ export async function listReports(q: ReportListQuery) {
   const banned = (col: Prisma.Sql) => Prisma.sql`EXISTS (SELECT 1 FROM "User" ou WHERE ou.id = ${col} AND ou.status = 'BANNED')`;
   const removed = Prisma.sql`CASE r."targetType"
       WHEN 'post' THEN EXISTS (SELECT 1 FROM "Post" p WHERE p.id = r."targetId" AND (p.removed OR ${banned(Prisma.sql`p."creatorId"`)}))
-      WHEN 'listing' THEN EXISTS (SELECT 1 FROM "Listing" l WHERE l.id = r."targetId" AND (l.status = 'REMOVED' OR ${banned(Prisma.sql`l."creatorId"`)}))
+      WHEN 'listing' THEN EXISTS (SELECT 1 FROM "Listing" l WHERE l.id = r."targetId" AND (l."moderatedAt" IS NOT NULL OR ${banned(Prisma.sql`l."creatorId"`)}))
       WHEN 'user' THEN EXISTS (SELECT 1 FROM "User" u WHERE u.id = r."targetId" AND u.status = 'BANNED')
       WHEN 'message' THEN EXISTS (
         SELECT 1 FROM "Message" m WHERE m.id = r."targetId" AND (

@@ -5,7 +5,7 @@ import {
   createAgeVerificationToken,
 } from '../../../lib/age-verification';
 import { claimAgeVerificationUuid } from '../../../lib/age-verification-uses';
-import { clientNetwork, consumeAttempt } from '../../../lib/rate-limit';
+import { consumeNetworkAttempt } from '../../../lib/rate-limit';
 
 // The client-side AgeChecker popup (pages/verify-age.js) reports "accepted"
 // via a JS callback, but that alone is bypassable -- anyone can fake the
@@ -27,6 +27,10 @@ import { clientNetwork, consumeAttempt } from '../../../lib/rate-limit';
 // not a hard cap.
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_PER_IP = 20;
+// Per IPv6 /48 (round-10 gates-token#1): one routed allocation is 65,536
+// /64s, and without this each could mint its own budget -- and its own key in
+// the limiter's map. Generous, since a carrier puts many subscribers in one.
+const MAX_PER_NETWORK = MAX_PER_IP * 10;
 const MAX_UUID_LENGTH = 200;
 
 export default async function handler(req, res) {
@@ -46,7 +50,8 @@ export default async function handler(req, res) {
   }
 
   // Before the outbound call, or it limits nothing.
-  const { limited, retryAfterSeconds } = consumeAttempt(`age-confirm:ip:${clientNetwork(req)}`, {
+  const { limited, retryAfterSeconds } = consumeNetworkAttempt(req, 'age-confirm', {
+    networkLimit: MAX_PER_NETWORK,
     limit: MAX_PER_IP,
     windowMs: WINDOW_MS,
   });

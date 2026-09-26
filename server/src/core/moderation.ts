@@ -106,19 +106,31 @@ export async function applyUserStatus(
   // of this -- browsing, buying and bidding already refuse a non-ACTIVE
   // seller, and an auction ending during a suspension closes with no sale
   // and a full release (core/auctions.ts closeAuction).
+  //
+  // Every listing a ban takes down is stamped moderatedAt: REMOVED alone is
+  // also what the creator's own unlist writes, and an account an admin later
+  // un-bans must not be able to relist what the ban removed with one PATCH
+  // (modules/marketplace.ts refuses a moderated listing).
   if (status === 'BANNED') {
+    const moderatedAt = new Date();
     const auctions = await prisma.listing.findMany({ where: { creatorId: userId, saleType: 'AUCTION', status: 'ACTIVE' }, select: { id: true } });
     // One auction failing to cancel (the sweep can close it between this
     // read and its transaction; cancelAuction then no-ops) must never skip
     // the fixed-price removal below for a creator who is already BANNED.
     for (const a of auctions) {
       try {
-        await money(prisma, (tx) => cancelAuction(tx, a.id, 'seller_banned'));
+        await money(prisma, async (tx) => {
+          const r = await cancelAuction(tx, a.id, 'seller_banned');
+          // Stamped only when THIS cancel took it down: cancelAuction no-ops
+          // on an auction the sweep already closed (sold, or ended unsold).
+          await tx.listing.updateMany({ where: { id: a.id, status: 'REMOVED', moderatedAt: null }, data: { moderatedAt } });
+          return r;
+        });
       } catch (err) {
         log.error({ err, listingId: a.id, userId }, 'ban: failed to cancel auction');
       }
     }
-    await prisma.listing.updateMany({ where: { creatorId: userId, saleType: 'FIXED', status: 'ACTIVE' }, data: { status: 'REMOVED' } });
+    await prisma.listing.updateMany({ where: { creatorId: userId, saleType: 'FIXED', status: 'ACTIVE' }, data: { status: 'REMOVED', moderatedAt } });
   }
   return true;
 }

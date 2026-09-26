@@ -6,7 +6,10 @@ import type { RoomsLike } from './livekit.js';
 // before being removed -- covers a client timer firing a little late.
 export const PAY_GRACE_MS = 30_000;
 // A just-created stream's room can take a moment to show up in listRooms.
-const NEW_STREAM_GRACE_MS = 2 * 60_000;
+// Shared by the sweep and by /live/start's stale-stream check
+// (endStaleStreamFor): neither may end a stream younger than this for a
+// missing room.
+export const NEW_STREAM_GRACE_MS = 2 * 60_000;
 
 /**
  * One pass over every LIVE stream:
@@ -92,14 +95,22 @@ async function lacksEntitlement(s: { id: string; ticketPriceCents: number; perMi
  * Called by /live/start before refusing with already_live: ends the creator's
  * existing LIVE stream if its room is gone. Returns true if a live stream
  * (with a real room) is still in the way.
+ *
+ * A stream younger than NEW_STREAM_GRACE_MS is always "in the way", room
+ * listed or not -- the same grace the sweep gives it. Without it, a second
+ * "Go Live" arriving just after the first committed (a double tap ~300 ms
+ * apart) saw the first room not yet in listRooms, ended the stream the
+ * creator was about to publish into, and started a second, empty one that
+ * /live/active and /join then pointed fans at.
  */
-export async function endStaleStreamFor(rooms: RoomsLike, creatorId: string): Promise<boolean> {
+export async function endStaleStreamFor(rooms: RoomsLike, creatorId: string, now = new Date()): Promise<boolean> {
   const cur = await prisma.liveStream.findFirst({ where: { creatorId, status: 'LIVE' } });
   if (!cur) return false;
+  if (now.getTime() - cur.startedAt.getTime() < NEW_STREAM_GRACE_MS) return true;
   let exists = true;
   try { exists = (await rooms.listRooms([cur.roomName])).some((r) => r.name === cur.roomName); } catch { return true; }
   if (exists) return true;
-  await prisma.liveStream.updateMany({ where: { id: cur.id, status: 'LIVE' }, data: { status: 'ENDED', endedAt: new Date() } });
+  await prisma.liveStream.updateMany({ where: { id: cur.id, status: 'LIVE' }, data: { status: 'ENDED', endedAt: now } });
   return false;
 }
 

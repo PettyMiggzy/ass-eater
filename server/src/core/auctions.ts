@@ -101,6 +101,19 @@ export async function placeBid(
   const listing = await tx.listing.findUniqueOrThrow({ where: { id: listingId } });
   if (listing.saleType !== 'AUCTION') throw statusCode('not_an_auction', 400);
   if (listing.status !== 'ACTIVE') throw statusCode('not_available', 400);
+  // A bid carries no request id, so a retry after a lost response (mobile
+  // network, a double tap) is indistinguishable from a new bid -- and used
+  // to be judged against the floor its own first attempt had just raised:
+  // refused as bid_too_low, which told a fan who was already LEADING that
+  // they had been outbid, and steered them into outbidding themselves. The
+  // current leader repeating exactly their standing bid is that retry: it is
+  // answered with the standing bid, nothing re-held. (A leader deliberately
+  // re-bidding the same amount would have been refused anyway -- it is
+  // below the floor -- so this changes nothing but the answer.)
+  if (listing.currentBidderId === bidderId && listing.currentBidCents === amountCents) {
+    const standing = await tx.bid.findFirst({ where: { listingId, bidderId, amountCents }, orderBy: { createdAt: 'desc' } });
+    if (standing) return Object.assign(standing, { already: true as const });
+  }
   if (!listing.auctionEndsAt || listing.auctionEndsAt <= new Date()) throw statusCode('auction_ended', 400);
   if (listing.creatorId === bidderId) throw statusCode('self_bid', 400);
   // A suspended or banned seller's auctions stay up only so the close can

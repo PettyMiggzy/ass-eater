@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
-import { effectiveCreatorStatus } from '../../lib/creator-status';
+import { effectiveCreatorStatus, MAX_LOCATION_LENGTH } from '../../lib/creator-status';
 import { FOUNDING_LIMIT, countFounding, isFoundingCreator } from '../../lib/founding';
 import { sanitizeGateTokens, tokenGateLive } from '../../lib/token-gate';
 import { Icons, SolidIcons } from '../../components/Brand';
@@ -322,6 +322,26 @@ export default function AdminPanel() {
       const built = fieldsFromDraft(rebased.draft, rebased.baseline);
       if (built.error) throw new Error(built.error);
       if (!Object.keys(built.fields).length) { setStatus('Nothing to save -- no field was changed.'); return; }
+      // A ban is the one irreversible choice this form makes, and the Status
+      // dropdown puts it right next to "Pending": confirm it like every other
+      // destructive action in this panel. Asked only on the transition into
+      // 'banned' (the panel re-posts status on every save), against the
+      // CURRENT record, so re-saving an already-banned creator isn't nagged.
+      const becomingBanned = built.fields.status === 'banned' && effectiveCreatorStatus(current) !== 'banned';
+      if (becomingBanned && !confirm(
+        `Ban ${current.name || 'this creator'} permanently?\n\n`
+        + '- Every listing nobody has paid for is taken down and its photos/videos are DELETED for good.\n'
+        + (isFoundingCreator(current) ? '- Their Founding Creator slot is revoked and will not come back if the ban is lifted.\n' : '')
+        + '- Their credit balance and pending payouts are frozen.\n\n'
+        + 'Setting them back to Active later does not restore any of this.',
+      )) { setStatus('Nothing was saved.'); return; }
+      // Unticking Founding is also permanent (foundingRevokedAt stops any
+      // later auto-grant), so it gets the same prompt when it isn't already
+      // covered by the ban confirmation above.
+      if (!becomingBanned && built.fields.founding === false && isFoundingCreator(current) && !confirm(
+        `Revoke ${current.name || 'this creator'}'s Founding Creator status?\n\n`
+        + 'This is permanent: they will not be granted Founding again automatically, and their fee waiver ends.',
+      )) { setStatus('Nothing was saved.'); return; }
       const { res, data } = await adminPost(adminKey, '/api/admin/profile', { creatorId: savingId, fields: built.fields });
       // A ban whose listing takedown failed comes back 500 WITH the saved
       // creator: the ban stands, so the roster and draft must show it.
@@ -1004,7 +1024,7 @@ export default function AdminPanel() {
                     <Field label="Name" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} />
                     <Field label="Handle (required to go live)" value={draft.handle} onChange={(v) => setDraft({ ...draft, handle: v })} />
                     <Field label="Price" value={draft.price} onChange={(v) => setDraft({ ...draft, price: v })} />
-                    <Field label="Location (optional)" value={draft.location} onChange={(v) => setDraft({ ...draft, location: v })} />
+                    <Field label="Location (optional)" value={draft.location} maxLength={MAX_LOCATION_LENGTH} onChange={(v) => setDraft({ ...draft, location: v })} />
                     <Field label="Age (optional, 18+)" value={draft.age} onChange={(v) => setDraft({ ...draft, age: v })} />
                   </div>
                   {/* Tags, location and age are public and are re-screened when a
@@ -1469,13 +1489,14 @@ function CreatorAccountInfo({ creator, account }) {
   );
 }
 
-function Field({ label, value, onChange }) {
+function Field({ label, value, onChange, maxLength }) {
   return (
     <div>
       <label className="block text-sm text-gray-400 mb-2">{label}</label>
       <input
         type="text"
         value={value}
+        maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white"
       />
@@ -4455,20 +4476,27 @@ function OrdersPanel({ adminKey, creators, fixedCreatorId = null, fixedBuyerId =
     return { params };
   };
 
+  // Only the newest load may write: switching the status filter (or a
+  // close/erase reload overlapping one) fires overlapping requests, and a
+  // slower earlier one landing last would list one status's orders under
+  // another's label. Same guard as ReportsPanel.
+  const loadSeq = useRef(0);
   const load = async ({ keepNotice = false } = {}) => {
+    const seq = ++loadSeq.current;
     const q = query();
     setError('');
     if (!keepNotice) setNotice('');
-    if (q.error) { setError(q.error); return; }
+    if (q.error) { setLoading(false); setError(q.error); return; }
     setLoading(true);
     try {
       const { res, data } = await adminGet(adminKey, `/api/admin/orders?${new URLSearchParams(q.params).toString()}`);
+      if (seq !== loadSeq.current) return;
       if (!res.ok || !Array.isArray(data.orders)) throw new Error(errorFrom(res, data, 'Could not load orders'));
       setOrders(data.orders);
     } catch (err) {
-      setError(err.message);
+      if (seq === loadSeq.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 

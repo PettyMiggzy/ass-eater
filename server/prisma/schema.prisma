@@ -344,6 +344,14 @@ model Listing {
   images            String[]       @default([]) // free public preview photos (physical items)
   media             Media[] // the actual digital product, gated until purchased -- see core/access.ts canViewListing
   status            ListingStatus  @default(ACTIVE)
+  // Set when a MODERATOR took the listing down (a report resolved with any
+  // action but dismiss, or the seller's ban -- modules/admin.ts,
+  // core/moderation.ts). status REMOVED alone cannot tell that apart from
+  // the creator unlisting it themselves, which let one PATCH
+  // {status:'ACTIVE'} undo a takedown. While set, the creator cannot edit or
+  // relist it (modules/marketplace.ts PATCH /listings/:id), and the report
+  // queue counts its content as down (core/reports.ts).
+  moderatedAt       DateTime?
   createdAt         DateTime       @default(now())
   orders            ListingOrder[]
 
@@ -730,6 +738,14 @@ model Payout {
   status      PayoutStatus   @default(PENDING)
   error       String?
   createdAt   DateTime       @default(now())
+  // The client's uuid for this cash-out, reused on any retry of the same
+  // request (modules/payouts.ts). A double tap or a retry after a lost
+  // response collides on the unique index and gets the first payout back
+  // instead of reserving -- and paying the withdrawal fee -- twice. Null on
+  // rows from before it existed (NULLs never collide).
+  requestId   String?
+
+  @@unique([creatorId, requestId])
 }
 
 model ChainCursor {

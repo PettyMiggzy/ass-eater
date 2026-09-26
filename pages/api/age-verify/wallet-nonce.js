@@ -6,7 +6,7 @@ import {
   walletSignInMessage,
   WALLET_NONCE_COOKIE_NAME,
 } from '../../../lib/wallet-auth';
-import { clientNetwork, consumeAttempt } from '../../../lib/rate-limit';
+import { consumeNetworkAttempt } from '../../../lib/rate-limit';
 
 // Step one of the wallet owner login: hand out a challenge.
 //
@@ -15,6 +15,10 @@ import { clientNetwork, consumeAttempt } from '../../../lib/rate-limit';
 // unbounded one is free CPU for anyone who finds it.
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_PER_IP = 30;
+// Per IPv6 /48 (round-10 gates-token#1): one routed allocation is 65,536
+// /64s, and without this each could mint its own budget -- and its own key in
+// the limiter's map. Generous, since a carrier puts many subscribers in one.
+const MAX_PER_NETWORK = MAX_PER_IP * 10;
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -24,7 +28,11 @@ export default async function handler(req, res) {
   // endpoint must not advertise that a bypass is a thing here.
   if (!ownerWalletAddress()) return res.status(404).json({ error: 'Not found' });
 
-  const { limited } = consumeAttempt(`wallet-nonce:ip:${clientNetwork(req)}`, { limit: MAX_PER_IP, windowMs: WINDOW_MS });
+  const { limited } = consumeNetworkAttempt(req, 'wallet-nonce', {
+    networkLimit: MAX_PER_NETWORK,
+    limit: MAX_PER_IP,
+    windowMs: WINDOW_MS,
+  });
   if (limited) return res.status(404).json({ error: 'Not found' });
 
   const { nonce, token } = await createWalletNonce(ageVerificationSecret());

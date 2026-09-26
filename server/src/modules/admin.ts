@@ -425,8 +425,19 @@ export const admin: FastifyPluginAsync = async (app) => {
           // A live auction is cancelled with the leader's hold returned; a
           // fixed-price listing just leaves sale. Its media comes down too, so
           // it stops being served to past buyers as well.
-          if (l.saleType === 'AUCTION' && l.status === 'ACTIVE') await money(prisma, (tx) => cancelAuction(tx, r.targetId, 'removed_by_admin'));
-          else await prisma.listing.updateMany({ where: { id: r.targetId, status: 'ACTIVE' }, data: { status: 'REMOVED' } });
+          //
+          // Either way it is stamped moderatedAt, in the same transaction as
+          // the removal, and whatever its status (a listing the creator had
+          // unlisted themselves before the takedown included). REMOVED alone
+          // is also what a creator's own unlist writes, so one PATCH
+          // {status:'ACTIVE'} used to undo the takedown; the marketplace
+          // PATCH refuses a moderated listing (modules/marketplace.ts).
+          const moderatedAt = new Date();
+          await money(prisma, async (tx) => {
+            if (l.saleType === 'AUCTION' && l.status === 'ACTIVE') await cancelAuction(tx, r.targetId, 'removed_by_admin');
+            else await tx.listing.updateMany({ where: { id: r.targetId, status: 'ACTIVE' }, data: { status: 'REMOVED' } });
+            await tx.listing.updateMany({ where: { id: r.targetId, moderatedAt: null }, data: { moderatedAt } });
+          });
           settledTargetIds = [r.targetId];
           const media = await prisma.media.findMany({ where: { listingId: r.targetId }, select: { id: true } });
           takedowns.push(...(await takedownRoots(media.map((m) => m.id), req.log)));

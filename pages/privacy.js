@@ -53,6 +53,17 @@ export default function Privacy() {
                   listings, messages, wall comments.
                 </li>
                 <li>
+                  <strong>Content filter records.</strong> Every message, wall comment, profile field (name,
+                  handle, bio, tags, location, social links), listing, and signup username is checked by
+                  automatic filters for payment details that route around the Platform (phone numbers, email
+                  addresses, outside payment apps) and for prohibited content. When one refuses what you
+                  wrote, the text is not sent or published, but we keep a moderation record of it for
+                  administrators to review: up to 200 characters of the refused text, the reason it was
+                  refused, when, and the account it came from — or, for a refused signup, the IP address it
+                  came from, since there is no account yet. Only Platform administrators can see these
+                  records. See Section 7 for how long they are kept.
+                </li>
+                <li>
                   <strong>Credits and payments.</strong> Your credit balance and a record of every credit
                   purchase, spend, sale, and payout on your account; for each credit purchase, the
                   transaction hash and the wallet address it was sent from; for each creator payout
@@ -276,7 +287,10 @@ export default function Privacy() {
                   are handled separately, below). Reports and moderation records are different: they
                   keep a copy of the reported or removed content, including who wrote or sent it (the username or
                   login email that account had at the time), for as long as the report, a legal hold, or a legal
-                  obligation requires — that copy is the evidence, so deleting the account does not remove it. If
+                  obligation requires — that copy is the evidence, so deleting the account does not remove it. The
+                  content filter records described in Section 1 are moderation records too: text a filter
+                  refused stays in them, with the account (or signup IP address) it came from, after the
+                  account is deleted. If
                   you have earnings waiting to be paid out, a pending payout, or a physical order that
                   hasn&apos;t shipped yet, we&apos;ll settle that with you before deleting the account — the
                   Settings page won&apos;t delete an account while one of its orders is still waiting to ship.

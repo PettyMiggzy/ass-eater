@@ -160,6 +160,22 @@ async function fetchKeyClaimed(key) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Reload so the page is rendered for the account signed in now. At most once
+// every 10 seconds per tab: if the page's session and the cart's re-check ever
+// disagreed persistently, this must not become a reload loop.
+const SESSION_RELOAD_KEY = 'onlyone-cart-session-reload';
+function reloadForSession() {
+  try {
+    const last = Number(sessionStorage.getItem(SESSION_RELOAD_KEY) || 0);
+    if (Date.now() - last < 10_000) return false;
+    sessionStorage.setItem(SESSION_RELOAD_KEY, String(Date.now()));
+  } catch {
+    // sessionStorage unavailable: reload anyway (the server check still holds)
+  }
+  window.location.reload();
+  return true;
+}
+
 export default function CartPage({ sessionUser }) {
   const cart = useCart();
   const uid = sessionUser ? String(sessionUser.id) : null;
@@ -194,14 +210,35 @@ export default function CartPage({ sessionUser }) {
   const cartItemsRef = useRef(cart.items);
   cartItemsRef.current = cart.items;
 
+  const viewerConfirmed = useRef(false);
   // This page knows the signed-in account from its own session: hand it to
   // the cart so a cart built by a different account on this browser is
   // discarded (lib/cart.js resolveCartOwnership) before anything renders or
   // is paid for, without waiting on the cart's own /api/auth/me check.
   useEffect(() => {
+    viewerConfirmed.current = false; // re-confirmed for this uid below
     cart.setViewer(uid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
+
+  // This page's `uid`, balance and checkout attempt all belong to the account
+  // it was rendered for. When the cart's own re-check (on focus, on a return
+  // to the tab, on another tab changing the cart -- lib/cart.js) finds a
+  // different account signed in, or nobody, reload so all of them belong to
+  // whoever is signed in now instead of offering the previous account's cart
+  // to the next one. Only a change AFTER the cart has confirmed this page's
+  // account counts: a value left over from the page before this one is
+  // replaced by setViewer above. The server refuses a mismatched checkout on
+  // its own too (expectedBuyerId below); this keeps the page honest.
+  useEffect(() => {
+    if (cart.viewer === undefined) return;
+    const current = cart.viewer === null ? null : String(cart.viewer);
+    if (current === uid) {
+      viewerConfirmed.current = true;
+      return;
+    }
+    if (viewerConfirmed.current) reloadForSession();
+  }, [cart.viewer, uid]);
 
   const refreshBalance = () =>
     fetch('/api/credits/balance')
@@ -285,8 +322,12 @@ export default function CartPage({ sessionUser }) {
   const uncertainAttempt = memAttempt && memAttempt.uncertain && !paying ? memAttempt : null;
 
   const hasEnough = balanceCents !== null && balanceCents >= cart.totalCents;
+  // The cart has seen a different account signed in: the reload above is
+  // on its way (and the server would refuse anyway), so don't offer Pay.
+  const viewerMismatch = cart.viewer !== undefined && (cart.viewer === null ? null : String(cart.viewer)) !== uid;
   const canCheckout =
     !!sessionUser &&
+    !viewerMismatch &&
     hasEnough &&
     ageConfirmed &&
     tosAccepted &&
@@ -419,6 +460,10 @@ export default function CartPage({ sessionUser }) {
             ageConfirmed,
             tosAccepted,
             idempotencyKey,
+            // The account this page was rendered for. If the browser has
+            // since signed in as someone else, the server refuses with
+            // SESSION_CHANGED rather than charge them for this cart.
+            expectedBuyerId: uid,
           }),
         });
       } catch {
@@ -440,6 +485,13 @@ export default function CartPage({ sessionUser }) {
         // points at the orders -- never leaves paid items sitting in the cart.
         settleClaimed(attempt);
         return;
+      }
+      if (res.status === 409 && data.code === 'SESSION_CHANGED') {
+        // A different account (or nobody) is signed in now. Nothing was
+        // charged, to anyone; this attempt was never the new account's.
+        endIfCertain();
+        if (reloadForSession()) return;
+        throw new Error(data.error || 'You signed in or out in another tab. Reload the page before paying.');
       }
       if (res.status === 409 && data.code === 'PRICE_CHANGED') {
         // Nothing was charged. Show the new prices and make the fan confirm

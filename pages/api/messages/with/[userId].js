@@ -1,5 +1,5 @@
 import { getVerifiedSessionUserId } from '../../../../lib/session';
-import { getConversationBetween, projectConversation, markConversationRead, quoteDmPrice } from '../../../../lib/messages-store';
+import { getConversationBetween, projectConversation, markConversationRead, quoteDmPrice, isBlockOnlyFor } from '../../../../lib/messages-store';
 import { findUserById, inboxNameFor } from '../../../../lib/users-store';
 import { getCreatorById } from '../../../../lib/creators-store';
 
@@ -53,9 +53,13 @@ export default async function handler(req, res) {
       await markConversationRead(uid, userId);
     }
 
-    const projected = conversation
+    // A legacy block-only row (lib/messages-store.js isBlockOnlyFor) may stand
+    // for an anonymous wall commenter, so probing an id here must not show it:
+    // it is answered exactly like "no conversation yet" (round-10 social#0).
+    const blockOnly = isBlockOnlyFor(conversation, uid);
+    const projected = conversation && !blockOnly
       ? projectConversation(conversation, uid, { limit, before: typeof before === 'string' ? before : null })
-      : { id: null, participantIds: [String(uid), String(userId)], messages: [], hasMore: false, lastMessage: null, unreadCount: 0, updatedAt: null };
+      : { id: null, participantIds: [String(uid), String(userId)], messages: [], hasMore: false, lastMessage: null, unreadCount: 0, blockedByMe: false, blockedByThem: false, updatedAt: null };
     // Opening the thread just read it.
     projected.unreadCount = 0;
     const otherCreator = other?.creatorId ? await getCreatorById(String(other.creatorId)) : null;
