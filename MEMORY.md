@@ -5306,3 +5306,37 @@ Replaces the data/house-media/ design above (that directory is now in
   only when every image of their plan is attached.
 - Every paid image must still be looked at by a person before upload: no
   nudity, nothing see-through, no sex act, clearly adult.
+
+## AI house-model chat + paid custom photos/videos (2026-09-27)
+
+Owner ask: fans chat with the AI house models (uncensored) and pay for custom
+pics/videos made on request -- the old "Chat with {name} (coming soon)" button
+was never built. Built on branch `claude/ai-model-chat`:
+
+- `lib/ai-chat.js` (logic), `lib/ai-chat-api.js` (route plumbing),
+  `pages/api/ai-chat/{thread,send,request}.js`, `pages/chat/[id].js`, a
+  "Chat with {name}" button on house profiles that have a persona.
+- `data/house-personas.js`: look + voice per house slug (the 8 roster models
+  plus 11 more for when they are added). No persona, no chat.
+- Venice: `venice-uncensored-role-play` with `include_venice_system_prompt:
+  false`; images `lustify-v8` with `safe_mode: false`; video
+  `wan-3-0-image-to-video` 5s/720p from a generated still. Env overrides
+  `AI_CHAT_MODEL`, `AI_IMAGE_MODEL`, `AI_VIDEO_MODEL`; uses `VENICE_API_KEY`.
+- Money: every charge is `chargeHouseSale` (100% platform revenue).
+  `AI_CHAT_PRICES`: message 10c, photo $3, video $10. Any failure refunds
+  exactly once (`refunded` flag flipped in a guarded UPDATE). Videos are
+  'pending' until `advanceVideoJobs` (run on each thread read) collects the
+  MP4 or refunds after 30 minutes.
+- Files: private Blob at `aichat/<userId>/<uuid>.jpg|mp4`, served by
+  /api/media ONLY to that user (and admins), and only while a chat row points
+  at it. Deliberately not part of `parseMediaPathname`, so no upload route can
+  accept such a path.
+- Limits: every fan message/request runs `screenPublicText` PLUS a stricter
+  chat-only age-play screen (bare ages under 18 attached to a person, young /
+  school / child framing, family-member sex), a hard-limit screen
+  (non-consent, incest, animals) and a likeness screen (real people,
+  lookalikes). Model replies go through the same age/hard-limit screens and
+  are replaced if they trip. Every persona look states an adult age and leads
+  every image prompt, so a request changes the scene, never the person.
+- Tests: `lib/ai-chat.test.mjs` (118 checks, real Postgres, Venice/Blob
+  doubles). Verified in a browser against a local build with a mock Venice.

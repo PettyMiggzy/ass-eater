@@ -15,6 +15,8 @@ import { holderGateState } from '../../lib/holder-access';
 import { tokenGateLive, formatGate } from '../../lib/token-gate';
 import { DM_PRICE_FLOOR_CENTS, formatCredits } from '../../lib/brand';
 import { feeWaiverActive } from '../../lib/founding';
+import { chatPersonaFor } from '../../lib/ai-chat';
+import { canSellAsHouse } from '../../lib/credits-store';
 import { FoundingBadge, Icons, SolidIcons, Tagline, pickTagline } from '../../components/Brand';
 import SiteNav from '../../components/SiteNav';
 import DemoBadge, { AiModelBadge } from '../../components/public/DemoBadge';
@@ -127,6 +129,8 @@ export async function getServerSideProps({ req, params }) {
       // __NEXT_DATA__ JSON even while the page itself correctly renders
       // "Creator not found".
       creatorUserId: creator && creatorUser ? String(creatorUser.id) : null,
+      // An AI house model with a chat persona (lib/ai-chat.js): the Chat button.
+      aiChat: !!creator && !!chatPersonaFor(creator) && canSellAsHouse(creator),
       gate: {
         allowed: gate.allowed === true,
         reason: gate.reason || null,
@@ -268,6 +272,7 @@ export default function CreatorProfile({
   dmMaxLength = 2000,
   wallMaxLength = 500,
   initialFavorited,
+  aiChat = false,
 }) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('posts');
@@ -615,6 +620,14 @@ export default function CreatorProfile({
                   >
                     Message
                   </button>
+                )}
+                {aiChat && (
+                  <a
+                    href={viewerId ? `/chat/${creator.id}` : `/login?next=${encodeURIComponent(`/chat/${creator.id}`)}`}
+                    className="px-5 h-11 inline-flex items-center rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-brand font-bold text-sm shadow-[0_0_18px_rgba(255,45,120,0.45)] transition"
+                  >
+                    Chat with {creator.name}
+                  </a>
                 )}
                 {listings.length > 0 && (
                   <button

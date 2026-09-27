@@ -6,6 +6,7 @@ import { effectiveCreatorStatus } from '../../../lib/creator-status';
 import { gateConfigured } from '../../../lib/token-gate';
 import {
   parseMediaPathname,
+  parseAiChatPathname,
   mediaSrc,
   sendMedia,
   hasAdminMediaSession,
@@ -13,6 +14,7 @@ import {
   canViewGatedCreatorMedia,
 } from '../../../lib/media';
 import { isMediaReaped, isOwnerUploadInProgress } from '../../../lib/media-refs';
+import { aiChatMediaExists } from '../../../lib/ai-chat';
 
 /**
  * GET /api/media/<pathname> -- the only way any uploaded file is served.
@@ -76,6 +78,24 @@ export default async function handler(req, res) {
   }
 
   const parts = Array.isArray(req.query.path) ? req.query.path : [];
+
+  // A file made in an AI house-model chat: its fan (who paid for it) and
+  // admins, nobody else -- and only while the chat row still points at it.
+  const aiChat = parseAiChatPathname(parts.join('/'));
+  if (aiChat) {
+    try {
+      if (!hasAdminMediaSession(req)) {
+        const user = await getSessionUser(req);
+        if (!user || String(user.id) !== aiChat.ownerUserId) return notFound(res);
+      }
+      if (!(await aiChatMediaExists(aiChat.pathname))) return notFound(res);
+      return await sendMedia(req, res, aiChat.pathname);
+    } catch (err) {
+      console.error('[media] ai chat file failed:', err?.message);
+      return notFound(res);
+    }
+  }
+
   const parsed = parseMediaPathname(parts.join('/'));
   if (!parsed) return notFound(res);
 
