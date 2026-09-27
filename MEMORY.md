@@ -5340,3 +5340,23 @@ was never built. Built on branch `claude/ai-model-chat`:
   every image prompt, so a request changes the scene, never the person.
 - Tests: `lib/ai-chat.test.mjs` (118 checks, real Postgres, Venice/Blob
   doubles). Verified in a browser against a local build with a mock Venice.
+
+## House models sell video clips; roster grows to 19 (2026-09-27)
+
+Owner: "they need to be able to buy images and videos". The house roster
+sold photo sets only. Now:
+
+- Sale slots 1-6 are photos, 7-9 are MP4 video clips (`isHouseClipSlot`,
+  `HOUSE_SALE_SLOT_COUNT` in data/house-roster.js). Same admin upload
+  (/admin > AI house roster, `/api/admin/house-sale-image?n=7..9`), same 4MB
+  cap (export clips under 4MB), MP4 sniffed by its `ftyp` box.
+- Four video listings per model: each clip $8, all three $20 (`clip: true`
+  plans). A model still goes live on its six photos alone; each video
+  listing is created and put on sale once its clips are uploaded. Items are
+  `type: 'video'`, and /orders already plays them.
+- The sold sets may now be explicit (owner decision). Public avatar, cover
+  and free previews stay clothed.
+- 11 more models added (Luna Vega the ad girl, Raven Black, Vanessa Lane,
+  Brooke Hayes, Daisy Monroe, Nia James, Camila Ortiz, Tiffany Blaze, Jade
+  Voss, Skye Rivers, Scarlett Vane) with their public images committed.
+  Their chat personas are already in data/house-personas.js.

@@ -3526,7 +3526,7 @@ const BLANK_RECORD = {
  * announce the launch.
  */
 // The AI house model roster (lib/house-roster.js, /api/admin/house-roster):
-// per model, the six PAID photo slots the owner uploads himself
+// per model, the six PAID photo slots and three video-clip slots the owner uploads himself
 // (/api/admin/house-sale-image -- straight to private storage, never git or
 // public/), which public profile files are present, and an install per model
 // (resumable -- each call stops before the function time limit and this panel
@@ -3560,16 +3560,19 @@ function HouseRosterPanel({ adminKey }) {
     return Number.isNaN(t) ? '' : new Date(t).toLocaleDateString();
   };
 
-  const upload = async (slug, n, file) => {
+  // Slots 1-6 are photos, 7-9 video clips (lib/house-roster.js).
+  const slotLabel = (slot) => (slot.clip ? `Video ${slot.n - 6}` : `Photo ${slot.n}`);
+  const upload = async (slug, slot, file) => {
     if (!file) return;
+    const n = slot.n;
     setError('');
     setMessage('');
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setError('Sale photos must be a JPEG, PNG or WebP image.');
+    if (slot.clip ? file.type !== 'video/mp4' : !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setError(slot.clip ? 'Video slots take an MP4 file.' : 'Sale photos must be a JPEG, PNG or WebP image.');
       return;
     }
     if (file.size > maxBytes) {
-      setError(`That file is too large (${fmtBytes(maxBytes)} maximum). Export it as a JPEG at a lower quality.`);
+      setError(`That file is too large (${fmtBytes(maxBytes)} maximum). ${slot.clip ? 'Export the video at a lower bitrate.' : 'Export it as a JPEG at a lower quality.'}`);
       return;
     }
     setBusy(true);
@@ -3581,7 +3584,7 @@ function HouseRosterPanel({ adminKey }) {
       });
       const data = await readJson(res);
       if (!res.ok) throw new Error(errorFrom(res, data, 'Upload failed'));
-      setMessage(`Photo ${n} ${data.slot?.replaced ? 'replaced' : 'uploaded'}. Install that model to put it on sale.`);
+      setMessage(`${slotLabel(slot)} ${data.slot?.replaced ? 'replaced' : 'uploaded'}. Install that model to put it on sale.`);
       await load();
     } catch (err) {
       setError(err.message);
@@ -3701,7 +3704,7 @@ function HouseRosterPanel({ adminKey }) {
                 {(m.slots || []).map((slot) => (
                   <div key={slot.n} className="text-xs rounded border border-white/10 p-2 space-y-1">
                     <p>
-                      Photo {slot.n}:{' '}
+                      {slotLabel(slot)}:{' '}
                       {slot.filled
                         ? <span className="text-green-400">filled</span>
                         : <span className="text-yellow-300">empty</span>}
@@ -3716,13 +3719,13 @@ function HouseRosterPanel({ adminKey }) {
                       {slot.filled ? 'Replace' : 'Upload'}
                       <input
                         type="file"
-                        accept="image/jpeg,image/png,image/webp"
+                        accept={slot.clip ? 'video/mp4' : 'image/jpeg,image/png,image/webp'}
                         className="hidden"
                         disabled={busy}
                         onChange={(e) => {
                           const file = e.target.files && e.target.files[0];
                           e.target.value = '';
-                          upload(m.slug, slot.n, file);
+                          upload(m.slug, slot, file);
                         }}
                       />
                     </label>

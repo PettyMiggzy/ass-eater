@@ -17,16 +17,17 @@ import {
 export const config = { api: { bodyParser: false, responseLimit: false } };
 
 const WINDOW_MS = 15 * 60 * 1000;
-const MAX_UPLOADS = 60; // 48 slots in all; room for a few re-uploads
+const MAX_UPLOADS = 200; // 19 models x 9 slots = 171; room for a few re-uploads
 const MAX_VIEWS = 200;
 
 /**
- * One of the AI house models' PAID photos (lib/house-roster.js), admin-key
- * gated. The owner makes these himself; they are never in git or public/.
+ * One of the AI house models' PAID photos or video clips (lib/house-roster.js),
+ * admin-key gated. The owner makes these himself; they are never in git or public/.
  *
- *   POST /api/admin/house-sale-image?slug=<model slug>&n=<1..6>
- *     Header x-admin-key, Content-Type image/jpeg | image/png | image/webp,
- *     body = the image bytes (at most HOUSE_SALE_IMAGE_MAX_BYTES, 4MB).
+ *   POST /api/admin/house-sale-image?slug=<model slug>&n=<1..9>
+ *     Slots 1-6 are photos (Content-Type image/jpeg | image/png | image/webp),
+ *     7-9 video clips (video/mp4). Header x-admin-key, body = the file bytes
+ *     (at most HOUSE_SALE_IMAGE_MAX_BYTES, 4MB).
  *     -> 200 { ok: true, slot: { slug, n, bytes, contentType, uploadedAt, replaced } }
  *     Uploads a new PRIVATE master and records it for that slot (replacing
  *     any earlier upload, which is kept). Listings pick it up on the next
@@ -35,7 +36,7 @@ const MAX_VIEWS = 200;
  *     415 house_bad_image (a type outside the three, or bytes that are not
  *     the declared type), 429, 503 house_blob_unconfigured.
  *
- *   GET /api/admin/house-sale-image?slug=<model slug>&n=<1..6>
+ *   GET /api/admin/house-sale-image?slug=<model slug>&n=<1..9>
  *     Header x-admin-key -> 200 the image bytes (Cache-Control: no-store),
  *     404 { code: 'house_slot_empty' } when nothing is uploaded. For the
  *     admin panel's "view" link, which fetches with the key in a header and

@@ -9,18 +9,26 @@
 //    surface labels them "AI MODEL" (components/public/cards.js).
 //  - Every model is a clearly adult character (late 20s to 30s look).
 //  - No invented activity: no follower, sale, view or rating numbers anywhere.
-//  - Images are non-nude (nothing see-through, no sex act), clearly adult and
-//    viewed by a person before they are used. Avatars, covers and the two free profile
-//    previews (free-1/free-2) live under public/images/house/<slug>/ (behind
-//    the age gate like every /images/ file). The six images per model that
-//    are SOLD are made by the owner and uploaded through /admin straight to
-//    the private Blob store (POST /api/admin/house-sale-image); they are never
-//    committed to git or put under public/. The install copies them into each
-//    listing, where /api/media only serves them to buyers.
+//  - Every image is clearly adult and viewed by a person before it is used.
+//    The PUBLIC images -- avatars, covers and the two free profile previews
+//    (free-1/free-2) under public/images/house/<slug>/, behind the age gate
+//    like every /images/ file -- are clothed. What is SOLD may be explicit
+//    (owner decision, 2026-09-27: see-through lingerie to nude photo sets and
+//    explicit video clips): six photos and three clips per model, made by the
+//    owner and uploaded through /admin straight to the private Blob store
+//    (POST /api/admin/house-sale-image); never committed to git or put under
+//    public/. The install copies them into each listing, where /api/media
+//    only serves them to buyers.
 //  - All text passes lib/prohibited-terms.js and
 //    lib/payment-circumvention-filter.js.
 //
-// Listing plan, the same for every model (6 sale images, 5 listings):
+// Sale slots: 1-6 are the photos, 7-9 the video clips (MP4). A model goes on
+// sale once its six photos are uploaded; each video listing goes on sale once
+// the clips it holds are uploaded too.
+//
+// Video listings: each clip on its own ($8) and all three together ($20).
+//
+// Photo listing plan, the same for every model (6 sale images, 5 listings):
 //   Set I (photos 1-2), Set II (3-4), Set III (5-6), a Sets I + II bundle
 //   (photos 1-4) and the complete 3-set bundle (all 6). Each description says
 //   which photos it holds and that bundles repeat photos from the sets, so
@@ -105,28 +113,158 @@ export const HOUSE_MODELS = [
     collection: 'Platinum Glow',
     bio: 'Valentina is platinum hair, soft glam and tall, elegant poses. Old Hollywood with a neon twist.',
   },
+  {
+    slug: 'luna-vega',
+    name: 'Luna Vega',
+    handle: '@lunavega_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'brunette', 'curvy', 'lingerie', 'glamour'],
+    collection: 'Come In',
+    bio: 'Luna is the girl from the door: caramel waves, a heart tattoo and an invitation you should accept.',
+  },
+  {
+    slug: 'raven-black',
+    name: 'Raven Black',
+    handle: '@ravenblack_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'goth', 'emo', 'piercings', 'alternative'],
+    collection: 'Black Velvet',
+    bio: 'Raven is black bangs, heavy eyeliner and a sharp tongue. Moody on the outside, needy on the inside.',
+  },
+  {
+    slug: 'vanessa-lane',
+    name: 'Vanessa Lane',
+    handle: '@vanessalane_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'milf', 'blonde', 'mature', 'glamour'],
+    collection: 'After Dark',
+    bio: 'Vanessa is honey blonde, polished and completely in charge. Experienced, elegant and never in a hurry.',
+  },
+  {
+    slug: 'brooke-hayes',
+    name: 'Brooke Hayes',
+    handle: '@brookehayes_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'pawg', 'blonde', 'curvy', 'booty'],
+    collection: 'Peach Season',
+    bio: 'Brooke is blonde, bubbly and very proud of her curves. Tiny waist, big smile, bigger everything else.',
+  },
+  {
+    slug: 'daisy-monroe',
+    name: 'Daisy Monroe',
+    handle: '@daisymonroe_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'bbw', 'curvy', 'redhead', 'plus size'],
+    collection: 'Soft Glow',
+    bio: 'Daisy is auburn hair, soft curves and total body confidence. Sweet, warm and a little cheeky.',
+  },
+  {
+    slug: 'nia-james',
+    name: 'Nia James',
+    handle: '@niajames_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'ebony', 'braids', 'curvy', 'glamour'],
+    collection: 'Midnight Gold',
+    bio: 'Nia is long braids, a big laugh and a bossy streak. Thick curves and all the confidence in the room.',
+  },
+  {
+    slug: 'camila-ortiz',
+    name: 'Camila Ortiz',
+    handle: '@camilaortiz_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'latina', 'curly hair', 'curvy', 'hourglass'],
+    collection: 'Fuego',
+    bio: 'Camila is dark curls, sun-warm skin and a fiery heart. Passionate, affectionate and never shy.',
+  },
+  {
+    slug: 'tiffany-blaze',
+    name: 'Tiffany Blaze',
+    handle: '@tiffanyblaze_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'blonde', 'busty', 'bimbo', 'glam'],
+    collection: 'Pink Diamond',
+    bio: 'Tiffany is platinum hair, glossy pink lips and a giggle you can hear. She loves attention and pink everything.',
+  },
+  {
+    slug: 'jade-voss',
+    name: 'Jade Voss',
+    handle: '@jadevoss_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'tattooed', 'alt girl', 'pink hair', 'piercings'],
+    collection: 'Ink and Neon',
+    bio: 'Jade is pastel pink hair, full sleeves and a septum ring. Laid-back, witty and a little kinky.',
+  },
+  {
+    slug: 'skye-rivers',
+    name: 'Skye Rivers',
+    handle: '@skyerivers_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'fitness', 'athletic', 'muscular', 'abs'],
+    collection: 'Pump Hour',
+    bio: 'Skye is a ponytail, sculpted abs and a competitive streak. High energy from warm-up to cool-down.',
+  },
+  {
+    slug: 'scarlett-vane',
+    name: 'Scarlett Vane',
+    handle: '@scarlettvane_ai',
+    categories: ['women', 'ai'],
+    tags: ['ai model', 'bondage', 'bdsm', 'redhead', 'leather'],
+    collection: 'Leather and Lace',
+    bio: 'Scarlett is red hair, red lips and a leather collar. Commanding, teasing and all about consensual power play.',
+  },
 ];
 
-/** The five listings every model gets. `images` are 1-based sale image numbers. */
+/**
+ * The listings every model gets. `images` are sale slot numbers: 1-6 photos,
+ * 7-9 video clips (`clip: true` plans hold only clips).
+ */
 export const HOUSE_LISTINGS = [
   { key: 'set-1', label: 'Set I', images: [1, 2], priceCents: 500 },
   { key: 'set-2', label: 'Set II', images: [3, 4], priceCents: 700 },
   { key: 'set-3', label: 'Set III', images: [5, 6], priceCents: 900 },
   { key: 'bundle-1-2', label: 'Sets I + II bundle', images: [1, 2, 3, 4], priceCents: 1200 },
   { key: 'bundle-all', label: 'Complete 3-set bundle', images: [1, 2, 3, 4, 5, 6], priceCents: 1500 },
+  { key: 'clip-1', label: 'Video 1', images: [7], priceCents: 800, clip: true },
+  { key: 'clip-2', label: 'Video 2', images: [8], priceCents: 800, clip: true },
+  { key: 'clip-3', label: 'Video 3', images: [9], priceCents: 800, clip: true },
+  { key: 'clips-all', label: 'All 3 videos', images: [7, 8, 9], priceCents: 2000, clip: true },
 ];
 
+/** Photo slots are 1..HOUSE_SALE_IMAGE_COUNT. */
 export const HOUSE_SALE_IMAGE_COUNT = 6;
+/** Video clip slots follow the photos: 7..9. */
+export const HOUSE_SALE_CLIP_COUNT = 3;
+export const HOUSE_SALE_SLOT_COUNT = HOUSE_SALE_IMAGE_COUNT + HOUSE_SALE_CLIP_COUNT;
+
+/** Whether sale slot `n` is a video clip (7-9) rather than a photo. */
+export function isHouseClipSlot(n) {
+  return Number.isInteger(n) && n > HOUSE_SALE_IMAGE_COUNT && n <= HOUSE_SALE_SLOT_COUNT;
+}
 
 export function houseBio(model) {
   return `${model.bio} ${HOUSE_BIO_SUFFIX}`;
 }
 
 export function houseListingTitle(model, plan) {
+  if (plan.clip) {
+    return plan.images.length === 1
+      ? `${model.collection}: ${plan.label} (video clip)`
+      : `${model.collection}: ${plan.label} (${plan.images.length} video clips)`;
+  }
   return `${model.collection}: ${plan.label} (${plan.images.length} photos)`;
 }
 
 export function houseListingDescription(model, plan) {
+  if (plan.clip) {
+    const which = plan.images.length === 1
+      ? `video ${plan.images[0] - HOUSE_SALE_IMAGE_COUNT} of 3`
+      : 'all 3 videos';
+    const overlap = plan.images.length > 1
+      ? ' This bundle repeats the videos sold one at a time, so skip it if you already own them.'
+      : ' The same video is also part of the 3-video bundle.';
+    return `An explicit AI-generated video of ${model.name}, a fictional adult character: ${which} from the ${model.collection} collection. Digital item, available in your order history right after purchase.${overlap} Sold by OnlyOne. No real person is depicted.`
+      .replace('An explicit AI-generated video', plan.images.length > 1 ? `${plan.images.length} explicit AI-generated videos` : 'An explicit AI-generated video');
+  }
   const which = plan.images.length === HOUSE_SALE_IMAGE_COUNT
     ? 'all 6 photos from Sets I, II and III'
     : `photos ${plan.images.join(', ')} of the ${model.collection} collection`;
