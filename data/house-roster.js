@@ -9,13 +9,14 @@
 //    surface labels them "AI MODEL" (components/public/cards.js).
 //  - Every model is a clearly adult character (late 20s to 30s look).
 //  - No invented activity: no follower, sale, view or rating numbers anywhere.
-//  - Images are non-nude editorial fashion shots, generated with Venice's
-//    default safety setting on (any image its classifier blurred was thrown
-//    away and regenerated). Avatars, covers and the two free profile
+//  - Images are non-nude (nothing see-through, no sex act), clearly adult and
+//    viewed by a person before they are used. Avatars, covers and the two free profile
 //    previews (free-1/free-2) live under public/images/house/<slug>/ (behind
-//    the age gate like every /images/ file); the images that are SOLD live under data/house-media/<slug>/,
-//    which is never served -- install uploads them to the private Blob store,
-//    where /api/media only serves them to buyers.
+//    the age gate like every /images/ file). The six images per model that
+//    are SOLD are made by the owner and uploaded through /admin straight to
+//    the private Blob store (POST /api/admin/house-sale-image); they are never
+//    committed to git or put under public/. The install copies them into each
+//    listing, where /api/media only serves them to buyers.
 //  - All text passes lib/prohibited-terms.js and
 //    lib/payment-circumvention-filter.js.
 //

@@ -5278,3 +5278,31 @@ human-approved approach (e.g. the owner generating/selecting them, or
 explicitly approving the prompt set). Every paid image must still be viewed
 by a person before it is kept: no nudity, nothing see-through, no sex act,
 clearly adult (30s) faces and bodies, photorealistic, no text/watermark.
+
+## House-model PAID images: the owner uploads them through /admin (2026-09-27)
+
+Owner decision: he makes the six paid images per model himself and uploads
+them in /admin; they are never committed to git and never under public/.
+Replaces the data/house-media/ design above (that directory is now in
+.gitignore and nothing reads it).
+
+- `POST /api/admin/house-sale-image?slug=<slug>&n=<1..6>` (admin key, raw
+  image body, JPEG/PNG/WebP only, bytes sniffed against the declared type,
+  4MB cap so every accepted upload stays under Vercel's 4.5MB function-body
+  limit, rate-limited) uploads a PRIVATE Blob "master" at
+  `house-sale/<slug>/<n>/<uuid>.<ext>` and records the slot in app_meta
+  (`house_sale_image:<slug>:<n>`). That pathname is not a media pathname, so
+  /api/media serves it to nobody and the orphan sweep never touches it. GET
+  on the same route (admin key) streams it for the panel's "view" link.
+- Re-uploading a slot writes a NEW master and keeps the old one on record
+  (`previous`); nothing is deleted. The next install of that model swaps each
+  listing's copy in one locked update: a listing someone bought keeps the old
+  copy in retainedMedia (its buyers keep being served it), an unbought one
+  deletes it.
+- Install is per model now: a model is READY once its six slots are filled
+  and its four public files (avatar, cover, free-1, free-2 under
+  public/images/house/<slug>/) exist. "Install every ready model" skips the
+  rest; `{ action: 'install', slug }` does one. Listings still go on sale
+  only when every image of their plan is attached.
+- Every paid image must still be looked at by a person before upload: no
+  nudity, nothing see-through, no sex act, clearly adult.

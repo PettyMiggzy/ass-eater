@@ -45,3 +45,7 @@ artifacts
 cache
 typechain-types
 ignition/deployments
+
+# AI house models' PAID images: uploaded through /admin to private storage,
+# never committed (lib/house-roster.js)
+data/house-media/

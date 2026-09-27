@@ -3526,9 +3526,14 @@ const BLANK_RECORD = {
  * announce the launch.
  */
 // The AI house model roster (lib/house-roster.js, /api/admin/house-roster):
-// install (resumable -- each call stops before the function time limit and
-// this panel calls again until done) and a soft remove that hides the models
-// and unlists their listings without deleting anything.
+// per model, the six PAID photo slots the owner uploads himself
+// (/api/admin/house-sale-image -- straight to private storage, never git or
+// public/), which public profile files are present, and an install per model
+// (resumable -- each call stops before the function time limit and this panel
+// calls again until done); plus a soft remove that hides the models and
+// unlists their listings without deleting anything. Slots show filled/empty,
+// size and date only -- never a thumbnail; "view" fetches the image with the
+// admin key in a header and opens it as a local object URL.
 function HouseRosterPanel({ adminKey }) {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -3548,23 +3553,80 @@ function HouseRosterPanel({ adminKey }) {
 
   useEffect(() => { load(); }, []);
 
-  const install = async () => {
+  const maxBytes = Number(status?.maxImageBytes) || 4 * 1024 * 1024;
+  const fmtBytes = (b) => (b >= 1024 * 1024 ? `${(b / (1024 * 1024)).toFixed(1)}MB` : `${Math.max(1, Math.round(b / 1024))}KB`);
+  const fmtDate = (iso) => {
+    const t = Date.parse(iso || '');
+    return Number.isNaN(t) ? '' : new Date(t).toLocaleDateString();
+  };
+
+  const upload = async (slug, n, file) => {
+    if (!file) return;
+    setError('');
+    setMessage('');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setError('Sale photos must be a JPEG, PNG or WebP image.');
+      return;
+    }
+    if (file.size > maxBytes) {
+      setError(`That file is too large (${fmtBytes(maxBytes)} maximum). Export it as a JPEG at a lower quality.`);
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/house-sale-image?slug=${encodeURIComponent(slug)}&n=${n}`, {
+        method: 'POST',
+        headers: { 'x-admin-key': adminKeyHeader(adminKey), 'content-type': file.type },
+        body: file,
+      });
+      const data = await readJson(res);
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Upload failed'));
+      setMessage(`Photo ${n} ${data.slot?.replaced ? 'replaced' : 'uploaded'}. Install that model to put it on sale.`);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const view = async (slug, n) => {
+    setError('');
+    // Opened before the fetch so a popup blocker treats it as a click.
+    const win = window.open('', '_blank');
+    try {
+      const res = await fetch(`/api/admin/house-sale-image?slug=${encodeURIComponent(slug)}&n=${n}`, {
+        headers: { 'x-admin-key': adminKeyHeader(adminKey) },
+      });
+      if (!res.ok) throw new Error(errorFrom(res, await readJson(res), 'Could not open that photo'));
+      const url = URL.createObjectURL(await res.blob());
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      if (win) win.close();
+      setError(err.message);
+    }
+  };
+
+  const install = async (slug = null) => {
     setBusy(true);
     setError('');
     setMessage('');
     try {
       let uploaded = 0;
-      // Bounded: 8 models x 18 images at worst, a few per call.
+      // Bounded: 8 models x 18 image copies at worst, a few per call.
       for (let i = 0; i < 40; i += 1) {
-        const { res, data } = await adminPost(adminKey, '/api/admin/house-roster', { action: 'install' });
+        const { res, data } = await adminPost(adminKey, '/api/admin/house-roster', slug ? { action: 'install', slug } : { action: 'install' });
         if (!res.ok) throw new Error(errorFrom(res, data, 'Install failed'));
         uploaded += Number(data.uploaded) || 0;
         if (data.status) setStatus(data.status);
         if (data.done) {
-          setMessage(`Installed. ${uploaded} image${uploaded === 1 ? '' : 's'} uploaded this run.`);
+          const skipped = Array.isArray(data.skipped) ? data.skipped.length : 0;
+          setMessage(`Installed ${(data.installed || []).length} model(s). ${uploaded} image${uploaded === 1 ? '' : 's'} copied this run.${skipped ? ` ${skipped} model(s) skipped: photos or profile files missing.` : ''}`);
           return;
         }
-        setMessage(`Installing… ${uploaded} image${uploaded === 1 ? '' : 's'} uploaded so far.`);
+        setMessage(`Installing… ${uploaded} image${uploaded === 1 ? '' : 's'} copied so far.`);
       }
       setMessage('Still not finished -- press Install again to continue.');
     } catch (err) {
@@ -3598,27 +3660,90 @@ function HouseRosterPanel({ adminKey }) {
         OnlyOne&apos;s own AI-generated fictional adult models. Every sale is platform revenue: the fan&apos;s
         credits are debited and no account is paid -- it is cashed out with the rest of the platform&apos;s money.
       </p>
+      <p className="text-xs text-gray-400">
+        Upload each model&apos;s six paid photos here (JPEG, PNG or WebP, up to {fmtBytes(maxBytes)}). They go
+        straight to private storage and are only ever served to buyers. Look at every photo before uploading:
+        no nudity, nothing see-through, no sex act, and clearly adult. A model can be installed once all six
+        photos and its avatar, cover and two free previews are in place; its listings go on sale then.
+      </p>
       {error && <p className="text-sm text-red-400">{error}</p>}
       {message && <p className="text-sm text-green-400">{message}</p>}
       {status && (
-        <div className="text-sm space-y-1">
+        <div className="text-sm space-y-3">
           <p>
             {status.installed ? (status.complete ? 'Installed, complete.' : 'Installed, incomplete.') : 'Not installed.'}
             {status.hidden ? ' Currently hidden.' : ''}
-            {!status.imagesDeployed ? ' The image files are missing from this deployment.' : ''}
+            {` ${status.readyModels ?? 0} of ${(status.models || []).length} models ready to install.`}
           </p>
-          <ul className="text-xs text-gray-400">
-            {(status.models || []).map((m) => (
-              <li key={m.slug}>
-                {m.name}: {m.creatorId ? `#${m.creatorId}, ${m.activeListings}/${m.listings} listings on sale, ${m.images}/${m.expectedImages} images${m.hidden ? ', hidden' : ''}` : 'not installed'}
-              </li>
-            ))}
-          </ul>
+          {(status.models || []).map((m) => (
+            <div key={m.slug} className="border border-white/10 rounded p-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold">
+                  {m.name}
+                  <span className="text-xs text-gray-400 font-normal">
+                    {' '}
+                    {m.creatorId
+                      ? `#${m.creatorId}, ${m.activeListings}/${m.listings} listings on sale, ${m.images}/${m.expectedImages} images${m.staleImages ? `, ${m.staleImages} to update` : ''}${m.hidden ? ', hidden' : ''}`
+                      : 'not installed'}
+                  </span>
+                </p>
+                <button
+                  type="button"
+                  onClick={() => install(m.slug)}
+                  disabled={busy || !m.ready}
+                  title={m.ready ? '' : 'Upload all six photos and add the public profile files first'}
+                  className="premium-button px-3 py-1 text-xs disabled:opacity-50"
+                >
+                  {m.creatorId ? 'Update / activate' : 'Install / activate'}
+                </button>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {(m.slots || []).map((slot) => (
+                  <div key={slot.n} className="text-xs rounded border border-white/10 p-2 space-y-1">
+                    <p>
+                      Photo {slot.n}:{' '}
+                      {slot.filled
+                        ? <span className="text-green-400">filled</span>
+                        : <span className="text-yellow-300">empty</span>}
+                    </p>
+                    {slot.filled && (
+                      <p className="text-gray-400">
+                        {fmtBytes(slot.bytes)}, {fmtDate(slot.uploadedAt)}{' '}
+                        <button type="button" onClick={() => view(m.slug, slot.n)} className="underline">view</button>
+                      </p>
+                    )}
+                    <label className={`inline-block cursor-pointer underline ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                      {slot.filled ? 'Replace' : 'Upload'}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        disabled={busy}
+                        onChange={(e) => {
+                          const file = e.target.files && e.target.files[0];
+                          e.target.value = '';
+                          upload(m.slug, slot.n, file);
+                        }}
+                      />
+                    </label>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400">
+                Public files:{' '}
+                {(m.publicFiles || []).map((f) => (
+                  <span key={f.src} className={f.present ? 'text-green-400' : 'text-yellow-300'}>
+                    {f.src.split('/').pop()} {f.present ? 'present' : 'missing'}{'; '}
+                  </span>
+                ))}
+              </p>
+            </div>
+          ))}
         </div>
       )}
       <div className="flex flex-wrap gap-2 items-center">
-        <button type="button" onClick={install} disabled={busy} className="premium-button px-4 py-2 text-sm disabled:opacity-50">
-          {busy ? 'Working…' : 'Install AI house roster'}
+        <button type="button" onClick={() => install()} disabled={busy || !(status?.readyModels > 0)} className="premium-button px-4 py-2 text-sm disabled:opacity-50">
+          {busy ? 'Working…' : 'Install every ready model'}
         </button>
         <button type="button" onClick={remove} disabled={busy || !status?.installed} className="px-4 py-2 text-sm rounded border border-red-400 text-red-300 disabled:opacity-50">
           Remove house roster

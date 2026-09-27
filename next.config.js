@@ -10,10 +10,11 @@ const nextConfig = {
   // that shows up if a client component ever imports a store module, but from
   // the other direction: here it is the SSR bundle, not the browser one.
   serverExternalPackages: ['pg'],
-  // The AI house-roster install reads its sale images and checks the model
-  // avatars/covers with fs at runtime; untraced files are not in the function.
+  // The AI house-roster install checks the model avatars/covers/free previews
+  // with fs at runtime; untraced files are not in the function. (The SOLD
+  // images are admin uploads in private Blob storage, never files here.)
   outputFileTracingIncludes: {
-    '/api/admin/house-roster': ['./data/house-media/**/*', './public/images/house/**/*'],
+    '/api/admin/house-roster': ['./public/images/house/**/*'],
   },
   async redirects() {
     // /onlyass was the Explore/creators page's old route name, from before
