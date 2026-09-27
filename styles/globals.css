@@ -16,17 +16,38 @@
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    /* Ambient pink glow on near-black -- matches the redesigned pages
-       (index.js, marketplace.js, founding-creator.js) rather than the old
-       gold/purple pairing. */
-    background: radial-gradient(circle at 20% 0%, rgba(255, 45, 120, 0.14) 0%, transparent 50%),
-      radial-gradient(circle at 80% 100%, rgba(255, 45, 120, 0.07) 0%, transparent 50%),
-      linear-gradient(135deg, #0d0a0f 0%, #1a0f16 50%, #0d0a0f 100%);
+    /* Near-black with a hot-pink glow from the top corner, per the owner's
+       2026-09-27 mockups (they sit on almost pure black, not the older
+       plum-tinted gradient). */
+    background: radial-gradient(circle at 15% 0%, rgba(255, 45, 120, 0.16) 0%, transparent 45%),
+      radial-gradient(circle at 85% 100%, rgba(255, 45, 120, 0.08) 0%, transparent 50%),
+      #08060a;
     background-attachment: fixed;
     letter-spacing: -0.01em;
+    /* Nothing on any page may widen the viewport on a 390px phone. */
+    overflow-x: hidden;
+  }
+
+  /* One visible focus ring for keyboard users everywhere, pink on black
+     (well over 3:1 against the page). Mouse clicks do not show it. */
+  :focus-visible {
+    outline: 2px solid #ff5c96;
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 
   h1, h2, h3 {
+    font-family: var(--oo-font-display, Montserrat), Montserrat, Inter, Arial, sans-serif;
     letter-spacing: -0.02em;
   }
 
@@ -55,24 +76,113 @@
 }
 
 @layer components {
+  /* The pink pill from the mockups. Every page that already used
+     .premium-button picks the new look up from here. */
   .premium-button {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
     padding: 0.75rem 2rem;
-    font-weight: bold;
-    font-size: 1.125rem;
-    letter-spacing: 0.025em;
-    transition: all 0.3s ease;
-    background: linear-gradient(135deg, #ff2d78 0%, #ff5c96 50%, #d6156b 100%);
+    font-family: var(--oo-font-display, Montserrat), Montserrat, Arial, sans-serif;
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: 0.02em;
+    transition: box-shadow 0.25s ease, background-color 0.25s ease, transform 0.25s ease;
+    background: linear-gradient(135deg, #ff2d78 0%, #e0126b 100%);
     color: #fff;
-    border-radius: 0.375rem;
+    border-radius: 9999px;
     border: none;
     cursor: pointer;
-    box-shadow: 0 20px 60px rgba(255, 45, 120, 0.3);
+    box-shadow: 0 0 0 1px rgba(255, 92, 150, 0.6), 0 10px 32px rgba(255, 45, 120, 0.35);
   }
 
   .premium-button:hover {
-    box-shadow: 0 40px 100px rgba(255, 45, 120, 0.4);
-    transform: scale(1.05);
+    box-shadow: 0 0 0 1px rgba(255, 143, 184, 0.8), 0 14px 44px rgba(255, 45, 120, 0.5);
+    transform: translateY(-1px);
+  }
+
+  .premium-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Pink pill (primary) and outline pill (secondary), the two buttons in
+     every mockup hero. Pair with an Icons.arrowRight for the arrow. */
+  .btn-pink {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.8rem 1.75rem;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, #ff2d78 0%, #e0126b 100%);
+    color: #fff;
+    font-family: var(--oo-font-display, Montserrat), Montserrat, Arial, sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
+    box-shadow: 0 0 0 1px rgba(255, 92, 150, 0.6), 0 10px 30px rgba(255, 45, 120, 0.35);
+    transition: box-shadow 0.25s ease, transform 0.25s ease;
+  }
+
+  .btn-pink:hover {
+    box-shadow: 0 0 0 1px rgba(255, 143, 184, 0.85), 0 14px 40px rgba(255, 45, 120, 0.5);
+    transform: translateY(-1px);
+  }
+
+  .btn-outline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.8rem 1.75rem;
+    border-radius: 9999px;
+    border: 1.5px solid rgba(255, 255, 255, 0.55);
+    color: #fff;
+    font-family: var(--oo-font-display, Montserrat), Montserrat, Arial, sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
+    transition: border-color 0.25s ease, background-color 0.25s ease;
+  }
+
+  .btn-outline:hover {
+    border-color: #ff5c96;
+    background-color: rgba(255, 45, 120, 0.08);
+  }
+
+  /* Big bold geometric headline ("MORE THAN CONTENT."). */
+  .headline {
+    font-family: var(--oo-font-display, Montserrat), Montserrat, Arial, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.015em;
+    line-height: 0.98;
+    text-transform: uppercase;
+  }
+
+  /* Wide letter-spaced small-caps tagline ("REAL CONNECTIONS."). */
+  .tagline-caps {
+    font-family: var(--oo-font-display, Montserrat), Montserrat, Arial, sans-serif;
+    font-weight: 500;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+  }
+
+  /* Neon script accent. Pink text with a soft glow; the glyphs themselves
+     stay solid so the words keep AA contrast on black. */
+  .neon-script {
+    font-family: var(--oo-font-script, Pacifico), Pacifico, 'Dancing Script', cursive;
+    color: #ff6fa5;
+    text-shadow: 0 0 6px rgba(255, 45, 120, 0.9), 0 0 18px rgba(255, 45, 120, 0.6), 0 0 36px rgba(255, 45, 120, 0.35);
+  }
+
+  /* Glowing pink edge for cards and panels. */
+  .neon-edge {
+    border: 1px solid rgba(255, 45, 120, 0.45);
+    box-shadow: 0 0 22px rgba(255, 45, 120, 0.18), inset 0 0 18px rgba(255, 45, 120, 0.05);
   }
 
   .premium-card {
@@ -91,7 +201,7 @@
   }
 
   .premium-title {
-    font-family: 'Playfair Display', serif;
+    font-family: var(--oo-font-display, Montserrat), Montserrat, Arial, sans-serif;
     font-weight: 800;
     background: linear-gradient(to right, #ff2d78, #ff8fb8, #ff2d78);
     background-clip: text;
@@ -102,9 +212,9 @@
   }
 
   .eyebrow {
-    font-family: Inter, sans-serif;
-    font-weight: 700;
-    letter-spacing: 0.15em;
+    font-family: var(--oo-font-display, Montserrat), Montserrat, Inter, sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
   }
 

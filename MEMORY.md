@@ -5195,3 +5195,86 @@ reworded from "your state" to "where you are". Costs AgeChecker's per-check
 fee for international traffic. **Open item for the founder:** confirm with
 AgeChecker that their flow accepts non-US IDs and meets Ofcom's "highly
 effective" standard; if not, switch to a vendor that does or geoblock.
+
+## AI "house" model roster: code built, images NOT generated yet (2026-09-27)
+
+Owner ask: "fill it up with models and chargeable content so it looks busy",
+with agreed limits: every AI model is labelled AI on every surface, no fake
+activity (no invented follower/sale/view counts, reviews or "N viewing"),
+non-nude images, every model plainly an adult.
+
+**Built:** `data/house-roster.js` (8 fictional personas: 4 women, 2 men, a
+couple, a trans woman; each bio says "AI model by OnlyOne: a fictional adult
+character, not a real person"; 5 digital listings each). `lib/house-roster.js`
++ `POST /api/admin/house-roster` + an "AI HOUSE ROSTER" tab in /admin install
+them idempotently (resumable, keyed by slug). Sale images go to the PRIVATE Blob
+store, so `/api/media` serves them only to buyers. A listing is created off
+sale and goes on sale only once every image in its plan is attached. Remove
+hides the models and unlists their listings; it deletes nothing.
+
+**Who gets paid: nobody -- a house sale is 100% platform revenue** (owner,
+2026-09-27: the payee step was "pointless"). The first version paid ONE login
+the owner named at install (`app_meta` `house_payee_user_id`,
+`lib/house-payee.js`, `lib/house-seller.js`); all of that is deleted, the
+install ignores a `payeeEmail` and clears any leftover payee row. Now
+`chargeHouseSale` (`lib/credits-store.js`) debits the fan exactly like any
+purchase and credits no one -- the USDG is already in the platform treasury
+and is cashed out with the rest of platform money. The fan's
+`marketplace_charge` ledger row is the audit record: `listingId`,
+`houseSale: true`, `houseCreatorId`, and `platformRevenueCents` = `feeCents` =
+the full price (`feeBps: 10000`); an ordinary sale records its fee as
+`feeCents` on its earn row, so summing `feeCents` over `credit_ledger` covers
+both. The order gets `houseSale: true`, `platformRevenueCents`,
+`creatorNetCents: 0` (admin-only fields). No sale notification is written
+(no seller login). `transferWithFee` now REFUSES a house seller outright, so
+no code path can pay a user for one. Only digital house listings sell; a
+hidden, non-active, demo or incomplete house listing is refused on the locked
+rows. Covered by `lib/b1roster.test.mjs`.
+
+**Labels:** `isAiModelCreator` / `isHouseCreator` in `lib/creator-status.js`;
+`AI_MODEL_LABEL`, `HOUSE_SOLD_BY_LINE` and `isHouseListing` in
+`components/public/cards.js`; an `AiModelBadge` in `DemoBadge.js`. DemoBadge
+stays for the two "How It Works" seeds, which are not for sale. Terms §7 and
+Privacy §3 each have a short paragraph saying OnlyOne sells AI images of
+fictional adults under house accounts.
+
+**Prices:** sets $5/$7/$9, a 4-photo bundle $12, the complete bundle $15. The
+brief's "full 6-pack $25" was left out because the 3-set bundle already holds
+all six photos.
+
+**NOT done (needs the owner):** no images exist. With Venice's default safety
+setting, every lingerie prompt came back blurred. Non-lingerie editorial outfits
+(slip dress, corset top, blazer) came back unblurred. The owner has to choose:
+editorial styling under the default setting, or explicitly allow turning safety
+off for lingerie. Until the images are committed (sale images in
+`data/house-media/<slug>/`, NOT public; avatars and covers in
+`public/images/house/<slug>/`), the install refuses with `house_images_missing`
+and changes nothing. Before anyone runs the install, the public pages must
+render `AiModelBadge` and the "Sold by OnlyOne" line (B2DESIGN handoff).
+
+## AI house-model images: wiring done, generation NOT done (2026-09-27)
+
+Owner decision, verbatim: *"They can be nice just not the image ppl first see
+they have click the creator to see a few free ones then good ones they pay
+for."* Three tiers per model: avatar + cover (clothed editorial, what people
+see first), two free profile previews `public/images/house/<slug>/free-1.jpg`
+/ `free-2.jpg` (flirty, still clothed), and six paid lingerie/swimwear sets in
+`data/house-media/<slug>/sale-1..6.jpg` (never under public/, uploaded to the
+private Blob store by the install and served only to buyers).
+
+Code is wired: `houseFreeSrc`/`housePublicImageSrcs`/`houseGallery` in
+`data/house-roster.js`; each house creator's gallery is cover + free-1 +
+free-2 (all `aiGenerated`), and `profileImagesDeployed()` now requires all
+four public files, so the install refuses (IMAGES_MISSING, nothing changed)
+until every file exists. Tests in `lib/b1roster.test.mjs`; set
+`EXPECT_HOUSE_IMAGES=1` once the files are committed to assert all 80 exist.
+
+**The 80 image files do not exist yet.** The automated generation pass was
+stopped: Venice's safe-mode classifier blurred even plainly clothed portraits
+whenever the prompt text carried explicit terms (including in the negative
+prompt), and reshaping prompts around that classifier was refused by this
+session's own permission policy as filter evasion. Generating them needs a
+human-approved approach (e.g. the owner generating/selecting them, or
+explicitly approving the prompt set). Every paid image must still be viewed
+by a person before it is kept: no nudity, nothing see-through, no sex act,
+clearly adult (30s) faces and bodies, photorealistic, no text/watermark.

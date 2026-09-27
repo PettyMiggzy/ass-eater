@@ -1,5 +1,5 @@
 import { isTokenGated, formatGate } from '../../lib/token-gate';
-import { isDemoCreator, isDemoListing } from '../../lib/creator-status';
+import { isDemoCreator, isDemoListing, isAiModelCreator, isHouseCreator } from '../../lib/creator-status';
 
 /**
  * Pure helpers shared by the public browse pages (/home, /creators, /search,
@@ -20,6 +20,24 @@ import { isDemoCreator, isDemoListing } from '../../lib/creator-status';
 export { isDemoCreator, isDemoListing };
 
 export const DEMO_LABEL = 'Demo — not for sale';
+
+/**
+ * OnlyOne's own AI "house" models (lib/house-roster.js): fictional adult
+ * characters whose photo sets ARE for sale, paid to OnlyOne. Every surface
+ * that shows one (card, profile header, listing card, listing detail) carries
+ * AI_MODEL_LABEL (components/public/DemoBadge.js AiModelBadge), and every
+ * house listing carries HOUSE_SOLD_BY_LINE. Same single predicates as the
+ * server (lib/creator-status.js).
+ */
+export { isAiModelCreator, isHouseCreator };
+
+export const AI_MODEL_LABEL = 'AI MODEL';
+export const HOUSE_SOLD_BY_LINE = 'Sold by OnlyOne. AI-generated images of a fictional adult; no real person is depicted.';
+
+/** Whether a listing is sold by an AI house model (its own flag, or its creator's). */
+export function isHouseListing(listing, creator = null) {
+  return (!!listing && listing.houseSlug != null) || isHouseCreator(creator);
+}
 
 /**
  * The card a browse page needs for one creator -- and nothing else. Input
@@ -51,6 +69,8 @@ export function toCreatorCard(pub) {
     gated,
     gateLabel: gated ? formatGate(pub) : '',
     demo: isDemoCreator(pub),
+    aiModel: isAiModelCreator(pub),
+    house: isHouseCreator(pub),
   };
 }
 

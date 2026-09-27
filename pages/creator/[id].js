@@ -17,14 +17,25 @@ import { DM_PRICE_FLOOR_CENTS, formatCredits } from '../../lib/brand';
 import { feeWaiverActive } from '../../lib/founding';
 import { FoundingBadge, Icons, SolidIcons, Tagline, pickTagline } from '../../components/Brand';
 import SiteNav from '../../components/SiteNav';
-import DemoBadge from '../../components/public/DemoBadge';
+import DemoBadge, { AiModelBadge } from '../../components/public/DemoBadge';
+import CategoryBar from '../../components/public/CategoryBar';
+import SiteFooter from '../../components/public/SiteFooter';
 import PremiumBadge from '../../components/public/PremiumBadge';
 import ListingPreview from '../../components/public/ListingPreview';
 import ReportModal, { postReport, takedownFormHref } from '../../components/public/ReportModal';
 import MediaLightbox from '../../components/public/MediaLightbox';
 import LengthCounter from '../../components/public/LengthCounter';
 import TokenUnlockPanel from '../../components/public/TokenUnlockPanel';
-import { isDemoCreator, isDemoListing, DEMO_LABEL, marketplaceHrefFor } from '../../components/public/cards';
+import {
+  isDemoCreator,
+  isDemoListing,
+  DEMO_LABEL,
+  marketplaceHrefFor,
+  isAiModelCreator,
+  isHouseCreator,
+  isHouseListing,
+  HOUSE_SOLD_BY_LINE,
+} from '../../components/public/cards';
 
 export async function getServerSideProps({ req, params }) {
   const creators = await getCreators();
@@ -399,6 +410,15 @@ export default function CreatorProfile({
   const socials = creator.socials || {};
   const websiteUrl = socials.website || null;
   const isOwner = !!viewerId && String(viewerId) === String(creatorUserId);
+  // OnlyOne's AI house models and AI creators (toPublicCreator publishes both
+  // flags): labelled AI MODEL beside the name, and every house listing says
+  // who sells it. A house model's public `cover` is its header banner and the
+  // teaser on its listing tiles (house listings carry no blurred preview).
+  const aiModel = !demo && isAiModelCreator(creator);
+  const houseModel = isHouseCreator(creator);
+  // Never for a token-gated profile the viewer has not unlocked.
+  const coverSrc = (houseModel || !locked) && typeof creator.cover === 'string' && creator.cover ? creator.cover : null;
+  const listingTeaser = houseModel ? coverSrc : null;
 
   const TABS = [
     { key: 'posts', label: 'Posts' },
@@ -474,8 +494,9 @@ export default function CreatorProfile({
         />
       )}
 
-      <div className="min-h-screen bg-brand-ink text-white pb-20">
+      <div className="min-h-screen text-white">
         <SiteNav signedIn={!!viewerId} />
+        <CategoryBar basePath="/creators" />
 
         <main className="max-w-6xl mx-auto px-4 md:px-6">
           {demo && (
@@ -489,8 +510,12 @@ export default function CreatorProfile({
               viewer is allowed to see (a gated creator's video is not sent
               until unlocked), through ProtectedMedia like every other tile,
               carrying the same viewer mark the page says its content carries. */}
-          <div className="relative mt-4 h-52 sm:h-64 md:h-72 rounded-2xl overflow-hidden bg-white/5">
-            {!locked && creator.video ? (
+          <div className="relative mt-4 h-52 sm:h-64 md:h-72 rounded-2xl overflow-hidden bg-white/5 neon-edge">
+            {coverSrc ? (
+              // A profile's own public cover (the AI house models have one):
+              // shown sharp, since it is the page's banner by design.
+              <ProtectedMedia src={coverSrc} type="image" mark={overlayMark} className="w-full h-full object-cover object-center" />
+            ) : !locked && creator.video ? (
               <ProtectedMedia src={creator.video} type="video" autoPlay mark={overlayMark} className="w-full h-full object-cover blur-sm scale-105" />
             ) : creator.img ? (
               <ProtectedMedia src={creator.img} type="image" mark={overlayMark} className="w-full h-full object-cover blur-sm scale-105" />
@@ -501,6 +526,11 @@ export default function CreatorProfile({
                 fade left that corner exactly as bright as the photo. */}
             <div className="absolute inset-0 bg-gradient-to-t from-brand-ink via-brand-ink/20 to-transparent pointer-events-none" />
             <div className="absolute inset-0 bg-gradient-to-bl from-black/50 via-transparent to-transparent pointer-events-none" />
+            {(demo || aiModel) && (
+              <p className="absolute bottom-3 right-3 text-[11px] px-2 py-1 rounded-full bg-black/75 text-gray-100 font-semibold">
+                Model imagery is AI-generated.
+              </p>
+            )}
             <button
               onClick={() => router.push('/creators')}
               aria-label="Back to creators"
@@ -509,10 +539,10 @@ export default function CreatorProfile({
               <Icons.arrowLeft className="h-5 w-5" />
             </button>
             <div className="absolute top-4 right-5 text-right">
-              {/* A demo persona is AI-generated and the banner above says it
-                  isn't a real person, so its cover never gets the rotation's
-                  "Real People" line -- only the neutral one. */}
-              <Tagline>{demo ? 'You’re Not Alone Here' : pickTagline(creator.handle)}</Tagline>
+              {/* A demo persona or AI model is AI-generated, so its cover
+                  gets the fixed neutral line; nothing in the rotation says
+                  "real people" any more either (components/Brand.js). */}
+              <Tagline>{demo || aiModel ? 'You’re Not Alone Here' : pickTagline(creator.handle)}</Tagline>
             </div>
           </div>
 
@@ -526,7 +556,7 @@ export default function CreatorProfile({
               </div>
 
               <div className="flex-1 sm:pb-2">
-                <h1 className="text-3xl font-black flex items-center gap-2 flex-wrap">
+                <h1 className="font-brand text-3xl font-extrabold flex items-center gap-2 flex-wrap">
                   {creator.name}
                   {creator.premium && <PremiumBadge />}
                   {creator.founding && (
@@ -539,8 +569,16 @@ export default function CreatorProfile({
                     </span>
                   )}
                   {demo && <DemoBadge />}
+                  {aiModel && <AiModelBadge />}
                 </h1>
-                <p className="text-gray-400 text-sm">{creator.handle}</p>
+                <p className="text-gray-300 text-sm">{creator.handle}</p>
+                {aiModel && (
+                  <p className="text-xs text-gray-300 mt-1">
+                    {houseModel
+                      ? 'AI model by OnlyOne: a fictional adult character, not a real person.'
+                      : 'AI model: this creator’s imagery is AI-generated.'}
+                  </p>
+                )}
                 {(creator.age || creator.location) && (
                   <p className="text-gray-500 text-xs mt-1 flex items-center gap-2">
                     {creator.age && <span>{creator.age}</span>}
@@ -573,7 +611,7 @@ export default function CreatorProfile({
                 {!demo && creatorUserId && (
                   <button
                     onClick={openInbox}
-                    className="px-5 h-11 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-bold text-sm transition"
+                    className="px-5 h-11 rounded-full bg-brand-pink hover:bg-brand-pink-dark text-white font-brand font-bold text-sm shadow-[0_0_18px_rgba(255,45,120,0.45)] transition"
                   >
                     Message
                   </button>
@@ -781,7 +819,7 @@ export default function CreatorProfile({
                       </p>
                       {listings[0] && (
                         <div className="relative rounded-lg overflow-hidden aspect-[4/3] mb-3">
-                          <ListingPreview media={listings[0].media} />
+                          <ListingPreview media={listings[0].media} fallbackSrc={listingTeaser} />
                         </div>
                       )}
                       <button
@@ -898,16 +936,20 @@ export default function CreatorProfile({
                     {listings.map((l) => (
                       <a key={l.id} href={marketplaceHrefFor(l)}
                          className="group relative aspect-square rounded-xl overflow-hidden border border-white/10 hover:border-brand-pink/60 transition">
-                        <ListingPreview media={l.media} />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent pointer-events-none" />
+                        <ListingPreview media={l.media} fallbackSrc={listingTeaser} />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-transparent pointer-events-none" />
                         <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
                           {l.demo && <DemoBadge short />}
+                          {!l.demo && (aiModel || isHouseListing(l, creator)) && <AiModelBadge />}
                           {(l.aiGenerated || l.media?.some((m) => m.aiGenerated)) && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/70 text-brand-pink font-bold">AI</span>
                           )}
                         </div>
                         <div className="absolute bottom-0 left-0 right-0 p-2">
                           <p className="text-xs font-bold truncate">{l.title}</p>
+                          {isHouseListing(l, creator) && (
+                            <p className="text-[10px] leading-snug text-gray-200 line-clamp-2">{HOUSE_SOLD_BY_LINE}</p>
+                          )}
                           {l.demo ? (
                             <span className="inline-block mt-1 px-2 py-0.5 rounded-full bg-yellow-400 text-black text-[11px] font-black">{DEMO_LABEL}</span>
                           ) : (
@@ -944,6 +986,7 @@ export default function CreatorProfile({
             </section>
           </div>
         </main>
+        <SiteFooter aiImagery={demo || aiModel} />
       </div>
 
       {inboxOpen && (

@@ -1,12 +1,15 @@
+import { useId } from 'react';
+import { BrandFonts } from './fonts';
+
 /**
  * The brand marks and the line icons from the OnlyOne designs.
  *
- * `Lockup` is the founder's real brand art, shipped as a transparent PNG
- * (see its own note below). Everything else here -- `Mark`, `Icons`, the
- * badges -- stays inline SVG, because at UI-chrome sizes drawn vector is
- * sharper than any raster, recolours from `currentColor` instead of needing
- * a re-export every time the pink changes, weighs almost nothing, and cannot
- * fail to load on the age-gate pages that must never render broken.
+ * Everything here is inline SVG -- the "01" mark, the lockup, the icons and
+ * the badges. At UI-chrome sizes drawn vector is sharper than any raster,
+ * weighs almost nothing, and cannot fail to load on the age-gate pages that
+ * must never render broken (it needs no entry in proxy.js's BRAND_ART_PATHS,
+ * because nothing is fetched). The raster exports of the same mark live in
+ * public/images/brand/ for places that need a file (favicons, app icons).
  */
 
 /**
@@ -22,8 +25,12 @@
  * make a server-rendered page mismatch the client on hydration) so the same
  * creator always gets the same line rather than one that changes on every
  * request.
+ *
+ * Neither line says "real people": the same tagline sits on the pages of
+ * OnlyOne's AI house models, and "Real People" beside an AI-generated
+ * fictional character is exactly the claim Terms section 7 forbids.
  */
-const TAGLINES = ["You're Not Alone Here", 'Real People. Real Connections.'];
+const TAGLINES = ["You're Not Alone Here", 'More Than Content'];
 
 export function pickTagline(seed) {
   const key = String(seed ?? '');
@@ -34,82 +41,127 @@ export function pickTagline(seed) {
 
 export function Tagline({ children, className = '' }) {
   return (
-    <p
-      className={`font-["Dancing_Script"] text-3xl sm:text-4xl leading-none text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] ${className}`}
-    >
+    <p className={`neon-script text-3xl sm:text-4xl leading-tight ${className}`}>
+      <BrandFonts />
       {children}
-      <SolidIcons.heart className="inline-block h-[0.6em] w-[0.6em] ml-2 -translate-y-0.5 text-brand-pink" />
+      <SolidIcons.heart className="inline-block h-[0.55em] w-[0.55em] ml-2 -translate-y-0.5 text-brand-pink" />
     </p>
   );
 }
 
+// SVG ids must be unique per document (two logos on one page would share a
+// gradient otherwise) and identical on server and client. useId gives both;
+// the characters it uses are stripped to a plain XML-name-safe token.
+function useSvgId(prefix) {
+  return `${prefix}${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
+}
+
 /**
- * The "01" mark: a thick pink ring with a padlock sitting in its centre, and a
- * ribbon-folded 1 beside it. Matches the reference artwork the founder set the
- * brand from.
+ * The "01" mark drawn as vector, from the owner's reference art: a thick
+ * hot-pink "0" ring with a white padlock in its dark centre, and a "1"
+ * whose top folds over like a ribbon. 170 x 100 units.
  *
- * `lockFill` is the colour showing THROUGH the padlock's cut-out, so it has to
- * match whatever sits behind the mark -- the padlock is punched out of the
- * disc rather than drawn on top of it, which is what keeps it crisp at 32px
- * instead of turning into a grey smudge. Defaults to the app's ink background.
+ * `lockFill` is the colour of the disc behind the padlock -- it should match
+ * whatever the mark sits on. Defaults to the site's near-black.
  */
-export function Mark({ className = 'h-16 w-auto', lockFill = '#120a10' }) {
+function MarkShapes({ ids, lockFill }) {
   return (
-    <svg viewBox="0 0 150 80" className={className} role="img" aria-label="OnlyOne">
+    <>
       <defs>
-        {/* Punches the padlock silhouette out of the inner disc so the page
-            background reads through it, exactly like the reference. */}
-        <mask id="oo-lock-mask">
-          <rect x="0" y="0" width="150" height="80" fill="black" />
-          <circle cx="40" cy="40" r="19" fill="white" />
-          <g fill="black">
-            <rect x="31.5" y="39" width="17" height="13.5" rx="3" />
-            <path d="M34.5 39v-4.5a5.5 5.5 0 0 1 11 0V39" fill="none" stroke="black" strokeWidth="3.6" strokeLinecap="round" />
-          </g>
-        </mask>
+        <linearGradient id={ids.main} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ff6aa6" />
+          <stop offset="0.55" stopColor="#ff2d78" />
+          <stop offset="1" stopColor="#d80f66" />
+        </linearGradient>
+        <linearGradient id={ids.fold} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ff8fbf" />
+          <stop offset="1" stopColor="#b90b55" />
+        </linearGradient>
       </defs>
+      {/* The "0": a ring (even-odd path, so the centre is truly empty). */}
+      <path
+        fillRule="evenodd"
+        fill={`url(#${ids.main})`}
+        d="M50 5a45 45 0 1 1 0 90a45 45 0 1 1 0-90zm0 23a22 22 0 1 0 0 44a22 22 0 1 0 0-44z"
+      />
+      {/* The dark disc inside the ring, then the white padlock on it. */}
+      <circle cx="50" cy="50" r="22.5" fill={lockFill} />
+      <path d="M43.2 49v-5.2a6.8 6.8 0 0 1 13.6 0V49" fill="none" stroke="#fff" strokeWidth="3.8" strokeLinecap="round" />
+      <rect x="39" y="47.5" width="22" height="17.5" rx="3.6" fill="#fff" />
+      <circle cx="50" cy="54.6" r="2.5" fill={lockFill} />
+      <rect x="48.9" y="55.5" width="2.2" height="5.2" rx="1.1" fill={lockFill} />
+      {/* The "1": a tall stem with a slanted top ... */}
+      <path d="M108 95V27l14-19h18v87z" fill={`url(#${ids.main})`} />
+      {/* ... and the ribbon folding down-left off its top edge. */}
+      <path d="M122 8L96 34l12 9V27z" fill={`url(#${ids.fold})`} />
+      <path d="M122 8l-14 19v4.5L122 13z" fill="#ffffff" opacity="0.18" />
+    </>
+  );
+}
 
-      {/* The "0" -- thick outer ring. */}
-      <circle cx="40" cy="40" r="31" fill="none" stroke="currentColor" strokeWidth="15" />
-      {/* Inner disc with the padlock knocked out of it. */}
-      <circle cx="40" cy="40" r="19" fill={lockFill} mask="url(#oo-lock-mask)" />
-      <circle cx="40" cy="40" r="19" fill="currentColor" mask="url(#oo-lock-mask)" />
-
-      {/* The "1", with the ribbon fold across its top like the reference. */}
-      <g fill="currentColor">
-        <path d="M96 71V23h15v48z" />
-        <path d="M96 23L79 33l7 12 25-15z" opacity="0.72" />
-      </g>
+export function Mark({ className = 'h-16 w-auto', lockFill = '#0b0b0e' }) {
+  const main = useSvgId('oo-m-');
+  const fold = useSvgId('oo-f-');
+  return (
+    <svg viewBox="0 0 145 100" className={className} role="img" aria-label="OnlyOne">
+      {/* Publishes the brand faces for the page around it (see fonts.js):
+          the ungated pages show this mark but no SiteNav. */}
+      <BrandFonts />
+      <MarkShapes ids={{ main, fold }} lockFill={lockFill} />
     </svg>
   );
 }
 
 /**
- * The full horizontal lockup -- the founder's real brand art (supplied
- * 2026-09-20), not the drawn approximation of it that `Mark` still is.
+ * The "ONLYONE" wordmark as live text: ONLY in white, ONE in pink, in the
+ * brand's heavy geometric face. For headings and heroes; use Lockup for the
+ * logo itself.
+ */
+export function Wordmark({ className = '' }) {
+  return (
+    <span className={`font-brand font-extrabold tracking-tight ${className}`}>
+      <BrandFonts />
+      ONLY<span className="text-brand-pink">ONE</span>
+    </span>
+  );
+}
+
+/**
+ * The full horizontal lockup: the "01" mark followed by the ONLYONE
+ * wordmark, as ONE svg so it scales from a single height class the way the
+ * old PNG did (callers pass e.g. "h-6 sm:h-7").
  *
- * Transparent PNG, extracted from art on a black background by treating the
- * composite as additive: alpha is the brightest channel and the colour is
- * the pixel un-premultiplied by it. That is exact at every edge pixel, so it
- * leaves no dark halo on any background. Keying black to transparent -- how
- * the old badge art was cut -- keeps the darkened edge pixels and fringes
- * the mark everywhere except the colour it was cut on. Use this method for
- * any future art supplied on black.
- *
- * It is listed in proxy.js's BRAND_ART_PATHS, because this renders on the
- * age-gate pages and /2257, all of which are exempt from the age check --
- * without that it would be the one broken image on the pages a blocked
- * visitor, a regulator or a payment processor actually reads.
+ * The wordmark is SVG text in the brand face with a fixed `textLength`, so
+ * it fills exactly the same box whether Montserrat has loaded yet or the
+ * browser is still on its fallback -- nothing can overflow or clip, and the
+ * accessible name comes from aria-label either way.
  */
 export function Lockup({ className = 'h-12 w-auto' }) {
+  const main = useSvgId('oo-lm-');
+  const fold = useSvgId('oo-lf-');
   return (
-    <img
-      src="/images/onlyone-lockup-nav.png"
-      alt="OnlyOne"
-      width={438}
-      height={72}
+    <svg
+      viewBox="0 0 493 100"
       className={`w-auto ${className}`}
-    />
+      role="img"
+      aria-label="OnlyOne"
+    >
+      <BrandFonts />
+      <MarkShapes ids={{ main, fold }} lockFill="#0b0b0e" />
+      <text
+        x="158"
+        y="73"
+        textLength="331"
+        lengthAdjust="spacingAndGlyphs"
+        fontSize="64"
+        fontWeight="800"
+        style={{ fontFamily: 'var(--oo-font-display, Montserrat), Montserrat, Arial, sans-serif' }}
+        aria-hidden="true"
+      >
+        <tspan fill="#ffffff">ONLY</tspan>
+        <tspan fill="#ff2d78">ONE</tspan>
+      </text>
+    </svg>
   );
 }
 

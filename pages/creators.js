@@ -19,7 +19,11 @@ import {
   CREDIT_PURCHASE_FEE_PCT,
 } from '../lib/brand';
 import { marketplaceVerificationLive } from '../lib/marketplace-payment-config';
-import DemoBadge from '../components/public/DemoBadge';
+import DemoBadge, { AiModelBadge } from '../components/public/DemoBadge';
+import GatedHero from '../components/public/GatedHero';
+import CategoryBar from '../components/public/CategoryBar';
+import FeatureRow from '../components/public/FeatureRow';
+import SiteFooter from '../components/public/SiteFooter';
 import PremiumBadge from '../components/public/PremiumBadge';
 import { toCreatorCard } from '../components/public/cards';
 import { CATEGORIES, categoryFromQuery, categoryLabel, countByCategory, withCategoryParam } from '../lib/categories';
@@ -273,10 +277,11 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
   }
 
   // Real counts for the stats bar: only real creators. Seed/demo profiles
-  // are samples OnlyOne made (labelled "Demo — not for sale" elsewhere);
-  // counting them here would be the same invented social proof the old
-  // hard-coded numbers were.
-  const realCreators = creators.filter((c) => !c.demo);
+  // are samples OnlyOne made (labelled "Demo — not for sale" elsewhere) and
+  // the AI house models are OnlyOne's own fictional characters; counting
+  // either here would be the same invented social proof the old hard-coded
+  // numbers were.
+  const realCreators = creators.filter((c) => !c.demo && !c.house);
   const totalPosts = realCreators.reduce((n, c) => n + (c.galleryCount || 0), 0);
 
   return (
@@ -316,12 +321,12 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
 
       <div className="min-h-screen bg-gradient-luxury text-white">
         {/* Header */}
-        <nav ref={navRef} className="w-full bg-brand-dark/95 backdrop-blur-xl border-b border-brand-gold/20 sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
+        <nav ref={navRef} className="w-full bg-[#08060a]/90 backdrop-blur-md border-b border-brand-pink/15 shadow-[0_1px_24px_rgba(255,45,120,0.08)] sticky top-0 z-50">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex justify-between items-center gap-3">
             <a href="/" className="flex items-center shrink-0">
               <Lockup className="h-6 md:h-8" />
             </a>
-            <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
+            <div className="hidden lg:flex items-center gap-6 font-brand text-[13px] font-semibold tracking-wide text-gray-200">
               <a href="#creators" className="hover:text-brand-gold transition">Creators</a>
               <a href="#pricing" className="hover:text-brand-gold transition">Pricing</a>
               <a href="#dashboard" className="hover:text-brand-gold transition">Dashboard</a>
@@ -331,7 +336,7 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
               <a href="/favorites" className="hover:text-brand-gold transition">Favorites</a>
             </div>
             <div className="flex items-center gap-3">
-              <a href="/" className="text-sm text-gray-400 hover:text-brand-gold transition hidden md:block">Home</a>
+              <a href="/" className="text-sm text-gray-300 hover:text-brand-gold transition hidden lg:block">Home</a>
               {/* Account links show at EVERY width: on a phone this header
                   used to offer nothing but the logo and Buy Credits, so a
                   signed-out visitor here had no way to log in. */}
@@ -341,21 +346,21 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
                 </a>
               ) : (
                 <>
-                  <a href="/login" className="text-sm text-gray-400 hover:text-brand-gold transition">Log In</a>
-                  <a href="/signup" className="text-sm text-gray-300 hover:text-brand-gold transition hidden sm:block">Sign Up</a>
+                  <a href="/login" className="font-brand text-[13px] font-semibold px-4 py-1.5 rounded-full border border-white/50 text-white hover:border-brand-pink transition">Log In</a>
+                  <a href="/signup" className="font-brand text-[13px] font-semibold text-gray-200 hover:text-brand-pink transition hidden sm:block">Sign Up</a>
                 </>
               )}
               {/* Was a "Connect Wallet" button wired to a toast saying wallet
                   features weren't live. The one wallet step a fan needs is
                   buying credits, and that page works. */}
-              <a href="/credits" className="premium-button text-sm px-4 sm:px-6 py-2 whitespace-nowrap">Buy Credits</a>
+              <a href="/credits" className="premium-button text-[13px] px-4 sm:px-5 py-2 whitespace-nowrap">Buy Credits</a>
             </div>
           </div>
-          {/* Below md the section links above are hidden, so they scroll
+          {/* Below lg the section links above are hidden, so they scroll
               horizontally here instead -- Marketplace and Search were
               otherwise unreachable from this page on a phone. */}
-          <div className="md:hidden overflow-x-auto border-t border-brand-gold/10">
-            <div className="flex items-center gap-5 px-6 py-2.5 text-sm text-gray-300 whitespace-nowrap">
+          <div className="lg:hidden overflow-x-auto border-t border-brand-pink/10">
+            <div className="flex items-center gap-5 px-4 sm:px-6 py-2.5 font-brand text-[13px] font-semibold text-gray-200 whitespace-nowrap">
               <a href="/home" className="hover:text-brand-gold transition">Home</a>
               <a href="/marketplace" className="hover:text-brand-gold transition">Marketplace</a>
               <a href="/search" className="hover:text-brand-gold transition">Search</a>
@@ -368,68 +373,69 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
           </div>
         </nav>
 
-        {/* Hero Banner */}
-        <section className="relative py-20 px-6 border-b border-brand-gold/20 overflow-hidden">
-          <div className="absolute top-1/2 left-1/3 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-brand-purple/15 rounded-full blur-3xl"></div>
-          <div className="absolute top-1/2 left-2/3 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-brand-gold/10 rounded-full blur-3xl"></div>
-          <div className="max-w-7xl mx-auto text-center relative z-10">
-            <div className="inline-block px-4 py-1 rounded-full bg-brand-gold/20 text-brand-gold text-xs font-bold tracking-widest mb-6">
-              18+ EXCLUSIVE PLATFORM
-            </div>
-            <h1 className="text-7xl md:text-8xl font-black mb-3 premium-title">ONLY<span className="text-brand-pink">ONE</span></h1>
-            <p className="text-brand-secondary font-bold text-xl mb-3">Support the creators you actually love.</p>
-            <p className="text-gray-400 max-w-xl mx-auto mb-10">
-              Buy from creators and message them with credits — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for.
-            </p>
-
-            {/* Stats Bar */}
-            {/* Counted from the real roster. These used to be invented
-                numbers -- "12.4K Members", "340+ Exclusive Drops", and a
-                creator count of 6 against a roster of 2. */}
-            <div className="flex flex-wrap justify-center gap-6 md:gap-12 mb-12">
-              {realCreators.length > 0 ? (
-                <>
-                  <div className="text-center">
-                    <p className="text-3xl font-black text-brand-gold">{realCreators.length}</p>
-                    <p className="text-xs text-gray-400 uppercase tracking-wide">Creators</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-3xl font-black text-brand-gold">{totalPosts}</p>
-                    <p className="text-xs text-gray-400 uppercase tracking-wide">Pieces of Content</p>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center">
-                  <p className="text-xl font-black text-brand-gold">Be one of the first</p>
-                  <p className="text-xs text-gray-400 uppercase tracking-wide">
-                    {creators.length > 0 ? 'We\'re just opening — the profiles below are demos' : 'Creators are just joining'}
-                  </p>
-                </div>
-              )}
-              <div className="text-center">
-                <p className="text-3xl font-black text-brand-gold">{PLATFORM_FEE_PCT}%</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide">Platform Fee ({MARKETPLACE_FEE_PCT}% on marketplace)</p>
-              </div>
-            </div>
-
-            {/* Search */}
-            <div className="max-w-md mx-auto">
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search creators..."
-                className="w-full px-6 py-3 rounded-full bg-black/40 border border-brand-gold/30 text-white placeholder-gray-500 focus:outline-none focus:border-brand-gold transition"
-              />
-            </div>
+        {/* Hero, per the owner's mockup (components/public/GatedHero.js). */}
+        <GatedHero
+          eyebrow="Real connections."
+          line1="Support the creators"
+          line2="you actually love."
+          sub="Buy from creators and message them with credits — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for."
+          primary={{ href: '/credits', label: 'Get Credits' }}
+          secondary={{ href: '#creators', label: 'Browse Creators' }}
+          showTrust={false}
+          compact
+        >
+          {/* Search */}
+          <div className="max-w-md mt-8">
+            <label className="sr-only" htmlFor="creators-search">Search creators</label>
+            <input
+              id="creators-search"
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search creators..."
+              className="w-full px-6 py-3 rounded-full bg-black/50 border border-brand-pink/40 text-white placeholder-gray-400 focus:outline-none focus:border-brand-pink transition"
+            />
           </div>
-        </section>
+        </GatedHero>
+
+        {/* Stats Bar */}
+        {/* Counted from the real roster. These used to be invented
+            numbers -- "12.4K Members", "340+ Exclusive Drops", and a
+            creator count of 6 against a roster of 2. Demo profiles and AI
+            house models are not counted (card.demo / card.house). */}
+        <div className="px-4 sm:px-6 py-6 flex flex-wrap justify-center gap-6 md:gap-12">
+          {realCreators.length > 0 ? (
+            <>
+              <div className="text-center">
+                <p className="font-brand text-3xl font-extrabold text-brand-pink">{realCreators.length}</p>
+                <p className="tagline-caps text-[10px] text-gray-300">Creators</p>
+              </div>
+              <div className="text-center">
+                <p className="font-brand text-3xl font-extrabold text-brand-pink">{totalPosts}</p>
+                <p className="tagline-caps text-[10px] text-gray-300">Pieces of Content</p>
+              </div>
+            </>
+          ) : (
+            <div className="text-center">
+              <p className="font-brand text-xl font-extrabold text-brand-pink">Be one of the first</p>
+              <p className="tagline-caps text-[10px] text-gray-300">
+                {creators.length > 0 ? 'We\'re just opening — the profiles below are demos' : 'Creators are just joining'}
+              </p>
+            </div>
+          )}
+          <div className="text-center">
+            <p className="font-brand text-3xl font-extrabold text-brand-pink">{PLATFORM_FEE_PCT}%</p>
+            <p className="tagline-caps text-[10px] text-gray-300">Platform Fee ({MARKETPLACE_FEE_PCT}% on marketplace)</p>
+          </div>
+        </div>
+
+        <CategoryBar basePath="/creators" active={category} onSelect={setCategory} />
 
         {/* Filter Bar. Below md it also carries the categories as a
             horizontal scroll row (the sidebar is md+ only). */}
         <div
           id="creators"
-          className="sticky top-[114px] md:top-[73px] z-40 bg-brand-dark/90 backdrop-blur border-b border-brand-gold/10 py-4"
+          className="sticky top-[114px] lg:top-[61px] z-40 bg-[#08060a]/90 backdrop-blur border-b border-brand-pink/10 py-4"
           style={navHeight ? { top: navHeight } : undefined}
         >
           <div className="md:hidden max-w-7xl mx-auto px-6 mb-3 flex gap-2 overflow-x-auto whitespace-nowrap">
@@ -455,10 +461,10 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
               <button
                 key={f}
                 onClick={() => setActiveFilter(f)}
-                className={`px-5 py-2 rounded-full text-sm font-bold whitespace-nowrap transition ${
+                className={`px-5 py-2 rounded-full font-brand text-xs tracking-widest font-bold whitespace-nowrap transition ${
                   activeFilter === f
-                    ? 'bg-gradient-to-r from-brand-gold to-brand-secondary text-black'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                    ? 'bg-brand-pink text-white shadow-[0_0_16px_rgba(255,45,120,0.45)]'
+                    : 'border border-white/20 text-gray-200 hover:border-brand-pink/60'
                 }`}
               >
                 {f.toUpperCase()}
@@ -541,7 +547,7 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
                   <div
                     key={c.id}
                     onClick={() => router.push(`/creator/${c.id}`)}
-                    className="premium-card overflow-visible border-2 border-brand-gold/30 hover:border-brand-gold/60 transition group cursor-pointer pt-10"
+                    className="premium-card overflow-visible border border-brand-pink/30 hover:border-brand-pink/70 hover:shadow-[0_0_32px_rgba(255,45,120,0.3)] transition group cursor-pointer pt-10"
                   >
                     {/* Avatar overlapping the top of the card */}
                     <div className="absolute -top-8 left-1/2 -translate-x-1/2 w-16 h-16 rounded-full border-4 border-gray-900 overflow-hidden bg-gray-800 z-10 shadow-luxury">
@@ -572,6 +578,10 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
 
                       {c.demo ? (
                         <div className="absolute top-3 left-3"><DemoBadge /></div>
+                      ) : c.aiModel ? (
+                        // OnlyOne's AI house models (and AI creators): always
+                        // labelled, and never given a TRENDING chip.
+                        <div className="absolute top-3 left-3"><AiModelBadge /></div>
                       ) : c.founding ? (
                         <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-brand-pink text-white text-xs font-black">
                           FOUNDING
@@ -599,11 +609,11 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
                     </div>
 
                     <div className="p-4 text-center">
-                      <p className="font-black text-lg text-white flex items-center justify-center gap-1">
+                      <p className="font-brand font-extrabold text-lg text-white flex items-center justify-center gap-1">
                         {c.name}
                         {c.premium && <PremiumBadge />}
                       </p>
-                      <p className="text-brand-secondary text-sm font-medium mb-1">{c.handle}</p>
+                      <p className="text-brand-pink-light text-sm font-medium mb-1">{c.handle}</p>
                       {/* Real count only -- there are no subscribers. */}
                       <p className="text-gray-400 text-xs mb-4">
                         {c.galleryCount} {c.galleryCount === 1 ? 'post' : 'posts'}
@@ -644,6 +654,8 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
             </div>
           </div>
         </section>
+
+        <FeatureRow />
 
         {/* What it costs a fan.
 
@@ -756,14 +768,7 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
           </div>
         </section>
 
-        <footer className="border-t border-brand-gold/20 py-8 px-6 text-center text-gray-500 text-sm">
-          <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs mb-4">
-            <a href="/terms" className="hover:text-brand-gold transition">Terms of Service</a>
-            <a href="/privacy" className="hover:text-brand-gold transition">Privacy Policy</a>
-            <a href="/report-content" className="text-red-400 hover:text-red-300 transition font-semibold">Report Non-Consensual Content</a>
-          </div>
-          <p>OnlyOne — an independent platform. Not affiliated with any other service. 18+ only; every creator profile is reviewed before it goes live.</p>
-        </footer>
+        <SiteFooter note="OnlyOne — an independent platform. Not affiliated with any other service. Every creator profile is reviewed before it goes live." />
       </div>
     </>
   );

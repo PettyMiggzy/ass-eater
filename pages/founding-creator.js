@@ -7,7 +7,7 @@ import {
   OG_IMAGE_ALT,
   CANONICAL_ORIGIN,
 } from '../lib/social';
-import { Mark, Icons, FoundingBadge } from '../components/Brand';
+import { Lockup, Icons, FoundingBadge } from '../components/Brand';
 import WaitlistForm from '../components/WaitlistForm';
 import { PREVIEW_COOKIE_NAME, previewModeEnabled, previewSecret, verifyPreviewToken } from '../lib/preview-access';
 import { signupsOpen } from '../lib/signups';
@@ -165,30 +165,27 @@ export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLoc
         <link rel="canonical" href={`${CANONICAL_ORIGIN}/founding-creator`} />
       </Head>
 
-      <div className="relative min-h-screen bg-brand-ink text-white overflow-hidden">
+      <div className="relative min-h-screen text-white overflow-hidden">
         <div aria-hidden="true" className="pointer-events-none absolute inset-0">
           <div className="absolute left-1/2 top-0 -translate-x-1/2 w-[900px] h-[700px] max-w-[160vw] rounded-full bg-brand-pink/10 blur-[140px]" />
         </div>
 
         <header className="relative px-6 pt-8">
-          <a href="/" className="inline-flex items-center gap-3">
-            <Mark className="h-9 w-auto text-brand-pink" />
-            <span className="font-black tracking-tight text-lg">
-              ONLY<span className="text-brand-pink">ONE</span>
-            </span>
+          <a href="/" className="inline-flex items-center rounded-md" aria-label="OnlyOne home">
+            <Lockup className="h-8" />
           </a>
         </header>
 
         <main className="relative max-w-4xl mx-auto px-6 pb-20 pt-10 sm:pt-16">
           <FoundingBadge className="h-24 w-24 mb-6 text-brand-pink drop-shadow-[0_0_30px_rgba(255,45,120,0.35)]" />
-          <p className="text-[11px] tracking-[0.3em] text-brand-pink mb-5">FOUNDING CREATOR PROGRAMME</p>
+          <p className="tagline-caps text-[11px] text-pink-300 mb-5">Founding creator programme</p>
 
-          <h1 className="text-4xl sm:text-6xl font-black tracking-tight leading-[1.05]">
+          <h1 className="headline text-4xl sm:text-6xl leading-[1.02]">
             BECOME ONE OF THE FIRST{' '}
             <span className="text-brand-pink">{FOUNDING_LIMIT}</span> ONLYONE CREATORS
           </h1>
 
-          <p className="mt-6 text-gray-400 text-sm sm:text-base leading-relaxed max-w-2xl">
+          <p className="mt-6 text-gray-300 text-sm sm:text-base leading-relaxed max-w-2xl">
             OnlyOne is new. The creators who build it get treated like it.
           </p>
 
@@ -207,10 +204,10 @@ export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLoc
                   <>ALL {FOUNDING_LIMIT} SPOTS TAKEN</>
                 )}
               </p>
-              <p className="text-[11px] text-gray-500">{taken} claimed</p>
+              <p className="text-[11px] text-gray-400">{taken} claimed</p>
             </div>
             <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full rounded-full bg-brand-pink transition-all" style={{ width: `${pct}%` }} />
+              <div className="h-full rounded-full bg-brand-pink shadow-[0_0_12px_rgba(255,45,120,0.7)] transition-all" style={{ width: `${pct}%` }} />
             </div>
           </div>
           )}
@@ -218,11 +215,11 @@ export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLoc
           <ul className="mt-14 grid sm:grid-cols-2 gap-x-10 gap-y-8">
             {PERKS.map((p) => (
               <li key={`${p.title}-${p.sub}`} className="flex gap-4">
-                <p.Icon className="h-6 w-6 text-brand-pink shrink-0 mt-0.5" />
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-brand-pink/50 shadow-[0_0_16px_rgba(255,45,120,0.25)]"><p.Icon className="h-5 w-5 text-brand-pink" /></span>
                 <div>
-                  <p className="text-sm font-black tracking-[0.1em]">{p.title}</p>
-                  <p className="text-[10px] tracking-[0.2em] text-brand-pink mt-1">{p.sub}</p>
-                  <p className="text-sm text-gray-400 mt-2 leading-relaxed">{p.body}</p>
+                  <p className="font-brand text-sm font-extrabold tracking-[0.1em]">{p.title}</p>
+                  <p className="tagline-caps text-[10px] text-pink-300 mt-1">{p.sub}</p>
+                  <p className="text-sm text-gray-300 mt-2 leading-relaxed">{p.body}</p>
                 </div>
               </li>
             ))}
@@ -230,9 +227,9 @@ export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLoc
 
           {/* Exactly when the clock runs, in the same size type as the
               promise itself. Burying this would be the dishonest version. */}
-          <div className="mt-12 px-5 py-4 rounded-xl border border-brand-pink/25 bg-brand-pink/5">
+          <div className="mt-12 px-5 py-4 rounded-xl neon-edge bg-brand-pink/5">
             <p className="text-sm text-gray-300 leading-relaxed">
-              <span className="text-brand-pink font-bold">About the 0% fees:</span> your {FEE_WAIVER_DAYS} fee-free
+              <span className="text-pink-300 font-bold">About the 0% fees:</span> your {FEE_WAIVER_DAYS} fee-free
               days start the day you’re approved as a Founding Creator
               {paymentsLiveOn ? ` (or ${paymentsLiveOn}, when payments went live, if that’s later)` : ''} — not
               the day you sign up. During them, nothing is taken from what fans spend on you. After them,
@@ -241,7 +238,7 @@ export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLoc
             </p>
           </div>
 
-          <p className="mt-16 text-2xl sm:text-4xl font-black tracking-tight leading-tight">
+          <p className="mt-16 headline text-3xl sm:text-5xl">
             YOUR CONTENT.
             <br />
             YOUR AUDIENCE.
@@ -254,37 +251,37 @@ export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLoc
               <>
                 <a
                   href="#waitlist"
-                  className="px-10 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-black tracking-wide transition inline-flex items-center gap-3 shadow-[0_0_40px_rgba(255,45,120,0.35)]"
+                  className="btn-pink px-10 py-4 tracking-wide"
                 >
                   GET NOTIFIED <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
                 </a>
-                <p className="text-[11px] tracking-[0.2em] text-gray-500">
+                <p className="text-[11px] tracking-[0.2em] text-gray-400">
                   CREATOR SIGNUPS OPEN AT LAUNCH — LEAVE YOUR EMAIL AND WE’LL TELL YOU WHEN THEY DO
                 </p>
               </>
             ) : open ? (
               <a
                 href="/signup?role=creator"
-                className="px-10 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-black tracking-wide transition inline-flex items-center gap-3 shadow-[0_0_40px_rgba(255,45,120,0.35)]"
+                className="btn-pink px-10 py-4 tracking-wide"
               >
                 CLAIM YOUR SPOT <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
               </a>
             ) : (
               <a
                 href="/signup?role=creator"
-                className="px-10 py-4 rounded-full border border-white/20 hover:border-brand-pink font-black tracking-wide transition inline-flex items-center gap-3"
+                className="btn-outline px-10 py-4 tracking-wide"
               >
                 JOIN AS A CREATOR <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
               </a>
             )}
-            <p className="text-[11px] tracking-[0.2em] text-gray-500">
+            <p className="text-[11px] tracking-[0.2em] text-gray-400">
               {open
                 ? 'THE FIRST 100 APPROVED WITH A FINISHED PROFILE'
                 : 'THE FOUNDING PROGRAMME IS CLOSED — CREATOR SIGNUPS ARE STILL OPEN'}
             </p>
           </div>
 
-          <div id="waitlist" className="mt-12 pt-10 border-t border-white/5 scroll-mt-8">
+          <div id="waitlist" className="mt-12 pt-10 border-t border-brand-pink/15 scroll-mt-8">
             <WaitlistForm
               source="founding-creator"
               defaultRole="creator"
@@ -294,7 +291,7 @@ export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLoc
             />
           </div>
 
-          <p className="mt-8 text-xs text-gray-600 leading-relaxed max-w-2xl">
+          <p className="mt-8 text-xs text-gray-400 leading-relaxed max-w-2xl">
             18+ only. Every creator profile is reviewed by our team before it is published.
             A founding spot goes to each of the first {FOUNDING_LIMIT} creators approved with a finished
             profile — avatar, bio, tags and content up — not simply the first {FOUNDING_LIMIT} to sign up.
@@ -305,8 +302,8 @@ export default function FoundingCreator({ taken, left, paymentsLiveOn, signupLoc
           </p>
         </main>
 
-        <footer className="relative border-t border-white/5 py-6 px-6">
-          <div className="max-w-4xl mx-auto flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-600">
+        <footer className="relative border-t border-brand-pink/15 py-6 px-6">
+          <div className="max-w-4xl mx-auto flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-400">
             <a href="/" className="hover:text-brand-pink transition">Home</a>
             <a href="/terms" className="hover:text-brand-pink transition">Terms</a>
             <a href="/privacy" className="hover:text-brand-pink transition">Privacy</a>

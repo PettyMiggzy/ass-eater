@@ -9,13 +9,20 @@ import { SolidIcons } from '../Brand';
  *
  * The preview is always a still image, even for a video listing (it is drawn
  * from a frame), so there is no <video> branch to get wrong.
+ *
+ * `fallbackSrc` is the teaser for a listing with no preview of its own -- the
+ * AI house models' listings carry preview:null by design (lib/house-roster.js)
+ * and show their model's PUBLIC cover instead (/images/house/<slug>/cover.jpg,
+ * already on the model's profile). It is never a sold file.
  */
-export default function ListingPreview({ media, className = '', showLock = true }) {
+export default function ListingPreview({ media, className = '', showLock = true, fallbackSrc = null }) {
   const first = Array.isArray(media) ? media[0] : null;
   return (
     <div className={`relative w-full h-full bg-black/40 overflow-hidden ${className}`}>
       {first?.preview ? (
         <img src={first.preview} alt="" className="w-full h-full object-cover blur-md scale-110" />
+      ) : fallbackSrc ? (
+        <img src={fallbackSrc} alt="" className="w-full h-full object-cover object-top" />
       ) : (
         <div className="w-full h-full bg-gradient-to-br from-brand-pink/25 via-white/5 to-black/40" />
       )}

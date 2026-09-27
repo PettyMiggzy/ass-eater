@@ -9,9 +9,21 @@ import { toPublicCreator, toPublicListing, isPubliclyVisible, listingHasDelivera
 import { byPlacement, isFoundingCreator } from '../lib/founding';
 import { getListings } from '../lib/listings-store';
 import ListingPreview from '../components/public/ListingPreview';
-import DemoBadge from '../components/public/DemoBadge';
-import PremiumBadge from '../components/public/PremiumBadge';
-import { toCreatorCard, isDemoListing, DEMO_LABEL, marketplaceHrefFor } from '../components/public/cards';
+import DemoBadge, { AiModelBadge } from '../components/public/DemoBadge';
+import CreatorTile from '../components/public/CreatorTile';
+import GatedHero from '../components/public/GatedHero';
+import CategoryBar from '../components/public/CategoryBar';
+import SiteFooter from '../components/public/SiteFooter';
+import {
+  toCreatorCard,
+  isDemoListing,
+  DEMO_LABEL,
+  marketplaceHrefFor,
+  isAiModelCreator,
+  isHouseCreator,
+  isHouseListing,
+  HOUSE_SOLD_BY_LINE,
+} from '../components/public/cards';
 import { CATEGORIES, categoryFromQuery, categoryLabel, creatorInCategory, withCategoryParam } from '../lib/categories';
 
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -60,6 +72,11 @@ export async function getServerSideProps({ query, req }) {
                 creatorName: creator.name,
                 creatorFounding: isFoundingCreator(creator),
                 demo: isDemoListing(l, creator),
+                // Same two fields /marketplace sends: the AI MODEL label, and
+                // a house listing's public cover as its teaser (house
+                // listings have no blurred preview by design).
+                creatorAiModel: isAiModelCreator(creator),
+                creatorCover: isHouseCreator(creator) && typeof creator.cover === 'string' ? creator.cover : null,
               }
             : null;
         })
@@ -107,21 +124,36 @@ export default function Search({ q, tag, category = null, creators, listings, al
   return (
     <>
       <Head><title>Search - OnlyOne</title></Head>
-      <div className="min-h-screen bg-gradient-luxury text-white">
+      <div className="min-h-screen text-white">
         <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
-        <div className="max-w-4xl mx-auto px-6 py-10">
-          <form onSubmit={submit} className="mb-6">
+        {browsing && (
+          <GatedHero
+            line1="Find your"
+            line2="one."
+            sub="Search creators by name or handle, browse by category or tag, and find what they are selling in the marketplace."
+            primary={{ href: '/creators', label: 'Explore Creators' }}
+            secondary={{ href: '/marketplace', label: 'Marketplace' }}
+            modelSlug="amara-cole"
+            showTrust={false}
+            compact
+          />
+        )}
+        <CategoryBar basePath="/search" active={category} />
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10">
+          <form onSubmit={submit} className="mb-6" role="search">
+            <label htmlFor="search-q" className="sr-only">Search creators and marketplace listings</label>
             <input
+              id="search-q"
               autoFocus
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="Search creators and marketplace listings..."
-              className="w-full px-5 py-4 rounded-md bg-black/40 border border-brand-purple/30 text-white text-lg"
+              className="w-full px-5 py-4 rounded-full bg-black/50 border border-brand-pink/40 text-white text-lg placeholder:text-gray-400 focus:outline-none focus:border-brand-pink"
             />
           </form>
 
           <div className="mb-6">
-            <h2 className="text-sm font-bold text-brand-gold uppercase tracking-wide mb-3">Browse by category</h2>
+            <h2 className="tagline-caps text-xs font-bold text-brand-pink-light mb-3">Browse by category</h2>
             <div className="flex flex-wrap gap-2">
               {CATEGORIES.map((c) => (
                 <a
@@ -131,7 +163,7 @@ export default function Search({ q, tag, category = null, creators, listings, al
                   className={`text-xs px-3 py-1.5 rounded-full border transition ${
                     category === c.key
                       ? 'bg-brand-pink text-white border-transparent font-bold'
-                      : 'bg-white/5 border-white/15 text-gray-200 hover:bg-white/10'
+                      : 'bg-white/5 border-white/15 text-gray-200 hover:border-brand-pink/60'
                   }`}
                 >
                   {c.label}
@@ -142,7 +174,7 @@ export default function Search({ q, tag, category = null, creators, listings, al
 
           {allTags.length > 0 && (
             <div className="mb-10">
-              <h2 className="text-sm font-bold text-brand-gold uppercase tracking-wide mb-3">Browse by tag</h2>
+              <h2 className="tagline-caps text-xs font-bold text-brand-pink-light mb-3">Browse by tag</h2>
               <div className="flex flex-wrap gap-2">
                 {allTags.map((t) => (
                   <a
@@ -150,8 +182,8 @@ export default function Search({ q, tag, category = null, creators, listings, al
                     href={`/search${withCategoryParam(`tag=${encodeURIComponent(t)}`, category)}`}
                     className={`text-xs px-3 py-1.5 rounded-full border transition ${
                       tag === t
-                        ? 'bg-brand-gold text-black border-transparent font-bold'
-                        : 'bg-brand-purple/15 border-brand-purple/30 text-brand-gold hover:bg-brand-purple/30'
+                        ? 'bg-brand-pink text-white border-transparent font-bold'
+                        : 'bg-white/5 border-brand-pink/30 text-pink-200 hover:border-brand-pink/70'
                     }`}
                   >
                     #{t}
@@ -163,20 +195,20 @@ export default function Search({ q, tag, category = null, creators, listings, al
 
           {tag && (
             <p className="text-gray-400 mb-6">
-              Showing creators tagged <span className="text-brand-gold font-bold">#{tag}</span> ·{' '}
+              Showing creators tagged <span className="text-brand-pink-light font-bold">#{tag}</span> ·{' '}
               <a href={`/search${withCategoryParam('', category)}`} className="underline">clear</a>
             </p>
           )}
 
           {category && (
             <p className="text-gray-400 mb-6">
-              In category <span className="text-brand-pink font-bold">{categoryLabel(category)}</span> ·{' '}
+              In category <span className="text-brand-pink-light font-bold">{categoryLabel(category)}</span> ·{' '}
               <a href={`/search${withCategoryParam(currentParams.toString(), null)}`} className="underline">clear</a>
             </p>
           )}
 
           {browsing ? (
-            allTags.length === 0 && <p className="text-gray-500">Type something to search creators and the marketplace.</p>
+            allTags.length === 0 && <p className="text-gray-400">Type something to search creators and the marketplace.</p>
           ) : creators.length === 0 && listings.length === 0 ? (
             <p className="text-gray-500">
               {tag || q
@@ -187,21 +219,10 @@ export default function Search({ q, tag, category = null, creators, listings, al
             <div className="space-y-10">
               {creators.length > 0 && (
                 <div>
-                  <h2 className="text-sm font-bold text-brand-gold uppercase tracking-wide mb-4">Creators</h2>
+                  <h2 className="tagline-caps text-xs font-bold text-brand-pink-light mb-4">Creators</h2>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {creators.map((c) => (
-                      <a key={c.id} href={`/creator/${c.id}`} className="premium-card border border-brand-gold/20 overflow-hidden block">
-                        <div className="aspect-square">
-                          <img src={c.img} alt={c.name} className="w-full h-full object-cover object-top" />
-                        </div>
-                        <div className="p-2">
-                          <p className="text-sm font-bold truncate flex items-center gap-1">
-                            {c.name}
-                            {c.premium && <PremiumBadge />}
-                          </p>
-                          {c.demo && <DemoBadge short className="mt-1" />}
-                        </div>
-                      </a>
+                      <CreatorTile key={c.id} c={c} showHandle={false} />
                     ))}
                   </div>
                 </div>
@@ -209,13 +230,14 @@ export default function Search({ q, tag, category = null, creators, listings, al
 
               {listings.length > 0 && (
                 <div>
-                  <h2 className="text-sm font-bold text-brand-gold uppercase tracking-wide mb-4">Marketplace</h2>
+                  <h2 className="tagline-caps text-xs font-bold text-brand-pink-light mb-4">Marketplace</h2>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {listings.map((l) => (
-                      <a key={l.id} href={marketplaceHrefFor(l)} className="premium-card border border-brand-gold/20 overflow-hidden block">
+                      <a key={l.id} href={marketplaceHrefFor(l)} className="block rounded-2xl overflow-hidden bg-brand-card border border-white/10 hover:border-brand-pink/60 transition">
                         <div className="aspect-square relative">
-                          <ListingPreview media={l.media} />
+                          <ListingPreview media={l.media} fallbackSrc={l.creatorCover} />
                           {l.demo && <DemoBadge short className="absolute top-2 left-2" />}
+                          {!l.demo && (l.creatorAiModel || isHouseListing(l)) && <AiModelBadge className="absolute top-2 left-2" />}
                           {/* Terms §4/§7: AI-generated content is labelled wherever it
                               shows -- same test as /marketplace and the profile. */}
                           {(l.aiGenerated || (Array.isArray(l.media) && l.media.some((m) => m && m.aiGenerated))) && (
@@ -223,8 +245,9 @@ export default function Search({ q, tag, category = null, creators, listings, al
                           )}
                         </div>
                         <div className="p-2">
-                          <p className="text-sm font-bold truncate">{l.title}</p>
-                          <p className="text-xs text-gray-500 truncate">
+                          <p className="font-brand text-sm font-bold truncate">{l.title}</p>
+                          {isHouseListing(l) && <p className="text-[10px] leading-snug text-gray-300 mt-0.5">{HOUSE_SOLD_BY_LINE}</p>}
+                          <p className="text-xs text-gray-400 truncate">
                             {l.creatorName} · {l.demo ? DEMO_LABEL : `$${(l.priceCents / 100).toFixed(2)}`}
                           </p>
                         </div>
@@ -236,6 +259,7 @@ export default function Search({ q, tag, category = null, creators, listings, al
             </div>
           )}
         </div>
+        <SiteFooter />
       </div>
     </>
   );

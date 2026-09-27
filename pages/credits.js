@@ -261,10 +261,10 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
       <Head>
         <title>Buy Credits — OnlyOne</title>
       </Head>
-      <div className="min-h-screen bg-brand-ink text-white pb-24">
+      <div className="min-h-screen text-white pb-24">
         <SiteNav signedIn viewerAvatar={sessionUser?.img || null} />
         <div className="max-w-lg mx-auto px-6 py-10">
-          <h1 className="text-3xl font-black mb-2">Buy Credits</h1>
+          <h1 className="font-brand text-3xl font-extrabold mb-2">Buy Credits</h1>
           <p className="text-sm text-gray-400 mb-6">
             1 credit = $1. Buy once with a crypto wallet, then spend credits on Marketplace items and messages to
             creators with no wallet needed. Tips and subscriptions aren&apos;t available yet.

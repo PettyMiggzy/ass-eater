@@ -1,4 +1,4 @@
-import { DEMO_LABEL } from './cards';
+import { DEMO_LABEL, AI_MODEL_LABEL } from './cards';
 
 /**
  * The visible "this is a demo" label for the platform's own sample creators
@@ -15,6 +15,23 @@ export default function DemoBadge({ className = '', short = false }) {
       className={`inline-flex items-center text-[10px] tracking-wide px-2 py-0.5 rounded-full bg-yellow-400 text-black font-black align-middle ${className}`}
     >
       {short ? 'DEMO · AI' : `${DEMO_LABEL} · AI-generated`}
+    </span>
+  );
+}
+
+/**
+ * The "AI MODEL" label for OnlyOne's own AI house models (lib/house-roster.js).
+ * Unlike DemoBadge (kept for the two "How It Works" seed profiles, which are
+ * not for sale) these models ARE for sale, so the badge says what they are,
+ * not "demo". Shown wherever isAiModelCreator(creator) / card.aiModel is true.
+ */
+export function AiModelBadge({ className = '' }) {
+  return (
+    <span
+      title="An AI-generated fictional adult character made by OnlyOne. No real person is depicted."
+      className={`inline-flex items-center text-[10px] tracking-wide px-2 py-0.5 rounded-full bg-fuchsia-500 text-white font-black align-middle ${className}`}
+    >
+      {AI_MODEL_LABEL}
     </span>
   );
 }

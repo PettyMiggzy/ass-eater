@@ -41,11 +41,11 @@ export default function Login() {
   return (
     <>
       <Head><title>Log In - OnlyOne</title></Head>
-      <div className="min-h-screen bg-gradient-luxury text-white">
+      <div className="min-h-screen text-white">
         <SiteNav />
         <div className="flex items-center justify-center px-6 py-16">
           <div className="max-w-md w-full premium-card p-8">
-            <h1 className="text-3xl font-black premium-title mb-6">Log In</h1>
+            <h1 className="font-brand text-3xl font-extrabold premium-title mb-6">Log In</h1>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Email or Username</label>

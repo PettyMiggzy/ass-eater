@@ -46,9 +46,9 @@ export default function GetCrypto({ paymentsLive }) {
         <meta name="description" content="A step-by-step guide to getting a wallet and dollars on-chain so you can buy credits on OnlyOne." />
       </Head>
 
-      <div className="min-h-screen bg-gradient-luxury text-white px-6 py-12">
+      <div className="min-h-screen text-white px-6 py-12">
         <div className="max-w-2xl mx-auto">
-          <h1 className="text-4xl font-black premium-title mb-3 text-center">New to Crypto?</h1>
+          <h1 className="font-brand text-4xl font-extrabold premium-title mb-3 text-center">New to Crypto?</h1>
           <p className="text-gray-400 text-center mb-12">
             Four steps to go from "never touched crypto" to spending on OnlyOne. Takes about 10 minutes.
           </p>

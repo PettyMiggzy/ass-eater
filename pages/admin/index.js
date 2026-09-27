@@ -823,6 +823,7 @@ export default function AdminPanel() {
     { key: 'waitlist', label: 'WAITLIST' },
     { key: 'payouts', label: 'PAYOUTS' },
     { key: 'accounts', label: 'ACCOUNTS' },
+    { key: 'house', label: 'AI HOUSE ROSTER' },
   ];
 
   const gateLive = tokenGateLive();
@@ -960,6 +961,8 @@ export default function AdminPanel() {
             <PayoutsPanel adminKey={adminKey} />
           ) : page === 'accounts' ? (
             <AccountsPanel adminKey={adminKey} creators={creators} onOpenCreator={(id) => { setPage('creators'); selectCreator(id); }} />
+          ) : page === 'house' ? (
+            <HouseRosterPanel adminKey={adminKey} />
           ) : (
           <div className="grid md:grid-cols-3 gap-6">
             {/* Model list */}
@@ -3522,6 +3525,109 @@ const BLANK_RECORD = {
  * real workflow is exporting the CSV into whatever mail tool is used to
  * announce the launch.
  */
+// The AI house model roster (lib/house-roster.js, /api/admin/house-roster):
+// install (resumable -- each call stops before the function time limit and
+// this panel calls again until done) and a soft remove that hides the models
+// and unlists their listings without deleting anything.
+function HouseRosterPanel({ adminKey }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  const load = async () => {
+    setError('');
+    try {
+      const { res, data } = await adminGet(adminKey, '/api/admin/house-roster');
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Failed to load the house roster status'));
+      setStatus(data.status || null);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const install = async () => {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      let uploaded = 0;
+      // Bounded: 8 models x 18 images at worst, a few per call.
+      for (let i = 0; i < 40; i += 1) {
+        const { res, data } = await adminPost(adminKey, '/api/admin/house-roster', { action: 'install' });
+        if (!res.ok) throw new Error(errorFrom(res, data, 'Install failed'));
+        uploaded += Number(data.uploaded) || 0;
+        if (data.status) setStatus(data.status);
+        if (data.done) {
+          setMessage(`Installed. ${uploaded} image${uploaded === 1 ? '' : 's'} uploaded this run.`);
+          return;
+        }
+        setMessage(`Installing… ${uploaded} image${uploaded === 1 ? '' : 's'} uploaded so far.`);
+      }
+      setMessage('Still not finished -- press Install again to continue.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!window.confirm('Hide every AI house model and take their listings off sale? Nothing is deleted; buyers keep their purchases.')) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/house-roster', { action: 'remove' });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Remove failed'));
+      if (data.status) setStatus(data.status);
+      setMessage(`Hidden ${data.hiddenCreators} model(s); ${data.unlistedListings} listing(s) taken off sale.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="premium-card p-6 space-y-4">
+      <h2 className="text-xl font-bold">AI house roster</h2>
+      <p className="text-sm text-gray-400">
+        OnlyOne&apos;s own AI-generated fictional adult models. Every sale is platform revenue: the fan&apos;s
+        credits are debited and no account is paid -- it is cashed out with the rest of the platform&apos;s money.
+      </p>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      {message && <p className="text-sm text-green-400">{message}</p>}
+      {status && (
+        <div className="text-sm space-y-1">
+          <p>
+            {status.installed ? (status.complete ? 'Installed, complete.' : 'Installed, incomplete.') : 'Not installed.'}
+            {status.hidden ? ' Currently hidden.' : ''}
+            {!status.imagesDeployed ? ' The image files are missing from this deployment.' : ''}
+          </p>
+          <ul className="text-xs text-gray-400">
+            {(status.models || []).map((m) => (
+              <li key={m.slug}>
+                {m.name}: {m.creatorId ? `#${m.creatorId}, ${m.activeListings}/${m.listings} listings on sale, ${m.images}/${m.expectedImages} images${m.hidden ? ', hidden' : ''}` : 'not installed'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2 items-center">
+        <button type="button" onClick={install} disabled={busy} className="premium-button px-4 py-2 text-sm disabled:opacity-50">
+          {busy ? 'Working…' : 'Install AI house roster'}
+        </button>
+        <button type="button" onClick={remove} disabled={busy || !status?.installed} className="px-4 py-2 text-sm rounded border border-red-400 text-red-300 disabled:opacity-50">
+          Remove house roster
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function WaitlistPanel({ adminKey }) {
   const [entries, setEntries] = useState([]);
   const [counts, setCounts] = useState({ total: 0, fans: 0, creators: 0 });

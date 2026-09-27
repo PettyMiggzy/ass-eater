@@ -6,8 +6,16 @@ module.exports = {
   ],
   theme: {
     extend: {
+      // Brand faces (2026-09-27 restyle to the owner's mockups). `display`
+      // and `brand` are Montserrat and `script` is Pacifico, both loaded by
+      // next/font in components/fonts.js and published as :root variables by
+      // <BrandFonts/>; the names after the variable are what a page without
+      // it falls back to. `display` used to be Bebas Neue: every
+      // `font-display` heading on the site picks the new face up from here.
       fontFamily: {
-        display: ['"Bebas Neue"', 'sans-serif'],
+        display: ['var(--oo-font-display, Montserrat)', 'Montserrat', '"Bebas Neue"', 'Arial', 'sans-serif'],
+        brand: ['var(--oo-font-display, Montserrat)', 'Montserrat', 'Arial', 'sans-serif'],
+        script: ['var(--oo-font-script, Pacifico)', 'Pacifico', '"Dancing Script"', 'cursive'],
         serif: ['"Playfair Display"', 'serif'],
         sans: ['Inter', '-apple-system', 'sans-serif'],
       },
@@ -52,6 +60,9 @@ module.exports = {
         'luxury': '0 20px 60px rgba(255, 45, 120, 0.15)',
         'luxury-lg': '0 40px 100px rgba(255, 45, 120, 0.2)',
         'glow': '0 0 40px rgba(255, 45, 120, 0.2)',
+        // The neon edge on pills and cards in the mockups.
+        'neon': '0 0 0 1px rgba(255, 45, 120, 0.55), 0 0 24px rgba(255, 45, 120, 0.35)',
+        'neon-lg': '0 0 0 1px rgba(255, 45, 120, 0.7), 0 0 48px rgba(255, 45, 120, 0.45)',
       },
       backdropBlur: {
         'xl': '20px',

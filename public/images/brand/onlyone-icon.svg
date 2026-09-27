@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><rect width="160" height="160" rx="32" fill="#0b0b0e"/><g transform="translate(10.5 22) scale(1)">
+<defs>
+<linearGradient id="m" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff6aa6"/><stop offset="0.55" stop-color="#ff2d78"/><stop offset="1" stop-color="#d80f66"/></linearGradient>
+<linearGradient id="f" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8fbf"/><stop offset="1" stop-color="#b90b55"/></linearGradient>
+</defs>
+<path fill-rule="evenodd" fill="url(#m)" d="M50 5a45 45 0 1 1 0 90a45 45 0 1 1 0-90zm0 23a22 22 0 1 0 0 44a22 22 0 1 0 0-44z"/>
+<circle cx="50" cy="50" r="22.5" fill="#0b0b0e"/>
+<path d="M43.2 49v-5.2a6.8 6.8 0 0 1 13.6 0V49" fill="none" stroke="#fff" stroke-width="3.8" stroke-linecap="round"/>
+<rect x="39" y="47.5" width="22" height="17.5" rx="3.6" fill="#fff"/>
+<circle cx="50" cy="54.6" r="2.5" fill="#0b0b0e"/>
+<rect x="48.9" y="55.5" width="2.2" height="5.2" rx="1.1" fill="#0b0b0e"/>
+<path d="M108 95V27l14-19h18v87z" fill="url(#m)"/>
+<path d="M122 8L96 34l12 9V27z" fill="url(#f)"/>
+<path d="M122 8l-14 19v4.5L122 13z" fill="#ffffff" opacity="0.18"/></g></svg>

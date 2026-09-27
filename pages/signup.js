@@ -69,11 +69,11 @@ export default function Signup({ open }) {
   return (
     <>
       <Head><title>Sign Up - OnlyOne</title></Head>
-      <div className="min-h-screen bg-gradient-luxury text-white">
+      <div className="min-h-screen text-white">
         <SiteNav />
         <div className="flex items-center justify-center px-6 py-16">
         <div className="max-w-md w-full premium-card p-8">
-          <h1 className="text-3xl font-black premium-title mb-2">Create Account</h1>
+          <h1 className="font-brand text-3xl font-extrabold premium-title mb-2">Create Account</h1>
           <p className="text-gray-400 text-sm mb-6">Join as a fan to unlock content, or as a creator to post your own.</p>
 
           <div className="flex gap-2 mb-6">

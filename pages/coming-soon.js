@@ -72,35 +72,36 @@ export default function ComingSoon() {
         <meta name="twitter:image:alt" content={OG_IMAGE_ALT} />
       </Head>
 
-      <div className="relative min-h-screen bg-brand-ink text-white overflow-hidden flex flex-col">
+      <div className="relative min-h-screen text-white overflow-hidden flex flex-col">
         <div aria-hidden="true" className="pointer-events-none absolute inset-0">
           <div className="absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[900px] max-w-[160vw] rounded-full bg-brand-pink/10 blur-[140px]" />
         </div>
 
         <main className="relative flex-1 flex flex-col items-center justify-center text-center px-6 py-16">
-          <Mark className="h-16 sm:h-24 w-auto text-brand-pink mb-5 drop-shadow-[0_0_28px_rgba(255,45,120,0.45)]" />
+          <Mark className="h-20 sm:h-28 w-auto mb-6 drop-shadow-[0_0_32px_rgba(255,45,120,0.5)]" />
 
-          <h1 className="text-5xl sm:text-7xl font-black tracking-tight leading-none">
+          <h1 className="font-brand text-5xl sm:text-7xl font-extrabold tracking-tight leading-none">
             ONLY<span className="text-brand-pink">ONE</span>
           </h1>
 
-          <p className="mt-5 text-[11px] sm:text-xs tracking-[0.35em] text-brand-pink">LAUNCHING SOON</p>
+          <p className="mt-5 tagline-caps text-[11px] sm:text-xs text-pink-300">Launching soon</p>
+          <p className="mt-4 neon-script text-2xl sm:text-3xl">More Than Content</p>
 
-          <p className="mt-6 max-w-lg text-sm sm:text-base text-gray-400 leading-relaxed">
+          <p className="mt-6 max-w-lg text-sm sm:text-base text-gray-300 leading-relaxed">
             A creator platform for women, men, couples and everyone — built so creators keep more of
             what they earn and fans can actually find them.
           </p>
 
           <div className="mt-12 w-full max-w-3xl grid sm:grid-cols-3 gap-6 text-left">
             {WHATS_COMING.map((item) => (
-              <div key={item.title} className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-                <p className="text-[10px] font-bold tracking-[0.2em] text-brand-pink">{item.title.toUpperCase()}</p>
-                <p className="mt-2 text-xs text-gray-400 leading-relaxed">{item.body}</p>
+              <div key={item.title} className="rounded-2xl neon-edge bg-white/[0.02] p-5">
+                <p className="tagline-caps text-[10px] font-bold text-pink-300">{item.title}</p>
+                <p className="mt-2 text-xs text-gray-300 leading-relaxed">{item.body}</p>
               </div>
             ))}
           </div>
 
-          <div className="mt-14 w-full flex justify-center border-t border-white/5 pt-12">
+          <div className="mt-14 w-full flex justify-center border-t border-brand-pink/15 pt-12">
             <WaitlistForm
               source="coming-soon"
               title="BE THERE ON DAY ONE"
@@ -110,7 +111,7 @@ export default function ComingSoon() {
 
           <a
             href="/founding-creator"
-            className="mt-10 text-[11px] tracking-[0.2em] text-gray-400 hover:text-brand-pink transition"
+            className="mt-10 tagline-caps text-[11px] text-gray-300 hover:text-brand-pink transition"
           >
             CREATOR? BE ONE OF THE FIRST 100 <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
           </a>
@@ -119,8 +120,8 @@ export default function ComingSoon() {
         {/* These stay reachable without an invite and without passing age
             verification -- see the exemption lists in proxy.js for why each
             one has to. */}
-        <footer className="relative border-t border-white/5 py-6 px-6">
-          <div className="max-w-4xl mx-auto flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-600 mb-3">
+        <footer className="relative border-t border-brand-pink/15 py-6 px-6">
+          <div className="max-w-4xl mx-auto flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-400 mb-3">
             <a href="/terms" className="hover:text-brand-pink transition">Terms</a>
             <a href="/privacy" className="hover:text-brand-pink transition">Privacy</a>
             <a href="/2257" className="hover:text-brand-pink transition">18 U.S.C. §2257</a>
@@ -140,10 +141,10 @@ export default function ComingSoon() {
               </a>
             ))}
           </div>
-          <p className="text-[11px] text-gray-600 text-center">
+          <p className="text-[11px] text-gray-400 text-center">
             18+ only. OnlyOne contains adult content available to verified adults.
           </p>
-          <p className="text-[11px] text-gray-700 text-center mt-1">© 2026 OnlyOne</p>
+          <p className="text-[11px] text-gray-500 text-center mt-1">© 2026 OnlyOne</p>
         </footer>
       </div>
     </>

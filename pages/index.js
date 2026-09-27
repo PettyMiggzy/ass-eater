@@ -102,7 +102,7 @@ export default function Landing() {
         />
       </Head>
 
-      <div className="relative min-h-screen bg-brand-ink text-white overflow-hidden flex flex-col">
+      <div className="relative min-h-screen text-white overflow-hidden flex flex-col">
         {/* Ambient glow only -- no photography on this side of the gate. */}
         <div aria-hidden="true" className="pointer-events-none absolute inset-0">
           <div className="absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[900px] max-w-[160vw] rounded-full bg-brand-pink/10 blur-[140px]" />
@@ -111,7 +111,7 @@ export default function Landing() {
 
         {/* Audience rail */}
         <div className="relative hidden sm:block absolute-left px-8 pt-8">
-          <ul className="text-[11px] tracking-[0.25em] text-gray-500 space-y-1">
+          <ul className="tagline-caps text-[11px] text-gray-300 space-y-1">
             {AUDIENCES.map((a) => (
               <li key={a}>{a}</li>
             ))}
@@ -120,22 +120,22 @@ export default function Landing() {
         </div>
 
         {/* Neon note */}
-        <p className="relative hidden md:block absolute-right px-8 -mt-24 text-right font-serif italic text-brand-pink text-xl leading-snug [text-shadow:0_0_18px_rgba(255,45,120,0.55)]">
+        <p className="relative hidden md:block absolute-right px-8 -mt-24 text-right neon-script text-2xl leading-snug">
           All Desires<br />Welcome<br /><SolidIcons.heart className="inline-block h-[0.8em] w-[0.8em] text-brand-pink" />
         </p>
 
         <main className="relative flex-1 flex flex-col items-center justify-center text-center px-6 py-16">
-          <Mark className="h-20 sm:h-28 w-auto text-brand-pink mb-5 drop-shadow-[0_0_28px_rgba(255,45,120,0.45)]" />
+          <Mark className="h-24 sm:h-32 w-auto mb-6 drop-shadow-[0_0_32px_rgba(255,45,120,0.5)]" />
 
-          <h1 className="text-5xl sm:text-7xl font-black tracking-tight leading-none">
+          <h1 className="font-brand text-5xl sm:text-7xl font-extrabold tracking-tight leading-none">
             ONLY<span className="text-brand-pink">ONE</span>
           </h1>
 
-          <p className="mt-6 text-[11px] sm:text-xs tracking-[0.3em] text-gray-300">
+          <p className="mt-6 tagline-caps text-[11px] sm:text-xs text-gray-200">
             REAL PEOPLE. REAL CONNECTIONS.
           </p>
 
-          <p className="mt-6 text-sm sm:text-base tracking-[0.15em] text-gray-400 leading-relaxed">
+          <p className="mt-6 font-brand font-semibold text-sm sm:text-base tracking-[0.15em] text-gray-300 leading-relaxed">
             SAME DESIRES. DIFFERENT PEOPLE.
             <br />
             <span className="text-brand-pink">ONE PLACE.</span>
@@ -144,8 +144,8 @@ export default function Landing() {
           <ul className="mt-12 flex flex-wrap justify-center gap-x-10 gap-y-6">
             {FEATURES.map((f) => (
               <li key={f.title} className="w-24 flex flex-col items-center">
-                <f.Icon className="h-7 w-7 text-brand-pink mb-2" />
-                <p className="text-[10px] tracking-[0.15em] text-gray-300 leading-snug">
+                <span className="mb-2 flex h-12 w-12 items-center justify-center rounded-full border border-brand-pink/50 shadow-[0_0_16px_rgba(255,45,120,0.25)]"><f.Icon className="h-6 w-6 text-brand-pink" /></span>
+                <p className="tagline-caps text-[10px] text-gray-200 leading-snug">
                   {f.title}
                   {f.sub && <><br />{f.sub}</>}
                 </p>
@@ -156,17 +156,17 @@ export default function Landing() {
           <div className="mt-12 flex flex-col sm:flex-row items-center gap-4">
             <a
               href="/signup"
-              className="px-10 py-4 rounded-full bg-brand-pink hover:bg-brand-pink-dark font-black tracking-wide transition inline-flex items-center gap-3 shadow-[0_0_40px_rgba(255,45,120,0.35)]"
+              className="btn-pink px-10 py-4 tracking-wide"
             >
               JOIN ONLYONE <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
             </a>
             {/* Everything past here is behind the age gate. */}
-            <a href="/home" className="text-sm tracking-[0.2em] text-gray-400 hover:text-white transition">
+            <a href="/home" className="btn-outline tracking-[0.2em]">
               ENTER <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
             </a>
           </div>
 
-          <p className="mt-8 text-[10px] tracking-[0.3em] text-gray-500">
+          <p className="mt-8 tagline-caps text-[10px] text-gray-400">
             CREATE. SHARE. CONNECT. EARN.
           </p>
 
@@ -174,12 +174,12 @@ export default function Landing() {
               reason -- see pages/founding-creator.js. */}
           <a
             href="/founding-creator"
-            className="mt-6 text-[11px] tracking-[0.2em] text-gray-400 hover:text-brand-pink transition"
+            className="mt-6 tagline-caps text-[11px] text-gray-300 hover:text-brand-pink transition"
           >
             CREATOR? BE ONE OF THE FIRST 100 <Icons.arrowRight className="inline-block h-4 w-4 align-[-0.15em]" />
           </a>
 
-          <div className="mt-12 w-full flex justify-center border-t border-white/5 pt-10">
+          <div className="mt-12 w-full flex justify-center border-t border-brand-pink/15 pt-10">
             <WaitlistForm
               source="landing"
               title="NOT OPEN YET? GET NOTIFIED."
@@ -187,7 +187,7 @@ export default function Landing() {
             />
           </div>
 
-          <nav className="mt-12 flex flex-wrap justify-center items-center gap-x-5 gap-y-2 text-[10px] tracking-[0.2em] text-gray-500">
+          <nav aria-label="Browse by category" className="mt-12 flex flex-wrap justify-center items-center gap-x-5 gap-y-2 tagline-caps text-[10px] text-gray-300">
             {CATEGORIES.map((c, i) => (
               <span key={c.label} className="flex items-center gap-5">
                 <a
@@ -196,16 +196,16 @@ export default function Landing() {
                 >
                   {c.label}
                 </a>
-                {i < CATEGORIES.length - 1 && <span className="text-gray-700" aria-hidden="true">|</span>}
+                {i < CATEGORIES.length - 1 && <span className="text-brand-pink/70" aria-hidden="true">|</span>}
               </span>
             ))}
           </nav>
         </main>
 
         <div className="relative text-center pb-4">
-          <p className="text-[10px] tracking-[0.3em] text-gray-600">
-            ANYONE <span className="text-gray-800">|</span> ANYBODY <span className="text-gray-800">|</span> EVERYONE{' '}
-            <span className="text-gray-800">|</span> <span className="text-brand-pink">ONLYONE</span>
+          <p className="tagline-caps text-[10px] text-gray-400">
+            ANYONE <span className="text-brand-pink/60">|</span> ANYBODY <span className="text-brand-pink/60">|</span> EVERYONE{' '}
+            <span className="text-brand-pink/60">|</span> <span className="text-brand-pink">ONLYONE</span>
           </p>
         </div>
 
@@ -214,8 +214,8 @@ export default function Landing() {
             freely accessible under the TAKE IT DOWN Act -- gating it would
             defeat the requirement, which is why /report-content is exempt in
             proxy.js too. */}
-        <footer className="relative border-t border-white/5 py-6 px-6">
-          <div className="max-w-4xl mx-auto flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-600 mb-3">
+        <footer className="relative border-t border-brand-pink/15 py-6 px-6">
+          <div className="max-w-4xl mx-auto flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-400 mb-3">
             <a href="/terms" className="hover:text-brand-pink transition">Terms</a>
             <a href="/privacy" className="hover:text-brand-pink transition">Privacy</a>
             <a href="/2257" className="hover:text-brand-pink transition">18 U.S.C. §2257</a>
@@ -237,10 +237,10 @@ export default function Landing() {
               </a>
             ))}
           </div>
-          <p className="text-[11px] text-gray-600 text-center">
+          <p className="text-[11px] text-gray-400 text-center">
             18+ only. OnlyOne contains adult content available to verified adults.
           </p>
-          <p className="text-[11px] text-gray-700 text-center mt-1">© 2026 OnlyOne</p>
+          <p className="text-[11px] text-gray-500 text-center mt-1">© 2026 OnlyOne</p>
         </footer>
       </div>
     </>

@@ -16,7 +16,7 @@ import { MIN_PAYOUT_CENTS } from '../lib/fees';
 // Section 6 is the Marketplace terms a buyer accepts at checkout
 // (CURRENT_TOS_VERSION in lib/orders-store.js); a material change to it
 // should bump that version too.
-const LAST_UPDATED = 'September 25, 2026';
+const LAST_UPDATED = 'September 27, 2026';
 const DM_FLOOR = `$${(DM_PRICE_FLOOR_CENTS / 100).toFixed(2)}`;
 const MIN_PAYOUT = `$${(MIN_PAYOUT_CENTS / 100).toFixed(2)}`;
 
@@ -251,6 +251,14 @@ export default function Terms() {
                 requests are frozen: nothing can be spent, sent, or cashed out until the suspension ends. A
                 ban freezes them permanently: any earned balance the Platform holds for you that
                 hasn&apos;t already been paid out is forfeited, and pending payout requests are not paid.
+              </p>
+              <p className="mt-3 text-gray-400">
+                <strong>OnlyOne&apos;s own AI models.</strong> OnlyOne itself sells AI-generated photo sets of
+                fictional adult characters under house accounts marked &quot;AI MODEL&quot;. No real person is
+                depicted in them, they have no creator behind them, and OnlyOne is the seller of those
+                listings; everything else in these Terms, including Section 6, applies to them as to any
+                other Marketplace purchase. Using this or any other content to create a depiction of a real
+                person is prohibited as above.
               </p>
             </Section>
 

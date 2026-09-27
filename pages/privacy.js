@@ -6,7 +6,7 @@ import Head from 'next/head';
 // in the same release. Set it to the day the change actually ships -- never
 // ahead of the deploy date: acceptance dates on orders and signups are read
 // against it, and a date that hasn't happened yet makes that history useless.
-const LAST_UPDATED = 'September 26, 2026';
+const LAST_UPDATED = 'September 27, 2026';
 
 export default function Privacy() {
   return (
@@ -174,6 +174,12 @@ export default function Privacy() {
                 <li>To respond to a valid legal request (subpoena, court order) where we're required to.</li>
               </ul>
               <p className="mt-3">We do not sell your personal information to third parties, and we do not use your content or account data to train AI models.</p>
+              <p className="mt-3">
+                OnlyOne also sells AI-generated images of fictional adults under house accounts marked
+                &quot;AI MODEL&quot;. No real person is depicted, so no one&apos;s personal data or likeness is
+                used to make them. When you buy one, the order is handled exactly like any other Marketplace
+                order, with OnlyOne as the seller.
+              </p>
             </Section>
 
             <Section title="4. Credits, Payouts & Public On-Chain Data">

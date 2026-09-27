@@ -584,7 +584,8 @@ export default function CartPage({ sessionUser }) {
       }
       if ((res.status === 404 || res.status === 409) && data.listingId) {
         // That listing is gone (sold, removed, or its creator can't sell
-        // right now). Nothing was charged; take it out of the cart.
+        // right now). Nothing was charged; take it out of the cart and show
+        // the server's own reason.
         cart.remove(data.listingId);
         endIfCertain();
         throw new Error(
@@ -635,11 +636,11 @@ export default function CartPage({ sessionUser }) {
 
   if (alreadyProcessed) {
     return (
-      <div className="min-h-screen bg-brand-ink text-white">
+      <div className="min-h-screen text-white">
         <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
         <div className="max-w-lg mx-auto px-6 py-24 text-center">
           <SolidIcons.heart className="h-10 w-10 text-brand-pink mx-auto mb-4" />
-          <h1 className="text-2xl font-black mb-2">Already paid</h1>
+          <h1 className="font-brand text-2xl font-extrabold mb-2">Already paid</h1>
           <p className="text-gray-400 text-sm mb-8">
             This checkout already went through — the confirmation just didn&apos;t reach you. You weren&apos;t charged
             again. Your order is in your order history{balanceCents !== null ? `, and your balance is now ${formatCredits(balanceCents)}` : ''}.
@@ -654,11 +655,11 @@ export default function CartPage({ sessionUser }) {
 
   if (paidOrders) {
     return (
-      <div className="min-h-screen bg-brand-ink text-white">
+      <div className="min-h-screen text-white">
         <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
         <div className="max-w-lg mx-auto px-6 py-24 text-center">
           <SolidIcons.heart className="h-10 w-10 text-brand-pink mx-auto mb-4" />
-          <h1 className="text-2xl font-black mb-2">Payment confirmed</h1>
+          <h1 className="font-brand text-2xl font-extrabold mb-2">Payment confirmed</h1>
           <p className="text-gray-400 text-sm mb-8">
             {paidOrders.length} {paidOrders.length === 1 ? 'order has' : 'orders have'} been placed. Find your digital
             items in your order history; physical items ship once the creator confirms your address.
@@ -695,11 +696,11 @@ export default function CartPage({ sessionUser }) {
       <Head>
         <title>Cart — OnlyOne</title>
       </Head>
-      <div className="min-h-screen bg-brand-ink text-white pb-24">
+      <div className="min-h-screen text-white pb-24">
         <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
         <div className="max-w-3xl mx-auto px-6 py-10">
           <div className="flex items-center justify-between mb-6">
-            <h1 className="text-3xl font-black">Your Cart</h1>
+            <h1 className="font-brand text-3xl font-extrabold">Your Cart</h1>
             {sessionUser && (
               <div className="flex items-center gap-4">
                 <a href="/orders" className="text-xs text-gray-400 hover:text-brand-pink transition">Order history</a>

@@ -8,13 +8,16 @@ import { getListings } from '../lib/listings-store';
 import { getCreators } from '../lib/creators-store';
 import { isPubliclyVisible, toPublicListing, listingHasDeliverable, LISTING_LIMITS } from '../lib/creator-status';
 import { isFoundingCreator } from '../lib/founding';
-import { Icons, SolidIcons, Tagline } from '../components/Brand';
+import { Icons, Mark } from '../components/Brand';
 import { useCart } from '../lib/cart';
 import { marketplacePaymentsLive, getMarketplacePaymentConfig } from '../lib/marketplace-payment-config';
 import ListingPreview from '../components/public/ListingPreview';
-import DemoBadge from '../components/public/DemoBadge';
+import DemoBadge, { AiModelBadge } from '../components/public/DemoBadge';
+import GatedHero from '../components/public/GatedHero';
+import CategoryBar from '../components/public/CategoryBar';
+import SiteFooter from '../components/public/SiteFooter';
 import ReportModal, { postReport, takedownFormHref } from '../components/public/ReportModal';
-import { isDemoListing, DEMO_LABEL } from '../components/public/cards';
+import { isDemoListing, DEMO_LABEL, isAiModelCreator, isHouseCreator, isHouseListing, HOUSE_SOLD_BY_LINE } from '../components/public/cards';
 import { CATEGORIES, categoriesOf, categoryFromQuery, categoryLabel, countByCategory, withCategoryParam } from '../lib/categories';
 
 // This page is also served as the root ('/') of onlyass.shop via proxy.js's
@@ -67,6 +70,13 @@ export async function getServerSideProps({ req, query }) {
         // The platform's own sample creators/listings: labelled, and never
         // given a buy button (checkout refuses them too).
         demo: isDemoListing(l, creator),
+        // AI house models / AI creators: the card carries the AI MODEL label
+        // (and, for a house listing, who sells it). A house listing has no
+        // blurred preview of its own (preview:null by design), so its card
+        // shows the model's PUBLIC cover -- the same file already shown on
+        // the model's profile, never a sold image.
+        creatorAiModel: isAiModelCreator(creator),
+        creatorCover: isHouseCreator(creator) && typeof creator.cover === 'string' ? creator.cover : null,
       };
     })
     // "Priority placement in Marketplace" for Founding Creators, newest
@@ -232,7 +242,7 @@ export default function Marketplace({
     if (listing.demo) return;
     // The cart's thumbnail is the listing's public blurred preview -- there
     // is no media src in a public listing to fall back on.
-    cart.add({ ...listing, preview: listing.media?.[0]?.preview || null });
+    cart.add({ ...listing, preview: listing.media?.[0]?.preview || listing.creatorCover || null });
     showToast(`Added "${listing.title}" to your cart.`);
   };
 
@@ -331,47 +341,50 @@ export default function Marketplace({
         />
       )}
 
-      <div className="min-h-screen bg-brand-ink text-white pb-20">
+      <div className="min-h-screen text-white">
         <SiteNav signedIn={!!sessionUser} viewerAvatar={sessionUser?.img || null} />
 
-        {/* Header. Ambient glow only -- the listings themselves carry the
-            imagery, and every preview is blurred until someone owns it. */}
-        <div className="relative overflow-hidden border-b border-white/5">
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-            <div className="absolute left-1/2 -top-40 -translate-x-1/2 w-[800px] h-[500px] max-w-[160vw] rounded-full bg-brand-pink/10 blur-[130px]" />
-          </div>
-          <div className="relative max-w-6xl mx-auto px-6 py-12">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-[11px] tracking-[0.3em] text-brand-pink mb-3">MARKETPLACE</p>
-                <h1 className="text-4xl sm:text-5xl font-black tracking-tight leading-none">
-                  BUY DIRECT FROM <span className="text-brand-pink">CREATORS</span>
-                </h1>
-              </div>
-              <Tagline className="mt-2">More Than Content</Tagline>
-            </div>
-            <p className="mt-4 text-sm text-gray-400 max-w-xl leading-relaxed">
-              Photo sets, video, and physical merch — listed by creators at whatever price they set.
-              Every purchase is between you and them.
-            </p>
-
-            {/* Said plainly and up front rather than discovered at checkout.
-                paymentsLive reflects whether real crypto checkout is actually
-                configured (lib/marketplace-payment-config.js) -- never
-                claimed true until the payout address, USDC contract and RPC
-                are all really set. */}
-            <div className="mt-6 inline-flex items-start gap-2 px-4 py-2.5 rounded-xl border border-brand-pink/25 bg-brand-pink/5 text-xs text-gray-300">
-              <span className="text-brand-pink font-bold">Heads up:</span>
-              <span>
-                {paymentsLive
-                  ? `Checkout is live — pay with credits, no wallet needed at checkout. Buy credits once with a crypto wallet (${stableSymbol}) on the Credits page, then spend them on marketplace items and messages. Digital items appear under Your Orders once bought.`
-                  : 'Browsing is live. Checkout opens when payments do — nothing here can charge you yet.'}
+        {/* Header, per the owner's mockups: the "01 | MARKETPLACE" lockup
+            (f489e41f) over the shared gated hero. Every listing preview below
+            stays blurred until someone owns it. */}
+        <GatedHero
+          kicker={
+            <p className="flex items-center gap-3 mb-6" aria-label="OnlyOne Marketplace">
+              <Mark className="h-9 w-auto" />
+              <span aria-hidden="true" className="h-8 w-px bg-brand-pink" />
+              <span aria-hidden="true" className="font-brand text-xl sm:text-2xl font-extrabold tracking-tight">
+                MARKET<span className="text-brand-pink">PLACE</span>
               </span>
-            </div>
+            </p>
+          }
+          eyebrow="Real connections."
+          line1="Buy direct from"
+          line2="creators."
+          sub="Photo sets, video, and physical merch — listed by creators at whatever price they set. Every purchase is between you and them."
+          primary={{ href: '#listings', label: 'Shop Listings' }}
+          secondary={{ href: '/credits', label: 'Get Credits' }}
+          script="More Than Content"
+          modelSlug="kira-sato"
+          compact
+        >
+          {/* Said plainly and up front rather than discovered at checkout.
+              paymentsLive reflects whether real crypto checkout is actually
+              configured (lib/marketplace-payment-config.js) -- never
+              claimed true until the payout address, USDC contract and RPC
+              are all really set. */}
+          <div className="mt-6 inline-flex items-start gap-2 px-4 py-2.5 rounded-xl border border-brand-pink/30 bg-brand-pink/5 text-xs text-gray-200 max-w-xl">
+            <span className="text-brand-pink-light font-bold">Heads up:</span>
+            <span>
+              {paymentsLive
+                ? `Checkout is live — pay with credits, no wallet needed at checkout. Buy credits once with a crypto wallet (${stableSymbol}) on the Credits page, then spend them on marketplace items and messages. Digital items appear under Your Orders once bought.`
+                : 'Browsing is live. Checkout opens when payments do — nothing here can charge you yet.'}
+            </span>
           </div>
-        </div>
+        </GatedHero>
 
-        <div className="max-w-6xl mx-auto px-6 pt-10 grid lg:grid-cols-[220px_1fr] gap-8">
+        <CategoryBar basePath="/marketplace" active={category} onSelect={setCategory} />
+
+        <div id="listings" className="max-w-6xl mx-auto px-4 sm:px-6 pt-10 grid lg:grid-cols-[220px_1fr] gap-8 scroll-mt-20">
           {/* Filters. Every one of these is real and wired to `filtered`
               below -- no invented counts like "Fetish (231)". CATEGORIES is
               the platform's fixed taxonomy (lib/categories.js), each with a
@@ -496,7 +509,7 @@ export default function Marketplace({
           {/* Below lg the sidebar stacks above the grid, so the categories
               ride here instead as a horizontal scroll row -- same `category`
               state and counts as the sidebar list, not a second filter. */}
-          <div className="lg:hidden -mx-6 px-6 mb-4 overflow-x-auto">
+          <div className="lg:hidden -mx-4 px-4 sm:-mx-6 sm:px-6 mb-4 overflow-x-auto">
             <div className="flex gap-2 whitespace-nowrap">
               {[{ key: null, label: 'All' }, ...CATEGORIES].map((c) => {
                 const on = (category || null) === c.key;
@@ -596,15 +609,16 @@ export default function Marketplace({
                   <div
                     key={l.id}
                     id={`listing-${l.id}`}
-                    className={`group rounded-2xl overflow-hidden bg-white/5 border hover:border-brand-pink/40 transition flex flex-col ${
-                      highlightId && String(highlightId) === String(l.id) ? 'border-brand-pink ring-2 ring-brand-pink/60' : 'border-white/5'
+                    className={`group rounded-2xl overflow-hidden bg-brand-card border hover:border-brand-pink/60 hover:shadow-[0_0_24px_rgba(255,45,120,0.25)] transition flex flex-col ${
+                      highlightId && String(highlightId) === String(l.id) ? 'border-brand-pink ring-2 ring-brand-pink/60' : 'border-white/10'
                     }`}
                   >
                     <div className="aspect-square relative bg-black/40">
-                      <ListingPreview media={l.media} />
+                      <ListingPreview media={l.media} fallbackSrc={l.creatorCover} />
 
                       <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
                         {l.demo && <DemoBadge short />}
+                        {!l.demo && (l.creatorAiModel || isHouseListing(l)) && <AiModelBadge />}
                         {l.creatorFounding && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-pink text-white font-black tracking-wide">FOUNDING</span>
                         )}
@@ -648,7 +662,10 @@ export default function Marketplace({
                           {l.creatorName}
                         </span>
                       </a>
-                      <p className="font-bold text-sm leading-snug mb-1 line-clamp-2">{l.title}</p>
+                      <p className="font-brand font-bold text-sm leading-snug mb-1 line-clamp-2">{l.title}</p>
+                      {isHouseListing(l) && (
+                        <p className="text-[10px] leading-snug text-gray-300 mb-2">{HOUSE_SOLD_BY_LINE}</p>
+                      )}
                       {Array.isArray(l.tags) && l.tags.length > 0 && (
                         <p className="text-[10px] text-brand-pink/80 mb-2 line-clamp-1">{l.tags.map((t) => `#${t}`).join(' ')}</p>
                       )}
@@ -660,7 +677,7 @@ export default function Marketplace({
                       <button
                         onClick={() => addToCart(l)}
                         disabled={cart.has(l.id)}
-                        className="mt-auto w-full py-2.5 rounded-full bg-white/10 hover:bg-brand-pink text-sm font-bold transition disabled:opacity-60 disabled:hover:bg-white/10 flex items-center justify-center gap-1.5"
+                        className="mt-auto w-full py-2.5 rounded-full border border-brand-pink/50 bg-brand-pink/10 hover:bg-brand-pink text-sm font-bold transition disabled:opacity-60 disabled:hover:bg-brand-pink/10 flex items-center justify-center gap-1.5"
                       >
                         {cart.has(l.id) ? (
                           <>
@@ -680,17 +697,13 @@ export default function Marketplace({
           </div>
         </div>
 
-        <footer className="border-t border-white/5 mt-20 py-8 px-6">
-          <div className="max-w-6xl mx-auto flex flex-wrap justify-center gap-x-5 gap-y-2 text-[11px] text-gray-600">
-            <a href={MAIN_SITE} className="hover:text-brand-pink transition">OnlyOne</a>
-            <a href={`${MAIN_SITE}/terms#marketplace`} className="hover:text-brand-pink transition">Marketplace Terms</a>
-            <a href={`${MAIN_SITE}/privacy`} className="hover:text-brand-pink transition">Privacy</a>
-            <a href={`${MAIN_SITE}/report-content`} className="text-red-400 hover:text-red-300 transition font-semibold">
-              Report Non-Consensual Content
-            </a>
-          </div>
-          <p className="text-[11px] text-gray-600 text-center mt-3">18+ only. Sales are between buyer and creator.</p>
-        </footer>
+        {/* Absolute links: this page is also the root of a mirror domain
+            (see MAIN_SITE above). */}
+        <SiteFooter
+          origin={MAIN_SITE}
+          extraLinks={[{ href: '/terms#marketplace', label: 'Marketplace Terms' }]}
+          note="Sales are between buyer and creator. AI-model listings are sold by OnlyOne."
+        />
       </div>
     </>
   );

@@ -159,10 +159,10 @@ export default function OrdersPage({ sessionUser, viewerMark }) {
       <Head>
         <title>Your Orders — OnlyOne</title>
       </Head>
-      <div className="min-h-screen bg-brand-ink text-white pb-24">
+      <div className="min-h-screen text-white pb-24">
         <SiteNav signedIn viewerAvatar={sessionUser?.img || null} />
         <div className="max-w-2xl mx-auto px-6 py-10">
-          <h1 className="text-3xl font-black mb-6">Your Orders</h1>
+          <h1 className="font-brand text-3xl font-extrabold mb-6">Your Orders</h1>
 
           {error && <p className="text-sm text-red-400">{error}</p>}
 

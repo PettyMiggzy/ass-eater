@@ -3,6 +3,7 @@ import { getListings, findListing } from '../../../../lib/listings-store';
 import { findUserByCreatorId } from '../../../../lib/users-store';
 import {
   getCreators,
+  isHouseCreator,
   effectiveCreatorStatus,
   isPubliclyVisible,
   isDemoListing,
@@ -15,6 +16,7 @@ import {
   accountStanding,
   isFrozenStanding,
   canReceiveStanding,
+  canSellAsHouse,
   INSUFFICIENT_BALANCE,
   ACCOUNT_FROZEN,
   RECIPIENT_UNAVAILABLE,
@@ -62,6 +64,8 @@ function isIntOrNull(v) {
  * Retry-After, nothing charged.
  * A digital listing the fan already bought: 409 { code: 'ALREADY_OWNED',
  * listingId, error } and nothing is charged.
+ * An AI house model's listing (lib/house-roster.js) is bought like any other;
+ * the whole price is platform revenue and no user is paid (chargeHouseSale).
  *
  * `expectedBuyerId` (required) is the account id the /cart page was rendered
  * for. A tab left open across a sign-out still holds the previous account's
@@ -189,18 +193,31 @@ export default async function handler(req, res) {
     // A creator's login account is separate from their public creator
     // profile -- credits move between USER accounts, so a listing whose
     // creator has no (or no longer has a) login account can't be paid into.
-    const creatorUser = await findUserByCreatorId(listing.creatorId);
-    if (!creatorUser) {
-      return res.status(404).json({ error: `"${listing.title}" isn't available for purchase right now`, listingId: String(listingId) });
-    }
-    if (String(creatorUser.id) === String(uid)) {
-      return res.status(400).json({ error: `"${listing.title}" is your own listing -- you can't buy it.`, listingId: String(listingId) });
-    }
-    // The same standing transferWithFee checks inside the transaction, so an
-    // account-level ban on the seller's LOGIN (not only their profile) is
-    // caught here, with the listing id the cart needs to drop the item.
-    if (!canReceiveStanding(await accountStanding(creatorUser.id))) {
-      return res.status(404).json({ error: `A listing in your cart is no longer available (#${listingId})`, listingId: String(listingId) });
+    // An AI HOUSE model has no login at all and pays nobody: its sale is
+    // platform revenue (chargeHouseSale), so it needs no seller account --
+    // only a model that can still sell (active, visible, digital listing).
+    const house = isHouseCreator(seller);
+    let creatorUserId = null;
+    if (house) {
+      if (!canSellAsHouse(seller) || listing.kind === 'physical') {
+        return res.status(404).json({ error: `A listing in your cart is no longer available (#${listingId})`, listingId: String(listingId) });
+      }
+    } else {
+      const creatorUser = await findUserByCreatorId(seller.id);
+      if (!creatorUser) {
+        return res.status(404).json({ error: `"${listing.title}" isn't available for purchase right now`, listingId: String(listingId) });
+      }
+      if (String(creatorUser.id) === String(uid)) {
+        return res.status(400).json({ error: `"${listing.title}" is your own listing -- you can't buy it.`, listingId: String(listingId) });
+      }
+      // The same standing transferWithFee checks inside the transaction, so an
+      // account-level ban on the seller's LOGIN (not only their profile) is
+      // caught here, with the listing id the cart needs to drop the item.
+      const sellerStanding = await accountStanding(creatorUser.id);
+      if (!canReceiveStanding(sellerStanding)) {
+        return res.status(404).json({ error: `A listing in your cart is no longer available (#${listingId})`, listingId: String(listingId) });
+      }
+      creatorUserId = creatorUser.id;
     }
 
     const kind = listing.kind === 'physical' ? 'physical' : 'digital';
@@ -222,7 +239,7 @@ export default async function handler(req, res) {
     }
     if (kind === 'physical') needsShipping = true;
     totalCents += priceCents + shippingCents;
-    resolved.push({ listing, creatorUserId: creatorUser.id, kind, priceCents, shippingCents });
+    resolved.push({ listing, creatorUserId, kind, priceCents, shippingCents });
   }
 
   if (changed.length) {
