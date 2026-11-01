@@ -5419,3 +5419,43 @@ no card code exists to remove. Creator-facing copy should say plainly that
 payouts arrive in USDG/ETH and that converting to cash is theirs to do (the
 bridge-to-USDC-on-Base-then-Coinbase route is already described on the
 dashboard).
+
+## Hosting moved off the old Vercel team after a billing block (2026-11-01)
+
+The live site went down with `402 DEPLOYMENT_DISABLED` on every domain (a
+Vercel billing/plan block on the old team, "Oversize Escort Hub", not a code
+error). Founder: *"im not paying my vercel bill"* -- he moved the site to
+another project, and it is back up (public pages answer 200, `/api/*` answers
+451 for non-US visitors as designed).
+
+**State as of this note, so it is not re-discovered:**
+- The old project (`prj_HqD55c4fAsUZvbogdPGNolLlSxFf`, name `onlyass`) is gone
+  from the old team (404). It is NOT in the `monpad` team either: the only
+  project there named like the old team is an unrelated product
+  (`Oversize-Escort-Hub` repo). Where OnlyOne runs now is not visible from this
+  session; the Vercel and GitHub connectors dropped before it could be checked.
+  **Do not assume the "production = this branch" fact above still holds**
+  until the founder says which project/branch the new deployment tracks.
+- The AI-chat audit fixes (commit `099d714`) are on
+  `claude/ecstatic-ride-g21n07`; whether the new project built that commit is
+  unconfirmed.
+- Neon (`falling-heart-96044726`) was untouched, so `DATABASE_URL` carries
+  over. It is small: ~5 waitlist rows, 4 creators, 1 listing, no orders and no
+  performer records, so nothing encrypted is at risk right now.
+
+**What a new project needs (names read from the code; values are NOT stored
+anywhere in the repo):** `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_UPLOAD_KEY`,
+`ORDERS_ENCRYPTION_KEY`, `RECORDS_ENCRYPTION_KEY`, `BLOB_READ_WRITE_TOKEN`
+(a NEW Blob store -- old blob URLs will not resolve), `NEXT_PUBLIC_AGECHECKER_KEY`
+and `AGECHECKER_SECRET_KEY` (the key is tied to the registered domain),
+`OWNER_ACCESS_KEY`, `REVIEWER_ACCESS_KEY`, `VENICE_API_KEY`, `SIGNUPS_OPEN`
+(unset = signups closed), plus the `NEXT_PUBLIC_MARKETPLACE_*` chain/payout
+settings and `NEXT_PUBLIC_RECORDS_CUSTODIAN_NAME` when used.
+**Two must be the SAME value as before or existing data becomes unreadable:**
+`ORDERS_ENCRYPTION_KEY` and `RECORDS_ENCRYPTION_KEY` (Secret-type values cannot
+be read back out of Vercel; if there is no outside backup, they have to be
+treated as lost, which only matters once orders or §2257 records exist).
+`SESSION_SECRET` can change; the cost is everyone being signed out.
+Domains have to be re-added and re-pointed on the new project for certificates.
+The new account must be on a plan that allows a commercial site, or it will be
+disabled the same way again.
