@@ -5360,3 +5360,62 @@ sold photo sets only. Now:
   Brooke Hayes, Daisy Monroe, Nia James, Camila Ortiz, Tiffany Blaze, Jade
   Voss, Skye Rivers, Scarlett Vane) with their public images committed.
   Their chat personas are already in data/house-personas.js.
+
+## Cursor audit of AI chat: five findings fixed on `fix/ai-chat-screens` (2026-11-01)
+
+Cursor's deep audit (PR #1 `audit/cursor-1`, report only, no code changed)
+found five real problems in `lib/ai-chat.js` / `lib/credits-store.js`. All five
+reproduced, all are fixed, each with a regression test in
+`lib/ai-chat.test.mjs` that FAILS against the old code (checked, not assumed):
+
+1. **Critical: ages spelled out in words bypassed the minor screen.** "you are
+   sixteen, nude photo" went through; only digits were caught. The age rules now
+   cover eleven..seventeen as words, "sixteen years old/yo", "sweet sixteen",
+   9th-17th birthdays, "age: sixteen", and read the text through
+   `normalizedReadings` (NFKD, homoglyph fold, zero-width stripped) so Cyrillic
+   look-alikes and zero-width characters between letters don't defeat them.
+   "twenty five year old" stays allowed (lookbehind on the tens words).
+2. **Hard limits only matched keywords.** Now act-based: a sleeping/unconscious
+   person next to a sexual word, animals near a sex act, step-family always,
+   other family nouns near a sex act, plus beastiality/zoophilia/incest.
+3. **Named real people slipped into image scenes.** `namesSomeone()` treats a
+   run of 2+ capitalised words in a MEDIA scene as a named person (allowlist for
+   colours, fabrics, places and the house models' own names). Known residual
+   gap: a real name typed all lowercase is not caught by any word-list approach.
+   **Recommendation, not built: an LLM moderation call before any image/video
+   generation.** That is an owner decision (cost, latency, and it sends fan
+   text to a second provider).
+4. **A refund restored balance but not the earnings the charge consumed.**
+   `chargeHouseSale` now returns `withdrawableConsumedCents`; the fan row stores
+   it (`ai_chat_messages.earned_spent_cents`) and the refund credits it back as
+   withdrawable. Deposit-only fans' refunds stay non-withdrawable.
+5. **The `refunded` flag committed before the credit.** Flag and credit are now
+   one transaction, so a failed credit leaves the flag clear. `settleStuckCharges`
+   (run on every thread read) refunds any fan row older than 10 minutes with no
+   model reply. If the refund can't be written the fan is told it is delayed,
+   never "you weren't charged".
+
+Screens are also enforced INSIDE `sendChatMessage` / `requestCustomMedia`, not
+only in the HTTP handlers, and a refused message is refused before any charge.
+Over-refusal is the accepted tradeoff on anything touching minors.
+
+Also fixed: `lib/b1roster.test.mjs` had an unescaped apostrophe (a SyntaxError
+since it was added), so that 184-check suite had never actually run.
+
+Test-run notes: `lib/r10b.test.mjs` has 2 failures that exist on the unmodified
+tree too (wall-block legacy rows), unrelated. `lib/r4b.test.mjs` failed once
+when run straight after other suites and passes 3/3 alone. `r6b`/`stores`/
+`performer-records` need `ORDERS_ENCRYPTION_KEY` and `RECORDS_ENCRYPTION_KEY`
+set; `next build` needs `SESSION_SECRET` (the production guard is correct).
+
+## Launch is crypto-only; no card payments (decided 2026-11-01)
+
+Founder: *"forgot card stuff so we can go live just do crypto stuff, creators
+can figure out how to convert so they can cash out later."* Fans pay in
+stablecoin (USDG on Robinhood Chain, bridged from USDC), spend credits, and
+creators are paid out in crypto. The adult-processor research (Epoch/Segpay/
+CCBill/Vendo) stays on the roadmap as a later add, not a launch dependency, and
+no card code exists to remove. Creator-facing copy should say plainly that
+payouts arrive in USDG/ETH and that converting to cash is theirs to do (the
+bridge-to-USDC-on-Base-then-Coinbase route is already described on the
+dashboard).

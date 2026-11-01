@@ -26,7 +26,7 @@ export default async function handler(req, res) {
   if (text.length < 3) return res.status(400).json({ error: 'Describe what you want to see.' });
   if (text.length > MAX_SCENE_TEXT) return res.status(400).json({ error: `Keep it under ${MAX_SCENE_TEXT} characters.` });
   if (refuseTooFast(res, ctx.user, 'media', 6)) return;
-  if (await refuseScreened(res, ctx.user, text, 'ai_chat_request')) return;
+  if (await refuseScreened(res, ctx.user, text, 'ai_chat_request', { media: true })) return;
   try {
     return res.status(200).json(await requestCustomMedia({ user: ctx.user, creator: ctx.creator, kind, scene: text }));
   } catch (err) {
