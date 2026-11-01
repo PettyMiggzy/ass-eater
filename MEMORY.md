@@ -5459,3 +5459,16 @@ treated as lost, which only matters once orders or §2257 records exist).
 Domains have to be re-added and re-pointed on the new project for certificates.
 The new account must be on a plan that allows a commercial site, or it will be
 disabled the same way again.
+
+### Confirmed 2026-11-01: the new project tracks this branch, and the audit fixes are live
+
+Founder's Vercel deployments screenshot: the newest Production deployment is
+`0ce846e` ("Record the hosting move and what a new Vercel project needs"),
+Ready in 28s, built from `claude/ecstatic-ride-g21n07`. `0ce846e` sits directly
+on top of `099d714` (the five AI-chat audit fixes), so those fixes are in the
+live build. That resolves the "unconfirmed" and "do not assume production =
+this branch" lines in the section above: **production again = this branch**,
+deployed straight from every push, now on the new project. (The two red
+"Error 10s" rows in that list are old Sep 27 *preview* builds of the side
+branch `claude/ai-model-chat`, unrelated.) What is still not visible from
+here: which Vercel account/team owns the new project, and its env vars.
