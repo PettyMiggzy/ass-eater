@@ -5472,3 +5472,14 @@ deployed straight from every push, now on the new project. (The two red
 "Error 10s" rows in that list are old Sep 27 *preview* builds of the side
 branch `claude/ai-model-chat`, unrelated.) What is still not visible from
 here: which Vercel account/team owns the new project, and its env vars.
+
+## Admin key left as-is, on purpose (2026-11-01)
+
+The founder pasted `ADMIN_UPLOAD_KEY` into chat to run the paid-photo uploads,
+was offered a long random replacement, and said *"not changing it"*. His call;
+the value is deliberately NOT recorded here. Don't re-raise it. Also added
+`scripts/upload-house-sale-images.mjs` (dry run by default, `--apply` to upload,
+key read from the environment) for loading the paid house-model files, which
+are never committed to the repo. The 19 models' public images (avatar, cover,
+free-1, free-2) are committed; only the paid files are missing, and each model
+goes live when its six photos are uploaded and Install is clicked in /admin.
