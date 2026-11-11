@@ -5483,3 +5483,64 @@ key read from the environment) for loading the paid house-model files, which
 are never committed to the repo. The 19 models' public images (avatar, cover,
 free-1, free-2) are committed; only the paid files are missing, and each model
 goes live when its six photos are uploaded and Install is clicked in /admin.
+
+## Full audit and go-live fixes (2026-11-11)
+
+Owner: "go through repo audit it all... want this live asap", then "fix all the
+must-fix stuff so we can go live and any small fixes no cash all crypto". Five
+parallel read-only audits (money, gates/auth, AI chat and media, creator/fan
+flows, visible pages). No way found to get paid media free, no cross-user data
+access, no age-gate bypass, no double spend.
+
+**Fixed and shipped in this pass:**
+- **AI photo/video requests were letting through minor-coded, real-person and
+  non-consent scenes** (44 example strings passed; verified by running
+  `screenFanText`). `lib/ai-chat.js` now reads extra spellings (leet, hyphen,
+  spaced letters), school grades and settings, "looks 14", birth years,
+  foreign-language ages, force/coercion/voyeur wording, distress next to sex,
+  animal breeds, and refuses any family member in a media scene.
+- **A second screen now runs before any photo/video is charged or generated**:
+  `venice.moderate()` asks a classifier model (`AI_MODERATION_MODEL`, default
+  `llama-3.3-70b`, falling back to the chat model if that id is refused) for a
+  strict JSON verdict. Anything but a complete all-false answer refuses, and
+  if the check cannot be made nothing is generated and nothing is charged.
+  This is the "LLM moderation" step earlier recorded as an owner decision; the
+  owner's "fix all the must-fix stuff" is that decision. **Never tested
+  against the real Venice API** (no key in this container): the first real
+  custom-photo request in production is the test.
+- Pending videos and charged-but-undelivered chat rows are now settled by the
+  daily cron for every fan (`settleAllAiChat`), not only when the fan reloads
+  the thread. A retrieve timeout no longer fails a video early. A missing
+  `VENICE_API_KEY` is reported before charging.
+- Legal pages: the public "template, needs attorney review" notices are gone
+  (the documents are still NOT attorney-reviewed); Terms §5/§7 cover AI chat,
+  custom media and video clips with prices read from `lib/fees.js`
+  (`AI_CHAT_PRICES` moved there so pages can import it); Privacy §6 names the
+  AI provider and the wallet safety check; /2257 says AI MODEL accounts depict
+  no real person. Terms version is now `2026-11-11`.
+- Landing category links go to `/creators?category=` (the tag links returned
+  nothing). "Real People" and "Launching soon" copy replaced. /credits links
+  to /get-crypto. Chat shows the per-message price on the Send button. Login
+  page says how to recover a password.
+- `scripts/upload-house-sale-images.mjs` signs in through the owner link when
+  `OWNER_ACCESS_KEY` is set (or takes `OA_AGE_COOKIE`), so it works from a
+  gated location such as Indiana.
+- `maxDuration: 60` on the three routes that wait for a chain confirmation.
+
+**Not code; the owner has to do these (cannot be seen or set from here):**
+- Vercel env: `SIGNUPS_OPEN=true` to open signups; `CRON_SECRET` (without it
+  the daily job does nothing, including takedown-deletion retries and the new
+  chat refund sweep); `PAYMENTS_LIVE_AT` set to the real go-live time (the
+  default `2026-09-24` means early founders' 30-day fee waiver has already
+  run out); `NCII_ALERT_WEBHOOK_URL` (takedown reports alert nobody without
+  it); `PAYOUT_SENDER_ADDRESS`; `NEXT_PUBLIC_MARKETPLACE_STABLE_SYMBOL=USDG`.
+- AgeChecker is set to 21+, so 18 to 20 year olds in gated places cannot get in.
+- Do one real $1 deposit, a purchase, a payout request and mark-paid.
+
+**Known, not fixed (owner's call or bigger than a small fix):** no password
+reset and no email change; no marketplace refund tool and no escrow on
+physical orders; deposits only work from a desktop browser wallet; most rate
+limits are per server instance; "re-verify every visit" is because the age
+cookie is per hostname (use www.joinonlyone.com only, or unblock Indiana).
+Tests: `r10b` (2 checks) and `r4b` (media sweep, 2 checks) fail on the
+unmodified tree as well; both are state-dependent on the scratch database.

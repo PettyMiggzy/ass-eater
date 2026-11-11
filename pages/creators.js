@@ -288,7 +288,7 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
     <>
       <Head>
         <title>OnlyOne - Exclusive Creator Content</title>
-        <meta name="description" content="Token-gated exclusive content platform" />
+        <meta name="description" content="Browse creators and AI models on OnlyOne. 18+ only." />
       </Head>
 
 
@@ -375,7 +375,7 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
 
         {/* Hero, per the owner's mockup (components/public/GatedHero.js). */}
         <GatedHero
-          eyebrow="Real connections."
+          eyebrow="More than content."
           line1="Support the creators"
           line2="you actually love."
           sub="Buy from creators and message them with credits — one credit, one dollar, no guesswork. No ads, no algorithm, just the creators you actually came for."
@@ -419,7 +419,7 @@ export default function Creators({ creators, sessionUser, paymentsLive, viewerMa
             <div className="text-center">
               <p className="font-brand text-xl font-extrabold text-brand-pink">Be one of the first</p>
               <p className="tagline-caps text-[10px] text-gray-300">
-                {creators.length > 0 ? 'We\'re just opening — the profiles below are demos' : 'Creators are just joining'}
+                {creators.length > 0 ? 'We\'re just opening — meet our AI models below' : 'Creators are just joining'}
               </p>
             </div>
           )}

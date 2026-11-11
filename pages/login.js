@@ -54,6 +54,9 @@ export default function Login() {
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Password</label>
                 <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-3 rounded-md bg-black/40 border border-brand-purple/30 text-white" />
+                <p className="mt-2 text-xs text-gray-500">
+                  Forgot your password? Email <a href="mailto:team@onlyone1.fun" className="text-brand-pink underline">team@onlyone1.fun</a> from the address on your account.
+                </p>
               </div>
               {error && <p className="text-sm text-red-400">{error}</p>}
               <button type="submit" disabled={submitting} className="w-full premium-button disabled:opacity-50">

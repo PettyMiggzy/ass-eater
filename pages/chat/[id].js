@@ -161,7 +161,7 @@ export default function ModelChat({ model, prices }) {
                 maxLength={400}
                 rows={3}
                 placeholder={mode === 'video'
-                  ? 'Describe the video: what she’s wearing (or not), where, and what she’s doing…'
+                  ? 'Describe the video: outfit (or none), where, and what happens…'
                   : 'Describe the photo: outfit or nude, pose, setting…'}
                 className="w-full rounded-lg bg-black/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-pink"
               />
@@ -196,7 +196,7 @@ export default function ModelChat({ model, prices }) {
             />
             <button type="submit" disabled={busy || !text.trim()}
               className="px-5 h-11 rounded-full bg-brand-pink text-white font-bold text-sm disabled:opacity-40">
-              Send
+              Send · {formatCredits(prices.messageCents)}
             </button>
           </form>
         </div>

@@ -51,7 +51,7 @@ export default function Landing() {
   return (
     <>
       <Head>
-        <title>OnlyOne — Real People. Real Connections.</title>
+        <title>OnlyOne — Same Desires. Different People.</title>
         <meta
           name="description"
           content="OnlyOne is a creator platform for women, men, couples and everyone. Create, share, connect, earn. 18+ only."
@@ -67,17 +67,17 @@ export default function Landing() {
             must not happen on an 18+ platform. */}
         <meta property="og:type" content="website" />
         <meta property="og:site_name" content="OnlyOne" />
-        <meta property="og:title" content="OnlyOne — Real People. Real Connections." />
+        <meta property="og:title" content="OnlyOne — Same Desires. Different People." />
         <meta
           property="og:description"
-          content="A creator platform for women, men, couples and everyone. Launching soon — get notified. 18+ only."
+          content="A creator platform for women, men, couples and everyone. Create, share, connect, earn. 18+ only."
         />
         <meta property="og:url" content="https://www.joinonlyone.com/" />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="OnlyOne — Real People. Real Connections." />
+        <meta name="twitter:title" content="OnlyOne — Same Desires. Different People." />
         <meta
           name="twitter:description"
-          content="A creator platform for women, men, couples and everyone. Launching soon — get notified. 18+ only."
+          content="A creator platform for women, men, couples and everyone. Create, share, connect, earn. 18+ only."
         />
         <meta property="og:image" content={OG_IMAGE} />
         <meta property="og:image:width" content={String(OG_IMAGE_WIDTH)} />
@@ -132,7 +132,7 @@ export default function Landing() {
           </h1>
 
           <p className="mt-6 tagline-caps text-[11px] sm:text-xs text-gray-200">
-            REAL PEOPLE. REAL CONNECTIONS.
+            MORE THAN CONTENT. IT&apos;S PERSONAL.
           </p>
 
           <p className="mt-6 font-brand font-semibold text-sm sm:text-base tracking-[0.15em] text-gray-300 leading-relaxed">
@@ -182,8 +182,8 @@ export default function Landing() {
           <div className="mt-12 w-full flex justify-center border-t border-brand-pink/15 pt-10">
             <WaitlistForm
               source="landing"
-              title="NOT OPEN YET? GET NOTIFIED."
-              blurb="We’ll email you the moment OnlyOne goes live. Tell us which side you’re on."
+              title="STAY IN THE LOOP."
+              blurb="Get an email when new creators and features go live. Tell us which side you’re on."
             />
           </div>
 
@@ -191,7 +191,7 @@ export default function Landing() {
             {CATEGORIES.map((c, i) => (
               <span key={c.label} className="flex items-center gap-5">
                 <a
-                  href={c.tag ? `/search?tag=${encodeURIComponent(c.tag)}` : '/creators'}
+                  href={c.category ? `/creators?category=${encodeURIComponent(c.category)}` : '/creators'}
                   className="hover:text-brand-pink transition"
                 >
                   {c.label}

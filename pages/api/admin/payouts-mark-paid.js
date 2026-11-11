@@ -54,6 +54,9 @@ function payoutSenderAddress() {
  *  - A request from an account that is no longer an active creator
  *    (banned/suspended/...) is frozen: 409 unless `override: true`.
  */
+// The on-chain confirmation wait can take up to a minute.
+export const config = { maxDuration: 60 };
+
 export default async function handler(req, res) {
   // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
   // database (lib/field-validation.js refuseMalformedText).

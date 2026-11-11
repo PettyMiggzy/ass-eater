@@ -274,6 +274,18 @@ export default function Privacy() {
                 any of them more than what&apos;s needed for that purpose.
               </p>
               <p className="mt-3">
+                <strong>AI model chat.</strong> If you chat with one of our AI models or request a custom
+                photo or video, the text you type is sent to our AI provider (Venice.ai) so it can write
+                the reply or generate the file. We send the text of that conversation and nothing that
+                identifies you: not your name, email, username or wallet. We keep the conversation and
+                the generated files in your account so you can see them.
+              </p>
+              <p className="mt-3">
+                <strong>Wallet safety check.</strong> When you connect a wallet to buy credits, the page
+                may send that wallet&apos;s public address to a security service (GoPlus) to warn you about
+                known risks. A wallet address is public information on the blockchain.
+              </p>
+              <p className="mt-3">
                 Our pages load their typefaces from Google Fonts (fonts.googleapis.com and fonts.gstatic.com).
                 When a page loads, your browser requests those font files from Google directly, so Google
                 receives your IP address, browser details and the address of the page that asked for the font
@@ -398,13 +410,6 @@ export default function Privacy() {
               </p>
             </Section>
           </div>
-
-          <p className="text-xs text-gray-600 mt-8">
-            This document is a general template and does not constitute legal advice. It should be
-            reviewed by a licensed attorney familiar with adult content platforms, cryptocurrency
-            regulations, and data privacy law (e.g. GDPR/CCPA) in your operating jurisdiction before public
-            launch.
-          </p>
         </div>
       </div>
     </>

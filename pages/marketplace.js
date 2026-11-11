@@ -357,10 +357,10 @@ export default function Marketplace({
               </span>
             </p>
           }
-          eyebrow="Real connections."
+          eyebrow="More than content."
           line1="Buy direct from"
           line2="creators."
-          sub="Photo sets, video, and physical merch — listed by creators at whatever price they set. Every purchase is between you and them."
+          sub="Photo sets, video, and physical merch — listed at whatever price the seller sets. Listings marked AI MODEL are sold by OnlyOne; everything else is sold by its creator."
           primary={{ href: '#listings', label: 'Shop Listings' }}
           secondary={{ href: '/credits', label: 'Get Credits' }}
           script="More Than Content"

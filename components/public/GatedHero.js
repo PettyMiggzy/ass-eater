@@ -28,7 +28,7 @@ const DEFAULT_MODEL = 'nova-reyes';
 
 export const TRUST = [
   { Icon: Icons.shield, title: 'Discreet billing', sub: 'Nothing on a card statement' },
-  { Icon: Icons.coin, title: 'USDC credits', sub: 'Pay with USDC credits — no card needed' },
+  { Icon: Icons.coin, title: 'Crypto credits', sub: 'Buy credits with stablecoin — no card needed' },
   { Icon: Icons.lock, title: 'Your privacy matters', sub: 'Private by design' },
 ];
 
@@ -56,7 +56,7 @@ function HeroPhoto({ slug }) {
 }
 
 export default function GatedHero({
-  eyebrow = 'Real connections.',
+  eyebrow = 'More than content.',
   line1 = 'More than content.',
   line2 = 'It’s personal.',
   sub = 'OnlyOne is a platform for creators and fans. Buy direct in the creator marketplace, message the creators you like, and pay with credits.',

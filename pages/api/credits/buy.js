@@ -37,6 +37,9 @@ const WINDOW_MS = 15 * 60 * 1000;
 const MAX_PER_USER = 20;
 const MAX_PER_IP = 40;
 
+// The on-chain confirmation wait can take up to a minute.
+export const config = { maxDuration: 60 };
+
 export default async function handler(req, res) {
   // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
   // database (lib/field-validation.js refuseMalformedText).

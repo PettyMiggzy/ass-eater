@@ -266,8 +266,9 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
         <div className="max-w-lg mx-auto px-6 py-10">
           <h1 className="font-brand text-3xl font-extrabold mb-2">Buy Credits</h1>
           <p className="text-sm text-gray-400 mb-6">
-            1 credit = $1. Buy once with a crypto wallet, then spend credits on Marketplace items and messages to
-            creators with no wallet needed. Tips and subscriptions aren&apos;t available yet.
+            1 credit = $1. Buy once with a crypto wallet, then spend credits on Marketplace items, messages to
+            creators and chat with our AI models, with no wallet needed. Tips and subscriptions aren&apos;t available yet.{' '}
+            <a href="/get-crypto" className="text-brand-pink underline">New to crypto? Start here.</a>
           </p>
 
           <div className="rounded-xl bg-white/5 border border-white/5 p-4 mb-6 flex items-center justify-between">
@@ -424,7 +425,7 @@ export default function CreditsPage({ sessionUser, paymentConfig, paymentsLive }
                 <p className="mb-2">
                   <span className="font-bold text-white">Credits are final.</span> They&apos;re non-refundable, can&apos;t be
                   cashed back out or transferred to anyone, and never expire. Right now they can be spent on Marketplace
-                  items and messages to creators only. See{' '}
+                  items, messages to creators and AI model chat only. See{' '}
                   <a href="/terms#payments" target="_blank" rel="noreferrer" className="text-brand-pink underline">
                     Terms §5
                   </a>

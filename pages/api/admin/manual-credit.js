@@ -27,6 +27,9 @@ import { refuseMalformedText } from '../../../lib/field-validation';
  *   resolved { userId, login, role } to confirm), 409 ACCOUNT_MISMATCH when it
  *   is not user `userId`'s -- both before anything is credited.
  */
+// The on-chain confirmation wait can take up to a minute.
+export const config = { maxDuration: 60 };
+
 export default async function handler(req, res) {
   // NUL / half-an-emoji anywhere in the request: 400, never a 500 from the
   // database (lib/field-validation.js refuseMalformedText).

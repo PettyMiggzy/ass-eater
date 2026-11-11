@@ -707,7 +707,9 @@ export default function CreatorProfile({
                               with no login can't be messaged, so no price is
                               offered for it (credits never refund), and no
                               future change is promised. */}
-                          {!creatorUserId
+                          {aiChat
+                            ? `Chat with ${creator.name} is paid per message, and custom photos and videos are made on request. Prices are shown in the chat.`
+                            : !creatorUserId
                             ? "Messaging isn't available for this creator."
                             : dmPriceCents > 0
                               ? `Send a message — ${dmPriceLabel} each (${dmFeeWaived ? 'goes to the creator in full' : "goes to the creator, less OnlyOne's platform fee"}).`

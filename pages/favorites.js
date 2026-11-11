@@ -34,7 +34,7 @@ export default function Favorites({ creators }) {
           eyebrow="Your favorites."
           line1="The creators"
           line2="you saved."
-          sub="Creators you've saved -- tap the heart on their profile to add or remove one."
+          sub="Creators you've saved. Tap the heart on their profile to add or remove one."
           primary={{ href: '/creators', label: 'Find More Creators' }}
           secondary={{ href: '/marketplace', label: 'Marketplace' }}
           modelSlug="sienna-blake"

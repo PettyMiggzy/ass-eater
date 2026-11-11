@@ -8,6 +8,12 @@
 //   <folder>/nova-reyes/7.mp4 ... 9.mp4   (video clips)
 // Without --apply it only prints the plan (a dry run). The admin key is read
 // from the environment so it never lands in shell history or the repo.
+//
+// From a location the site age-gates (outside the US, or one of the gated US
+// states) every upload is answered 451 unless the request carries the
+// age-verification cookie. Set OWNER_ACCESS_KEY in the environment as well
+// and the script signs in through the owner link first; or set OA_AGE_COOKIE
+// to the value of your browser's oa_age_verified cookie. Neither is printed.
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
 
@@ -22,6 +28,19 @@ const TYPES = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png'
 
 if (!dir || !existsSync(dir)) { console.error('Usage: node scripts/upload-house-sale-images.mjs <folder> [--site URL] [--apply]'); process.exit(2); }
 if (apply && !key) { console.error('Set ADMIN_UPLOAD_KEY in the environment first.'); process.exit(2); }
+
+// The age-verification cookie, when one is needed (see the header comment).
+async function ageCookie() {
+  if (process.env.OA_AGE_COOKIE) return `oa_age_verified=${process.env.OA_AGE_COOKIE.replace(/^oa_age_verified=/, '')}`;
+  const ownerKey = process.env.OWNER_ACCESS_KEY;
+  if (!ownerKey) return '';
+  const res = await fetch(`${site}/api/age-verify/owner?key=${encodeURIComponent(ownerKey)}`, { redirect: 'manual' });
+  const set = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('set-cookie') || ''];
+  const found = set.map((c) => /^oa_age_verified=([^;]+)/.exec(c || '')).find(Boolean);
+  if (!found) { console.error('The owner link did not sign in (wrong OWNER_ACCESS_KEY, or too many tries -- wait 15 minutes).'); process.exit(2); }
+  return `oa_age_verified=${found[1]}`;
+}
+const cookie = apply ? await ageCookie() : '';
 
 const plan = [];
 for (const slug of readdirSync(dir).filter((d) => statSync(join(dir, d)).isDirectory())) {
@@ -42,10 +61,11 @@ for (const p of plan) {
   if (p.problem) { bad++; console.log(`SKIP  ${p.slug}/${p.file.split(/[\\/]/).pop()}  -- ${p.problem}`); continue; }
   if (!apply) { ok++; console.log(`PLAN  ${p.slug} slot ${p.n}  <- ${p.file}`); continue; }
   const res = await fetch(`${site}/api/admin/house-sale-image?slug=${encodeURIComponent(p.slug)}&n=${p.n}`, {
-    method: 'POST', headers: { 'x-admin-key': key, 'content-type': p.type }, body: readFileSync(p.file),
+    method: 'POST', headers: { 'x-admin-key': key, 'content-type': p.type, ...(cookie ? { cookie } : {}) }, body: readFileSync(p.file),
   });
   const body = await res.text();
   if (res.ok) { ok++; console.log(`OK    ${p.slug} slot ${p.n}`); } else { bad++; console.log(`FAIL  ${p.slug} slot ${p.n}: ${res.status} ${body.slice(0, 120)}`); }
+  if (res.status === 451 && !cookie) { console.log('The site age-gates your location. Set OWNER_ACCESS_KEY (or OA_AGE_COOKIE) and run again.'); break; }
 }
 console.log(`\n${apply ? 'uploaded' : 'planned'}: ${ok}, problems: ${bad}${apply ? '' : '  (dry run -- add --apply to upload)'}`);
 if (!apply) console.log('Then open /admin > AI HOUSE ROSTER and click Install on each model.');

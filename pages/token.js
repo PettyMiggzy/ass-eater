@@ -59,7 +59,7 @@ const ROADMAP = [
     items: [
       { label: 'Creator identity verification (KYC vendor)', status: 'planned' },
       { label: 'Age verification for visitors outside the US and in US states that require it (live via AgeChecker.Net)', status: 'live' },
-      { label: 'Terms of Service and Privacy Policy (template -- needs attorney review)', status: 'live' },
+      { label: 'Terms of Service and Privacy Policy', status: 'live' },
       { label: 'Non-consensual content (deepfake/NCII) reporting & 48-hour takedown process, required by the federal TAKE IT DOWN Act', status: 'live' },
       { label: '18 U.S.C. §2257 statement and performer records', status: 'live' },
     ],

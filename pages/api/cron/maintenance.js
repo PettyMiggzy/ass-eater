@@ -5,6 +5,7 @@ import { deliverStandingPushes } from '../../../lib/standing-outbox';
 import { lapsedAccountSuspensionCreatorIds } from '../../../lib/users-store';
 import { pushCreatorStatus } from '../../../lib/server-api';
 import { eraseAddressesOfDeletedBuyers } from '../../../lib/orders-store';
+import { settleAllAiChat } from '../../../lib/ai-chat';
 
 /**
  * GET /api/cron/maintenance -- the scheduled job (vercel.json "crons").
@@ -80,6 +81,13 @@ export default async function handler(req, res) {
   } catch (err) {
     out.ok = false;
     console.error('[cron/maintenance] deleted-buyer address erase failed:', err);
+  }
+  try {
+    // Pending AI videos and charged-but-undelivered chat rows, for every fan.
+    out.aiChat = await settleAllAiChat({ limit: 40 });
+  } catch (err) {
+    out.ok = false;
+    console.error('[cron/maintenance] ai-chat settle failed:', err);
   }
   try {
     out.standing = await deliverStandingPushes({ limit: 100 });

@@ -10,7 +10,7 @@ import { Icons } from '../Brand';
 export const LIVE_FEATURES = [
   { Icon: Icons.tag, title: 'Creator Marketplace', sub: 'Buy direct from creators', href: '/marketplace' },
   { Icon: Icons.message, title: 'Direct Messaging', sub: 'Talk to the creators you like' },
-  { Icon: Icons.coin, title: 'USDC Credits', sub: 'Pay with USDC credits — no card needed', href: '/credits' },
+  { Icon: Icons.coin, title: 'Crypto Credits', sub: 'Buy credits with stablecoin — no card needed', href: '/credits' },
   { Icon: Icons.heart, title: 'Favorites', sub: 'Save the creators you follow', href: '/favorites' },
   { Icon: Icons.people, title: 'Creator Profiles', sub: 'Photos, links and a wall', href: '/creators' },
 ];
