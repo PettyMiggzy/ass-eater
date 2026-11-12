@@ -5544,3 +5544,28 @@ limits are per server instance; "re-verify every visit" is because the age
 cookie is per hostname (use www.joinonlyone.com only, or unblock Indiana).
 Tests: `r10b` (2 checks) and `r4b` (media sweep, 2 checks) fail on the
 unmodified tree as well; both are state-dependent on the scratch database.
+
+## Generate button for the paid house-model photos (2026-11-12)
+
+Owner had no paid photos anywhere (not on his PC, not in Venice, never in the
+repo: only the 76 public images were ever made) and could not upload from
+Indiana. He asked for a Generate button. Built:
+`POST /api/admin/house-sale-generate { slug, n, scene }` (admin key, photo
+slots 1-6 only) calls `generateHouseSalePhoto` in `lib/ai-chat.js`: the scene
+passes the word screen and the classifier, the model's fixed look leads the
+prompt, and the JPEG is stored as that slot's private master through the same
+`saveHouseSaleImage` an upload uses. /admin > AI HOUSE ROSTER has a Generate
+link beside Upload on each photo slot; "view" shows the result; Install puts
+it on sale. No charge, no chat row. Video slots stay upload-only.
+
+I do not generate explicit images myself and did not use the Venice admin key
+he pasted in chat; the site's own `VENICE_API_KEY` does the generating when he
+presses the button. **Not tested against the real Venice API or the real Blob
+store from here** (neither is reachable): auth, slot and input refusals were
+checked on a local server, the generation path with test doubles.
+
+Also set in Vercel on 2026-11-11: `PAYMENTS_LIVE_AT=2026-11-11`. Still unset:
+`NCII_ALERT_WEBHOOK_URL`, `PAYOUT_SENDER_ADDRESS`. The Vercel project
+(`onlyass`, team slug `monpad`) is reachable from the connector again.
+He says the AgeChecker bill is unpaid and wants a different vendor; his way in
+meanwhile is the owner link or /owner.

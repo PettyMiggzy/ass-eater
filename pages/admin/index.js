@@ -3593,6 +3593,33 @@ function HouseRosterPanel({ adminKey }) {
     }
   };
 
+  // Makes the photo with the site's own image model and puts it in the slot
+  // (/api/admin/house-sale-generate). The last description typed is offered
+  // again, since regenerating the same scene is the common case.
+  const [lastScene, setLastScene] = useState({});
+  const generate = async (slug, slot) => {
+    const key = `${slug}:${slot.n}`;
+    const scene = window.prompt(`Describe ${slotLabel(slot)}: outfit, pose, setting. The model's own look is added for you.`, lastScene[key] || '');
+    if (scene === null) return;
+    const text = scene.trim();
+    if (text.length < 3) { setError('Describe what the photo should show.'); return; }
+    setLastScene((prev) => ({ ...prev, [key]: text }));
+    setBusy(true);
+    setError('');
+    setMessage(`Generating ${slotLabel(slot)}… this takes up to a minute.`);
+    try {
+      const { res, data } = await adminPost(adminKey, '/api/admin/house-sale-generate', { slug, n: slot.n, scene: text });
+      if (!res.ok) throw new Error(errorFrom(res, data, 'Generation failed'));
+      setMessage(`${slotLabel(slot)} generated. Press "view" to look at it; Generate again if it isn't right, then install the model.`);
+      await load();
+    } catch (err) {
+      setMessage('');
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const view = async (slug, n) => {
     setError('');
     // Opened before the fetch so a popup blocker treats it as a click.
@@ -3664,10 +3691,12 @@ function HouseRosterPanel({ adminKey }) {
         credits are debited and no account is paid -- it is cashed out with the rest of the platform&apos;s money.
       </p>
       <p className="text-xs text-gray-400">
-        Upload each model&apos;s six paid photos here (JPEG, PNG or WebP, up to {fmtBytes(maxBytes)}). They go
-        straight to private storage and are only ever served to buyers. Look at every photo before uploading:
-        no nudity, nothing see-through, no sex act, and clearly adult. A model can be installed once all six
-        photos and its avatar, cover and two free previews are in place; its listings go on sale then.
+        Fill each model&apos;s six paid photo slots here: Upload a file (JPEG, PNG or WebP, up to {fmtBytes(maxBytes)}),
+        or press Generate and describe the photo to have the site make it with that model&apos;s look. They go
+        straight to private storage and are only ever served to buyers. Press view and look at every photo
+        before installing: clearly an adult, the same person as the profile, no text or watermark. A model can
+        be installed once all six photos and its avatar, cover and two free previews are in place; its
+        listings go on sale then.
       </p>
       {error && <p className="text-sm text-red-400">{error}</p>}
       {message && <p className="text-sm text-green-400">{message}</p>}
@@ -3729,6 +3758,11 @@ function HouseRosterPanel({ adminKey }) {
                         }}
                       />
                     </label>
+                    {!slot.clip && (
+                      <button type="button" onClick={() => generate(m.slug, slot)} disabled={busy} className="ml-3 underline text-brand-pink disabled:opacity-50">
+                        Generate
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
