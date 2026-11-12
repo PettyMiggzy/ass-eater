@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
+import { put as blobPut } from '@vercel/blob/client';
 import { effectiveCreatorStatus, MAX_LOCATION_LENGTH } from '../../lib/creator-status';
 import { FOUNDING_LIMIT, countFounding, isFoundingCreator, foundingAutoGrantEligible } from '../../lib/founding';
 import { sanitizeGateTokens, tokenGateLive } from '../../lib/token-gate';
@@ -3554,6 +3555,7 @@ function HouseRosterPanel({ adminKey }) {
   useEffect(() => { load(); }, []);
 
   const maxBytes = Number(status?.maxImageBytes) || 4 * 1024 * 1024;
+  const maxClipBytes = Number(status?.maxClipBytes) || maxBytes;
   const fmtBytes = (b) => (b >= 1024 * 1024 ? `${(b / (1024 * 1024)).toFixed(1)}MB` : `${Math.max(1, Math.round(b / 1024))}KB`);
   const fmtDate = (iso) => {
     const t = Date.parse(iso || '');
@@ -3571,12 +3573,36 @@ function HouseRosterPanel({ adminKey }) {
       setError(slot.clip ? 'Video slots take an MP4 file.' : 'Sale photos must be a JPEG, PNG or WebP image.');
       return;
     }
-    if (file.size > maxBytes) {
-      setError(`That file is too large (${fmtBytes(maxBytes)} maximum). ${slot.clip ? 'Export the video at a lower bitrate.' : 'Export it as a JPEG at a lower quality.'}`);
+    const limit = slot.clip ? maxClipBytes : maxBytes;
+    if (file.size > limit) {
+      setError(`That file is too large (${fmtBytes(limit)} maximum). ${slot.clip ? 'Export the video at a lower bitrate.' : 'Export it as a JPEG at a lower quality.'}`);
       return;
     }
     setBusy(true);
     try {
+      if (slot.clip) {
+        // Videos go straight from this browser to private storage, so they
+        // are not held to the small size a function upload allows.
+        const { res: tRes, data: t } = await adminPost(adminKey, '/api/admin/house-sale-clip', { action: 'token', slug, n, contentType: file.type, size: file.size });
+        if (!tRes.ok || !t?.pathname || !t?.clientToken) throw new Error(errorFrom(tRes, t, 'Could not start the upload'));
+        setMessage(`Uploading ${slotLabel(slot)}…`);
+        try {
+          await blobPut(t.pathname, file, {
+            access: 'private',
+            token: t.clientToken,
+            contentType: 'video/mp4',
+            multipart: file.size > 5 * 1024 * 1024,
+            onUploadProgress: ({ percentage }) => setMessage(`Uploading ${slotLabel(slot)}… ${Math.round(percentage)}%`),
+          });
+        } catch (err) {
+          throw new Error('The upload did not complete. Check your connection and try again.');
+        }
+        const { res: fRes, data: f } = await adminPost(adminKey, '/api/admin/house-sale-clip', { action: 'finalize', slug, n, pathname: t.pathname });
+        if (!fRes.ok) throw new Error(errorFrom(fRes, f, 'Upload failed'));
+        setMessage(`${slotLabel(slot)} ${f.slot?.replaced ? 'replaced' : 'uploaded'}. Install that model to put it on sale.`);
+        await load();
+        return;
+      }
       const res = await fetch(`/api/admin/house-sale-image?slug=${encodeURIComponent(slug)}&n=${n}`, {
         method: 'POST',
         headers: { 'x-admin-key': adminKeyHeader(adminKey), 'content-type': file.type },
@@ -3691,6 +3717,7 @@ function HouseRosterPanel({ adminKey }) {
         credits are debited and no account is paid -- it is cashed out with the rest of the platform&apos;s money.
       </p>
       <p className="text-xs text-gray-400">
+        Videos go in the three Video slots (MP4, up to {fmtBytes(maxClipBytes)}).
         Fill each model&apos;s six paid photo slots here: Upload a file (JPEG, PNG or WebP, up to {fmtBytes(maxBytes)}),
         or press Generate and describe the photo to have the site make it with that model&apos;s look. They go
         straight to private storage and are only ever served to buyers. Press view and look at every photo

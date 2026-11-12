@@ -5569,3 +5569,23 @@ Also set in Vercel on 2026-11-11: `PAYMENTS_LIVE_AT=2026-11-11`. Still unset:
 (`onlyass`, team slug `monpad`) is reachable from the connector again.
 He says the AgeChecker bill is unpaid and wants a different vendor; his way in
 meanwhile is the owner link or /owner.
+
+## Paid video clips up to 200MB; owner key reset (2026-11-12)
+
+The owner's videos were refused at the 4MB function-body limit. Clip slots
+(7-9) now upload straight from the admin's browser to private storage:
+`POST /api/admin/house-sale-clip` `{action:'token'}` issues a one-pathname MP4
+token (`prepareHouseSaleClipUpload`, cap `HOUSE_SALE_CLIP_MAX_BYTES` = 200MB),
+the panel uploads with `@vercel/blob/client`, and `{action:'finalize'}`
+(`registerHouseSaleClip`) checks the stored file is a real MP4 in that slot
+before recording it. Photo slots keep the 4MB function upload. Tested with
+doubles and on a local server; **not tested against the real Blob store**.
+
+`OWNER_ACCESS_KEY` was reset in Vercel at the owner's request to the one
+password he uses (the same value as the admin key; value not recorded here),
+and the owner link was verified live (302 to /home). Indiana stays gated: he
+said "unblock Indiana" and then "dont remove indiana" before it was pushed.
+
+Go.cam (free, French, adult-industry age checks) is his pick to replace
+AgeChecker; his account is under their review. It makes no US-state claims and
+ships a PHP kit only, so the build needs their sample files from his account.
